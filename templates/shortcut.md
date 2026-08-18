@@ -230,18 +230,21 @@ won't find it by searching the actions panel.
 
 ### Optional: make it shareable with import questions
 
-In the same info panel (the ⓘ button), **Import Questions** let a shared copy of
-the shortcut ask its new owner for their own values at import time — so you can
-share the shortcut without your token or volumes in it.
+**Import Questions** (in the same ⓘ info panel) let a shared copy ask its new
+owner for their own values at import time. A field that has an import question
+is cleared automatically when the shortcut is shared — so your token never
+travels with it.
 
-1. Blank the token Text box and set your Dictionary to example rows (or leave
-   one generic row).
-2. Add an import question for the token Text action, e.g. "Paste your GitHub
-   token (see Before you begin)".
-3. Add an import question for the Dictionary, e.g. "Your volumes: display name
-   -> owner/repo".
-4. Share that copy as an iCloud link. Importers get prompted for their own
-   values; your real shortcut (with your token) stays private.
+1. In the info panel, tap **Import Questions**, then **Add New Question**.
+2. Choose the token **Text** parameter from the list, tap its name in the
+   Import Questions area, and set the **Question Text** to something like
+   "Paste your GitHub token (see Before you begin in the setup guide)".
+   Confirm, then tap **Done**.
+3. Set your Dictionary to example rows before sharing, or add import questions
+   for its values the same way — repo paths aren't secret, and importers can
+   edit them after import either way.
+4. Share as an iCloud link. The token field arrives blank and the importer is
+   prompted for their own.
 
 ## Try it
 
@@ -253,9 +256,9 @@ closes itself.
 
 - To silence GitHub's issue notifications, set the volume repo's **Watch**
   setting to **Ignore**.
-- Never share your live shortcut or its iCloud link — shared shortcuts embed
-  whatever token is inside. Share a blanked copy with import questions (above),
-  or this recipe.
+- Never share a shortcut whose token field lacks an import question — shared
+  shortcuts embed whatever is in their fields. With the import question set
+  (above), the token field is cleared on share and sharing is safe.
 - Text shares work for short snippets. GitHub caps issue titles at about 256
   characters, so long text fails — share a link to the source instead.
 - Any HTTP client can capture the same way: POST an issue with the URL as the
