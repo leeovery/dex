@@ -25,37 +25,25 @@ one shortcut must belong to the same owner.
 
 ## Create the shortcut
 
-Open the Shortcuts app and create a new shortcut.
-
-1. Turn on Share Sheet input. This is a setting, not an action — it can't be
-   found by searching the actions list.
-   1. Tap the shortcut's settings (the info button, or tap the shortcut's name
-      at the top and choose the settings icon).
-   2. Turn on **Show in Share Sheet**, then close the settings.
-   3. A **Receive [input] from Share Sheet** header now appears at the top of
-      the editor. Tap its highlighted input-types chip.
-   4. Turn on **Safari web pages**, **URLs**, **Articles**, **Text**,
-      **Rich text**, and **App Store apps**.
-   5. Turn everything else off. Images, files, and PDFs share as data, not
-      links — this capture path can't carry them.
-   6. Set **If there's no input** to **Stop and Respond**.
-2. Add **Dictionary**. Add one row per volume: the key is a display name, the
+Open the Shortcuts app and create a new shortcut. Add the actions below in
+order by searching the actions panel; the Share Sheet wiring comes last.
+1. Add **Dictionary**. Add one row per volume: the key is a display name, the
    value is the repo path.
    For example: `Engineering` → `you/dex-engineering`, `Marketing` →
    `you/dex-marketing`.
-3. Add **Text**, paste your token into it, then add **Set Variable** and name the
+2. Add **Text**, paste your token into it, then add **Set Variable** and name the
    variable `token`.
-4. Add **Get Dictionary Keys**, then add **Count** (set to count **Items**).
-5. Add **If**, with the condition **Count is 1**:
+3. Add **Get Dictionary Keys**, then add **Count** (set to count **Items**).
+4. Add **If**, with the condition **Count is 1**:
    1. In the **If** branch: add **Get Item from List** (First Item, from the
       keys), then **Get Dictionary Value** for it, then **Set Variable** named
       `repo`.
    2. In the **Otherwise** branch: add **Choose from List** (over the keys, with
       the prompt "Which dex?"), then **Get Dictionary Value** for the Chosen
       Item, then **Set Variable** named `repo`.
-6. Add **Ask for Input** (type **Text**), with the prompt "Why? (optional)".
+5. Add **Ask for Input** (type **Text**), with the prompt "Why? (optional)".
    Leave the default answer empty.
-7. Add **Get Contents of URL** and configure it:
+6. Add **Get Contents of URL** and configure it:
    1. URL: type `https://api.github.com/repos/`, insert the **repo** variable,
       then type `/issues`.
    2. Tap the arrow to expand the options. Set **Method** to **POST**.
@@ -65,7 +53,20 @@ Open the Shortcuts app and create a new shortcut.
    4. Set **Request Body** to **JSON** and add two text fields:
       - `title`: insert **Shortcut Input**
       - `body`: insert **Provided Input**
-8. Name the shortcut **Send to Dex** and turn on **Show in Share Sheet**.
+7. Name the shortcut **Send to Dex** (tap the name at the top to rename it).
+8. Turn on Share Sheet input. This is a shortcut setting, not an action — you
+   won't find it by searching the actions panel.
+   1. Dismiss the action-search panel if it's covering the bottom of the
+      editor (swipe it down or tap outside it).
+   2. Tap the details button at the bottom of the editor and turn on
+      **Show in Share Sheet**, then tap **Done**.
+   3. A **Receive [input] from Share Sheet** header appears above your first
+      action. Tap its highlighted input-types chip.
+   4. Turn on **Safari web pages**, **URLs**, **Articles**, **Text**,
+      **Rich text**, and **App Store apps**. Turn everything else off — images,
+      files, and PDFs share as data, not links, and this capture path can't
+      carry them.
+   5. Set **If there's no input** to **Stop and Respond**.
 
 ## Try it
 
