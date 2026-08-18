@@ -105,10 +105,11 @@ Instances run the engine's mechanical commands via a `bin/kb` shim
 | `kb-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
 | `kb-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
 
-Capture inbox: any HTTP client opens a GitHub issue on the instance (`title` = URL,
-`body` = note); the reusable workflow (`.github/workflows/inbox-reusable.yml`)
-appends to `state/inbox.md` and closes the issue. Suggestion is untrusted by
-design — scope filtering happens at ingest, inside the instance.
+Capture inbox: clients write one file per capture into `state/inbox/` via the
+GitHub contents API — a `.md` (URL + note) for links and text, or an image file
+(plus optional `.md` sidecar note). No server-side machinery at all: the PUT is
+the commit. Suggestion is untrusted by design — scope filtering happens at
+ingest, inside the instance.
 
 Instance layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim
 exports) · `corpus/` (append-only items) · `enrichment/` · `wiki/`

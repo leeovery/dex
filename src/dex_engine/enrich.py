@@ -24,6 +24,16 @@ CORPUS = ROOT / "corpus"
 ENRICH = ROOT / "enrichment"
 LEDGER = ROOT / "state" / "enrichment-ledger.jsonl"
 
+def _instance_cfg() -> dict:
+    p = ROOT / "state" / "normalize-config.json"
+    try:
+        import json as _j
+        return _j.loads(p.read_text())
+    except Exception:
+        return {}
+
+MEDIA_FETCH = _instance_cfg().get("media_fetch", "lead")  # none | lead
+
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) aikb-enricher"}
 SLEEP = {"youtube": 2.0, "blog": 1.0, "github": 0.3, "paper": 3.0, "tweet": 4.0}
 
@@ -109,7 +119,7 @@ def write_enrichment(item_id: str, name: str, url: str, meta: dict, body: str) -
     out = ENRICH / item_id / name
     out.parent.mkdir(parents=True, exist_ok=True)
     fm = ["---", f"url: {url}", f"fetched: {date.today()}"]
-    fm += [f"{k}: {v}" for k, v in meta.items() if v not in (None, "")]
+    fm += [f"{k}: {v}" for k, v in meta.items() if v not in (None, "") and not k.startswith("_")]
     fm += ["---", ""]
     out.write_text("\n".join(fm) + body.strip() + "\n")
     return out
@@ -184,7 +194,12 @@ def fetch_blog(url: str) -> tuple[str, dict, str]:
     if html:
         body = _trafilatura_extract(html)
         if body and len(body) > 300:
-            return ("done", {}, body)
+            meta = {}
+            og = re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)', html) or \
+                 re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image["\']', html)
+            if og:
+                meta["_media"] = [og.group(1)]
+            return ("done", meta, body)
     # wayback fallback
     try:
         q = urllib.parse.quote(url, safe="")
@@ -322,6 +337,9 @@ def fetch_tweet(url: str) -> tuple[str, dict, str]:
     if t.get("quote"):
         q = t["quote"]
         body += f"\n\n> Quoting @{q['author']['screen_name']}: {q.get('text', '')}"
+    photos = ((t.get("media") or {}).get("photos") or [])
+    if photos:
+        meta["_media"] = [p_.get("url") for p_ in photos if p_.get("url")]
     return ("done", meta, body) if body else ("manual", meta, "")
 
 
@@ -369,6 +387,19 @@ def cmd_run(limit: int | None, kinds: set[str]) -> None:
             path = write_enrichment(w["item"]["id"], name, w["url"], meta, body)
             entry["path"] = str(path.relative_to(ROOT))
             touched[w["item"]["id"]] = w["item"]
+            if MEDIA_FETCH != "none":
+                for n, murl in enumerate(meta.get("_media", [])[:4]):
+                    try:
+                        ext = (urllib.parse.urlsplit(murl).path.rsplit(".", 1)[-1] or "jpg").lower()
+                        if len(ext) > 4 or "/" in ext:
+                            ext = "jpg"
+                        mreq = urllib.request.Request(murl, headers=UA)
+                        data = urllib.request.urlopen(mreq, timeout=30).read()
+                        mdest = ENRICH / w["item"]["id"] / f"media-{n}.{ext}"
+                        mdest.parent.mkdir(parents=True, exist_ok=True)
+                        mdest.write_bytes(data)
+                    except Exception:
+                        pass
         ledger_append(entry)
         counts[status] = counts.get(status, 0) + 1
         if i % 25 == 0 or i == len(work):

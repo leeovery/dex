@@ -1,7 +1,7 @@
 """Sync engine-managed machinery into the current instance.
 
 Refreshes from the engine's bundled templates: .claude/skills/dex-*,
-bin/kb, .github/workflows/inbox.yml. Instance-owned files (CLAUDE.md, README,
+bin/kb, .gitattributes. Instance-owned files (CLAUDE.md, README,
 content) are never touched.
 
 Run from the instance root: kb-sync (or bin/kb sync)
@@ -33,8 +33,7 @@ def main() -> None:
                               src.read_text(), changed)
     _write_if_changed(ROOT / "bin" / "kb", (tpl / "kb").read_text(), changed)
     os.chmod(ROOT / "bin" / "kb", 0o755)
-    _write_if_changed(ROOT / ".github" / "workflows" / "inbox.yml",
-                      (tpl / "inbox-caller.yml").read_text(), changed)
+    _write_if_changed(ROOT / ".gitattributes", (tpl / "gitattributes").read_text(), changed)
     if changed:
         print("synced from engine:")
         for c in changed:

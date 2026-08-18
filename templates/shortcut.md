@@ -6,17 +6,8 @@ silently; with several it shows a picker.
 
 ## Add the ready-made shortcut (recommended)
 
-1. Create your token first — see **Before you begin** below.
-2. Open this link on your iPhone or iPad and add the shortcut:
-   https://www.icloud.com/shortcuts/4b3f52d833b14d169ff0a015d383cfd5
-3. On import you're asked two questions:
-   - **Your dex instances** — tap **Add new item**, choose **Text**, key = the
-     instance's name (e.g. `Engineering`), text = its repo as `owner/repo`.
-     Repeat for each instance.
-   - **Your GitHub token** — paste it.
-
-Done — share any page and it files into your dex. Everything below is the
-manual build, kept as reference for how the shortcut works.
+_The shareable link is being rebuilt for the current capture design (direct
+capture files, image support). Until it's re-pinned here, build manually below._
 
 ## Before you begin
 
@@ -31,7 +22,7 @@ Create a token that the shortcut uses to file captures:
    a token expires; if you prefer an expiring token, set a calendar reminder to
    rotate it.
 4. Under **Repository access**, select only your instance repo (or repos).
-5. Under **Permissions**, set **Contents** and **Issues** to **Read and write**.
+5. Under **Permissions**, set **Contents** to **Read and write**.
 6. Generate the token and copy it.
 
 Fine-grained tokens work for one account or organization at a time. Every repo
@@ -45,8 +36,9 @@ No expiration) — it works identically in this shortcut, at the cost of broader
 access. The org must allow classic PAT access in its settings.
 
 When you add a new dex instance later, also add its repo to this token's
-**Repository access** — a send to a repo the token can't reach fails silently
-(GitHub returns a valid-looking 404, and the shortcut shows a checkmark).
+**Repository access** — an upload to a repo the token can't reach fails
+silently (GitHub returns a valid-looking 404, and the shortcut shows a
+checkmark).
 
 ## Create the shortcut
 
@@ -191,31 +183,52 @@ part of a capture — it travels with the link into the knowledge base.
 
 ### Step 5: File it
 
-This step sends the capture: it opens a GitHub issue on the chosen instance,
-which the instance's workflow files into its inbox and then closes.
+This step writes the capture into the instance repo: one new file per capture
+in `state/inbox/`, created directly through GitHub's contents API. A link or
+note becomes a small `.md` file; an image becomes an image file (with the note
+as a sidecar). No server-side machinery — the upload is the commit.
 
-1. Add **Get Contents of URL**. It arrives reading "Get contents of" with the
-   Ask for Input result already filled in — the wrong content for this field.
-   Tap that chip, then tap **Clear**. The row now reads
-   "Get contents of **URL**" with **URL** faded.
-2. Tap the faded **URL** field and type `https://api.github.com/repos/`, pick
-   `repo` from the bar at the bottom of the screen, then type `/issues`.
-3. Tap the arrow to expand the options and set **Method** to **POST**.
-4. Add two headers. Each header is a pair of fields — a key and a text value —
-   and no colons are typed anywhere:
-   1. Tap **Add new header**. In the key field type `Authorization`. In the
-      text field type `Bearer`, then a space, then pick `token` from the bar
-      at the bottom of the screen.
-   2. Tap **Add new header** again. In the key field type `Accept`. In the
-      text field type `application/vnd.github+json`.
-5. Set **Request Body** to **JSON** and add two fields, the same key/text
-   pattern as the headers:
-   1. Tap **Add new field** and choose **Text**. In the key field type
-      `title`. In the text field, pick `Shortcut Input` from the bar at the
-      bottom of the screen.
-   2. Tap **Add new field** and choose **Text** again. In the key field type
-      `body`. In the text field, pick `Ask for Input` from the bar — that's
-      the answer you typed at the "Why? (optional)" prompt.
+First, a timestamp for unique filenames:
+
+1. Add **Date** (set to **Current Date**).
+2. Add **Format Date**. Set its format to **Custom** and the format string to
+   `yyyyMMdd-HHmmss`.
+3. Add **Set Variable** below it. Tap **Variable Name** and type `stamp`.
+
+Then detect whether an image was shared:
+
+4. Add **Get Images from Input**. Point its input at `Shortcut Input` if it
+   didn't connect itself.
+5. Add **Count** (counting **Items**), then add **If** with the condition
+   **is greater than** and the number **0**. As in Step 3, drag each of the
+   following actions into the right branch.
+
+Between **If** and **Otherwise** (an image was shared):
+
+6. Add **Convert Image**, converting to **JPEG**. Point its input at the
+   **Get Images from Input** result.
+7. Add **Base64 Encode**.
+8. Add **Get Contents of URL**:
+   1. URL: `https://api.github.com/repos/` + the `repo` variable +
+      `/contents/state/inbox/` + the `stamp` variable + `.jpg`
+   2. Method: **PUT**. Headers, as in the text branch below:
+      - key `Authorization`, text `Bearer` + space + the `token` variable
+      - key `Accept`, text `application/vnd.github+json`
+   3. Request Body **JSON**, two text fields:
+      - key `message`, text `capture`
+      - key `content`, text = the **Base64 Encoded** result
+9. To carry the note too: add **If** on `Ask for Input` **has any value**;
+   inside it, add **Base64 Encode** of the `Ask for Input` result, and another
+   **Get Contents of URL** exactly like step 8 but with the URL ending
+   `.md` instead of `.jpg` and `content` = that second Base64 result.
+
+Between **Otherwise** and **End If** (a link or text was shared):
+
+10. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
+    line, then the `Ask for Input` variable.
+11. Add **Base64 Encode** (of that Text).
+12. Add **Get Contents of URL**, configured as in step 8 but with the URL
+    ending `.md` and `content` = this Base64 result.
 
 ### Step 6: Name it and add it to the Share Sheet
 
@@ -284,18 +297,16 @@ travels with it.
 
 ## Try it
 
-Share any page from Safari. Within about 30 seconds, an issue appears on the
-instance repo, the inbox workflow files it into `state/inbox.md`, and the issue
-closes itself.
+Share any page from Safari. Within seconds a new commit appears on the
+instance repo adding a file under `state/inbox/` — that's the capture, waiting
+for the next ingest. Share a photo to see the image path: a `.jpg` lands, plus
+a `.md` sidecar if you added a note.
 
 ## Notes
 
-- To silence GitHub's issue notifications, set the instance repo's **Watch**
-  setting to **Ignore**.
 - Never share a shortcut whose token field lacks an import question — shared
   shortcuts embed whatever is in their fields. With the import question set
   (above), the token field is cleared on share and sharing is safe.
-- Text shares work for short snippets. GitHub caps issue titles at about 256
-  characters, so long text fails — share a link to the source instead.
-- Any HTTP client can capture the same way: POST an issue with the URL as the
-  title. A bookmarklet or a CLI alias works as well as a shortcut.
+- Any HTTP client can capture the same way: PUT a file into
+  `state/inbox/` via the contents API. A bookmarklet or CLI alias works as
+  well as a shortcut.

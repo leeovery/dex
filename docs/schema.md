@@ -12,10 +12,11 @@ shared_by: <sharer>                           # display name as seen in the sour
 date: 2025-06-12                            # date shared (message timestamp, ISO)
 urls:
   - https://www.youtube.com/watch?v=...
-kinds: [youtube]                            # derived from urls: youtube | blog | github | paper | tweet | text
+kinds: [youtube]                            # derived from urls: youtube | blog | github | paper | tweet | text | image
 tier: frontier                              # foundations | frontier — derived, see below
 status: raw                                 # raw | enriched
 enrichment: []                              # populated by enricher, e.g. [transcript.md]
+media: []                                   # optional: repo-relative image/file paths (media/<id>/..., LFS-tracked)
 ---
 
 <original message text, verbatim — including surrounding commentary, which is often

@@ -26,14 +26,15 @@ them a short "how to use it" note.
 
 ```bash
 mkdir -p <path> && cd <path> && git init
-mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin .github/workflows
+mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin media
 # templates from the engine repo (you may be running inside a clone of it — copy locally if so)
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-README.md -o README.md  # then personalize
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/kb -o bin/kb && chmod +x bin/kb
-bin/kb sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, inbox workflow
+bin/kb sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, .gitattributes
 printf '.DS_Store\n.env\n' > .gitignore
-printf '# Inbox — capture suggestions\n\nOne line per suggestion; triaged at ingest; lines removed once handled.\n' > state/inbox.md
+mkdir -p state/inbox && touch state/inbox/.gitkeep
+git lfs install --local   # media/ and image captures are LFS-tracked
 printf '{\n  "name_map": {},\n  "internal_domains": [],\n  "noise_prefixes": []\n}\n' > state/normalize-config.json
 printf '# Index\n\nNo pages yet — first ingest pending.\n' > wiki/index.md
 printf '# Ops log\n' > wiki/log.md
@@ -45,15 +46,13 @@ Then:
 - Personalize README.md: owner/domain AND the same In-scope list — the two files
   mirror each other; scope changes always update both.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
-  and offer to set repo notifications to Ignore (inbox issue traffic is noise):
-  `gh api -X PUT /repos/<owner>/<name>/subscription -F ignored=true`.
-- Sanity check: `bin/kb lint` from the instance root (prints a fresh-instance notice).
+  - Sanity check: `bin/kb lint` from the instance root (prints a fresh-instance notice).
 
 ## 3. Capture setup (only their PAT needs their hands)
 
 Walk them through, concretely:
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token scoped
-   to ONLY this instance repo, permissions: Contents R/W + Issues R/W.
+   to ONLY this instance repo, permissions: Contents R/W.
 2. iOS Shortcut: walk them through `templates/shortcut.md` (the universal
    recipe — dictionary of instances, auto-skips the picker when there's only one).
 3. Tell them plainly: never share the Shortcut or its iCloud link publicly — shared
