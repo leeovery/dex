@@ -88,8 +88,8 @@ What makes it trustworthy rather than vibes-in-a-wiki:
   practice as marked history. Conflicts between old and new are surfaced, not
   smoothed over.
 
-See `example/` for a three-file toy instance showing the shapes, and `docs/schema.md`
-for the corpus format.
+See `example/` for a three-file toy instance showing the shapes, and
+`templates/skills/dex-ingest/schema.md` for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>

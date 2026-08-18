@@ -27,10 +27,12 @@ def main() -> None:
     changed: list = []
     skills = tpl / "skills"
     for skill in skills.iterdir():
-        src = skill / "SKILL.md"
-        if src.is_file():
-            _write_if_changed(ROOT / ".claude" / "skills" / skill.name / "SKILL.md",
-                              src.read_text(), changed)
+        if not skill.is_dir():
+            continue
+        for src in skill.iterdir():
+            if src.is_file():
+                _write_if_changed(ROOT / ".claude" / "skills" / skill.name / src.name,
+                                  src.read_text(), changed)
     _write_if_changed(ROOT / "bin" / "dex", (tpl / "dex").read_text(), changed)
     os.chmod(ROOT / "bin" / "dex", 0o755)
     old_shim = ROOT / "bin" / "kb"
