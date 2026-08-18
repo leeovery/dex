@@ -201,8 +201,8 @@ won't find it by searching the actions panel.
 1. Tap the name at the top and rename the shortcut to **Send to Dex**.
 2. Dismiss the actions panel if it's covering the bottom of the editor (swipe
    it down or tap outside it).
-3. Tap the details button at the bottom of the editor, turn on
-   **Show in Share Sheet**, then tap **Done**.
+3. Tap the small info button (an ⓘ in a circle) at the bottom of the editor,
+   turn on **Show in Share Sheet**, then tap **Done**.
 4. A **Receive input from Share Sheet** header appears above your first action.
    Tap its highlighted input-types chip and turn on:
    - **Safari web pages**
