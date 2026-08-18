@@ -183,9 +183,14 @@ which the volume's workflow files into its inbox and then closes.
       at the bottom of the screen.
    2. Tap **Add new header** again. In the key field type `Accept`. In the
       text field type `application/vnd.github+json`.
-5. Set **Request Body** to **JSON** and add two text fields:
-   - `title`: insert **Shortcut Input**
-   - `body`: insert **Provided Input**
+5. Set **Request Body** to **JSON** and add two fields, the same key/text
+   pattern as the headers:
+   1. Tap **Add new field** and choose **Text**. In the key field type
+      `title`. In the text field, pick `Shortcut Input` from the bar at the
+      bottom of the screen.
+   2. Tap **Add new field** and choose **Text** again. In the key field type
+      `body`. In the text field, pick `Ask for Input` from the bar — that's
+      the answer you typed at the "Why? (optional)" prompt.
 
 ### Step 6: Name it and add it to the Share Sheet
 
