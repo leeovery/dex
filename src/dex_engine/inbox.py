@@ -240,18 +240,6 @@ def main() -> None:
                      "origin remote on github.com")
         sys.exit(0 if _ensure_release(repo, token) else 1)
 
-    legacy = ROOT / "state" / "inbox"
-    if legacy.is_dir():
-        INBOX.mkdir(exist_ok=True)
-        moved = 0
-        for p in sorted(legacy.iterdir()):
-            if p.is_file() and p.name != ".gitkeep" and not (INBOX / p.name).exists():
-                p.rename(INBOX / p.name)
-                moved += 1
-        if moved:
-            print(f"migrated {moved} capture(s) from the legacy state/inbox/ path "
-                  f"to inbox/ (a capture client may still point at the old path).")
-
     if not INBOX.is_dir():
         print("no inbox/ here — run from an instance root.")
         return

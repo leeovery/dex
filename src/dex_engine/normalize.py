@@ -28,7 +28,7 @@ INTERNAL_DOMAINS = set(_cfg.get("internal_domains", []))
 
 # Out-of-scope threads (id + reason per line, tab-separated), curated by the
 # scope-filter pass. Matched on the item id's trailing shortid so exclusions
-# survive slug changes. See bin/exclude.py.
+# survive slug changes. See exclude.py.
 EXCLUSIONS = ROOT / "state" / "exclusions.tsv"
 
 

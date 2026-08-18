@@ -2,10 +2,10 @@
 
 Mechanical capture only — no LLM. Resumable via state/enrichment-ledger.jsonl.
 
-  bin/enrich.py inventory          what would be fetched
-  bin/enrich.py run [--limit N] [--kinds youtube,blog,...]
-  bin/enrich.py whisper            transcribe ledgered no-caption videos (needs OPENAI_API_KEY)
-  bin/enrich.py status             ledger summary
+  bin/dex enrich inventory         what would be fetched
+  bin/dex enrich run [--limit N] [--kinds youtube,blog,...]
+  bin/dex enrich whisper           transcribe ledgered no-caption videos (needs OPENAI_API_KEY)
+  bin/dex enrich status            ledger summary
 """
 
 import json
@@ -19,7 +19,7 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-ROOT = Path.cwd()  # engine runs from the brain repo root
+ROOT = Path.cwd()  # engine runs from the instance repo root
 CORPUS = ROOT / "corpus"
 ENRICH = ROOT / "enrichment"
 LEDGER = ROOT / "state" / "enrichment-ledger.jsonl"
@@ -34,7 +34,7 @@ def _instance_cfg() -> dict:
 
 MEDIA_FETCH = _instance_cfg().get("media_fetch", "lead")  # none | lead
 
-UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) aidex-enricher"}
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) dex-enricher"}
 SLEEP = {"youtube": 2.0, "blog": 1.0, "github": 0.3, "paper": 3.0, "tweet": 4.0}
 
 # ---------- URL handling ----------
@@ -483,7 +483,7 @@ def cmd_whisper() -> None:
             ledger_append({**e, "status": status})
             mp3.unlink(missing_ok=True)
             continue
-        boundary = "----aikb"
+        boundary = "----dex"
         payload = (
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n"
             f"whisper-1\r\n"

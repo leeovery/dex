@@ -7,8 +7,8 @@ Checks:
   4. index: pages missing from wiki/index.md, index entries without pages
   5. staleness: topic pages whose members include items newer than the page
 
-  bin/lint.py            # report to stdout
-  bin/lint.py --write    # also write state/lint-report.md
+  bin/dex lint           # report to stdout
+  bin/dex lint --write   # also write state/lint-report.md
 """
 
 import json
@@ -17,7 +17,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path.cwd()  # engine runs from the brain repo root
+ROOT = Path.cwd()  # engine runs from the instance repo root
 WIKI = ROOT / "wiki"
 
 ID_RE = re.compile(r"`(\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6})`")

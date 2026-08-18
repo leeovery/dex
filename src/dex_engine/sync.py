@@ -41,10 +41,6 @@ def main() -> None:
                       (tpl / "dex-contract.md").read_text(), changed)
     _write_if_changed(ROOT / "bin" / "dex", (tpl / "dex").read_text(), changed)
     os.chmod(ROOT / "bin" / "dex", 0o755)
-    old_shim = ROOT / "bin" / "kb"
-    if old_shim.exists():
-        old_shim.unlink()
-        changed.append("bin/kb (removed — renamed to bin/dex)")
     _write_if_changed(ROOT / ".gitattributes", (tpl / "gitattributes").read_text(), changed)
     if changed:
         print("synced from engine:")

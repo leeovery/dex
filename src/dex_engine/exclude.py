@@ -1,8 +1,8 @@
 """Exclude corpus items as out-of-scope: delete item + enrichment, record why.
 
-  bin/exclude.py exclusions.json      # [{"id": "...", "reason": "..."}, ...]
+  bin/dex exclude exclusions.json      # [{"id": "...", "reason": "..."}, ...]
 
-Appends to state/exclusions.tsv (consulted by bin/normalize.py so excluded
+Appends to state/exclusions.tsv (consulted by normalize.py so excluded
 threads are never regenerated), removes corpus/<year>/<id>.md and
 enrichment/<id>/.
 """
@@ -12,7 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 
-ROOT = Path.cwd()  # engine runs from the brain repo root
+ROOT = Path.cwd()  # engine runs from the instance repo root
 EXCLUSIONS = ROOT / "state" / "exclusions.tsv"
 
 
