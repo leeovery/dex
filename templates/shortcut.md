@@ -204,8 +204,10 @@ won't find it by searching the actions panel.
 3. Tap the small info button (an ⓘ in a circle) at the bottom of the editor,
    turn on **Show in Share Sheet**, then tap the blue tick in the top-right
    corner.
-4. A **Receive input from Share Sheet** header appears above your first action.
-   Tap its highlighted input-types chip and turn on:
+4. Scroll back to the top of the action list, above your Dictionary. A new
+   action has appeared there reading "Receive **Apps and 18 more** from
+   **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
+   **Apps and 18 more** chip and turn on:
    - **Safari web pages**
    - **URLs**
    - **Articles**
