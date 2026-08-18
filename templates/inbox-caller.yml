@@ -17,4 +17,4 @@ concurrency:
 
 jobs:
   inbox:
-    uses: leeovery/dex-engine/.github/workflows/inbox-reusable.yml@main
+    uses: leeovery/dex/.github/workflows/inbox-reusable.yml@main

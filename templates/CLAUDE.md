@@ -1,6 +1,6 @@
 # <volume> — <Domain> Knowledge Base (a dex volume)
 
-A personal, LLM-maintained knowledge base. Engine: github.com/leeovery/dex-engine
+A personal, LLM-maintained knowledge base. Engine: github.com/leeovery/dex
 (run via `bin/kb <cmd>` from the repo root). Claude operating over these files IS
 the application.
 
