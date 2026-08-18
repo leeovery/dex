@@ -29,6 +29,7 @@ mkdir -p <path> && cd <path> && git init
 mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin .github/workflows
 # templates from the engine repo (you may be running inside a clone of it — copy locally if so)
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
+curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/volume-README.md -o README.md  # then personalize
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/kb -o bin/kb && chmod +x bin/kb
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/inbox-caller.yml -o .github/workflows/inbox.yml
 printf '.DS_Store\n.env\n' > .gitignore
