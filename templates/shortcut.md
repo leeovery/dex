@@ -27,10 +27,14 @@ one shortcut must belong to the same owner.
 
 Open the Shortcuts app and create a new shortcut. Add the actions below in
 order by searching the actions panel; the Share Sheet wiring comes last.
-1. Add **Dictionary**. Add one row per volume — the key is a display name, the
-   value is the repo path. For example:
-   - `Engineering` → `you/dex-engineering`
-   - `Marketing` → `you/dex-marketing`
+1. Add **Dictionary**, then add one item per volume:
+   1. Tap **Add new item**.
+   2. Choose **Text** as the item type (the other types — Number, Array,
+      Dictionary, Boolean — aren't used here).
+   3. Set the key to the volume's display name and the text value to its repo
+      path. For example:
+      - key `Engineering`, text `you/dex-engineering`
+      - key `Marketing`, text `you/dex-marketing`
 2. Add **Text**, paste your token into it, then add **Set Variable** and name the
    variable `token`.
 3. Add **Get Dictionary Keys**, then add **Count** (set to count **Items**).
