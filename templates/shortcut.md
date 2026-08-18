@@ -25,12 +25,17 @@ in one shortcut must belong to the same owner.
 
 ## Create the shortcut
 
-Open the Shortcuts app and create a new shortcut. Work through the sections
-below in order. Every action is added the same way: search the actions panel
-for the term given, then tap the action to add it. The only exception is the
-Share Sheet setting at the end, which isn't an action.
+Open the Shortcuts app and create a new shortcut, then work through the
+sections below in order.
 
-Three things to know about how Shortcuts works before you start:
+Terms used throughout:
+
+- An **action** is one building block of a shortcut — a box that does one
+  thing. When a step says **add** an action, it means: search the actions
+  panel for the action's name, then tap it to add it. The one exception is
+  the Share Sheet setting at the end, which isn't an action.
+
+And three things to know about how Shortcuts behaves:
 
 - A shortcut is a chain: each action automatically passes its result to the
   action below it. When these instructions add several actions in a row, that
@@ -49,7 +54,7 @@ The dictionary is the shortcut's list of knowledge bases. It's what lets one
 shortcut serve any number of volumes, and it's the only thing you edit when you
 add a volume later.
 
-1. Search the actions panel for "dictionary" and add **Dictionary**.
+1. Add **Dictionary**.
 2. For each volume, tap **Add new item**, then:
    1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
       aren't used here.)
@@ -68,9 +73,9 @@ You'll store the token in one place and give it a name, so the final step can
 use it — and so there's exactly one box to update if you ever replace the
 token.
 
-1. Search the actions panel for "text" and add **Text**. It appears as an empty
+1. Add **Text**. It appears as an empty
    text box — paste your token into it.
-2. Search the actions panel for "set variable" and add **Set Variable** directly
+2. Add **Set Variable** directly
    below. This is a second, separate action: it takes the result of the action
    above it (your token) and saves it under a name.
 3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
@@ -81,8 +86,7 @@ token.
 These actions pick the destination volume — and skip the picker entirely when
 your dictionary has only one volume in it.
 
-1. Search the actions panel for "dictionary value" and add
-   **Get Dictionary Value**.
+1. Add **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
    **All Keys**.
 3. The action now reads "Get All Keys in `token`". Shortcuts has guessed the
@@ -94,10 +98,10 @@ your dictionary has only one volume in it.
    3. Pick `Dictionary`.
    The action now reads "Get All Keys in `Dictionary`" — that's correct. It
    produces the list of your volume names.
-4. Search the actions panel for "count" and add **Count**. It arrives reading
+4. Add **Count**. It arrives reading
    "Count Items in `Dictionary Value`" — that's correct: `Dictionary Value` is
    the list of names produced by the previous step. Leave it as is.
-5. Search the actions panel for "if" and add **If**. This adds three
+5. Add **If**. This adds three
    connected rows at once — **If**, **Otherwise**, and **End If** — which
    form two branches: actions placed between **If** and **Otherwise** run
    when the condition is true; actions between **Otherwise** and **End If**
@@ -109,24 +113,21 @@ your dictionary has only one volume in it.
    the bottom of the shortcut instead, touch and hold it and drag it up until
    it sits indented beneath the row it belongs under.
 8. Between **If** and **Otherwise** (one volume — use it without asking):
-   1. Search the actions panel for "dictionary value" and add
-      **Get Dictionary Value**. Change **Value** to **All Values**, and if its
+   1. Add **Get Dictionary Value**. Change **Value** to **All Values**, and if its
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
       "Get All Values in `Dictionary`". With one volume, the "list" of values
       is just that volume's repo path.
-   2. Search the actions panel for "set variable" and add **Set Variable**
+   2. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`.
 9. Between **Otherwise** and **End If** (several volumes — ask which):
-   1. Search the actions panel for "choose from list" and add
-      **Choose from List**. If its list isn't `Dictionary Value` (the volume
+   1. Add **Choose from List**. If its list isn't `Dictionary Value` (the volume
       names), repoint it to `Dictionary Value`. Set its **Prompt** to
       "Which dex?".
-   2. Search the actions panel for "dictionary value" and add
-      **Get Dictionary Value**, leaving its mode as **Value**. Repoint its
+   2. Add **Get Dictionary Value**, leaving its mode as **Value**. Repoint its
       source to `Dictionary` if needed, and in its key field pick
       `Chosen Item` from the variables bar. It should read "Get Value for
       `Chosen Item` in `Dictionary`".
-   3. Search the actions panel for "set variable" and add **Set Variable**
+   3. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`.
 
 Whichever branch runs, the shortcut now holds the destination repo path in the
@@ -137,7 +138,7 @@ Whichever branch runs, the shortcut now holds the destination repo path in the
 A one-line note about why something caught your eye is often the most valuable
 part of a capture — it travels with the link into the knowledge base.
 
-1. Search the actions panel for "ask for input" and add **Ask for Input**.
+1. Add **Ask for Input**.
 2. Set its type to **Text** and its prompt to "Why? (optional)". Leave the
    default answer empty.
 
@@ -146,7 +147,7 @@ part of a capture — it travels with the link into the knowledge base.
 This step sends the capture: it opens a GitHub issue on the chosen volume,
 which the volume's workflow files into its inbox and then closes.
 
-1. Search the actions panel for "get contents" and add **Get Contents of URL**.
+1. Add **Get Contents of URL**.
 2. In the URL field: type `https://api.github.com/repos/`, insert the `repo`
    variable from the variables bar, then type `/issues`.
 3. Tap the arrow to expand the options and set **Method** to **POST**.
