@@ -29,6 +29,16 @@ Open the Shortcuts app and create a new shortcut. Work through the sections
 below in order. Actions are added by searching the actions panel, except the
 Share Sheet setting at the end.
 
+Two things to know about how Shortcuts works before you start:
+
+- A shortcut is a chain: each action automatically passes its result to the
+  action below it. When these instructions say to add several actions in a
+  row, that automatic hand-off is doing the wiring — you rarely connect
+  anything by hand.
+- **Set Variable** is how you save a result for use later, further down the
+  chain. It's an ordinary action: it takes whatever the action above produced
+  and gives it a name you choose.
+
 ### List your volumes
 
 The dictionary is the shortcut's list of knowledge bases. It's what lets one
@@ -49,12 +59,18 @@ For example:
 
 ### Store the token
 
-The shortcut authenticates to GitHub with the token you created earlier.
-Keeping it in a single Text action gives you one place to update if you ever
-rotate it.
+The shortcut proves who it is to GitHub with the token you created earlier.
+You'll store the token in one place and give it a name, so the final step can
+use it — and so there's exactly one box to update if you ever replace the
+token.
 
-1. Add a **Text** action and paste your token into it.
-2. Add **Set Variable** and name the variable `token`.
+1. Search the actions panel for "text" and add the **Text** action. It appears
+   as an empty text box — paste your token into it.
+2. Search for "set variable" and add the **Set Variable** action directly
+   below. This is a second, separate action: it takes the result of the action
+   above it (your token) and saves it under a name.
+3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
+   its input alone — Shortcuts has already connected it to the Text box above.
 
 ### Route to the right volume
 
