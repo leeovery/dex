@@ -9,12 +9,10 @@ source when an instance is born. Day-to-day material arrives via capture
 - **Discord** — [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter):
   export the channel(s) as **JSON**. Works with a user token for servers you're
   a member of.
-- **Google Chat** — [Google Takeout](https://takeout.google.com): select only
-  Google Chat, export, and take the per-space JSON out of the archive.
 
-`dex-normalize` understands both formats natively. For any other source,
-either convert it to one of these shapes or feed items through the capture
-protocol / a session instead — don't teach the normalizer one-off formats.
+`dex-normalize` understands this format natively. For any other source,
+either convert it to this shape or feed items through the capture protocol /
+a session instead — don't teach the normalizer one-off formats.
 
 ## Process
 
@@ -22,7 +20,7 @@ protocol / a session instead — don't teach the normalizer one-off formats.
    permanent record of what was received.
 2. Fill `state/normalize-config.json` (shapes: the ingest skill's
    `references/state-formats.md`): `name_map` for sharer display names,
-   `internal_domains` and `noise_prefixes` for what to drop.
+   `internal_domains` for links to drop.
 3. `bin/dex normalize` — one corpus item per share, provenance stamped.
    Re-runnable; fix normalizer issues by re-running, never by hand-editing
    corpus items.

@@ -10,7 +10,7 @@ them a short "how to use it" note.
 
 ## 1. Interview (use AskUserQuestion where available; one round, not twenty questions)
 
-1. **Name** — suggest `dex-<domain>` (dex-marketing, dex-cooking). Keep the dex
+1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the dex
    brand; the domain is the qualifier.
 2. **What it covers** — 2-4 bullets. Anything not covered is out of scope by
    default; at ingest time the agent asks the owner about borderline items rather

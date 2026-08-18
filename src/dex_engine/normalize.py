@@ -1,8 +1,9 @@
-"""Normalize raw Google Chat exports (Takeout format) into corpus items.
+"""Normalize raw chat exports into corpus items.
 
-raw/gspace/<space>/messages.json -> corpus/YYYY/YYYY-MM-DD-<slug>-<id>.md
+raw/discord/<channel>/messages.json (DiscordChatExporter JSON)
+  -> corpus/YYYY/YYYY-MM-DD-<slug>-<id>.md
 
-One corpus item per thread (topic_id). Deterministic + idempotent: re-running
+One corpus item per message cluster. Deterministic + idempotent: re-running
 regenerates the same files; fix bugs here and re-run, never hand-edit corpus.
 """
 
@@ -10,26 +11,20 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
-ROOT = Path.cwd()  # engine runs from the brain repo root
-RAW = ROOT / "raw" / "gspace"
+ROOT = Path.cwd()  # engine runs from the instance repo root
 CORPUS = ROOT / "corpus"
 
-# Instance-specific mappings live in state/normalize-config.json at the instance
-# root: {"name_map": {...}, "internal_domains": [...], "noise_prefixes": [...]}
+# Instance configuration lives in state/normalize-config.json at the instance
+# root: {"name_map": {...}, "internal_domains": [...]}
 import json as _json
 _cfg = {}
 _cfg_path = ROOT / "state" / "normalize-config.json"
 if _cfg_path.exists():
     _cfg = _json.loads(_cfg_path.read_text())
 NAME_MAP = _cfg.get("name_map", {})
-INTERNAL_DOMAINS = set(_cfg.get("internal_domains", [])) | {
-    "docs.google.com", "drive.google.com", "mail.google.com", "chat.google.com",
-    "calendar.google.com", "meet.google.com", "sites.google.com",
-}
-NOISE_PREFIXES = tuple(_cfg.get("noise_prefixes", ["Updated room membership"]))
+INTERNAL_DOMAINS = set(_cfg.get("internal_domains", []))
 
 # Out-of-scope threads (id + reason per line, tab-separated), curated by the
 # scope-filter pass. Matched on the item id's trailing shortid so exclusions
@@ -54,11 +49,6 @@ def is_internal(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in INTERNAL_DOMAINS)
 
 
-def parse_date(s: str) -> datetime:
-    # "Thursday, 11 January 2024 at 21:37:56 UTC"
-    return datetime.strptime(s, "%A, %d %B %Y at %H:%M:%S %Z")
-
-
 def kind_of(url: str) -> str:
     host = re.sub(r"^https?://", "", url).split("/")[0].lower().removeprefix("www.")
     if host in ("youtube.com", "youtu.be", "m.youtube.com"):
@@ -75,96 +65,6 @@ def kind_of(url: str) -> str:
 def slugify(text: str, max_len: int = 40) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return s[:max_len].rstrip("-") or "untitled"
-
-
-def unfurl_titles(msg: dict) -> dict:
-    """url -> title from Google's link annotations."""
-    out = {}
-    for ann in msg.get("annotations", []):
-        meta = ann.get("url_metadata")
-        if not meta:
-            continue
-        url = (meta.get("url") or {}).get(
-            "private_do_not_access_or_else_safe_url_wrapped_value"
-        )
-        if url and meta.get("title"):
-            out[url] = meta["title"]
-    return out
-
-
-def normalize_space(space_dir: Path, channel: str) -> tuple[int, int]:
-    msgs = json.loads((space_dir / "messages.json").read_text())["messages"]
-
-    threads: dict[str, list[dict]] = {}
-    for m in msgs:
-        text = m.get("text", "")
-        if any(text.startswith(p) for p in NOISE_PREFIXES):
-            continue
-        if not text and not m.get("attached_files"):
-            continue
-        threads.setdefault(m["topic_id"], []).append(m)
-
-    written = skipped = 0
-    for topic_id, tmsgs in threads.items():
-        tmsgs.sort(key=lambda m: parse_date(m["created_date"]))
-        all_text = "\n".join(m.get("text", "") for m in tmsgs)
-        urls = [u.rstrip(".,") for u in URL_RE.findall(all_text)]
-        external = [u for u in dict.fromkeys(urls) if not is_internal(u)]
-        attachments = [
-            f["export_name"]
-            for m in tmsgs
-            for f in m.get("attached_files", [])
-        ]
-        substance = len(re.sub(r"\s+", " ", URL_RE.sub("", all_text)).strip())
-
-        # A thread earns an item via an external resource, a shared file, or
-        # enough prose to stand alone as knowledge.
-        if not external and not attachments and substance < 200:
-            skipped += 1
-            continue
-
-        first = tmsgs[0]
-        date = parse_date(first["created_date"])
-        titles = {}
-        for m in tmsgs:
-            titles.update(unfurl_titles(m))
-
-        if external and titles.get(external[0]):
-            slug = slugify(titles[external[0]])
-        else:
-            slug = slugify(URL_RE.sub("", all_text)[:80])
-        shortid = hashlib.sha1(f"{channel}/{topic_id}".encode()).hexdigest()[:6]
-        if shortid in EXCLUDED:
-            skipped += 1
-            continue
-        item_id = f"{date:%Y-%m-%d}-{slug}-{shortid}"
-
-        kinds = sorted({kind_of(u) for u in external}) or ["text"]
-        reactions = sum(
-            len(r.get("reactor_emails", [])) for m in tmsgs for r in m.get("reactions", [])
-        )
-
-        shared_by = NAME_MAP.get(first["creator"]["name"], first["creator"]["name"])
-        body = []
-        for m in tmsgs:
-            who = NAME_MAP.get(m["creator"]["name"], m["creator"]["name"])
-            d = parse_date(m["created_date"])
-            body.append(f"**{who}** ({d:%Y-%m-%d %H:%M}):")
-            if m.get("text"):
-                body.append(m["text"])
-            for f in m.get("attached_files", []):
-                body.append(f"*[attached: {f['original_name']}]*")
-            for url, title in unfurl_titles(m).items():
-                body.append(f"> unfurl: {title}")
-            body.append("")
-
-        emit_item("gspace", channel, item_id, date, shared_by,
-                  external, kinds,
-                  [f"raw/gspace/{channel}/{a}" for a in attachments],
-                  reactions, body)
-        written += 1
-
-    return written, skipped
 
 
 def emit_item(source, channel, item_id, date, shared_by, urls, kinds,
@@ -293,11 +193,6 @@ EXCLUDED: set[str] = set()
 def main() -> None:
     EXCLUDED.update(load_exclusions())
     found = False
-    for d in sorted(RAW.iterdir()) if RAW.exists() else []:
-        if (d / "messages.json").exists():
-            found = True
-            written, skipped = normalize_space(d, d.name)
-            print(f"gspace/{d.name}: {written} items written, {skipped} threads skipped")
     for d in sorted(RAW_DISCORD.iterdir()) if RAW_DISCORD.exists() else []:
         if (d / "messages.json").exists():
             found = True

@@ -74,7 +74,6 @@ Which items mention each entity; feeds entity pages.
 {
   "name_map": {},            "//": "raw sharer name -> display name",
   "internal_domains": [],    "//": "domains treated as internal/noise",
-  "noise_prefixes": [],      "//": "message prefixes to drop at normalize",
   "media_fetch": "lead"      "//": "none | lead — fetch lead images at enrich"
 }
 ```

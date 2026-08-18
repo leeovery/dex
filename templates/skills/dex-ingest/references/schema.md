@@ -8,7 +8,7 @@ to the person who saved it). Frontmatter:
 ```yaml
 ---
 id: 2026-08-18-rag-eval-harness-a1b2c3      # YYYY-MM-DD-<slug>-<shortid>; shortid = sha1 of a stable key, first 6 hex
-source: inbox                               # inbox | manual | <exporter name, e.g. discord, gspace>
+source: inbox                               # inbox | manual | <exporter name, e.g. discord>
 channel: inbox                              # channel / space name; `inbox` for captures, `manual` for session drops
 shared_by: Lee                              # display name as seen in the source
 date: 2026-08-18                            # date shared (message timestamp, ISO)
@@ -33,7 +33,9 @@ media: []                                   # media captures: repo-relative path
   (no link, or the link is incidental); `image`/`file` when the item's primary
   source is captured media.
 - `source` — `inbox` for capture files, `manual` for items dropped directly
-  into a session, exporter name for backfills. Same pipeline regardless.
+  into a session, exporter name (e.g. `discord`) for backfills. Every source
+  goes through the same pipeline and carries the same weight; nothing about a
+  source implies age or importance.
 - `status` — `raw` at creation; enricher flips to `enriched` and fills
   `enrichment` with filenames under `enrichment/<id>/`.
 - Threaded replies that add substance are appended to the parent item's body

@@ -82,8 +82,8 @@ add an instance later.
 
 For example:
 
-- key = `Engineering`, text = `you/dex-engineering`
-- key = `Marketing`, text = `you/dex-marketing`
+- key = `Cooking`, text = `you/dex-cooking`
+- key = `Travel`, text = `you/dex-travel`
 
 ### Step 2: Store the token
 

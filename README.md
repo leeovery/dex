@@ -58,7 +58,7 @@ knowledge base, never to the machinery.
   fixed. Corrections you make by hand are pinned and survive every rebuild.
 
 One **dex**, many brains: each knowledge base is its own private *instance* repo
-(dex-engineering, dex-cooking, one for your partner's business...) and this public
+(dex-cooking, dex-woodworking, one for your partner's business...) and this public
 repo is the shared engine they all run on. Fix the engine once, every instance
 benefits.
 
@@ -99,7 +99,7 @@ Instances run the engine's mechanical commands via a `bin/dex` shim
 
 | command | does |
 |---|---|
-| `dex-normalize` | raw chat exports → corpus items (Google Chat Takeout + DiscordChatExporter formats) |
+| `dex-normalize` | raw chat exports → corpus items (DiscordChatExporter JSON) |
 | `dex-enrich run` | fetch behind every corpus URL: YouTube captions, article text (with Wayback fallback), GitHub repos/profiles, arXiv papers, tweets |
 | `dex-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
 | `dex-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |

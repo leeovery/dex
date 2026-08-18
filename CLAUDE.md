@@ -1,8 +1,9 @@
 # dex-engine — the shared engine behind every dex instance
 
 Public repo (github.com/leeovery/dex). It contains machinery only — never
-personal data, tokens, or instance content. Instances are private content
-repos that run this machinery; see `~/Code/dex/CLAUDE.md` for the workspace.
+personal data, tokens, or instance content, and no knowledge of any specific
+instance: instances are private content repos that run this machinery, and
+the engine stays unaware of which ones exist.
 
 ## Structure
 
@@ -59,7 +60,7 @@ repos that run this machinery; see `~/Code/dex/CLAUDE.md` for the workspace.
   (`schema.md`, `state-formats.md`) is the contract; change it in the same
   commit as the code and skills that read those files.
 - **Anything under `templates/`**: after pushing, run `bin/dex sync` in every
-  instance and commit there. The instances are listed in `~/Code/dex/CLAUDE.md`.
+  instance you maintain and commit there.
 - **Decisions**: record in `design/roadmap.md` — present tense, current design
   only; this file and the docs describe what IS, not what was.
 - **README**: its under-the-hood section mirrors the structure and design
