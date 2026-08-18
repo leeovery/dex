@@ -318,8 +318,8 @@ kind of capture:
        - key `Authorization`, text `Bearer` + space + the `token` variable
        - key `Accept`, text `application/vnd.github+json`
     4. Request Body **JSON**, two text fields:
-       - key `message`, text `capture` — your "why" note travels inside the
-         file, not the commit message
+       - key `message`, text the literal word `capture` — the API requires a
+         commit message; this constant is it
        - key `content`, text = the `Base64 Encoded` variable (the action
          above)
 
