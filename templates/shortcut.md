@@ -10,9 +10,15 @@ Create a token that the shortcut uses to file captures:
 
 1. On GitHub, go to **Settings > Developer settings > Fine-grained tokens** and
    tap **Generate new token**.
-2. Under **Repository access**, select only your volume repo (or repos).
-3. Under **Permissions**, set **Contents** and **Issues** to **Read and write**.
-4. Generate the token and copy it.
+2. Name the token so future-you knows what it is — for example `send-to-dex` —
+   and add a description like "Files captures from my phone into dex volume
+   inboxes. Lives inside the Send to Dex shortcut."
+3. Set **Expiration** to **No expiration**. The shortcut breaks silently the day
+   a token expires; if you prefer an expiring token, set a calendar reminder to
+   rotate it.
+4. Under **Repository access**, select only your volume repo (or repos).
+5. Under **Permissions**, set **Contents** and **Issues** to **Read and write**.
+6. Generate the token and copy it.
 
 Fine-grained tokens work for one account or organization at a time. Every repo in
 one shortcut must belong to the same owner.
