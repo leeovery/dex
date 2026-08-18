@@ -37,7 +37,7 @@ git clone https://github.com/leeovery/dex && cd dex && claude
 
 Then say:
 
-> **/dex-new-instance**
+> **/new-dex-instance**
 
 Claude interviews you — what to call it, what it covers, where it should live — and
 sets up everything: the repo, the structure, the scope rules, and (if you want) a
