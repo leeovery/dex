@@ -1,0 +1,20 @@
+name: inbox
+# Thin caller — all logic lives in dex-engine's reusable workflow.
+
+on:
+  repository_dispatch:
+    types: [inbox]
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: inbox-append
+  cancel-in-progress: false
+
+jobs:
+  inbox:
+    uses: leeovery/dex-engine/.github/workflows/inbox-reusable.yml@main

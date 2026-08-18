@@ -1,0 +1,39 @@
+name: inbox-reusable
+# Reusable inbox appender for dex volumes. Callers pass their own events
+# (repository_dispatch type "inbox" and/or issues.opened); the caller's
+# github.event context flows through.
+
+on:
+  workflow_call:
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'repository_dispatch' || github.event.issue.user.login == github.repository_owner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Append suggestion to inbox
+        env:
+          URL: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.url || github.event.issue.title }}
+          NOTE: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.note || github.event.issue.body }}
+        run: |
+          [ -n "$URL" ] || { echo "no url in payload"; exit 1; }
+          URL=$(printf '%s' "$URL" | tr -d '\n\r')
+          NOTE=$(printf '%s' "$NOTE" | tr -d '\n\r')
+          LINE="- ${URL}"
+          [ -n "$NOTE" ] && LINE="${LINE} — ${NOTE}"
+          LINE="${LINE} (shortcut, $(date -u +%F))"
+          echo "$LINE" >> state/inbox.md
+          git config user.name "dex-inbox"
+          git config user.email "inbox@users.noreply.github.com"
+          git add state/inbox.md
+          git commit -m "inbox: shortcut suggestion"
+          for i in 1 2 3; do
+            git push && break
+            git pull --rebase && continue
+          done
+      - name: Close the issue
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue close ${{ github.event.issue.number }} -R ${{ github.repository }}
