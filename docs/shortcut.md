@@ -82,8 +82,8 @@ add an instance later.
 
 For example:
 
-- key `Engineering`, text `you/dex-engineering`
-- key `Marketing`, text `you/dex-marketing`
+- key = `Engineering`, text = `you/dex-engineering`
+- key = `Marketing`, text = `you/dex-marketing`
 
 ### Step 2: Store the token
 
@@ -241,8 +241,8 @@ Below the outer **End If**:
        1. URL: `https://api.github.com/repos/` + the `repo` variable +
           `/releases/tags/inbox`
        2. Method: **GET**
-       3. Headers: key `Authorization`, text `Bearer` + space + the `token`
-          variable
+       3. Headers: key = `Authorization`, text = `Bearer` + space + the
+          `token` variable
     2. Add **Get Dictionary Value** below it, key `id`, in `Contents of URL`
        (the action above — repoint if it connected elsewhere).
     3. Add **Set Variable** below it. Tap **Variable Name** and type
@@ -253,8 +253,8 @@ Below the outer **End If**:
           `stamp` variable + the `ext` variable
        2. Method: **POST**
        3. Headers:
-          - key `Authorization`, text `Bearer` + space + the `token` variable
-          - key `Content-Type`, text `application/octet-stream`
+          - key = `Authorization`, text = `Bearer` + space + the `token` variable
+          - key = `Content-Type`, text = `application/octet-stream`
        4. Request Body: **File**, and set the file to the `blob` variable.
     5. Add **Get Dictionary Value** below it, key `url`, in `Contents of URL`
        (the POST directly above).
@@ -292,11 +292,11 @@ Below that **End If**, at the top level of the shortcut:
        `/contents/inbox/` + the `stamp` variable + `.md`
     2. Method: **PUT**
     3. Headers:
-       - key `Authorization`, text `Bearer` + space + the `token` variable
-       - key `Accept`, text `application/vnd.github+json`
+       - key = `Authorization`, text = `Bearer` + space + the `token` variable
+       - key = `Accept`, text = `application/vnd.github+json`
     4. Request Body **JSON**, two text fields:
-       - key `message`, text the literal word `capture`
-       - key `content`, text = the `Base64 Encoded` variable (the action
+       - key = `message`, text = the literal word `capture`
+       - key = `content`, text = the `Base64 Encoded` variable (the action
          above)
 
 ### Step 6: Name it and add it to the Share Sheet
