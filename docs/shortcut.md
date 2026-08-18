@@ -216,7 +216,9 @@ Between **If** and **Otherwise** (an image was shared):
    beneath **Get Images from Input** if the options don't list it.
 8. Add **Base64 Encode** below it (it encodes the converted image
    automatically).
-9. Add **Set Variable**. Tap **Variable Name** and type `payload`.
+9. Add **Set Variable**, dragging it below the Base64 Encode. Tap
+   **Variable Name** and type `payload`. The row now reads
+   "Set `payload` to `Base64 Encoded`".
 10. Add **Text** containing exactly `.jpg`.
 11. Add **Set Variable**. Tap **Variable Name** and type `ext`.
 
