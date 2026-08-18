@@ -6,8 +6,7 @@ silently; with several it shows a picker.
 
 ## Add the ready-made shortcut (recommended)
 
-_The shareable link is being rebuilt for the current capture design (direct
-capture files, image support). Until it's re-pinned here, build manually below._
+_Link coming soon — until it's pinned here, build manually below._
 
 ## Before you begin
 
@@ -296,7 +295,7 @@ won't find it by searching the actions panel.
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
    **Apps and 18 more** chip.
 5. Everything is toggled on by default. Turn OFF the following and leave
-   everything else on (**Images and Files stay on** — image and file capture are supported):
+   everything else on:
    - **Media**
    - **Folders**
    - **PDFs**
@@ -309,8 +308,7 @@ won't find it by searching the actions panel.
    - **iTunes products**
 6. Tap the blue tick in the top-right corner to confirm the toggles.
 7. Tap **Continue** (after "If there's no input:") and change it to
-   **Stop and Respond**. It asks for a response — the message shown if the
-   shortcut is ever run without anything shared. Enter:
+   **Stop and Respond**. It asks for a response — enter:
    `Nothing to send — share a link to use Send To Dex.`
 
 ### Optional: make it shareable with import questions
@@ -324,18 +322,16 @@ travels with it.
 2. Working top to bottom: choose the **Dictionary** parameter (shown as
    "Dictionary items"). Set the **Question Text** to:
    `For each dex instance you have (one or more), add an item of type Text: key = its name (e.g. Engineering), text = its GitHub repo as owner/repo`
-   Leave the **Default Answer** empty — the question text is the guidance.
-   Confirm.
+   Leave the **Default Answer** empty. Confirm.
 3. Tap **Add New Question** again, choose the token **Text** parameter, and set
    its **Question Text** to something like "Paste your GitHub token (see
    Before you begin in the setup guide)". Confirm, then tap **Done**.
-4. Once the questions exist, **Change Answers** / **Customize Shortcut**
-   becomes how ANY copy gets configured — including yours. It re-asks the
-   questions and writes the answers into the shortcut's fields.
-5. You can share directly from your configured copy: fields that carry import
+4. Configure any copy — including yours — via **Change Answers** /
+   **Customize Shortcut**: it re-asks the questions and writes the answers
+   into the shortcut's fields.
+5. Share directly from your configured copy: fields that carry import
    questions are cleared automatically in the shared artifact, so your token
-   and instances never travel (verified — importing the shared link prompts
-   for them). Each share produces a new link.
+   and instances never travel. Each share produces a new link.
 6. Share as an iCloud link. On import, the questions appear as a
    **Customize Shortcut** screen: for the instances question the importer taps
    **Add new item**, chooses **Text**, and fills the key (name) and text
