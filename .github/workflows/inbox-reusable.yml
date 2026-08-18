@@ -9,7 +9,7 @@ on:
 jobs:
   append:
     runs-on: ubuntu-latest
-    if: github.event_name == 'repository_dispatch' || github.event.issue.user.login == github.repository_owner
+    if: github.event_name == 'repository_dispatch' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
     steps:
       - uses: actions/checkout@v4
       - name: Append suggestion to inbox
