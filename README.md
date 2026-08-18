@@ -109,9 +109,9 @@ Capture inbox: any HTTP client opens a GitHub issue on the volume (`title` = URL
 appends to `state/inbox.md` and closes the issue. Suggestion is untrusted by
 design — scope filtering happens at ingest, inside the volume.
 
-Volume layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim exports)
-· `corpus/` (append-only items) · `enrichment/` · `wiki/` (topics/entities/syntheses
-+ index/log/pins) · `state/` (digests, taxonomy, ledgers, inbox,
-normalize-config.json).
+Volume layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim
+exports) · `corpus/` (append-only items) · `enrichment/` · `wiki/`
+(topics/entities/syntheses plus index, log, pins) · `state/` (digests, taxonomy,
+ledgers, inbox, normalize-config.json).
 
 </details>
