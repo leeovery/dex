@@ -397,8 +397,6 @@ binary into the repo (under `media/`, LFS-tracked) and deletes the asset.
 - Never share a shortcut whose token field lacks an import question — shared
   shortcuts embed whatever is in their fields. With the import question set
   (above), the token field is cleared on share and sharing is safe.
-- Any HTTP client can capture the same way: PUT a `.md` into `inbox/`
-  via the contents API — and for a binary, first upload it as an asset on the
-  `inbox` release and reference it from the `.md`'s frontmatter (`asset:` its
-  API URL, `name:` its filename). A bookmarklet or CLI alias works as well as
-  a shortcut.
+- The shortcut is one client of the capture protocol (`docs/capture.md`) —
+  any HTTP client can capture the same way: a bookmarklet or CLI alias works
+  as well as a shortcut.

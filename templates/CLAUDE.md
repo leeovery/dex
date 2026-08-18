@@ -28,6 +28,10 @@ Three operations. Detailed procedures live in skills — load them, don't improv
   re-apply `wiki/pins.md`. Owners will ask for this in plain words ("check my
   knowledge base over", "health check") — same operation.
 
+Machinery is engine-owned: `.claude/skills/`, `bin/dex`, and `.gitattributes`
+are overwritten by `bin/dex sync` — never hand-edit them here. Fixes go into
+the engine (github.com/leeovery/dex), then sync.
+
 ## Dataflow
 
 ```

@@ -113,7 +113,8 @@ GitHub contents API — body = URL and/or note; a capture that carried a binary
 release and references it in frontmatter. No server-side machinery at all: the
 PUT is the commit, and ingest moves staged binaries into `media/` where LFS
 applies. Suggestion is untrusted by design — scope filtering happens at
-ingest, inside the instance.
+ingest, inside the instance. Full protocol: `docs/capture.md`; bulk imports:
+`docs/backfill.md`.
 
 Instance layout: `CLAUDE.md` (scope + operations contract) · `inbox/` (pending
 captures) · `raw/` (verbatim exports) · `corpus/` (append-only items) ·
