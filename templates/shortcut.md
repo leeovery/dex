@@ -244,7 +244,11 @@ travels with it.
 3. Tap **Add New Question** again, choose the token **Text** parameter, and set
    its **Question Text** to something like "Paste your GitHub token (see
    Before you begin in the setup guide)". Confirm, then tap **Done**.
-4. Share as an iCloud link. On import, the questions appear as a
+4. Careful with **Change Answers** / **Customize Shortcut** on your own copy:
+   it doesn't just preview — it re-asks the questions and writes the answers
+   into your shortcut, so walking through it with blank answers wipes your own
+   dictionary. If you try it, re-check your Dictionary and token afterwards.
+5. Share as an iCloud link. On import, the questions appear as a
    **Customize Shortcut** screen: for the instances question the importer taps
    **Add new item**, chooses **Text**, and fills the key (name) and text
    (owner/repo) — repeating for each instance — then pastes their token for
