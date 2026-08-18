@@ -236,9 +236,12 @@ is cleared automatically when the shortcut is shared — so your token never
 travels with it.
 
 1. In the info panel, tap **Import Questions**, then **Add New Question**.
-2. Working top to bottom: choose the **Dictionary** parameter, tap its name in
-   the Import Questions area, and set the **Question Text** to something like
-   "Your volume(s): display name and owner/repo path". Confirm.
+2. Working top to bottom: choose the **Dictionary** parameter (shown as
+   "Dictionary items"). Set the **Question Text** to:
+   `Your volumes — one item each: key = display name, text = owner/repo`
+   In the **Default Answer**, tap **Add new item** and add one example row
+   (key `Engineering`, text `your-username/dex-engineering`) so importers edit
+   a template instead of starting blank. Confirm.
 3. Tap **Add New Question** again, choose the token **Text** parameter, and set
    its **Question Text** to something like "Paste your GitHub token (see
    Before you begin in the setup guide)". Confirm, then tap **Done**.
