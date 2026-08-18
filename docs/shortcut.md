@@ -269,8 +269,7 @@ won't find it by searching the actions panel.
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
    **Apps and 18 more** chip.
 5. Everything is toggled on by default. Turn OFF the following and leave
-   everything else on:
-   - **Images**
+   everything else on (**Images stays on** — image capture is supported):
    - **Media**
    - **Files**
    - **Folders**
