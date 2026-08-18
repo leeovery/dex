@@ -22,7 +22,11 @@ state formats). This file holds what's *next*, not what is.
   whisper), blog (trafilatura + wayback + og:image), github
   (repos/profiles/gists/issues), arxiv, tweet (fxtwitter + t.co follow +
   photos). To design: instagram, PDF, generic files, and a clean way to add
-  more. This is the core value of the system — solve it properly.
+  more. Also enrichment depth: the blog driver fetches only the shared URL,
+  so product sites that spread substance across landing/pricing/docs come in
+  thin — consider a site driver that pulls a small judged set of pages
+  (capped, never a crawler). This is the core value of the system — solve it
+  properly.
 - **Instagram driver** — shape not agreed. Facts: no official API for
   arbitrary public posts (Graph API = own business accounts only). Options
   mapped: instaloader + dedicated session (residential IP only, flagging
