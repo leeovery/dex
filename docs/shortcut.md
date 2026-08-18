@@ -215,7 +215,8 @@ Between **If** and **Otherwise** (an image was shared):
    placeholder, and pick `Images` — via **Select Variable** and the token
    beneath **Get Images from Input** if the options don't list it.
 8. Add **Base64 Encode** below it (it encodes the converted image
-   automatically).
+   automatically). Expand its options and set **Line Breaks** to **None** —
+   the default inserts line breaks that GitHub rejects as invalid base64.
 9. Add **Set Variable**, dragging it below the Base64 Encode. Tap
    **Variable Name** and type `payload`. The row now reads
    "Set `payload` to `Base64 Encoded`".
@@ -229,7 +230,8 @@ Between **Otherwise** and **End If** (a link or text was shared):
 12. Add **Text**, dragging it beneath **Otherwise**. First line: the
     `Shortcut Input` variable. Then an empty line, then the `Ask for Input`
     variable.
-13. Add **Base64 Encode**, dragging it below that Text.
+13. Add **Base64 Encode**, dragging it below that Text. Set its
+    **Line Breaks** to **None**, as in step 8.
 14. Add **Set Variable**, dragging it below the Base64 Encode. Tap
     **Variable Name** and type `payload`. The row now reads
     "Set `payload` to `Base64 Encoded`".
