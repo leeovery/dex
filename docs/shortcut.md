@@ -226,30 +226,45 @@ Between **If** and **Otherwise** (an image was shared):
 
 Between **Otherwise** and **End If** (not an image — a link, text, or a file):
 
-12. Add **Get Details of Files**, dragging it beneath **Otherwise**. Set the
-    detail to **File Extension**, and repoint its input to `Shortcut Input`
-    if needed. For a shared file this produces its extension (`pdf`); for a
-    shared link or text it produces nothing — which is what the next check
-    uses.
-13. Add **If** below it, with the condition **has any value**. This If sits
-    nested inside **Otherwise**. Delete its **Otherwise** row so the block is
-    just **If** … **End If** — a link or note needs no preparation here. The
-    bottom of the shortcut then reads: the nested **End If**, immediately
-    followed by the outer **End If**.
+A Safari link share also carries a webpage "file" (its file extension reads
+`html`), so these steps check for a URL first — a capture only counts as a
+file when there is no URL.
 
-    Inside this **If** (a file was shared):
+12. Add **Get URLs from Input**, dragging it beneath **Otherwise**. Repoint
+    its input to `Shortcut Input`. For a shared link this produces the URL;
+    for a shared file it produces nothing.
+13. Add **Count** below it. It should read "Count Items in `URLs`" — repoint
+    it to `URLs` if it connected to anything else.
+14. Add **If** below it, reading "If `Count` is **Number**"; tap the faded
+    **Number** and enter **0**. Delete its **Otherwise** row. This If — no
+    URL was shared — sits nested inside the outer **Otherwise**.
 
-    1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
-       **Variable Name** and type `blob`. The row reads
-       "Set `blob` to `Shortcut Input`".
-    2. Add **Text** below that, containing `.` immediately followed by the
-       **File Extension** variable (from step 12).
-    3. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
+    Inside it:
+
+    1. Add **Get Details of Files**. Set the detail to **File Extension**,
+       and repoint its input to `Shortcut Input`. For a shared file this
+       produces its extension (`pdf`); for shared text it produces nothing.
+    2. Add **If** below it, with the condition **has any value**. Delete its
+       **Otherwise** row too.
+
+       Inside it (a file was shared):
+
+       1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
+          **Variable Name** and type `blob`. The row reads
+          "Set `blob` to `Shortcut Input`".
+       2. Add **Text** below that, containing `.` immediately followed by
+          the **File Extension** variable (from the Get Details of Files
+          above).
+       3. Add **Set Variable** below it. Tap **Variable Name** and type
+          `ext`.
+
+    The bottom of the shortcut now reads: two nested **End If** rows, then
+    the outer **End If**.
 
 Then, below the outer **End If**, build the capture file's content and save it
 as `payload`:
 
-14. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
+15. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
     bar doesn't list it), and set the condition to **has any value**. Drag
     the following actions into its branches.
 
@@ -307,10 +322,10 @@ Finally, the single upload. These last two actions sit below the **End If**,
 outside every branch, at the top level of the shortcut — they run for every
 kind of capture:
 
-15. Add **Base64 Encode**. Repoint its input to `payload`, and expand its
+16. Add **Base64 Encode**. Repoint its input to `payload`, and expand its
     options and set **Line Breaks** to **None** — the default inserts line
     breaks that GitHub rejects as invalid base64.
-16. Add **Get Contents of URL** below it. Configure:
+17. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
        `/contents/inbox/` + the `stamp` variable + `.md`
     2. Method: **PUT**
