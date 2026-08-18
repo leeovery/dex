@@ -104,11 +104,15 @@ Instances run the engine's mechanical commands via a `bin/kb` shim
 | `kb-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
 | `kb-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
 | `kb-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
+| `kb-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
+| `kb-sync` | refresh engine-managed instance machinery (skills, `bin/kb`, `.gitattributes`) |
 
-Capture inbox: clients write one file per capture into `state/inbox/` via the
-GitHub contents API — a `.md` (URL + note) for links and text, or an image file
-(plus optional `.md` sidecar note). No server-side machinery at all: the PUT is
-the commit. Suggestion is untrusted by design — scope filtering happens at
+Capture inbox: every capture is one `.md` in `state/inbox/`, written via the
+GitHub contents API — body = URL and/or note; a capture that carried a binary
+(image, PDF, any file) stages it as an asset on the repo's standing `inbox`
+release and references it in frontmatter. No server-side machinery at all: the
+PUT is the commit, and ingest moves staged binaries into `media/` where LFS
+applies. Suggestion is untrusted by design — scope filtering happens at
 ingest, inside the instance.
 
 Instance layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim

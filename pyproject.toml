@@ -11,6 +11,7 @@ kb-enrich = "dex_engine.enrich:main"
 kb-lint = "dex_engine.lint:main"
 kb-exclude = "dex_engine.exclude:main"
 kb-sync = "dex_engine.sync:main"
+kb-inbox = "dex_engine.inbox:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -3,29 +3,32 @@
 Living document. Decisions here are agreed with Lee; queued items need
 discussion before building.
 
-## Agreed, to build next
+## Built: release-asset capture staging (2026-08-18)
 
-### Release-asset capture staging (binary captures done properly)
+Binary captures no longer enter git history as raw blobs. The unified design
+("one method for receiving content" — Lee):
 
-Problem: API uploads bypass LFS, so image/file captures land as raw blobs in
-git history (permanent bloat); the alternative "true LFS via API" dance leaves
-orphaned LFS objects in billed storage forever (GitHub exposes no remote prune).
+- **Every capture is one `.md` in `state/inbox/`** — body = URL and/or note
+  (the note always lives in the body now; the note-as-commit-message hack is
+  gone). A capture that carried a binary adds frontmatter: `asset:` (API URL
+  of a release asset on the repo's standing `inbox` release) + `name:`.
+- **Shortcut**: branches only prepare variables (`blob`/`ext`, then `payload`);
+  binaries upload as a raw File body (no base64) to the inbox release; one
+  shared final PUT of `{stamp}.md` for every capture kind. Rewritten in
+  `docs/shortcut.md` — needs the on-device rebuild.
+- **Engine**: `kb-inbox` reconciles the inbox (asset → `media/<id>/` +
+  git add so LFS applies — verified staged as an LFS pointer before the asset
+  is deleted; pointer frontmatter rewritten to `media:`); `kb inbox ensure`
+  creates the standing release (also self-heals on each run); orphaned assets
+  (upload succeeded, pointer PUT failed) are reported. Auth: GITHUB_TOKEN →
+  `gh auth token` — **gh is a declared instance dependency** (checked at
+  setup); no PAT is ever stored in an instance. The only stored token is the
+  one inside the shortcut (one field, all instances).
+- Ingest skill is one per-capture procedure; media is just another enrichment
+  source ("transcript" via description/OCR).
 
-Agreed shape — each layer used for its design intent:
-
-1. Capture client uploads the binary as a **release asset** on a standing
-   "inbox" release (raw binary body — Shortcuts' File request body; no base64,
-   one request), then PUTs a tiny `.md` pointer into `state/inbox/` carrying
-   the asset URL + the note.
-2. Ingest downloads the asset, files it at `media/<item-id>/` via a **local
-   git add** (LFS applies canonically), then **deletes the release asset**.
-3. End state: media in LFS as designed, git history text-only, nothing
-   orphaned.
-
-Build items: engine (scaffold creates the standing release; ingest skill
-update), shortcut doc rewrite of the image/file branches (asset upload +
-pointer), then re-share the shortcut (links are frozen snapshots — see below)
-and pin the new link. Land BEFORE Natasha installs and BEFORE dex-design.
+Still to land before Natasha installs / dex-design: on-device shortcut
+rebuild per the new doc, re-share, pin the link.
 
 ## Queued discussions (not yet designed)
 
@@ -65,6 +68,9 @@ and pin the new link. Land BEFORE Natasha installs and BEFORE dex-design.
 ## Pending on Lee's device
 
 - Fix the Marketing dictionary row (marketing captures currently 404 silently).
-- Rebuild shortcut per current doc: resize step (2048w) + generic file branch.
-- After release-asset staging lands: final rebuild, re-share, pin new link in
-  docs/shortcut.md.
+- Rebuild shortcut per the rewritten docs/shortcut.md (release-asset staging:
+  Step 5 restructured — shared final PUT, binary asset upload, pointer file).
+  Two spots to device-verify during the build: the asset POST's Request Body
+  **File** + `Content-Type: application/octet-stream` header, and repointing
+  an If's input to the `blob` variable.
+- Then re-share, pin the new link in docs/shortcut.md.

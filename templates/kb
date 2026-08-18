@@ -1,6 +1,6 @@
 #!/bin/sh
 # dex engine dispatcher — run from the instance root.
-#   bin/kb normalize | enrich [run|whisper|status|inventory|...] | lint [--write] | exclude <file.json>
+#   bin/kb normalize | enrich [run|whisper|status|inventory|...] | lint [--write] | exclude <file.json> | inbox [ensure] | sync
 cmd=$1; shift 2>/dev/null
-[ -n "$cmd" ] || { echo "usage: bin/kb <normalize|enrich|lint|exclude> [args]"; exit 1; }
+[ -n "$cmd" ] || { echo "usage: bin/kb <normalize|enrich|lint|exclude|inbox|sync> [args]"; exit 1; }
 exec uvx --from git+https://github.com/leeovery/dex "kb-$cmd" "$@"

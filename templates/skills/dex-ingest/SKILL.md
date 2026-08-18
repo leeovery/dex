@@ -10,38 +10,58 @@ steps; never invent inputs. All commands run from the instance root.
 
 ## The inbox
 
-`state/inbox/` holds one file per capture, written directly by capture clients
-(the Send To Dex shortcut, or anything else that PUTs via the GitHub contents
-API):
+`state/inbox/` holds one `.md` file per capture, written directly by capture
+clients (the Send To Dex shortcut, or anything else that PUTs via the GitHub
+contents API). Every capture has the same shape: the body is the captured URL
+and/or the owner's note. A capture that arrived with a binary (image, PDF, any
+file) additionally carries frontmatter pointing at its media.
 
-- **Text capture** — a `.md` file whose body is a URL and/or a note.
-- **Image capture** — an image file (`.jpg`, `.png`, ...).
-- **File capture** — any other file (`.pdf`, ...). Treat like an image
-  capture: file it under `media/<item-id>/`, read it directly (Claude reads
-  PDFs natively) and write its description/extraction as the enrichment.
-- For images and files, the capturer's note, if any, is the file's commit
-  message (`git log --format=%B -n1 -- <file>`, minus the leading "capture").
+Start every ingest with:
 
-`git pull` first — captures arrive as commits. Process every file, then delete
-it (the capture is preserved in git history; its content lives on in the
-corpus).
+1. `git pull` — captures arrive as commits.
+2. `bin/kb inbox` — mechanical reconcile: downloads any staged release assets
+   into `media/<item-id>/`, git-adds them so LFS applies, deletes the remote
+   assets, and rewrites each capture's frontmatter to
+   `media: media/<item-id>/<file>`. Text captures pass through untouched. It
+   needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports missing
+   auth or a failure, fix that with the owner before continuing — never work
+   around it by hand-downloading.
 
-## Per text/URL capture
+Then process every capture with the one procedure below, and delete each
+capture file when its item is done (the capture is preserved in git history;
+its content lives on in the corpus).
 
-1. **Scope check** against CLAUDE.md's In-scope list. Unsure → ask the owner.
-   Rejected → delete the capture file and say why.
-2. **Corpus item.** Canonicalize the URL (strip utm/tracking params). Compute
-   `shortid = sha1("manual/<canonical-url>")[:6]`. Write
-   `corpus/YYYY/YYYY-MM-DD-<slug>-<shortid>.md` with frontmatter per the
+## Per capture
+
+1. **Scope check** against CLAUDE.md's In-scope list — if the capture has
+   `media:`, view the media first and judge its content. Unsure → ask the
+   owner. Rejected → delete the capture file (and its `media/<item-id>/` dir
+   if one was created) and say why.
+2. **Corpus item.** The id:
+   - Link/text capture: canonicalize the URL (strip utm/tracking params);
+     `shortid = sha1("manual/<canonical-url>")[:6]`. Note-only captures with
+     no URL: `sha1("manual/<capture-filename>")[:6]`.
+   - Media capture: the item id is already fixed — it's the directory name
+     `bin/kb inbox` created under `media/`.
+
+   Write `corpus/YYYY/YYYY-MM-DD-<slug>-<shortid>.md` with frontmatter per the
    engine's `docs/schema.md`: id, source (`inbox`|`manual`|exporter name),
-   channel, shared_by, date, urls, kinds, `status: raw`, `enrichment: []`.
-   Body = the capture's note verbatim — often the most valuable part.
-3. **Enrich:** `bin/kb enrich run` (fetches captions, article text, READMEs,
+   channel, shared_by, date, urls, kinds (media captures: `[image]` or
+   `[file]`, plus a `media:` list pointing at the file(s)), `status: raw`,
+   `enrichment: []`. Body = the capture's note verbatim — often the most
+   valuable part.
+3. **Enrich.** `bin/kb enrich run` (fetches captions, article text, READMEs,
    papers, tweets — and lead images/tweet photos into
    `enrichment/<id>/media-N.*` unless the instance config says otherwise).
-   Caption-less video/audio: `bin/kb enrich whisper` (OPENAI_API_KEY in `.env`).
-4. **Digest.** Read the enrichment fully — including viewing any fetched media
-   files — and write `state/digests/<id>.md`: frontmatter (id, date,
+   Caption-less video/audio: `bin/kb enrich whisper` (OPENAI_API_KEY in
+   `.env`). For a media capture the primary source is the media itself: view
+   it and write `enrichment/<id>/media-0.md` — what it depicts, all legible
+   text (OCR), and, where relevant to this instance's domain, style, palette,
+   composition, typography, layout. This is the media's "transcript"; make it
+   substantive enough to stand in for the media in text-only contexts. PDFs
+   and other files get the same treatment (read them directly).
+4. **Digest.** Read the enrichment fully — including viewing any media — and
+   write `state/digests/<id>.md`: frontmatter (id, date,
    `signal: high|medium|low`, topics, entities, and `media:` listing any media
    paths) + 3–15 standalone fact bullets with concrete specifics. Topics: use
    canonical names from `state/taxonomy.json` when it exists; otherwise 2–5
@@ -49,29 +69,10 @@ corpus).
 5. **Place.** Taxonomy exists → append the id to each matching topic's items.
    Create a new topic only once several items justify a page.
 6. **Update the wiki.** Splice cited sentence(s) into affected pages —
-   rewrite-not-append if "current state" changes. Pages may embed item media
-   with relative image links where showing beats describing. Update
-   `wiki/index.md`; append a `wiki/log.md` line; delete the capture file.
+   rewrite-not-append if "current state" changes. Pages citing a media item
+   should usually embed it (relative image links). Update `wiki/index.md`;
+   append a `wiki/log.md` line; delete the capture file.
 7. **Commit + push**: `ingest: <short title>`.
-
-## Per image capture
-
-Images are corpus items whose primary source is the image itself.
-
-1. **Scope check** — view the image first; judge content against the In-scope
-   list.
-2. **File the media.** Move the image to `media/<item-id>/<original-name>`
-   (create the item id first: `shortid = sha1("media/<inbox-filename>")[:6]`,
-   slug from what the image shows). `media/` is append-only and LFS-tracked.
-3. **Corpus item** as above, with `kinds: [image]`, a `media:` frontmatter list
-   pointing at the file(s), and the capture commit's note (if any) as the body.
-4. **Describe.** View the image and write `enrichment/<id>/media-0.md`: what it
-   depicts, all legible text (OCR), and — where relevant to this instance's
-   domain — style, palette, composition, typography, layout. This is the
-   image's "transcript"; make it substantive enough to stand in for the image
-   in text-only contexts.
-5. **Digest, place, wiki, commit** as steps 4–7 above. Wiki pages citing an
-   image item should usually embed it.
 
 ## Backfills (exports in raw/)
 

@@ -31,8 +31,8 @@ Three operations. Detailed procedures live in skills — load them, don't improv
 ## Dataflow
 
 ```
-raw/ (verbatim exports) + state/inbox/ (capture files, incl. images)
-  →  corpus/ (one item per share, provenance frontmatter; media/ holds image files)
+raw/ (verbatim exports) + state/inbox/ (capture files; staged binaries land in media/<id>/, LFS)
+  →  corpus/ (one item per share, provenance frontmatter; media/ holds captured binaries)
   →  enrichment/<id>/ (fetched content + media descriptions)
   →  state/digests/<id>.md (fact index)
   →  state/taxonomy.json (topics/entities)  →  wiki/ (pages, index, log, pins)

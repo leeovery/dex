@@ -24,6 +24,11 @@ them a short "how to use it" note.
 
 ## 2. Build (you do this, silently competent)
 
+First check the machine has the tools an instance depends on: `git`, `git-lfs`,
+`uv`, and `gh` (authed — `gh auth status`). If any is missing, ask before
+installing it (`brew install gh git-lfs` etc.); binary capture and ingest need
+gh's auth.
+
 ```bash
 mkdir -p <path> && cd <path> && git init
 mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin media
@@ -46,6 +51,8 @@ Then:
 - Personalize README.md: owner/domain AND the same In-scope list — the two files
   mirror each other; scope changes always update both.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
+  then `bin/kb inbox ensure` — creates the standing "inbox" release that binary
+  captures stage into.
   - Sanity check: `bin/kb lint` from the instance root (prints a fresh-instance notice).
 
 ## 3. Capture setup (only their PAT needs their hands)

@@ -183,13 +183,14 @@ part of a capture — it travels with the link into the knowledge base.
 
 ### Step 5: File it
 
-This step writes the capture into the instance repo: one new file per capture
-in `state/inbox/`, created directly through GitHub's contents API. A link or
-note becomes a small `.md` file; an image is resized and becomes a `.jpg`; any
-other shared file (a PDF, for example) is carried as-is. The branches only
-prepare two variables — `payload` (the content) and `ext` (the filename
-ending) — and a single upload action at the end sends it, with your note as
-the commit message.
+Every capture files exactly one small `.md` into `state/inbox/` — that's the
+capture, whatever was shared. A link or note goes straight into the file's
+body along with your "why" note. A shared image (resized) or file (a PDF, for
+example) is first uploaded as an asset on the instance's standing **inbox
+release** (dex creates this release during instance setup), and the `.md`
+references it — the next ingest moves the binary into the repo proper and
+deletes the asset. The branches below only prepare variables; one shared
+upload at the end sends the same `.md` for every kind of capture.
 
 First, a timestamp for unique filenames:
 
@@ -198,7 +199,8 @@ First, a timestamp for unique filenames:
    `yyyyMMdd-HHmmss`.
 3. Add **Set Variable** below it. Tap **Variable Name** and type `stamp`.
 
-Then detect whether an image was shared:
+Then work out whether a binary was shared, and hold it as `blob` with its
+filename ending as `ext`:
 
 4. Add **Get Images from Input**. It arrives reading "Get images from
    `stamp`" — the wrong source. Repoint it: tap the `stamp` chip, tap
@@ -216,62 +218,107 @@ Between **If** and **Otherwise** (an image was shared):
    `Images`, repoint it to `Images`. Set the width to `2048` and leave the
    height automatic — this caps what each capture adds to the repo.
 8. Add **Convert Image** below it, converting to **JPEG**.
-9. Add **Base64 Encode** below it. Expand its options and set **Line Breaks**
-   to **None** — the default inserts line breaks that GitHub rejects as
-   invalid base64.
-10. Add **Set Variable**, dragging it below the Base64 Encode. Tap
-    **Variable Name** and type `payload`. The row now reads
-    "Set `payload` to `Base64 Encoded`".
-11. Add **Text**, dragging it below that, containing exactly `.jpg`.
-12. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
-    and type `ext`. The row now reads "Set `ext` to `Text`".
+9. Add **Set Variable** below it. Tap **Variable Name** and type `blob`. The
+   row reads "Set `blob` to `Converted Image`".
+10. Add **Text** below that, containing exactly `.jpg`.
+11. Add **Set Variable** below it. Tap **Variable Name** and type `ext`. The
+    row reads "Set `ext` to `Text`".
 
 Between **Otherwise** and **End If** (not an image — a link, text, or a file):
 
-13. Add **Get Details of Files**, dragging it beneath **Otherwise**. Set the
+12. Add **Get Details of Files**, dragging it beneath **Otherwise**. Set the
     detail to **File Extension**, and repoint its input to `Shortcut Input`
     if needed. For a shared file this produces its extension (`pdf`); for a
     shared link or text it produces nothing — which is what the next check
     uses.
-14. Add **If** below it, with the condition **has any value**. Drag the
-    following actions inside its branches (this If sits nested inside
-    **Otherwise**).
+13. Add **If** below it, with the condition **has any value**. This If sits
+    nested inside **Otherwise**; its own **Otherwise** stays empty (a link or
+    note needs no preparation here).
 
     Between this **If** and its **Otherwise** (a file was shared):
 
-    1. Add **Base64 Encode**. Repoint its input to `Shortcut Input`, and set
-       **Line Breaks** to **None**.
-    2. Add **Set Variable** below it. Tap **Variable Name** and type
+    1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
+       **Variable Name** and type `blob`. The row reads
+       "Set `blob` to `Shortcut Input`".
+    2. Add **Text** below that, containing `.` immediately followed by the
+       **File Extension** variable (from step 12).
+    3. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
+
+After the outer **End If**: if a binary was shared, upload it as an asset and
+write a `.md` that points at it; otherwise write the link/note `.md`. Either
+way the result lands in the `payload` variable.
+
+14. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
+    bar doesn't list it), and set the condition to **has any value**. Drag
+    the following actions into its branches.
+
+    Between **If** and **Otherwise** (a binary was shared):
+
+    1. Add **Get Contents of URL**. Configure:
+       1. URL: `https://api.github.com/repos/` + the `repo` variable +
+          `/releases/tags/inbox`
+       2. Method: **GET**
+       3. Headers: key `Authorization`, text `Bearer` + space + the `token`
+          variable
+       This fetches the instance's standing inbox release.
+    2. Add **Get Dictionary Value** below it, key `id`, in `Contents of URL`
+       (the action above — repoint if it connected elsewhere).
+    3. Add **Set Variable** below it. Tap **Variable Name** and type
+       `release`.
+    4. Add **Get Contents of URL** below that. Configure:
+       1. URL: `https://uploads.github.com/repos/` + the `repo` variable +
+          `/releases/` + the `release` variable + `/assets?name=` + the
+          `stamp` variable + the `ext` variable
+       2. Method: **POST**
+       3. Headers:
+          - key `Authorization`, text `Bearer` + space + the `token` variable
+          - key `Content-Type`, text `application/octet-stream`
+       4. Request Body: **File**, and set the file to the `blob` variable.
+       This uploads the binary itself — no base64, one request.
+    5. Add **Get Dictionary Value** below it, key `url`, in `Contents of URL`
+       (the POST directly above).
+    6. Add **Set Variable** below it. Tap **Variable Name** and type `asset`.
+    7. Add **Text** below that — the capture file's content, exactly five
+       lines then your note:
+
+       ```
+       ---
+       asset: [asset]
+       name: [stamp][ext]
+       ---
+
+       [Ask for Input]
+       ```
+
+       where each bracketed name is that variable (type the surrounding
+       characters literally; `[stamp][ext]` sit together with no space).
+    8. Add **Set Variable** below it. Tap **Variable Name** and type
        `payload`.
-    3. Add **Text** below that, containing `.` immediately followed by the
-       **File Extension** variable (from step 13).
-    4. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
 
-    Between its **Otherwise** and **End If** (a link or text):
+    Between **Otherwise** and **End If** (a link or text):
 
-    5. Add **Text**. First line: the `Shortcut Input` variable. Then an
+    9. Add **Text**. First line: the `Shortcut Input` variable. Then an
        empty line, then the `Ask for Input` variable.
-    6. Add **Base64 Encode** below it, **Line Breaks** set to **None**.
-    7. Add **Set Variable** below it. Tap **Variable Name** and type
-       `payload`. The row now reads "Set `payload` to `Base64 Encoded`".
-    8. Add **Text** below that, containing exactly `.md`.
-    9. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
-       The row now reads "Set `ext` to `Text`".
+    10. Add **Set Variable** below it. Tap **Variable Name** and type
+        `payload`.
 
-After the outer **End If**, the single upload:
+Finally, the single upload — identical for every kind of capture:
 
-15. Add **Get Contents of URL**. Clear its auto-filled input as in earlier
-    steps, then configure:
+15. Add **Base64 Encode**. Repoint its input to `payload`, and expand its
+    options and set **Line Breaks** to **None** — the default inserts line
+    breaks that GitHub rejects as invalid base64.
+16. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
-       `/contents/state/inbox/` + the `stamp` variable + the `ext` variable
+       `/contents/state/inbox/` + the `stamp` variable + `.md`
     2. Method: **PUT**
     3. Headers:
        - key `Authorization`, text `Bearer` + space + the `token` variable
        - key `Accept`, text `application/vnd.github+json`
     4. Request Body **JSON**, two text fields:
-       - key `message`, text `capture ` + the `Ask for Input` variable — your
-         "why" note becomes the commit message
-       - key `content`, text = the `payload` variable
+       - key `message`, text `capture` — your "why" note travels inside the
+         file, not the commit message
+       - key `content`, text = the `Base64 Encoded` variable (the action
+         above)
 
 ### Step 6: Name it and add it to the Share Sheet
 
@@ -339,15 +386,19 @@ travels with it.
 ## Try it
 
 Share any page from Safari. Within seconds a new commit appears on the
-instance repo adding a file under `state/inbox/` — that's the capture, waiting
-for the next ingest, with your note as the commit message. Share a photo to
-see the image path: a `.jpg` lands the same way.
+instance repo adding a `.md` file under `state/inbox/` — that's the capture,
+with your note in its body, waiting for the next ingest. Share a photo to see
+the binary path: the resized image appears as an asset on the repo's **inbox**
+release, and the committed `.md` points at it. The next ingest moves the
+binary into the repo (under `media/`, LFS-tracked) and deletes the asset.
 
 ## Notes
 
 - Never share a shortcut whose token field lacks an import question — shared
   shortcuts embed whatever is in their fields. With the import question set
   (above), the token field is cleared on share and sharing is safe.
-- Any HTTP client can capture the same way: PUT a file into
-  `state/inbox/` via the contents API. A bookmarklet or CLI alias works as
-  well as a shortcut.
+- Any HTTP client can capture the same way: PUT a `.md` into `state/inbox/`
+  via the contents API — and for a binary, first upload it as an asset on the
+  `inbox` release and reference it from the `.md`'s frontmatter (`asset:` its
+  API URL, `name:` its filename). A bookmarklet or CLI alias works as well as
+  a shortcut.
