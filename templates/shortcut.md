@@ -25,15 +25,20 @@ one shortcut must belong to the same owner.
 
 ## Create the shortcut
 
-Open the Shortcuts app, create a new shortcut, and add these actions in order.
+Open the Shortcuts app and create a new shortcut.
 
-1. Add **Receive input from Share Sheet**.
-   1. Tap the highlighted input-types chip after the word "Receive".
-   2. Turn on **Safari web pages**, **URLs**, **Articles**, **Text**,
+1. Turn on Share Sheet input. This is a setting, not an action — it can't be
+   found by searching the actions list.
+   1. Tap the shortcut's settings (the info button, or tap the shortcut's name
+      at the top and choose the settings icon).
+   2. Turn on **Show in Share Sheet**, then close the settings.
+   3. A **Receive [input] from Share Sheet** header now appears at the top of
+      the editor. Tap its highlighted input-types chip.
+   4. Turn on **Safari web pages**, **URLs**, **Articles**, **Text**,
       **Rich text**, and **App Store apps**.
-   3. Turn everything else off. Images, files, and PDFs share as data, not
+   5. Turn everything else off. Images, files, and PDFs share as data, not
       links — this capture path can't carry them.
-   4. Set **If there's no input** to **Stop and Respond**.
+   6. Set **If there's no input** to **Stop and Respond**.
 2. Add **Dictionary**. Add one row per volume: the key is a display name, the
    value is the repo path.
    For example: `Engineering` → `you/dex-engineering`, `Marketing` →
