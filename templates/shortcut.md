@@ -240,7 +240,7 @@ travels with it.
    "Dictionary items"). Set the **Question Text** to:
    `Your instances — one item each: key = display name, text = owner/repo`
    In the **Default Answer**, tap **Add new item** and add one example row
-   (key `Engineering`, text `your-username/dex-engineering`) so importers edit
+   (key `Engineering`, text `your-github-username/your-dex-instance`) so importers edit
    a template instead of starting blank. Confirm.
 3. Tap **Add New Question** again, choose the token **Text** parameter, and set
    its **Question Text** to something like "Paste your GitHub token (see
