@@ -226,7 +226,10 @@ won't find it by searching the actions panel.
    Rich text, Safari web pages, URLs, Articles, App Store apps — all arrive as
    text or links, which this capture path can carry.)
 6. Tap the blue tick in the top-right corner to confirm the toggles.
-7. Set **If there's no input** to **Stop and Respond**.
+7. Tap **Continue** (after "If there's no input:") and change it to
+   **Stop and Respond**. It asks for a response — the message shown if the
+   shortcut is ever run without anything shared. Enter:
+   `Nothing to send — share a link to use Send to Dex.`
 
 ## Try it
 
