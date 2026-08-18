@@ -106,14 +106,15 @@ your dictionary has only one volume in it.
    form two branches: actions placed between **If** and **Otherwise** run
    when the condition is true; actions between **Otherwise** and **End If**
    run when it isn't.
-6. In the **If** row, tap **Condition** and choose **is**, then tap the number
-   field and enter **1**. The row now reads "If `Count` is 1".
+6. The **If** row arrives reading "If `Count` is **Number**", with **Number**
+   faded — `Count` and **is** are already correct by default. Tap the faded
+   **Number**, enter **1**, and close the panel. The row now reads
+   "If `Count` is 1 **+**" — ignore the **+**; it adds extra conditions to the
+   check, which we don't need.
 7. Get each of the next actions into the right branch. New actions land at
    the bottom of the shortcut, not inside the If block — for each one, touch
    and hold it, then drag it up until it sits indented directly beneath the
    row it belongs under (**If** for steps 8, **Otherwise** for steps 9).
-   Note: the **+** shown inside the If row adds extra *conditions* to the
-   check itself — it is not for adding actions, and it isn't used here.
 8. Between **If** and **Otherwise** (one volume — use it without asking):
    1. Add **Get Dictionary Value**. Change **Value** to **All Values**, and if its
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
