@@ -7,6 +7,16 @@ state formats). This file holds what's *next*, not what is.
 
 ## Queued discussions (not yet designed)
 
+- **Scheduled ingestion** — captures land in `inbox/` but nothing ingests
+  them until a session runs, so the wiki drifts stale between sessions. To
+  design: how ingest runs on a regular schedule. Candidates: Claude Cowork
+  scheduled sessions (first to test), headless Claude Code on a cron/launchd
+  timer, a scheduled cloud session. Decide alongside: schedule vs
+  capture-triggered, and how failures surface — ingest is a judgment
+  operation (scope checks, digests, wiki edits), not a blind pipeline, so
+  whatever runs it must be a full Claude session operating the instance
+  contract.
+
 - **Driver-based ingestion architecture** — the enricher should be an explicit
   driver registry per source kind. Existing drivers: youtube (captions +
   whisper), blog (trafilatura + wayback + og:image), github
