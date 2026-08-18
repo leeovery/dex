@@ -38,6 +38,10 @@ Two things to know about how Shortcuts works before you start:
 - **Set Variable** is how you save a result for use later, further down the
   chain. It's an ordinary action: it takes whatever the action above produced
   and gives it a name you choose.
+- Any field inside an action can also point at the result of an *earlier*
+  action, not just the one directly above. Tap the field, choose
+  **Select Variable**, then tap the result bubble beneath the action you want.
+  These instructions call that "point it at ...".
 
 ### List your volumes
 
@@ -75,19 +79,35 @@ token.
 ### Route to the right volume
 
 These actions pick the destination volume — and skip the picker entirely when
-there's only one volume to pick.
+your dictionary has only one volume in it.
 
-1. Add **Get Dictionary Keys**.
-2. Add **Count**, set to count **Items**.
-3. Add **If**, with the condition **Count is 1**.
-4. In the **If** branch (one volume, so use it without asking):
-   1. Add **Get Item from List**, set to **First Item**, from the keys.
-   2. Add **Get Dictionary Value** for that item.
-   3. Add **Set Variable** and name it `repo`.
-5. In the **Otherwise** branch (several volumes, so show the picker):
-   1. Add **Choose from List** over the keys, with the prompt "Which dex?".
-   2. Add **Get Dictionary Value** for the Chosen Item.
-   3. Add **Set Variable** and name it `repo`.
+1. Search the actions panel for "dictionary value" and add
+   **Get Dictionary Value**. (There is no separate "get keys" action — this one
+   does it, once you change its mode.)
+2. In that action, tap the highlighted word **Value** and change it to
+   **All Keys**. It now produces the list of your volume names.
+3. Check its dictionary field: Shortcuts may have auto-filled it with the token
+   text from the action above. Tap the field and point it at your
+   **Dictionary** from the first section.
+4. Search for "count" and add **Count**. Leave it counting **Items** — it
+   connects itself to the list of names above.
+5. Search for "if" and add **If**. Set its condition to **is** and the number
+   to **1**. Everything you add next goes inside one of its two branches.
+6. Inside the **If** branch (one volume — use it without asking):
+   1. Add **Get Dictionary Value**. Change **Value** to **All Values** and
+      point its dictionary field at your **Dictionary**. With one volume, the
+      "list" of values is just that volume's repo path.
+   2. Add **Set Variable** below it, and name the variable `repo`.
+7. Inside the **Otherwise** branch (several volumes — ask which):
+   1. Add **Choose from List**. Point its list field at the **All Keys** result
+      from step 2, and set the prompt to "Which dex?".
+   2. Add **Get Dictionary Value** (leave its mode as **Value**). Point its
+      dictionary field at your **Dictionary**, and in its key field insert
+      **Chosen Item**.
+   3. Add **Set Variable** below it, and name the variable `repo`.
+
+Whichever branch runs, the shortcut now holds the destination repo path in the
+`repo` variable.
 
 ### Capture the "why"
 
