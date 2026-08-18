@@ -197,37 +197,41 @@ First, a timestamp for unique filenames:
 
 Then detect whether an image was shared:
 
-4. Add **Get Images from Input**. Point its input at `Shortcut Input` if it
-   didn't connect itself.
-5. Add **Count** (counting **Items**), then add **If** with the condition
-   **is greater than** and the number **0**. As in Step 3, drag each of the
-   following actions into the right branch.
+4. Add **Get Images from Input**. It arrives reading "Get images from
+   `stamp`" — the wrong source. Repoint it: tap the `stamp` chip, tap
+   **Clear**, tap the faded placeholder, and pick `Shortcut Input` from the
+   options that appear.
+5. Add **Count**. It should read "Count Items in `Images`" — `Images` is the
+   result of Get Images from Input. If it connected to anything else, repoint
+   it to `Images`.
+6. Add **If**, with the condition **is greater than** and the number **0**.
+   As in Step 3, drag each of the following actions into the right branch.
 
 Between **If** and **Otherwise** (an image was shared):
 
-6. Add **Convert Image**, converting to **JPEG**. Point its input at the
-   **Get Images from Input** result.
-7. Add **Base64 Encode**.
-8. Add **Get Contents of URL**:
+7. Add **Convert Image**, converting to **JPEG**. Point its input at
+   `Images` (the Get Images from Input result).
+8. Add **Base64 Encode**.
+9. Add **Get Contents of URL**:
    1. URL: `https://api.github.com/repos/` + the `repo` variable +
       `/contents/state/inbox/` + the `stamp` variable + `.jpg`
-   2. Method: **PUT**. Headers, as in the text branch below:
+   2. Method: **PUT**. Headers:
       - key `Authorization`, text `Bearer` + space + the `token` variable
       - key `Accept`, text `application/vnd.github+json`
    3. Request Body **JSON**, two text fields:
       - key `message`, text `capture`
       - key `content`, text = the **Base64 Encoded** result
-9. To carry the note too: add **If** on `Ask for Input` **has any value**;
-   inside it, add **Base64 Encode** of the `Ask for Input` result, and another
-   **Get Contents of URL** exactly like step 8 but with the URL ending
+10. To carry the note too: add **If** on `Ask for Input` **has any value**;
+    inside it, add **Base64 Encode** of the `Ask for Input` result, and another
+    **Get Contents of URL** exactly like step 9 but with the URL ending
    `.md` instead of `.jpg` and `content` = that second Base64 result.
 
 Between **Otherwise** and **End If** (a link or text was shared):
 
-10. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
+11. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
     line, then the `Ask for Input` variable.
-11. Add **Base64 Encode** (of that Text).
-12. Add **Get Contents of URL**, configured as in step 8 but with the URL
+12. Add **Base64 Encode** (of that Text).
+13. Add **Get Contents of URL**, configured as in step 9 but with the URL
     ending `.md` and `content` = this Base64 result.
 
 ### Step 6: Name it and add it to the Share Sheet
