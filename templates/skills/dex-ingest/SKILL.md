@@ -88,6 +88,13 @@ prefix today's date — so ids stay one-to-one with files.
    append a `wiki/log.md` line; delete the capture file.
 7. **Commit + push**: `ingest: <short title>`.
 
+## After the last capture
+
+Check `wiki/log.md` for the most recent health check (a `| lint` entry). If
+it is more than 7 days old — or there has never been one — run the dex-lint
+skill now. Maintenance is the system's job, not the owner's; ingest is the
+trigger that keeps it regular.
+
 ## Backfills (exports in raw/)
 
 `bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex exclude

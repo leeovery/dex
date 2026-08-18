@@ -15,7 +15,8 @@ state formats). This file holds what's *next*, not what is.
   capture-triggered, and how failures surface — ingest is a judgment
   operation (scope checks, digests, wiki edits), not a blind pipeline, so
   whatever runs it must be a full Claude session operating the instance
-  contract.
+  contract. The same schedule carries the health check (today it rides a
+  7-day staleness trigger at the end of ingest).
 
 - **Driver-based ingestion architecture** — the enricher should be an explicit
   driver registry per source kind. Existing drivers: youtube (captions +

@@ -16,8 +16,9 @@ Three operations. Detailed procedures live in skills — load them, don't improv
   back under `wiki/syntheses/`.
 - **lint / health check** (`.claude/skills/dex-lint`) — `bin/dex lint` mechanical
   checks + judgment: fix, fold in stale members, reconcile contradictions,
-  re-apply `wiki/pins.md`. Owners will ask for this in plain words ("check my
-  knowledge base over", "health check") — same operation.
+  re-apply `wiki/pins.md`. Runs automatically: ingest triggers it when the
+  last check is over 7 days old. Owners can also ask in plain words ("check
+  my knowledge base over", "health check") — same operation.
 
 Machinery is engine-owned: `.claude/` (skills and this contract), `bin/dex`,
 and `.gitattributes` are overwritten by `bin/dex sync` — never hand-edit them
