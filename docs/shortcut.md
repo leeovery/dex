@@ -219,17 +219,23 @@ Between **If** and **Otherwise** (an image was shared):
 9. Add **Set Variable**, dragging it below the Base64 Encode. Tap
    **Variable Name** and type `payload`. The row now reads
    "Set `payload` to `Base64 Encoded`".
-10. Add **Text** containing exactly `.jpg`.
-11. Add **Set Variable**. Tap **Variable Name** and type `ext`.
+10. Add **Text**, dragging it below the Set Variable, containing exactly
+    `.jpg`.
+11. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
+    and type `ext`. The row now reads "Set `ext` to `Text`".
 
 Between **Otherwise** and **End If** (a link or text was shared):
 
-12. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
-    line, then the `Ask for Input` variable.
-13. Add **Base64 Encode** below it.
-14. Add **Set Variable**. Tap **Variable Name** and type `payload`.
-15. Add **Text** containing exactly `.md`.
-16. Add **Set Variable**. Tap **Variable Name** and type `ext`.
+12. Add **Text**, dragging it beneath **Otherwise**. First line: the
+    `Shortcut Input` variable. Then an empty line, then the `Ask for Input`
+    variable.
+13. Add **Base64 Encode**, dragging it below that Text.
+14. Add **Set Variable**, dragging it below the Base64 Encode. Tap
+    **Variable Name** and type `payload`. The row now reads
+    "Set `payload` to `Base64 Encoded`".
+15. Add **Text**, dragging it below that, containing exactly `.md`.
+16. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
+    and type `ext`. The row now reads "Set `ext` to `Text`".
 
 After **End If**, the single upload:
 
