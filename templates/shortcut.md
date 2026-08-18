@@ -38,10 +38,12 @@ Two things to know about how Shortcuts works before you start:
 - **Set Variable** is how you save a result for use later, further down the
   chain. It's an ordinary action: it takes whatever the action above produced
   and gives it a name you choose.
-- Any field inside an action can also point at the result of an *earlier*
-  action, not just the one directly above. Tap the field, choose
-  **Select Variable**, then tap the result bubble beneath the action you want.
-  These instructions call that "point it at ...".
+- Shortcuts often guesses which earlier result an action should use, and it
+  sometimes guesses wrong. You can always repoint it: tap the blue variable
+  chip inside the action, tap **Select Variable** in the options that appear,
+  and the editor switches to a selection mode showing a result bubble beneath
+  every earlier action — tap the bubble you want. These instructions call that
+  "point it at ...".
 
 ### List your volumes
 
@@ -85,9 +87,14 @@ your dictionary has only one volume in it.
    **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
    **All Keys**. It now produces the list of your volume names.
-3. Check its dictionary field: Shortcuts may have auto-filled it with the token
-   text from the action above. Tap the field and point it at your
-   **Dictionary** from the first section.
+3. The action now reads "Get All Keys in **Token**". That's Shortcuts guessing
+   the wrong source — it should read your volume list, not your token. Fix it:
+   1. Tap the blue **Token** chip inside the action.
+   2. In the options that appear, tap **Select Variable**.
+   3. The editor switches to selection mode, with a result bubble under each
+      earlier action. Tap the **Dictionary** bubble under your Dictionary
+      action.
+   The action now reads "Get All Keys in **Dictionary**" — that's correct.
 4. Search the actions panel for "count" and add **Count**. Leave it counting
    **Items** — it
    connects itself to the list of names above.
@@ -97,8 +104,9 @@ your dictionary has only one volume in it.
 6. Inside the **If** branch (one volume — use it without asking):
    1. Search the actions panel for "dictionary value" and add
       **Get Dictionary Value**. Change **Value** to **All Values** and point
-      its dictionary field at your **Dictionary**. With one volume, the "list"
-      of values is just that volume's repo path.
+      its dictionary field at your **Dictionary**, so it reads "Get All Values
+      in **Dictionary**". With one volume, the "list" of values is just that
+      volume's repo path.
    2. Search the actions panel for "set variable" and add **Set Variable**
       below it. Name the variable `repo`.
 7. Inside the **Otherwise** branch (several volumes — ask which):
@@ -108,7 +116,8 @@ your dictionary has only one volume in it.
    2. Search the actions panel for "dictionary value" and add
       **Get Dictionary Value**, leaving its mode as **Value**. Point its
       dictionary field at your **Dictionary**, and in its key field insert
-      **Chosen Item**.
+      **Chosen Item**, so it reads "Get Value for **Chosen Item** in
+      **Dictionary**".
    3. Search the actions panel for "set variable" and add **Set Variable**
       below it. Name the variable `repo`.
 
