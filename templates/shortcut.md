@@ -49,7 +49,7 @@ The dictionary is the shortcut's list of knowledge bases. It's what lets one
 shortcut serve any number of volumes, and it's the only thing you edit when you
 add a volume later.
 
-1. Add a **Dictionary** action.
+1. Search the actions panel for "dictionary" and add **Dictionary**.
 2. For each volume, tap **Add new item** and:
    1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
       aren't used here.)
@@ -68,9 +68,9 @@ You'll store the token in one place and give it a name, so the final step can
 use it — and so there's exactly one box to update if you ever replace the
 token.
 
-1. Search the actions panel for "text" and add the **Text** action. It appears
-   as an empty text box — paste your token into it.
-2. Search for "set variable" and add the **Set Variable** action directly
+1. Search the actions panel for "text" and add **Text**. It appears as an
+   empty text box — paste your token into it.
+2. Search the actions panel for "set variable" and add **Set Variable** directly
    below. This is a second, separate action: it takes the result of the action
    above it (your token) and saves it under a name.
 3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
@@ -82,29 +82,35 @@ These actions pick the destination volume — and skip the picker entirely when
 your dictionary has only one volume in it.
 
 1. Search the actions panel for "dictionary value" and add
-   **Get Dictionary Value**. (There is no separate "get keys" action — this one
-   does it, once you change its mode.)
+   **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
    **All Keys**. It now produces the list of your volume names.
 3. Check its dictionary field: Shortcuts may have auto-filled it with the token
    text from the action above. Tap the field and point it at your
    **Dictionary** from the first section.
-4. Search for "count" and add **Count**. Leave it counting **Items** — it
+4. Search the actions panel for "count" and add **Count**. Leave it counting
+   **Items** — it
    connects itself to the list of names above.
-5. Search for "if" and add **If**. Set its condition to **is** and the number
+5. Search the actions panel for "if" and add **If**. Set its condition to
+   **is** and the number
    to **1**. Everything you add next goes inside one of its two branches.
 6. Inside the **If** branch (one volume — use it without asking):
-   1. Add **Get Dictionary Value**. Change **Value** to **All Values** and
-      point its dictionary field at your **Dictionary**. With one volume, the
-      "list" of values is just that volume's repo path.
-   2. Add **Set Variable** below it, and name the variable `repo`.
+   1. Search the actions panel for "dictionary value" and add
+      **Get Dictionary Value**. Change **Value** to **All Values** and point
+      its dictionary field at your **Dictionary**. With one volume, the "list"
+      of values is just that volume's repo path.
+   2. Search the actions panel for "set variable" and add **Set Variable**
+      below it. Name the variable `repo`.
 7. Inside the **Otherwise** branch (several volumes — ask which):
-   1. Add **Choose from List**. Point its list field at the **All Keys** result
+   1. Search the actions panel for "choose from list" and add
+      **Choose from List**. Point its list field at the **All Keys** result
       from step 2, and set the prompt to "Which dex?".
-   2. Add **Get Dictionary Value** (leave its mode as **Value**). Point its
+   2. Search the actions panel for "dictionary value" and add
+      **Get Dictionary Value**, leaving its mode as **Value**. Point its
       dictionary field at your **Dictionary**, and in its key field insert
       **Chosen Item**.
-   3. Add **Set Variable** below it, and name the variable `repo`.
+   3. Search the actions panel for "set variable" and add **Set Variable**
+      below it. Name the variable `repo`.
 
 Whichever branch runs, the shortcut now holds the destination repo path in the
 `repo` variable.
@@ -114,15 +120,16 @@ Whichever branch runs, the shortcut now holds the destination repo path in the
 A one-line note about why something caught your eye is often the most valuable
 part of a capture — it travels with the link into the knowledge base.
 
-1. Add **Ask for Input**, type **Text**, with the prompt "Why? (optional)".
-2. Leave the default answer empty.
+1. Search the actions panel for "ask for input" and add **Ask for Input**.
+2. Set its type to **Text** and its prompt to "Why? (optional)". Leave the
+   default answer empty.
 
 ### File it
 
 This step sends the capture: it opens a GitHub issue on the chosen volume,
 which the volume's workflow files into its inbox and then closes.
 
-1. Add **Get Contents of URL**.
+1. Search the actions panel for "get contents" and add **Get Contents of URL**.
 2. In the URL field: type `https://api.github.com/repos/`, insert the **repo**
    variable, then type `/issues`.
 3. Tap the arrow to expand the options and set **Method** to **POST**.
