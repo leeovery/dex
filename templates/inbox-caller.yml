@@ -1,5 +1,8 @@
 name: inbox
-# Thin caller — all logic lives in dex-engine's reusable workflow.
+# Thin caller — the logic lives in the dex engine's reusable workflow. It runs
+# entirely in YOUR repo with YOUR token; no data leaves your volume. If you are
+# not leeovery, you're trusting the engine repo's code: pin a commit SHA instead
+# of @main, or fork the engine and point 'uses:' at your fork.
 
 on:
   repository_dispatch:
