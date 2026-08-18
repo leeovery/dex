@@ -6,7 +6,15 @@ silently; with several it shows a picker.
 
 ## Add the ready-made shortcut (recommended)
 
-_Link coming soon — until it's pinned here, build manually below._
+1. Create your token first (see **Before you begin**).
+2. Open this link on your iPhone or iPad and add the shortcut:
+   https://www.icloud.com/shortcuts/f34f57189941476bb96be669235396b6
+3. On import, a **Customize Shortcut** screen asks two questions:
+   1. Your instances — for each dex instance, tap **Add new item**, choose
+      **Text**, and set key = its display name, text = its GitHub repo as
+      `owner/repo`.
+   2. Your token — paste it.
+4. Share something to test it (see **Try it**).
 
 ## Before you begin
 
