@@ -303,7 +303,9 @@ as `payload`:
     10. Add **Set Variable** below it. Tap **Variable Name** and type
         `payload`.
 
-Finally, the single upload — identical for every kind of capture:
+Finally, the single upload. These last two actions sit below the **End If**,
+outside every branch, at the top level of the shortcut — they run for every
+kind of capture:
 
 15. Add **Base64 Encode**. Repoint its input to `payload`, and expand its
     options and set **Line Breaks** to **None** — the default inserts line
