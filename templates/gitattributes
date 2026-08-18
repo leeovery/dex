@@ -6,3 +6,12 @@ state/inbox/*.png filter=lfs diff=lfs merge=lfs -text
 state/inbox/*.gif filter=lfs diff=lfs merge=lfs -text
 state/inbox/*.heic filter=lfs diff=lfs merge=lfs -text
 enrichment/**/media-* filter=lfs diff=lfs merge=lfs -text
+raw/**/*.png filter=lfs diff=lfs merge=lfs -text
+raw/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+raw/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+raw/**/*.webp filter=lfs diff=lfs merge=lfs -text
+raw/**/*.gif filter=lfs diff=lfs merge=lfs -text
+raw/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+raw/**/*.mov filter=lfs diff=lfs merge=lfs -text
+raw/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+raw/**/*.heic filter=lfs diff=lfs merge=lfs -text
