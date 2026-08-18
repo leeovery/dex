@@ -39,6 +39,13 @@ references (schema, state formats). This file holds what's *next*, not what is.
   shows a checkmark; silent failure.
 - Instance repos owned by orgs can't use no-expiration fine-grained PATs;
   classic PAT (repo scope) is the workaround (dex-curated/Natasha).
+- Shortcuts variable chips can go stale after nearby edits: the chip renders
+  normally but resolves empty at run time. Symptom: "Cannot parse response"
+  on a request whose config looks correct. Fix: delete and re-insert the
+  chips.
+- Get Images from Input dereferences URL inputs (fetches them); the X app's
+  share URL redirects through a non-HTTPS scheme and errors. Links must be
+  detected and diverted before any Get Images call.
 
 ## Pending on Lee's device
 
