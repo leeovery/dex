@@ -4,6 +4,20 @@ Share a link from any app to file it in your instance's inbox, ready for the nex
 ingest. One shortcut handles any number of instances: with one instance it files
 silently; with several it shows a picker.
 
+## Add the ready-made shortcut (recommended)
+
+1. Create your token first — see **Before you begin** below.
+2. Open this link on your iPhone or iPad and add the shortcut:
+   https://www.icloud.com/shortcuts/4b3f52d833b14d169ff0a015d383cfd5
+3. On import you're asked two questions:
+   - **Your dex instances** — tap **Add new item**, choose **Text**, key = the
+     instance's name (e.g. `Engineering`), text = its repo as `owner/repo`.
+     Repeat for each instance.
+   - **Your GitHub token** — paste it.
+
+Done — share any page and it files into your dex. Everything below is the
+manual build, kept as reference for how the shortcut works.
+
 ## Before you begin
 
 Create a token that the shortcut uses to file captures:
