@@ -1,10 +1,10 @@
 """Sync engine-managed machinery into the current instance.
 
 Refreshes from the engine's bundled templates: .claude/skills/dex-*,
-bin/kb, .gitattributes. Instance-owned files (CLAUDE.md, README,
+bin/dex, .gitattributes. Instance-owned files (CLAUDE.md, README,
 content) are never touched.
 
-Run from the instance root: kb-sync (or bin/kb sync)
+Run from the instance root: dex-sync (or bin/dex sync)
 """
 
 import os
@@ -31,8 +31,12 @@ def main() -> None:
         if src.is_file():
             _write_if_changed(ROOT / ".claude" / "skills" / skill.name / "SKILL.md",
                               src.read_text(), changed)
-    _write_if_changed(ROOT / "bin" / "kb", (tpl / "kb").read_text(), changed)
-    os.chmod(ROOT / "bin" / "kb", 0o755)
+    _write_if_changed(ROOT / "bin" / "dex", (tpl / "dex").read_text(), changed)
+    os.chmod(ROOT / "bin" / "dex", 0o755)
+    old_shim = ROOT / "bin" / "kb"
+    if old_shim.exists():
+        old_shim.unlink()
+        changed.append("bin/kb (removed — renamed to bin/dex)")
     _write_if_changed(ROOT / ".gitattributes", (tpl / "gitattributes").read_text(), changed)
     if changed:
         print("synced from engine:")

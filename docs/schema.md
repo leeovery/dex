@@ -33,7 +33,7 @@ the most valuable part (why the sharer thought it mattered)>
   deleted users, so leavers can't be told apart; in the two AI spaces this is *mostly*
   <sharer> (he was the prolific sharer) but not provably on any given item.
 - `manual` items — anything <owner> drops in directly (URL or pasted text, via a session or
-  `bin/kb add`). `shared_by: <owner>`, `channel: manual`, date = today. Same pipeline from
+  `bin/dex add`). `shared_by: <owner>`, `channel: manual`, date = today. Same pipeline from
   there on.
 - `status` — `raw` at normalize time; enricher flips to `enriched` and fills
   `enrichment` with filenames under `enrichment/<id>/`.

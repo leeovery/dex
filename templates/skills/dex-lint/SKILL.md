@@ -5,9 +5,9 @@ description: Health-check and repair this dex instance. Use when the owner asks 
 
 # Health check (lint)
 
-1. `bin/kb sync` — refresh engine-managed machinery (skills, shim, inbox
+1. `bin/dex sync` — refresh engine-managed machinery (skills, shim, inbox
    workflow); commit if anything changed.
-2. Run `bin/kb lint` from the instance root — the mechanical report.
+2. Run `bin/dex lint` from the instance root — the mechanical report.
 3. Fix, in order:
    - **Broken wikilinks** — typo → correct it; genuinely missing target → create
      the page if its members justify one, otherwise de-link.

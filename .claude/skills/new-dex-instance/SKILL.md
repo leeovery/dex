@@ -35,8 +35,8 @@ mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digest
 # templates from the engine repo (you may be running inside a clone of it — copy locally if so)
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-README.md -o README.md  # then personalize
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/kb -o bin/kb && chmod +x bin/kb
-bin/kb sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, .gitattributes
+curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/dex -o bin/dex && chmod +x bin/dex
+bin/dex sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, .gitattributes
 printf '.DS_Store\n.env\n' > .gitignore
 mkdir -p state/inbox && touch state/inbox/.gitkeep
 git lfs install --local   # media/ and image captures are LFS-tracked
@@ -51,9 +51,9 @@ Then:
 - Personalize README.md: owner/domain AND the same In-scope list — the two files
   mirror each other; scope changes always update both.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
-  then `bin/kb inbox ensure` — creates the standing "inbox" release that binary
+  then `bin/dex inbox ensure` — creates the standing "inbox" release that binary
   captures stage into.
-  - Sanity check: `bin/kb lint` from the instance root (prints a fresh-instance notice).
+  - Sanity check: `bin/dex lint` from the instance root (prints a fresh-instance notice).
 
 ## 3. Capture setup (only their PAT needs their hands)
 
@@ -67,8 +67,8 @@ Walk them through, concretely:
 
 ## 4. Backfill (if any)
 
-Exports go in `raw/`, then run the pipeline: `bin/kb normalize` → scope-filter pass
-(agent judgment, exclusions via `bin/kb exclude`) → `bin/kb enrich run` → digest every
+Exports go in `raw/`, then run the pipeline: `bin/dex normalize` → scope-filter pass
+(agent judgment, exclusions via `bin/dex exclude`) → `bin/dex enrich run` → digest every
 item → taxonomy → assemble wiki pages → verify. For large backfills (500+ items):
 work in waves; verify coverage mechanically between waves; write work manifests
 BEFORE dispatching parallel agents; every agent contract includes "if an input is

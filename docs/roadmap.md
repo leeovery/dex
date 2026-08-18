@@ -16,9 +16,9 @@ Binary captures no longer enter git history as raw blobs. The unified design
   binaries upload as a raw File body (no base64) to the inbox release; one
   shared final PUT of `{stamp}.md` for every capture kind. Rewritten in
   `docs/shortcut.md` — needs the on-device rebuild.
-- **Engine**: `kb-inbox` reconciles the inbox (asset → `media/<id>/` +
+- **Engine**: `dex-inbox` reconciles the inbox (asset → `media/<id>/` +
   git add so LFS applies — verified staged as an LFS pointer before the asset
-  is deleted; pointer frontmatter rewritten to `media:`); `kb inbox ensure`
+  is deleted; pointer frontmatter rewritten to `media:`); `dex inbox ensure`
   creates the standing release (also self-heals on each run); orphaned assets
   (upload succeeded, pointer PUT failed) are reported. Auth: GITHUB_TOKEN →
   `gh auth token` — **gh is a declared instance dependency** (checked at

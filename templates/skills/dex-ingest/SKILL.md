@@ -19,7 +19,7 @@ file) additionally carries frontmatter pointing at its media.
 Start every ingest with:
 
 1. `git pull` — captures arrive as commits.
-2. `bin/kb inbox` — mechanical reconcile: downloads any staged release assets
+2. `bin/dex inbox` — mechanical reconcile: downloads any staged release assets
    into `media/<item-id>/`, git-adds them so LFS applies, deletes the remote
    assets, and rewrites each capture's frontmatter to
    `media: media/<item-id>/<file>`. Text captures pass through untouched. It
@@ -30,6 +30,12 @@ Start every ingest with:
 Then process every capture with the one procedure below, and delete each
 capture file when its item is done (the capture is preserved in git history;
 its content lives on in the corpus).
+
+Items handed directly in a session (a URL pasted in, an image or file dropped
+in) follow the same procedure — no inbox involved. For session-provided media,
+do what `bin/dex inbox` would have done: file it at `media/<item-id>/<name>`
+(`item-id = sha1("media/<name>")[:6]`) and `git add` it so LFS applies, then
+continue from step 1.
 
 ## Per capture
 
@@ -42,7 +48,7 @@ its content lives on in the corpus).
      `shortid = sha1("manual/<canonical-url>")[:6]`. Note-only captures with
      no URL: `sha1("manual/<capture-filename>")[:6]`.
    - Media capture: the item id is already fixed — it's the directory name
-     `bin/kb inbox` created under `media/`.
+     `bin/dex inbox` created under `media/`.
 
    Write `corpus/YYYY/YYYY-MM-DD-<slug>-<shortid>.md` with frontmatter per the
    engine's `docs/schema.md`: id, source (`inbox`|`manual`|exporter name),
@@ -50,10 +56,10 @@ its content lives on in the corpus).
    `[file]`, plus a `media:` list pointing at the file(s)), `status: raw`,
    `enrichment: []`. Body = the capture's note verbatim — often the most
    valuable part.
-3. **Enrich.** `bin/kb enrich run` (fetches captions, article text, READMEs,
+3. **Enrich.** `bin/dex enrich run` (fetches captions, article text, READMEs,
    papers, tweets — and lead images/tweet photos into
    `enrichment/<id>/media-N.*` unless the instance config says otherwise).
-   Caption-less video/audio: `bin/kb enrich whisper` (OPENAI_API_KEY in
+   Caption-less video/audio: `bin/dex enrich whisper` (OPENAI_API_KEY in
    `.env`). For a media capture the primary source is the media itself: view
    it and write `enrichment/<id>/media-0.md` — what it depicts, all legible
    text (OCR), and, where relevant to this instance's domain, style, palette,
@@ -76,8 +82,8 @@ its content lives on in the corpus).
 
 ## Backfills (exports in raw/)
 
-`bin/kb normalize` → scope-filter pass (judgment; purge via `bin/kb exclude
-<file.json>`) → `bin/kb enrich run` → digest/place/assemble at scale. For 500+
+`bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex exclude
+<file.json>`) → `bin/dex enrich run` → digest/place/assemble at scale. For 500+
 items: work in waves; write work manifests BEFORE dispatching any parallel
 agents; every agent contract includes "if an input is missing, STOP — do not
 improvise"; verify coverage mechanically between waves.

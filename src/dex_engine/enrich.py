@@ -34,7 +34,7 @@ def _instance_cfg() -> dict:
 
 MEDIA_FETCH = _instance_cfg().get("media_fetch", "lead")  # none | lead
 
-UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) aikb-enricher"}
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) aidex-enricher"}
 SLEEP = {"youtube": 2.0, "blog": 1.0, "github": 0.3, "paper": 3.0, "tweet": 4.0}
 
 # ---------- URL handling ----------
@@ -449,7 +449,7 @@ def cmd_whisper() -> None:
                 os.environ.setdefault(k.strip(), v.strip())
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
-        sys.exit("OPENAI_API_KEY not set (env or aikb/.env)")
+        sys.exit("OPENAI_API_KEY not set (env or instance .env)")
     import yt_dlp
 
     ledger = load_ledger()

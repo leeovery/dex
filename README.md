@@ -94,18 +94,18 @@ for the corpus format.
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>
 
-Instances run the engine's mechanical commands via a `bin/kb` shim
-(`uvx --from git+https://github.com/leeovery/dex kb-<cmd>`, cwd = instance root):
+Instances run the engine's mechanical commands via a `bin/dex` shim
+(`uvx --from git+https://github.com/leeovery/dex dex-<cmd>`, cwd = instance root):
 
 | command | does |
 |---|---|
-| `kb-normalize` | raw chat exports → corpus items (Google Chat Takeout + DiscordChatExporter formats) |
-| `kb-enrich run` | fetch behind every corpus URL: YouTube captions, article text (with Wayback fallback), GitHub repos/profiles, arXiv papers, tweets |
-| `kb-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
-| `kb-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
-| `kb-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
-| `kb-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
-| `kb-sync` | refresh engine-managed instance machinery (skills, `bin/kb`, `.gitattributes`) |
+| `dex-normalize` | raw chat exports → corpus items (Google Chat Takeout + DiscordChatExporter formats) |
+| `dex-enrich run` | fetch behind every corpus URL: YouTube captions, article text (with Wayback fallback), GitHub repos/profiles, arXiv papers, tweets |
+| `dex-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
+| `dex-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
+| `dex-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
+| `dex-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
+| `dex-sync` | refresh engine-managed instance machinery (skills, `bin/dex`, `.gitattributes`) |
 
 Capture inbox: every capture is one `.md` in `state/inbox/`, written via the
 GitHub contents API — body = URL and/or note; a capture that carried a binary

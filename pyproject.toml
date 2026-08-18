@@ -6,12 +6,12 @@ requires-python = ">=3.11"
 dependencies = ["trafilatura>=1.12", "yt-dlp>=2025.1.1", "pypdf>=5"]
 
 [project.scripts]
-kb-normalize = "dex_engine.normalize:main"
-kb-enrich = "dex_engine.enrich:main"
-kb-lint = "dex_engine.lint:main"
-kb-exclude = "dex_engine.exclude:main"
-kb-sync = "dex_engine.sync:main"
-kb-inbox = "dex_engine.inbox:main"
+dex-normalize = "dex_engine.normalize:main"
+dex-enrich = "dex_engine.enrich:main"
+dex-lint = "dex_engine.lint:main"
+dex-exclude = "dex_engine.exclude:main"
+dex-sync = "dex_engine.sync:main"
+dex-inbox = "dex_engine.inbox:main"
 
 [build-system]
 requires = ["hatchling"]

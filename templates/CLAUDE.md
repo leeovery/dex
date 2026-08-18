@@ -2,7 +2,7 @@
 
 A personal, LLM-maintained knowledge base. You (Claude) ARE the application: you
 operate this repo per the contract below. Engine (mechanical pipeline):
-github.com/leeovery/dex, run via `bin/kb <cmd>` from the repo root.
+github.com/leeovery/dex, run via `bin/dex <cmd>` from the repo root.
 
 ## In scope
 
@@ -23,7 +23,7 @@ Three operations. Detailed procedures live in skills — load them, don't improv
 - **query** (`.claude/skills/dex-query`) — answer from the wiki: `wiki/index.md`
   first, follow [[wikilinks]], prefer newest, cite item ids. File real syntheses
   back under `wiki/syntheses/`.
-- **lint / health check** (`.claude/skills/dex-lint`) — `bin/kb lint` mechanical
+- **lint / health check** (`.claude/skills/dex-lint`) — `bin/dex lint` mechanical
   checks + judgment: fix, fold in stale members, reconcile contradictions,
   re-apply `wiki/pins.md`. Owners will ask for this in plain words ("check my
   knowledge base over", "health check") — same operation.

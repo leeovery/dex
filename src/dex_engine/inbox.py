@@ -11,7 +11,7 @@ the instance's standing "inbox" release:
     ---
     why this caught my eye
 
-Run from the instance root (bin/kb inbox), this command:
+Run from the instance root (bin/dex inbox), this command:
 
   1. downloads each staged asset to media/<item-id>/<name>
      (item-id = sha1("media/<name>")[:6] — the id the ingest skill uses),
@@ -20,7 +20,7 @@ Run from the instance root (bin/kb inbox), this command:
   4. rewrites the capture frontmatter to `media: media/<item-id>/<name>`.
 
 Text captures pass through untouched. Idempotent; run it at the top of
-every ingest. `bin/kb inbox ensure` creates the standing release if
+every ingest. `bin/dex inbox ensure` creates the standing release if
 missing (one-time per instance; reconcile runs also self-heal it).
 
 Auth: GITHUB_TOKEN env var, else `gh auth token`. Only required when
