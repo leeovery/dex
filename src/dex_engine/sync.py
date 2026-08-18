@@ -22,17 +22,21 @@ def _write_if_changed(dest: Path, content: str, changed: list) -> None:
     changed.append(str(dest.relative_to(ROOT)))
 
 
+def _copy_tree(src_dir, dest_dir: Path, changed: list) -> None:
+    for item in src_dir.iterdir():
+        if item.is_dir():
+            _copy_tree(item, dest_dir / item.name, changed)
+        elif item.is_file():
+            _write_if_changed(dest_dir / item.name, item.read_text(), changed)
+
+
 def main() -> None:
     tpl = resources.files("dex_engine") / "templates"
     changed: list = []
     skills = tpl / "skills"
     for skill in skills.iterdir():
-        if not skill.is_dir():
-            continue
-        for src in skill.iterdir():
-            if src.is_file():
-                _write_if_changed(ROOT / ".claude" / "skills" / skill.name / src.name,
-                                  src.read_text(), changed)
+        if skill.is_dir():
+            _copy_tree(skill, ROOT / ".claude" / "skills" / skill.name, changed)
     _write_if_changed(ROOT / "bin" / "dex", (tpl / "dex").read_text(), changed)
     os.chmod(ROOT / "bin" / "dex", 0o755)
     old_shim = ROOT / "bin" / "kb"

@@ -58,7 +58,7 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
 ## Conventions
 
 - Filenames lowercase kebab-case. Corpus items: `corpus/YYYY/YYYY-MM-DD-<slug>-<id>.md`
-  (id = sha1 of a stable key, first 6 hex). Schema: `.claude/skills/dex-ingest/schema.md`.
+  (id = sha1 of a stable key, first 6 hex). Schema: `.claude/skills/dex-ingest/references/schema.md`.
 - Citations: backticked item ids inline. Wikilinks `[[name]]` only to names that
   exist in `state/taxonomy.json` or as pages.
 - Commit after each completed operation with a one-line summary; append one line to

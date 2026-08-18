@@ -89,7 +89,7 @@ What makes it trustworthy rather than vibes-in-a-wiki:
   smoothed over.
 
 See `example/` for a three-file toy instance showing the shapes, and
-`templates/skills/dex-ingest/schema.md` for the corpus format.
+`templates/skills/dex-ingest/references/schema.md` for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>

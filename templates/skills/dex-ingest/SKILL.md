@@ -51,7 +51,7 @@ continue from step 1.
      `bin/dex inbox` created under `media/`.
 
    Write `corpus/YYYY/YYYY-MM-DD-<slug>-<shortid>.md` with frontmatter per
-   `schema.md` (in this skill's directory): id, source (`inbox`|`manual`|exporter name),
+   `references/schema.md` (in this skill's directory): id, source (`inbox`|`manual`|exporter name),
    channel, shared_by, date, urls, kinds (media captures: `[image]` or
    `[file]`, plus a `media:` list pointing at the file(s)), `status: raw`,
    `enrichment: []`. Body = the capture's note verbatim — often the most
