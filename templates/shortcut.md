@@ -208,8 +208,8 @@ won't find it by searching the actions panel.
    action has appeared there reading "Receive **Apps and 18 more** from
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
    **Apps and 18 more** chip.
-5. Everything is toggled on by default. Turn OFF the following, in the order
-   they appear, and leave everything else on:
+5. Everything is toggled on by default. Turn OFF the following and leave
+   everything else on:
    - **Images**
    - **Media**
    - **Files**
@@ -222,9 +222,6 @@ won't find it by searching the actions panel.
    - **Phone numbers**
    - **Dates**
    - **iTunes products**
-   (These share as data or aren't knowledge sources; what stays on — Text,
-   Rich text, Safari web pages, URLs, Articles, App Store apps — all arrive as
-   text or links, which this capture path can carry.)
 6. Tap the blue tick in the top-right corner to confirm the toggles.
 7. Tap **Continue** (after "If there's no input:") and change it to
    **Stop and Respond**. It asks for a response — the message shown if the
