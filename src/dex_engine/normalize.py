@@ -158,7 +158,7 @@ def normalize_space(space_dir: Path, channel: str) -> tuple[int, int]:
                 body.append(f"> unfurl: {title}")
             body.append("")
 
-        emit_item("gspace", "foundations", channel, item_id, date, shared_by,
+        emit_item("gspace", channel, item_id, date, shared_by,
                   external, kinds,
                   [f"raw/gspace/{channel}/{a}" for a in attachments],
                   reactions, body)
@@ -167,7 +167,7 @@ def normalize_space(space_dir: Path, channel: str) -> tuple[int, int]:
     return written, skipped
 
 
-def emit_item(source, tier, channel, item_id, date, shared_by, urls, kinds,
+def emit_item(source, channel, item_id, date, shared_by, urls, kinds,
               attachment_paths, reactions, body_lines) -> None:
     fm = [
         "---",
@@ -186,7 +186,7 @@ def emit_item(source, tier, channel, item_id, date, shared_by, urls, kinds,
         fm += [f"  - {p}" for p in attachment_paths]
     if reactions:
         fm.append(f"reactions: {reactions}")
-    fm += [f"tier: {tier}", "status: raw", "enrichment: []", "---", ""]
+    fm += ["status: raw", "enrichment: []", "---", ""]
 
     out = CORPUS / f"{date:%Y}" / f"{item_id}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -278,7 +278,7 @@ def normalize_discord(chan_dir: Path, channel: str) -> tuple[int, int]:
                     body.append(f"> unfurl: {title}")
             body.append("")
 
-        emit_item("discord", "frontier", channel, item_id, date, shared_by,
+        emit_item("discord", channel, item_id, date, shared_by,
                   external, kinds,
                   [f"raw/discord/{channel}/{a}" for a in attachments],
                   reactions, body)

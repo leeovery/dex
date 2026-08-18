@@ -38,8 +38,8 @@ media: []                                   # media captures: repo-relative path
   `enrichment` with filenames under `enrichment/<id>/`.
 - Threaded replies that add substance are appended to the parent item's body
   with an attribution line, not split into separate items.
-- Instances may add their own derived fields (e.g. a `tier` classifying eras
-  of material) — document any in the instance's CLAUDE.md.
+- The schema is identical across every instance — no instance-specific
+  fields. Only the content differs.
 
 ## What is deliberately NOT in the schema
 
