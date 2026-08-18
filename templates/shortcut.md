@@ -265,10 +265,10 @@ travels with it.
 4. Once the questions exist, **Change Answers** / **Customize Shortcut**
    becomes how ANY copy gets configured — including yours. It re-asks the
    questions and writes the answers into the shortcut's fields.
-5. So the clean setup: empty the Dictionary and the token Text box. That empty
-   shortcut is the shareable master. Then run **Change Answers** yourself and
-   enter your real instances and token — your copy is configured for daily
-   use, and the master you share stays clean.
+5. You can share directly from your configured copy: fields that carry import
+   questions are cleared automatically in the shared artifact, so your token
+   and instances never travel (verified — importing the shared link prompts
+   for them). Each share produces a new link.
 6. Share as an iCloud link. On import, the questions appear as a
    **Customize Shortcut** screen: for the instances question the importer taps
    **Add new item**, chooses **Text**, and fills the key (name) and text
