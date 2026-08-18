@@ -1,9 +1,9 @@
 ---
-name: dex-new-volume
-description: Set up a new dex knowledge base (a "volume") end-to-end — interview the user, scaffold the repo, configure capture. Use when the user wants a new knowledge base, brain, or dex volume ("set up a dex for marketing", "make a knowledge base for my business").
+name: dex-new-instance
+description: Set up a new dex knowledge base (a "instance") end-to-end — interview the user, scaffold the repo, configure capture. Use when the user wants a new knowledge base, brain, or dex instance ("set up a dex for marketing", "make a knowledge base for my business").
 ---
 
-# Set up a new dex volume
+# Set up a new dex instance
 
 You do ALL the work — the user never runs commands. Interview, then build, then hand
 them a short "how to use it" note.
@@ -29,7 +29,7 @@ mkdir -p <path> && cd <path> && git init
 mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin .github/workflows
 # templates from the engine repo (you may be running inside a clone of it — copy locally if so)
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/volume-README.md -o README.md  # then personalize
+curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-README.md -o README.md  # then personalize
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/kb -o bin/kb && chmod +x bin/kb
 bin/kb sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, inbox workflow
 printf '.DS_Store\n.env\n' > .gitignore
@@ -41,21 +41,21 @@ printf '# Pins\n\nHuman corrections as claim+anchor; regeneration must re-apply 
 ```
 
 Then:
-- Fill CLAUDE.md: volume name, domain, and the In-scope list exactly as interviewed.
+- Fill CLAUDE.md: instance name, domain, and the In-scope list exactly as interviewed.
 - Personalize README.md: owner/domain AND the same In-scope list — the two files
   mirror each other; scope changes always update both.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
   and offer to set repo notifications to Ignore (inbox issue traffic is noise):
   `gh api -X PUT /repos/<owner>/<name>/subscription -F ignored=true`.
-- Sanity check: `bin/kb lint` from the volume root (prints a fresh-volume notice).
+- Sanity check: `bin/kb lint` from the instance root (prints a fresh-instance notice).
 
 ## 3. Capture setup (only their PAT needs their hands)
 
 Walk them through, concretely:
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token scoped
-   to ONLY this volume repo, permissions: Contents R/W + Issues R/W.
+   to ONLY this instance repo, permissions: Contents R/W + Issues R/W.
 2. iOS Shortcut: walk them through `templates/shortcut.md` (the universal
-   recipe — dictionary of volumes, auto-skips the picker when there's only one).
+   recipe — dictionary of instances, auto-skips the picker when there's only one).
 3. Tell them plainly: never share the Shortcut or its iCloud link publicly — shared
    shortcuts embed the PAT.
 
@@ -70,6 +70,6 @@ missing, STOP — do not improvise".
 
 ## 5. Hand-off note (end your final message with this)
 
-Tell the user, in a few lines: where the volume lives, its scope as written, how to
+Tell the user, in a few lines: where the instance lives, its scope as written, how to
 save things (shortcut + "add this to dex" in a session), how to ask questions, and
 that "run a lint" is the periodic health check. They never touch the machinery.

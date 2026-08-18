@@ -1,1 +1,1 @@
-"""dex engine — shared pipeline for dex knowledge-base volumes."""
+"""dex engine — shared pipeline for dex knowledge-base instances."""

@@ -1,10 +1,10 @@
-"""Sync engine-managed machinery into the current volume.
+"""Sync engine-managed machinery into the current instance.
 
 Refreshes from the engine's bundled templates: .claude/skills/dex-*,
-bin/kb, .github/workflows/inbox.yml. Volume-owned files (CLAUDE.md, README,
+bin/kb, .github/workflows/inbox.yml. Instance-owned files (CLAUDE.md, README,
 content) are never touched.
 
-Run from the volume root: kb-sync (or bin/kb sync)
+Run from the instance root: kb-sync (or bin/kb sync)
 """
 
 import os
@@ -41,7 +41,7 @@ def main() -> None:
             print(f"  {c}")
         print("review + commit these.")
     else:
-        print("volume machinery already current.")
+        print("instance machinery already current.")
 
 
 if __name__ == "__main__":

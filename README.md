@@ -37,12 +37,12 @@ git clone https://github.com/leeovery/dex && cd dex && claude
 
 Then say:
 
-> **/dex-new-volume**
+> **/dex-new-instance**
 
 Claude interviews you — what to call it, what it covers, where it should live — and
 sets up everything: the repo, the structure, the scope rules, and (if you want) a
 one-tap "save to my dex" shortcut for your phone (recipe: `templates/shortcut.md` —
-one shortcut serves one volume silently or several with a picker). From then on you talk to your
+one shortcut serves one instance silently or several with a picker). From then on you talk to your
 knowledge base, never to the machinery.
 
 ## Living with it
@@ -57,9 +57,9 @@ knowledge base, never to the machinery.
   broken links, missing citations, stale pages, and contradictions get found and
   fixed. Corrections you make by hand are pinned and survive every rebuild.
 
-One **dex**, many brains: each knowledge base is its own private *volume* repo
+One **dex**, many brains: each knowledge base is its own private *instance* repo
 (dex-engineering, dex-cooking, one for your partner's business...) and this public
-repo is the shared engine they all run on. Fix the engine once, every volume
+repo is the shared engine they all run on. Fix the engine once, every instance
 benefits.
 
 ## How it works
@@ -88,29 +88,29 @@ What makes it trustworthy rather than vibes-in-a-wiki:
   practice as marked history. Conflicts between old and new are surfaced, not
   smoothed over.
 
-See `example/` for a three-file toy volume showing the shapes, and `docs/schema.md`
+See `example/` for a three-file toy instance showing the shapes, and `docs/schema.md`
 for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>
 
-Volumes run the engine's mechanical commands via a `bin/kb` shim
-(`uvx --from git+https://github.com/leeovery/dex kb-<cmd>`, cwd = volume root):
+Instances run the engine's mechanical commands via a `bin/kb` shim
+(`uvx --from git+https://github.com/leeovery/dex kb-<cmd>`, cwd = instance root):
 
 | command | does |
 |---|---|
 | `kb-normalize` | raw chat exports → corpus items (Google Chat Takeout + DiscordChatExporter formats) |
 | `kb-enrich run` | fetch behind every corpus URL: YouTube captions, article text (with Wayback fallback), GitHub repos/profiles, arXiv papers, tweets |
-| `kb-enrich whisper` | transcribe caption-less media (OpenAI key in volume `.env`) |
+| `kb-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
 | `kb-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
 | `kb-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
 
-Capture inbox: any HTTP client opens a GitHub issue on the volume (`title` = URL,
+Capture inbox: any HTTP client opens a GitHub issue on the instance (`title` = URL,
 `body` = note); the reusable workflow (`.github/workflows/inbox-reusable.yml`)
 appends to `state/inbox.md` and closes the issue. Suggestion is untrusted by
-design — scope filtering happens at ingest, inside the volume.
+design — scope filtering happens at ingest, inside the instance.
 
-Volume layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim
+Instance layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim
 exports) · `corpus/` (append-only items) · `enrichment/` · `wiki/`
 (topics/entities/syntheses plus index, log, pins) · `state/` (digests, taxonomy,
 ledgers, inbox, normalize-config.json).

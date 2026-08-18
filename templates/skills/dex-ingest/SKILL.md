@@ -1,12 +1,12 @@
 ---
 name: dex-ingest
-description: Ingest new knowledge into this dex volume — from state/inbox.md, a URL or text dropped into the session, or exports in raw/. Use when the user says "add this to dex", "ingest this", or when inbox lines are waiting.
+description: Ingest new knowledge into this dex instance — from state/inbox.md, a URL or text dropped into the session, or exports in raw/. Use when the user says "add this to dex", "ingest this", or when inbox lines are waiting.
 ---
 
 # Ingest
 
 One item = capture provenance → enrich → digest → place → update wiki. Never skip
-steps; never invent inputs. All commands run from the volume root.
+steps; never invent inputs. All commands run from the instance root.
 
 ## Per item
 
@@ -20,7 +20,7 @@ steps; never invent inputs. All commands run from the volume root.
    sharer's verbatim note/context — often the most valuable part.
 3. **Enrich:** `bin/kb enrich run` (fetches captions, article text, READMEs,
    papers, tweets; updates the item's frontmatter). Caption-less video/audio:
-   `bin/kb enrich whisper` (needs OPENAI_API_KEY in the volume's `.env`).
+   `bin/kb enrich whisper` (needs OPENAI_API_KEY in the instance's `.env`).
 4. **Digest.** Read the enrichment fully; write `state/digests/<id>.md`:
    frontmatter (id, date, `signal: high|medium|low`, topics, entities) + 3–15
    standalone fact bullets with concrete specifics — names, numbers, versions,

@@ -1,6 +1,6 @@
 ---
 name: dex-query
-description: Answer a question from this dex volume's knowledge. Use for "what do we know about X", "what's the current thinking on Y", or any knowledge question in the volume's domain.
+description: Answer a question from this dex instance's knowledge. Use for "what do we know about X", "what's the current thinking on Y", or any knowledge question in the instance's domain.
 ---
 
 # Query

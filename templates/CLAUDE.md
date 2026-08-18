@@ -1,4 +1,4 @@
-# <volume> — <Domain> Knowledge Base (a dex volume)
+# <instance> — <Domain> Knowledge Base (a dex instance)
 
 A personal, LLM-maintained knowledge base. You (Claude) ARE the application: you
 operate this repo per the contract below. Engine (mechanical pipeline):

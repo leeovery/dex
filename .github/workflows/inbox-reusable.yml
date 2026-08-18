@@ -1,5 +1,5 @@
 name: inbox-reusable
-# Reusable inbox appender for dex volumes. Callers pass their own events
+# Reusable inbox appender for dex instances. Callers pass their own events
 # (repository_dispatch type "inbox" and/or issues.opened); the caller's
 # github.event context flows through.
 

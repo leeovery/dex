@@ -1,6 +1,6 @@
 name: inbox
 # Thin caller — the logic lives in the dex engine's reusable workflow. It runs
-# entirely in YOUR repo with YOUR token; no data leaves your volume. If you are
+# entirely in YOUR repo with YOUR token; no data leaves your instance. If you are
 # not leeovery, you're trusting the engine repo's code: pin a commit SHA instead
 # of @main, or fork the engine and point 'uses:' at your fork.
 

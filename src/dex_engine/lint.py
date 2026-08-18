@@ -27,7 +27,7 @@ LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 def main() -> None:
     tax_path = ROOT / "state" / "taxonomy.json"
     if not tax_path.exists():
-        print("fresh volume: no state/taxonomy.json yet — nothing to lint.")
+        print("fresh instance: no state/taxonomy.json yet — nothing to lint.")
         return
     tax = json.loads(tax_path.read_text())
     topics, entities = set(tax["topics"]), set(tax["entities"])

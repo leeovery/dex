@@ -1,13 +1,13 @@
 ---
 name: dex-lint
-description: Health-check and repair this dex volume. Use when the owner asks for a health check, a lint, to "look it over", or periodically after a run of ingests.
+description: Health-check and repair this dex instance. Use when the owner asks for a health check, a lint, to "look it over", or periodically after a run of ingests.
 ---
 
 # Health check (lint)
 
 1. `bin/kb sync` — refresh engine-managed machinery (skills, shim, inbox
    workflow); commit if anything changed.
-2. Run `bin/kb lint` from the volume root — the mechanical report.
+2. Run `bin/kb lint` from the instance root — the mechanical report.
 3. Fix, in order:
    - **Broken wikilinks** — typo → correct it; genuinely missing target → create
      the page if its members justify one, otherwise de-link.

@@ -17,7 +17,7 @@ ROOT = Path.cwd()  # engine runs from the brain repo root
 RAW = ROOT / "raw" / "gspace"
 CORPUS = ROOT / "corpus"
 
-# Volume-specific mappings live in state/normalize-config.json at the volume
+# Instance-specific mappings live in state/normalize-config.json at the instance
 # root: {"name_map": {...}, "internal_domains": [...], "noise_prefixes": [...]}
 import json as _json
 _cfg = {}

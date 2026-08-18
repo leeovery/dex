@@ -1,7 +1,7 @@
-# <volume>
+# <instance>
 
 <Owner>'s <domain> knowledge base — a private **[dex](https://github.com/leeovery/dex)**
-volume, maintained by Claude.
+instance, maintained by Claude.
 
 **How to use it** (no technical steps, ever):
 

@@ -1,7 +1,7 @@
 # Send To Dex — one-tap capture from iPhone or iPad
 
-Share a link from any app to file it in your volume's inbox, ready for the next
-ingest. One shortcut handles any number of volumes: with one volume it files
+Share a link from any app to file it in your instance's inbox, ready for the next
+ingest. One shortcut handles any number of instances: with one instance it files
 silently; with several it shows a picker.
 
 ## Before you begin
@@ -11,12 +11,12 @@ Create a token that the shortcut uses to file captures:
 1. On GitHub, go to **Settings > Developer settings > Fine-grained tokens** and
    tap **Generate new token**.
 2. Name the token so future-you knows what it is — for example `send-to-dex` —
-   and add a description like "Files captures from my phone into dex volume
+   and add a description like "Files captures from my phone into dex instance
    inboxes. Lives inside the Send To Dex shortcut."
 3. Set **Expiration** to **No expiration**. The shortcut breaks silently the day
    a token expires; if you prefer an expiring token, set a calendar reminder to
    rotate it.
-4. Under **Repository access**, select only your volume repo (or repos).
+4. Under **Repository access**, select only your instance repo (or repos).
 5. Under **Permissions**, set **Contents** and **Issues** to **Read and write**.
 6. Generate the token and copy it.
 
@@ -51,18 +51,18 @@ And three things to know about how Shortcuts behaves:
   action whose result you want. These instructions call that
   "repoint it to ...".
 
-### Step 1: List your volumes
+### Step 1: List your instances
 
 The dictionary is the shortcut's list of knowledge bases. It's what lets one
-shortcut serve any number of volumes, and it's the only thing you edit when you
-add a volume later.
+shortcut serve any number of instances, and it's the only thing you edit when you
+add a instance later.
 
 1. Add **Dictionary**.
-2. For each volume, tap **Add new item**, then:
+2. For each instance, tap **Add new item**, then:
    1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
       aren't used here.)
-   2. Set the key to the volume's display name.
-   3. Set the text value to the volume's repo path.
+   2. Set the key to the instance's display name.
+   3. Set the text value to the instance's repo path.
 
 For example:
 
@@ -84,23 +84,23 @@ token.
 3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
    its input alone — Shortcuts has already connected it to the Text box above.
 
-### Step 3: Route to the right volume
+### Step 3: Route to the right instance
 
-These actions pick the destination volume — and skip the picker entirely when
-your dictionary has only one volume in it.
+These actions pick the destination instance — and skip the picker entirely when
+your dictionary has only one instance in it.
 
 1. Add **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
    **All Keys**.
 3. The action now reads "Get All Keys in `token`". Shortcuts has guessed the
-   wrong source — it should read your volume list, not your token. Fix it:
+   wrong source — it should read your instance list, not your token. Fix it:
    1. Tap the blue `token` chip, then tap **Clear**. The panel closes and the
       field shows a faded **Dictionary** placeholder.
    2. Tap the faded placeholder. A bar appears listing the workflow's results
       by name — for example `token`, `Dictionary`, `Text`.
    3. Pick `Dictionary`.
    The action now reads "Get All Keys in `Dictionary`" — that's correct. It
-   produces the list of your volume names.
+   produces the list of your instance names.
 4. Add **Count**. It arrives reading
    "Count Items in `Dictionary Value`" — that's correct: `Dictionary Value` is
    the list of names produced by the previous step. Leave it as is.
@@ -118,7 +118,7 @@ your dictionary has only one volume in it.
    the bottom of the shortcut, not inside the If block — for each one, touch
    and hold it, then drag it up until it sits indented directly beneath the
    row it belongs under (**If** for steps 8, **Otherwise** for steps 9).
-8. Between **If** and **Otherwise** (one volume — use it without asking):
+8. Between **If** and **Otherwise** (one instance — use it without asking):
    1. Add **Get Dictionary Value**. Change **Value** to **All Values**, and if its
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
       "Get All Values in `Dictionary`".
@@ -126,7 +126,7 @@ your dictionary has only one volume in it.
       below it. Tap **Variable Name** and type `repo`. The row now reads
       "Set `repo` to `Dictionary Value`" — that's correct: it saves the repo
       path under the name `repo`.
-9. Between **Otherwise** and **End If** (several volumes — ask which):
+9. Between **Otherwise** and **End If** (several instances — ask which):
    1. Add **Choose from List** and drag it beneath **Otherwise**. It arrives
       reading "Choose from `Count`" — the wrong source. Fix it:
       1. Tap the `Count` chip, then tap **Clear**. The row now shows a faded
@@ -166,8 +166,8 @@ part of a capture — it travels with the link into the knowledge base.
 
 ### Step 5: File it
 
-This step sends the capture: it opens a GitHub issue on the chosen volume,
-which the volume's workflow files into its inbox and then closes.
+This step sends the capture: it opens a GitHub issue on the chosen instance,
+which the instance's workflow files into its inbox and then closes.
 
 1. Add **Get Contents of URL**. It arrives reading "Get contents of" with the
    Ask for Input result already filled in — the wrong content for this field.
@@ -238,7 +238,7 @@ travels with it.
 1. In the info panel, tap **Import Questions**, then **Add New Question**.
 2. Working top to bottom: choose the **Dictionary** parameter (shown as
    "Dictionary items"). Set the **Question Text** to:
-   `Your volumes — one item each: key = display name, text = owner/repo`
+   `Your instances — one item each: key = display name, text = owner/repo`
    In the **Default Answer**, tap **Add new item** and add one example row
    (key `Engineering`, text `your-username/dex-engineering`) so importers edit
    a template instead of starting blank. Confirm.
@@ -251,12 +251,12 @@ travels with it.
 ## Try it
 
 Share any page from Safari. Within about 30 seconds, an issue appears on the
-volume repo, the inbox workflow files it into `state/inbox.md`, and the issue
+instance repo, the inbox workflow files it into `state/inbox.md`, and the issue
 closes itself.
 
 ## Notes
 
-- To silence GitHub's issue notifications, set the volume repo's **Watch**
+- To silence GitHub's issue notifications, set the instance repo's **Watch**
   setting to **Ignore**.
 - Never share a shortcut whose token field lacks an import question — shared
   shortcuts embed whatever is in their fields. With the import question set
