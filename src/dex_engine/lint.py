@@ -25,7 +25,11 @@ LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 
 
 def main() -> None:
-    tax = json.loads((ROOT / "state" / "taxonomy.json").read_text())
+    tax_path = ROOT / "state" / "taxonomy.json"
+    if not tax_path.exists():
+        print("fresh volume: no state/taxonomy.json yet — nothing to lint.")
+        return
+    tax = json.loads(tax_path.read_text())
     topics, entities = set(tax["topics"]), set(tax["entities"])
     corpus_ids = {p.stem for p in (ROOT / "corpus").glob("*/*.md")}
     pages = {p.stem: p for p in WIKI.glob("topics/*.md")}
