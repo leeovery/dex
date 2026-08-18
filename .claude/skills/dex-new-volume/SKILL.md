@@ -31,7 +31,7 @@ mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digest
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/volume-README.md -o README.md  # then personalize
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/kb -o bin/kb && chmod +x bin/kb
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/inbox-caller.yml -o .github/workflows/inbox.yml
+bin/kb sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, inbox workflow
 printf '.DS_Store\n.env\n' > .gitignore
 printf '# Inbox — capture suggestions\n\nOne line per suggestion; triaged at ingest; lines removed once handled.\n' > state/inbox.md
 printf '{\n  "name_map": {},\n  "internal_domains": [],\n  "noise_prefixes": []\n}\n' > state/normalize-config.json

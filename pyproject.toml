@@ -10,6 +10,7 @@ kb-normalize = "dex_engine.normalize:main"
 kb-enrich = "dex_engine.enrich:main"
 kb-lint = "dex_engine.lint:main"
 kb-exclude = "dex_engine.exclude:main"
+kb-sync = "dex_engine.sync:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -17,3 +18,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dex_engine"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "dex_engine/templates"

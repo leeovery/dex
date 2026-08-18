@@ -52,9 +52,9 @@ knowledge base, never to the machinery.
 - **Ask anything** — "what's the current thinking on X?" Claude answers from your
   wiki with citations, prefers the newest material, and files genuinely new answers
   back in so they compound.
-- **Trust but verify** — periodically ask Claude to "run a lint": broken links,
-  uncited items, stale pages, and contradictions get found and fixed. Corrections
-  you make by hand are pinned and survive every rebuild.
+- **Trust but verify** — now and then, ask Claude to give it a health check:
+  broken links, missing citations, stale pages, and contradictions get found and
+  fixed. Corrections you make by hand are pinned and survive every rebuild.
 
 One **dex**, many brains: each knowledge base is its own private *volume* repo
 (dex-engineering, dex-cooking, one for your partner's business...) and this public
