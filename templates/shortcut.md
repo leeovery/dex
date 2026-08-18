@@ -37,6 +37,13 @@ Create a token that the shortcut uses to file captures:
 Fine-grained tokens work for one account or organization at a time. Every repo
 in one shortcut must belong to the same owner.
 
+**If your instance repo is owned by an organization** (not your personal
+account): fine-grained tokens hit two org policies — the org must be chosen as
+the token's Resource owner, and org-owned tokens can't be non-expiring. The
+practical alternative is a **classic** token (Tokens (classic), scope `repo`,
+No expiration) — it works identically in this shortcut, at the cost of broader
+access. The org must allow classic PAT access in its settings.
+
 When you add a new dex instance later, also add its repo to this token's
 **Repository access** — a send to a repo the token can't reach fails silently
 (GitHub returns a valid-looking 404, and the shortcut shows a checkmark).
