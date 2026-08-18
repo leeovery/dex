@@ -1,0 +1,6 @@
+#!/bin/sh
+# dex engine dispatcher — run from the volume root.
+#   bin/kb normalize | enrich [run|whisper|status|inventory|...] | lint [--write] | exclude <file.json>
+cmd=$1; shift 2>/dev/null
+[ -n "$cmd" ] || { echo "usage: bin/kb <normalize|enrich|lint|exclude> [args]"; exit 1; }
+exec uvx --from git+https://github.com/leeovery/dex-engine "kb-$cmd" "$@"
