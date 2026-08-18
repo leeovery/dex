@@ -48,7 +48,7 @@ And three things to know about how Shortcuts behaves:
   the variable you want from the bar that appears — it lists every result in
   the workflow by name. These instructions call that "repoint it to ...".
 
-### List your volumes
+### Step 1: List your volumes
 
 The dictionary is the shortcut's list of knowledge bases. It's what lets one
 shortcut serve any number of volumes, and it's the only thing you edit when you
@@ -66,7 +66,7 @@ For example:
 - key `Engineering`, text `you/dex-engineering`
 - key `Marketing`, text `you/dex-marketing`
 
-### Store the token
+### Step 2: Store the token
 
 The shortcut proves who it is to GitHub with the token you created earlier.
 You'll store the token in one place and give it a name, so the final step can
@@ -81,7 +81,7 @@ token.
 3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
    its input alone — Shortcuts has already connected it to the Text box above.
 
-### Route to the right volume
+### Step 3: Route to the right volume
 
 These actions pick the destination volume — and skip the picker entirely when
 your dictionary has only one volume in it.
@@ -133,7 +133,7 @@ your dictionary has only one volume in it.
 Whichever branch runs, the shortcut now holds the destination repo path in the
 `repo` variable.
 
-### Capture the "why"
+### Step 4: Capture the "why"
 
 A one-line note about why something caught your eye is often the most valuable
 part of a capture — it travels with the link into the knowledge base.
@@ -142,7 +142,7 @@ part of a capture — it travels with the link into the knowledge base.
 2. Set its type to **Text** and its prompt to "Why? (optional)". Leave the
    default answer empty.
 
-### File it
+### Step 5: File it
 
 This step sends the capture: it opens a GitHub issue on the chosen volume,
 which the volume's workflow files into its inbox and then closes.
@@ -158,7 +158,7 @@ which the volume's workflow files into its inbox and then closes.
    - `title`: insert **Shortcut Input**
    - `body`: insert **Provided Input**
 
-### Name it and add it to the Share Sheet
+### Step 6: Name it and add it to the Share Sheet
 
 This makes the shortcut appear when you tap Share in other apps, and defines
 what kinds of shares it accepts. It's a shortcut setting, not an action — you
