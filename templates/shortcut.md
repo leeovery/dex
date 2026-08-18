@@ -185,8 +185,9 @@ part of a capture — it travels with the link into the knowledge base.
 
 This step writes the capture into the instance repo: one new file per capture
 in `state/inbox/`, created directly through GitHub's contents API. A link or
-note becomes a small `.md` file; an image becomes an image file (with the note
-as a sidecar). No server-side machinery — the upload is the commit.
+note becomes a small `.md` file; an image becomes a `.jpg`. The two branches
+only prepare what to upload — a single upload action at the end sends it, and
+your note travels in the commit message.
 
 First, a timestamp for unique filenames:
 
@@ -209,30 +210,39 @@ Then detect whether an image was shared:
 
 Between **If** and **Otherwise** (an image was shared):
 
-7. Add **Convert Image**, converting to **JPEG**. Point its input at
-   `Images` (the Get Images from Input result).
-8. Add **Base64 Encode**.
-9. Add **Get Contents of URL**:
-   1. URL: `https://api.github.com/repos/` + the `repo` variable +
-      `/contents/state/inbox/` + the `stamp` variable + `.jpg`
-   2. Method: **PUT**. Headers:
-      - key `Authorization`, text `Bearer` + space + the `token` variable
-      - key `Accept`, text `application/vnd.github+json`
-   3. Request Body **JSON**, two text fields:
-      - key `message`, text `capture`
-      - key `content`, text = the **Base64 Encoded** result
-10. To carry the note too: add **If** on `Ask for Input` **has any value**;
-    inside it, add **Base64 Encode** of the `Ask for Input` result, and another
-    **Get Contents of URL** exactly like step 9 but with the URL ending
-   `.md` instead of `.jpg` and `content` = that second Base64 result.
+7. Add **Convert Image**, converting to **JPEG**. If its input isn't `Images`,
+   repoint it: tap its variable chip, tap **Clear**, tap the faded
+   placeholder, and pick `Images` — via **Select Variable** and the token
+   beneath **Get Images from Input** if the options don't list it.
+8. Add **Base64 Encode** below it (it encodes the converted image
+   automatically).
+9. Add **Set Variable**. Tap **Variable Name** and type `payload`.
+10. Add **Text** containing exactly `.jpg`.
+11. Add **Set Variable**. Tap **Variable Name** and type `ext`.
 
 Between **Otherwise** and **End If** (a link or text was shared):
 
-11. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
+12. Add **Text**. First line: the `Shortcut Input` variable. Then an empty
     line, then the `Ask for Input` variable.
-12. Add **Base64 Encode** (of that Text).
-13. Add **Get Contents of URL**, configured as in step 9 but with the URL
-    ending `.md` and `content` = this Base64 result.
+13. Add **Base64 Encode** below it.
+14. Add **Set Variable**. Tap **Variable Name** and type `payload`.
+15. Add **Text** containing exactly `.md`.
+16. Add **Set Variable**. Tap **Variable Name** and type `ext`.
+
+After **End If**, the single upload:
+
+17. Add **Get Contents of URL**. Clear its auto-filled input as in earlier
+    steps, then configure:
+    1. URL: `https://api.github.com/repos/` + the `repo` variable +
+       `/contents/state/inbox/` + the `stamp` variable + the `ext` variable
+    2. Method: **PUT**
+    3. Headers:
+       - key `Authorization`, text `Bearer` + space + the `token` variable
+       - key `Accept`, text `application/vnd.github+json`
+    4. Request Body **JSON**, two text fields:
+       - key `message`, text `capture ` + the `Ask for Input` variable — your
+         "why" note becomes the commit message
+       - key `content`, text = the `payload` variable
 
 ### Step 6: Name it and add it to the Share Sheet
 
@@ -303,8 +313,8 @@ travels with it.
 
 Share any page from Safari. Within seconds a new commit appears on the
 instance repo adding a file under `state/inbox/` — that's the capture, waiting
-for the next ingest. Share a photo to see the image path: a `.jpg` lands, plus
-a `.md` sidecar if you added a note.
+for the next ingest, with your note as the commit message. Share a photo to
+see the image path: a `.jpg` lands the same way.
 
 ## Notes
 

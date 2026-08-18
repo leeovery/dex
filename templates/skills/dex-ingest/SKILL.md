@@ -15,8 +15,9 @@ steps; never invent inputs. All commands run from the instance root.
 API):
 
 - **Text capture** — a `.md` file whose body is a URL and/or a note.
-- **Image capture** — an image file (`.jpg`, `.png`, ...), optionally with a
-  `.md` sidecar of the same stem carrying the note.
+- **Image capture** — an image file (`.jpg`, `.png`, ...). The capturer's
+  note, if any, is the file's commit message
+  (`git log --format=%B -n1 -- <file>`, minus the leading "capture").
 
 `git pull` first — captures arrive as commits. Process every file, then delete
 it (the capture is preserved in git history; its content lives on in the
@@ -60,7 +61,7 @@ Images are corpus items whose primary source is the image itself.
    (create the item id first: `shortid = sha1("media/<inbox-filename>")[:6]`,
    slug from what the image shows). `media/` is append-only and LFS-tracked.
 3. **Corpus item** as above, with `kinds: [image]`, a `media:` frontmatter list
-   pointing at the file(s), and the sidecar note (if any) as the body.
+   pointing at the file(s), and the capture commit's note (if any) as the body.
 4. **Describe.** View the image and write `enrichment/<id>/media-0.md`: what it
    depicts, all legible text (OCR), and — where relevant to this instance's
    domain — style, palette, composition, typography, layout. This is the
