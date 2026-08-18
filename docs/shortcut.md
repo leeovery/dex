@@ -63,6 +63,10 @@ Terms used throughout:
   it, tap **Select Variable** — the editor switches to a view with a blue
   token beneath every action — and tap the token beneath the action whose
   result you want.
+- **Place the next actions between two rows** (for example between **If**
+  and **Otherwise**): new actions land at the bottom of the shortcut —
+  touch and hold each one and drag it up until it sits indented directly
+  beneath the row it belongs under.
 - Each step ends with what the finished row reads. If your row reads
   differently, fix it before moving on.
 
@@ -104,30 +108,29 @@ when your dictionary has only one instance in it.
    condition is true; actions between **Otherwise** and **End If** run when it
    isn't. Tap the faded **Number** and enter **1**. The row reads
    "If `Count` is 1" — ignore the **+** after it.
-4. Drag each of the following actions into its branch: new actions land at
-   the bottom of the shortcut, so touch and hold each one and drag it up
-   until it sits indented directly beneath the row it belongs under.
 
-Between **If** and **Otherwise** (one instance — use it without asking):
+Place the next actions between **If** and **Otherwise**. They run when there
+is one instance — use it without asking:
 
-5. Add **Get Dictionary Value**, dragging it beneath **If**. Change **Value**
+4. Add **Get Dictionary Value**. Change **Value**
    to **All Values**, and repoint its source to `Dictionary` if needed. The
    row reads "Get All Values in `Dictionary`".
-6. Add **Set Variable** below it, named `repo`. The row reads
+5. Add **Set Variable** below it, named `repo`. The row reads
    "Set variable `repo` to `Dictionary Value`".
 
-Between **Otherwise** and **End If** (several instances — ask which):
+Place the next actions between **Otherwise** and **End If**. They run when
+there are several instances — show a picker:
 
-7. Add **Choose from List**, dragging it beneath **Otherwise**. Repoint its
+6. Add **Choose from List**. Repoint its
    input to the result of step 1 (use **Select Variable** and tap the token
    beneath "Get All Keys in `Dictionary`"). Tap the arrow on the action and
    set **Prompt** to `Which dex?`. The row reads
    "Choose from `Dictionary Value`".
-8. Add **Get Dictionary Value** below it. Repoint its source (after "in") to
+7. Add **Get Dictionary Value** below it. Repoint its source (after "in") to
    `Dictionary`. Tap the faded **key** field and pick `Selected Item` from
    the horizontally scrollable bar at the bottom of the screen. The row reads
    "Get Value for `Selected Item` in `Dictionary`".
-9. Add **Set Variable** below it, named `repo`. The row reads
+8. Add **Set Variable** below it, named `repo`. The row reads
    "Set variable `repo` to `Dictionary Value`".
 
 ### Step 4: Capture the "why"
@@ -152,12 +155,12 @@ These actions write the capture into the instance repo.
 5. Add **Count**. The row reads "Count Items in `Images`" — repoint it to
    `Images` if it connected to anything else.
 6. Add **If**, with the condition **is greater than** and the number **0**.
-   The row reads "If `Count` is greater than 0". As in Step 3, drag each of
-   the following actions into its branch.
+   The row reads "If `Count` is greater than 0".
 
-Between **If** and **Otherwise** (an image was shared):
+Place the next actions between **If** and **Otherwise**. They run when an
+image was shared:
 
-7. Add **Resize Image**, dragging it beneath **If**. Repoint it to `Images`
+7. Add **Resize Image**. Repoint it to `Images`
    if needed. Set the width to `2048` and leave the height on **Auto
    Height**. The row reads "Resize `Images`".
 8. Add **Convert Image** below it, converting to **JPEG**. The row reads
@@ -168,9 +171,10 @@ Between **If** and **Otherwise** (an image was shared):
 11. Add **Set Variable** below it, named `ext`. The row reads
     "Set variable `ext` to `Text`".
 
-Between **Otherwise** and **End If** (not an image):
+Place the next actions between **Otherwise** and **End If**. They run when
+the share isn't an image:
 
-12. Add **Get URLs from Input**, dragging it beneath **Otherwise**. Repoint
+12. Add **Get URLs from Input**. Repoint
     it to `Shortcut Input`. The row reads "Get URLs from `Shortcut Input`".
 13. Add **Count** below it. The row reads "Count Items in `URLs`" — repoint
     it to `URLs` if it connected to anything else.
@@ -178,7 +182,7 @@ Between **Otherwise** and **End If** (not an image):
     **Otherwise** row. This If sits nested inside the outer **Otherwise**.
     The row reads "If `Count` is 0".
 
-    Inside it:
+    Place the next actions inside it. They run when no URL was shared:
 
     1. Add **Get Details of Files**. Set the detail to **File Extension**,
        and repoint its input to `Shortcut Input`. The row reads
@@ -187,7 +191,7 @@ Between **Otherwise** and **End If** (not an image):
        **Otherwise** row too. The row reads
        "If `File Extension` has any value".
 
-       Inside it (a file was shared):
+       Place the next actions inside it. They run when a file was shared:
 
        1. Add **Set Variable** named `blob`, repointing its input to
           `Shortcut Input`. The row reads
@@ -203,10 +207,10 @@ Between **Otherwise** and **End If** (not an image):
 Below the outer **End If**:
 
 15. Add **If**. Repoint its input to `blob`, and set the condition to
-    **has any value**. The row reads "If `blob` has any value". Drag the
-    following actions into its branches.
+    **has any value**. The row reads "If `blob` has any value".
 
-    Between **If** and **Otherwise** (a binary was shared):
+    Place the next actions between **If** and **Otherwise**. They run when a
+    binary was shared:
 
     1. Add **Get Contents of URL**. Configure:
        1. URL: `https://api.github.com/repos/` + the `repo` variable +
@@ -250,7 +254,8 @@ Below the outer **End If**:
     8. Add **Set Variable** below it, named `payload`. The row reads
        "Set variable `payload` to `Text`".
 
-    Between **Otherwise** and **End If** (a link or text):
+    Place the next actions between **Otherwise** and **End If**. They run
+    when a link or text was shared:
 
     9. Add **Text**. First line: the `Shortcut Input` variable. Then an
        empty line, then the `Ask for Input` variable.
