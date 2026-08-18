@@ -55,7 +55,7 @@ And three things to know about how Shortcuts behaves:
 
 The dictionary is the shortcut's list of knowledge bases. It's what lets one
 shortcut serve any number of instances, and it's the only thing you edit when you
-add a instance later.
+add an instance later.
 
 1. Add **Dictionary**.
 2. For each instance, tap **Add new item**, then:
