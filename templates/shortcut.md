@@ -120,7 +120,9 @@ your dictionary has only one volume in it.
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
       "Get All Values in `Dictionary`".
    2. Add **Set Variable**
-      below it. Tap **Variable Name** and type `repo`.
+      below it. Tap **Variable Name** and type `repo`. The row now reads
+      "Set `repo` to `Dictionary Value`" — that's correct: it saves the repo
+      path under the name `repo`.
 9. Between **Otherwise** and **End If** (several volumes — ask which):
    1. Add **Choose from List**. If its list isn't `Dictionary Value` (the volume
       names), repoint it to `Dictionary Value`. Set its **Prompt** to
@@ -130,7 +132,8 @@ your dictionary has only one volume in it.
       `Chosen Item` from the variables bar. It should read "Get Value for
       `Chosen Item` in `Dictionary`".
    3. Add **Set Variable**
-      below it. Tap **Variable Name** and type `repo`.
+      below it. Tap **Variable Name** and type `repo`. As in the other branch,
+      the row now reads "Set `repo` to `Dictionary Value`".
 
 Whichever branch runs, the shortcut now holds the destination repo path in the
 `repo` variable.
