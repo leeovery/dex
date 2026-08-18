@@ -185,9 +185,11 @@ part of a capture — it travels with the link into the knowledge base.
 
 This step writes the capture into the instance repo: one new file per capture
 in `state/inbox/`, created directly through GitHub's contents API. A link or
-note becomes a small `.md` file; an image becomes a `.jpg`. The two branches
-only prepare what to upload — a single upload action at the end sends it, and
-your note travels in the commit message.
+note becomes a small `.md` file; an image is resized and becomes a `.jpg`; any
+other shared file (a PDF, for example) is carried as-is. The branches only
+prepare two variables — `payload` (the content) and `ext` (the filename
+ending) — and a single upload action at the end sends it, with your note as
+the commit message.
 
 First, a timestamp for unique filenames:
 
@@ -210,38 +212,55 @@ Then detect whether an image was shared:
 
 Between **If** and **Otherwise** (an image was shared):
 
-7. Add **Convert Image**, converting to **JPEG**. If its input isn't `Images`,
-   repoint it: tap its variable chip, tap **Clear**, tap the faded
-   placeholder, and pick `Images` — via **Select Variable** and the token
-   beneath **Get Images from Input** if the options don't list it.
-8. Add **Base64 Encode** below it (it encodes the converted image
-   automatically). Expand its options and set **Line Breaks** to **None** —
-   the default inserts line breaks that GitHub rejects as invalid base64.
-9. Add **Set Variable**, dragging it below the Base64 Encode. Tap
-   **Variable Name** and type `payload`. The row now reads
-   "Set `payload` to `Base64 Encoded`".
-10. Add **Text**, dragging it below the Set Variable, containing exactly
-    `.jpg`.
-11. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
-    and type `ext`. The row now reads "Set `ext` to `Text`".
-
-Between **Otherwise** and **End If** (a link or text was shared):
-
-12. Add **Text**, dragging it beneath **Otherwise**. First line: the
-    `Shortcut Input` variable. Then an empty line, then the `Ask for Input`
-    variable.
-13. Add **Base64 Encode**, dragging it below that Text. Set its
-    **Line Breaks** to **None**, as in step 8.
-14. Add **Set Variable**, dragging it below the Base64 Encode. Tap
+7. Add **Resize Image**, dragging it beneath **If**. If its input isn't
+   `Images`, repoint it to `Images`. Set the width to `2048` and leave the
+   height automatic — this caps what each capture adds to the repo.
+8. Add **Convert Image** below it, converting to **JPEG**.
+9. Add **Base64 Encode** below it. Expand its options and set **Line Breaks**
+   to **None** — the default inserts line breaks that GitHub rejects as
+   invalid base64.
+10. Add **Set Variable**, dragging it below the Base64 Encode. Tap
     **Variable Name** and type `payload`. The row now reads
     "Set `payload` to `Base64 Encoded`".
-15. Add **Text**, dragging it below that, containing exactly `.md`.
-16. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
+11. Add **Text**, dragging it below that, containing exactly `.jpg`.
+12. Add **Set Variable**, dragging it below that Text. Tap **Variable Name**
     and type `ext`. The row now reads "Set `ext` to `Text`".
 
-After **End If**, the single upload:
+Between **Otherwise** and **End If** (not an image — a link, text, or a file):
 
-17. Add **Get Contents of URL**. Clear its auto-filled input as in earlier
+13. Add **Get Details of Files**, dragging it beneath **Otherwise**. Set the
+    detail to **File Extension**, and repoint its input to `Shortcut Input`
+    if needed. For a shared file this produces its extension (`pdf`); for a
+    shared link or text it produces nothing — which is what the next check
+    uses.
+14. Add **If** below it, with the condition **has any value**. Drag the
+    following actions inside its branches (this If sits nested inside
+    **Otherwise**).
+
+    Between this **If** and its **Otherwise** (a file was shared):
+
+    1. Add **Base64 Encode**. Repoint its input to `Shortcut Input`, and set
+       **Line Breaks** to **None**.
+    2. Add **Set Variable** below it. Tap **Variable Name** and type
+       `payload`.
+    3. Add **Text** below that, containing `.` immediately followed by the
+       **File Extension** variable (from step 13).
+    4. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
+
+    Between its **Otherwise** and **End If** (a link or text):
+
+    5. Add **Text**. First line: the `Shortcut Input` variable. Then an
+       empty line, then the `Ask for Input` variable.
+    6. Add **Base64 Encode** below it, **Line Breaks** set to **None**.
+    7. Add **Set Variable** below it. Tap **Variable Name** and type
+       `payload`. The row now reads "Set `payload` to `Base64 Encoded`".
+    8. Add **Text** below that, containing exactly `.md`.
+    9. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
+       The row now reads "Set `ext` to `Text`".
+
+After the outer **End If**, the single upload:
+
+15. Add **Get Contents of URL**. Clear its auto-filled input as in earlier
     steps, then configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
        `/contents/state/inbox/` + the `stamp` variable + the `ext` variable
@@ -271,9 +290,8 @@ won't find it by searching the actions panel.
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
    **Apps and 18 more** chip.
 5. Everything is toggled on by default. Turn OFF the following and leave
-   everything else on (**Images stays on** — image capture is supported):
+   everything else on (**Images and Files stay on** — image and file capture are supported):
    - **Media**
-   - **Files**
    - **Folders**
    - **PDFs**
    - **Map links**

@@ -15,9 +15,12 @@ steps; never invent inputs. All commands run from the instance root.
 API):
 
 - **Text capture** — a `.md` file whose body is a URL and/or a note.
-- **Image capture** — an image file (`.jpg`, `.png`, ...). The capturer's
-  note, if any, is the file's commit message
-  (`git log --format=%B -n1 -- <file>`, minus the leading "capture").
+- **Image capture** — an image file (`.jpg`, `.png`, ...).
+- **File capture** — any other file (`.pdf`, ...). Treat like an image
+  capture: file it under `media/<item-id>/`, read it directly (Claude reads
+  PDFs natively) and write its description/extraction as the enrichment.
+- For images and files, the capturer's note, if any, is the file's commit
+  message (`git log --format=%B -n1 -- <file>`, minus the leading "capture").
 
 `git pull` first — captures arrive as commits. Process every file, then delete
 it (the capture is preserved in git history; its content lives on in the
