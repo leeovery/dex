@@ -169,9 +169,12 @@ part of a capture — it travels with the link into the knowledge base.
 This step sends the capture: it opens a GitHub issue on the chosen volume,
 which the volume's workflow files into its inbox and then closes.
 
-1. Add **Get Contents of URL**.
-2. In the URL field: type `https://api.github.com/repos/`, insert the `repo`
-   variable from the variables bar, then type `/issues`.
+1. Add **Get Contents of URL**. It arrives reading "Get contents of" with the
+   Ask for Input result already filled in — the wrong content for this field.
+   Tap that chip, then tap **Clear**. The row now reads
+   "Get contents of **URL**" with **URL** faded.
+2. Tap the faded **URL** field and type `https://api.github.com/repos/`, pick
+   `repo` from the bar at the bottom of the screen, then type `/issues`.
 3. Tap the arrow to expand the options and set **Method** to **POST**.
 4. Add two headers:
    - `Authorization`: type `Bearer `, then insert the `token` variable.
