@@ -106,8 +106,8 @@ when your dictionary has only one instance in it.
 3. Add **If**. This adds three connected rows at once — **If**, **Otherwise**,
    and **End If**: actions between **If** and **Otherwise** run when the
    condition is true; actions between **Otherwise** and **End If** run when it
-   isn't. Tap the faded **Number** and enter **1**. The row reads
-   "If `Count` is 1" — ignore the **+** after it.
+   isn't. Tap the faded **Number** and enter **1**, ignoring the **+**
+   after it. The row reads "If `Count` is 1".
 
 Place the next actions between **If** and **Otherwise**. They run when there
 is one instance — use it without asking:
@@ -152,8 +152,8 @@ These actions write the capture into the instance repo.
    "Set variable `stamp` to `Formatted Date`".
 4. Add **Get Images from Input**. Repoint it to `Shortcut Input`. The row
    reads "Get images from `Shortcut Input`".
-5. Add **Count**. The row reads "Count Items in `Images`" — repoint it to
-   `Images` if it connected to anything else.
+5. Add **Count**. Repoint it to `Images` if it connected to anything else.
+   The row reads "Count Items in `Images`".
 6. Add **If**, with the condition **is greater than** and the number **0**.
    The row reads "If `Count` is greater than 0".
 
@@ -176,8 +176,8 @@ the share isn't an image:
 
 12. Add **Get URLs from Input**. Repoint
     it to `Shortcut Input`. The row reads "Get URLs from `Shortcut Input`".
-13. Add **Count** below it. The row reads "Count Items in `URLs`" — repoint
-    it to `URLs` if it connected to anything else.
+13. Add **Count** below it. Repoint it to `URLs` if it connected to
+    anything else. The row reads "Count Items in `URLs`".
 14. Add **If** below it. Tap the faded **Number** and enter **0**. Delete its
     **Otherwise** row. This If sits nested inside the outer **Otherwise**.
     The row reads "If `Count` is 0".
