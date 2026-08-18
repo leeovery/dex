@@ -16,6 +16,6 @@ description: Answer a question from this dex instance's knowledge. Use for "what
 4. **Compound**: if the answer required real synthesis (not just reading one
    page), file it as `wiki/syntheses/<slug>.md` — frontmatter `type: synthesis`,
    `question:`, `generated:` date; body cites item ids and wikilinks related
-   topics. Add to index, log it, commit. Syntheses are question-shaped, dated
+   topics. Add to index, log it, commit and push. Syntheses are question-shaped, dated
    snapshots; the health check refreshes them as new material lands.
 5. Never cite wiki pages as sources — item ids only.

@@ -57,7 +57,7 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
   (id = sha1 of a stable key, first 6 hex). Schema: `.claude/skills/dex-ingest/references/schema.md`.
 - Citations: backticked item ids inline. Wikilinks `[[name]]` only to names that
   exist in `state/taxonomy.json` or as pages.
-- Commit after each completed operation with a one-line summary; append one line to
+- Commit and push after each completed operation with a one-line summary; append one line to
   `wiki/log.md` (`## [YYYY-MM-DD] <op> | <title>`).
 - Multi-agent work (large backfills only): write work manifests BEFORE dispatching;
   every agent contract includes "if an input is missing, STOP — do not improvise";
