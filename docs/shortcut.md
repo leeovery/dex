@@ -141,7 +141,7 @@ your dictionary has only one instance in it.
       "Get All Values in `Dictionary`".
    2. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`. The row now reads
-      "Set `repo` to `Dictionary Value`" — that's correct: it saves the repo
+      "Set variable `repo` to `Dictionary Value`" — that's correct: it saves the repo
       path under the name `repo`.
 9. Between **Otherwise** and **End If** (several instances — ask which):
    1. Add **Choose from List** and drag it beneath **Otherwise**. It arrives
@@ -167,7 +167,7 @@ your dictionary has only one instance in it.
       The row now reads "Get Value for `Selected Item` in `Dictionary`".
    3. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`. As in the other branch,
-      the row now reads "Set `repo` to `Dictionary Value`".
+      the row now reads "Set variable `repo` to `Dictionary Value`".
 
 Whichever branch runs, the shortcut now holds the destination repo path in the
 `repo` variable.
@@ -219,10 +219,10 @@ Between **If** and **Otherwise** (an image was shared):
    height automatic — this caps what each capture adds to the repo.
 8. Add **Convert Image** below it, converting to **JPEG**.
 9. Add **Set Variable** below it. Tap **Variable Name** and type `blob`. The
-   row reads "Set `blob` to `Converted Image`".
+   row reads "Set variable `blob` to `Converted Image`".
 10. Add **Text** below that, containing exactly `.jpg`.
 11. Add **Set Variable** below it. Tap **Variable Name** and type `ext`. The
-    row reads "Set `ext` to `Text`".
+    row reads "Set variable `ext` to `Text`".
 
 Between **Otherwise** and **End If** (not an image — a link, text, or a file):
 
@@ -251,7 +251,7 @@ file when there is no URL.
 
        1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
           **Variable Name** and type `blob`. The row reads
-          "Set `blob` to `Shortcut Input`".
+          "Set variable `blob` to `Shortcut Input`".
        2. Add **Text** below that, containing `.` immediately followed by
           the **File Extension** variable (from the Get Details of Files
           above).
