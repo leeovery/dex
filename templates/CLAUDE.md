@@ -10,7 +10,8 @@ github.com/leeovery/dex, run via `bin/kb <cmd>` from the repo root.
 - <topic>
 
 Anything not listed is out of scope. When unsure, ask the owner rather
-than guessing.
+than guessing. The list is mirrored in README.md — any scope change must
+update both files.
 
 ## Operations
 

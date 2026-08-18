@@ -13,5 +13,13 @@ volume, maintained by Claude.
 - **Health check** — now and then, ask Claude to check the knowledge base over;
   it finds and fixes broken links, stale pages, and contradictions.
 
-What belongs here is defined in [`CLAUDE.md`](./CLAUDE.md) (the In-scope list).
+## In scope
+
+- <topic>
+- <topic>
+
+Anything not listed is out of scope — Claude will ask rather than guess about
+borderline finds. Want more topics covered? Just say so: scope changes update
+both this README and [`CLAUDE.md`](./CLAUDE.md).
+
 The machinery lives in the shared engine and never needs touching.
