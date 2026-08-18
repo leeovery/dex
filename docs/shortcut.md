@@ -51,22 +51,20 @@ Terms used throughout:
   thing. When a step says **add** an action, it means: search the actions
   panel for the action's name, then tap it to add it. The one exception is
   the Share Sheet setting at the end, which isn't an action.
-
-And three things to know about how Shortcuts behaves:
-
 - A shortcut is a chain: each action automatically passes its result to the
   action below it. When these instructions add several actions in a row, that
   automatic hand-off does the wiring.
-- **Set Variable** saves a result under a name so a later step can use it. It's
-  an ordinary action: it takes whatever the action above produced and names it.
-- Shortcuts sometimes connects an action to the wrong earlier result. To
-  repoint it: tap the blue variable chip, tap **Clear** (the panel closes and
-  the field shows a faded placeholder), then tap the faded placeholder and a
-  bar of options appears. If the result you need is listed in the bar, pick
-  it. If it isn't, tap **Select Variable** — the editor switches to a view
-  with a blue token beneath every action — and tap the token beneath the
-  action whose result you want. These instructions call that
-  "repoint it to ...".
+- **Add Set Variable named `x`** means: add the **Set Variable** action, tap
+  **Variable Name**, and type `x`. Its input is whatever the action above
+  produced, unless a step says to repoint it.
+- **Repoint it to `x`** means: tap the blue variable chip, tap **Clear** (the
+  panel closes and the field shows a faded placeholder), then tap the faded
+  placeholder and pick `x` from the bar that appears. If the bar doesn't list
+  it, tap **Select Variable** — the editor switches to a view with a blue
+  token beneath every action — and tap the token beneath the action whose
+  result you want.
+- Each step ends with what the finished row reads. If your row reads
+  differently, fix it before moving on.
 
 ### Step 1: List your instances
 
@@ -75,8 +73,7 @@ add an instance later.
 
 1. Add **Dictionary**.
 2. For each instance, tap **Add new item**, then:
-   1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
-      aren't used here.)
+   1. Choose **Text** as the item type.
    2. Set the key to the instance's display name.
    3. Set the text value to the instance's repo path.
 
@@ -89,151 +86,125 @@ For example:
 
 Store the token once, under a name, so later steps can use it.
 
-1. Add **Text**. It appears as an empty
-   text box — paste your token into it.
-2. Add **Set Variable** directly
-   below. This is a second, separate action: it takes the result of the action
-   above it (your token) and saves it under a name.
-3. In the Set Variable action, tap **Variable Name** and type `token`. Leave
-   its input alone — Shortcuts has already connected it to the Text box above.
+1. Add **Text**. It appears as an empty text box — paste your token into it.
+2. Add **Set Variable** below it, named `token`. The row reads
+   "Set variable `token` to `Text`".
 
 ### Step 3: Route to the right instance
 
-These actions pick the destination instance — and skip the picker entirely when
-your dictionary has only one instance in it.
+These actions pick the destination instance — and skip the picker entirely
+when your dictionary has only one instance in it.
 
-1. Add **Get Dictionary Value**.
-2. In that action, tap the highlighted word **Value** and change it to
-   **All Keys**.
-3. The action now reads "Get All Keys in `token`" — the wrong source. Fix it:
-   1. Tap the blue `token` chip, then tap **Clear**. The panel closes and the
-      field shows a faded **Dictionary** placeholder.
-   2. Tap the faded placeholder. A bar appears listing the workflow's results
-      by name — for example `token`, `Dictionary`, `Text`.
-   3. Pick `Dictionary`.
-   The action now reads "Get All Keys in `Dictionary`" — that's correct.
-4. Add **Count**. It arrives reading
-   "Count Items in `Dictionary Value`" — that's correct. Leave it as is.
-5. Add **If**. This adds three
-   connected rows at once — **If**, **Otherwise**, and **End If** — which
-   form two branches: actions placed between **If** and **Otherwise** run
-   when the condition is true; actions between **Otherwise** and **End If**
-   run when it isn't.
-6. The **If** row arrives reading "If `Count` is **Number**", with **Number**
-   faded — `Count` and **is** are already correct by default. Tap the faded
-   **Number**, enter **1**, and close the panel. The row now reads
-   "If `Count` is 1 **+**" — ignore the **+**; it adds extra conditions to the
-   check, which we don't need.
-7. Get each of the next actions into the right branch. New actions land at
-   the bottom of the shortcut, not inside the If block — for each one, touch
-   and hold it, then drag it up until it sits indented directly beneath the
-   row it belongs under (**If** for steps 8, **Otherwise** for steps 9).
-8. Between **If** and **Otherwise** (one instance — use it without asking):
-   1. Add **Get Dictionary Value**. Change **Value** to **All Values**, and if its
-      source isn't `Dictionary`, repoint it to `Dictionary`. It should read
-      "Get All Values in `Dictionary`".
-   2. Add **Set Variable**
-      below it. Tap **Variable Name** and type `repo`. The row now reads
-      "Set variable `repo` to `Dictionary Value`" — that's correct.
-9. Between **Otherwise** and **End If** (several instances — ask which):
-   1. Add **Choose from List** and drag it beneath **Otherwise**. It arrives
-      reading "Choose from `Count`" — the wrong source. Fix it:
-      1. Tap the `Count` chip, then tap **Clear**. The row now shows a faded
-         **Choose** placeholder.
-      2. Tap the faded placeholder. The bar that appears won't list what we
-         need, so tap **Select Variable**.
-      3. In the selection view, tap the blue token beneath your first
-         **Get Dictionary Value** action (the one reading "Get All Keys in
-         `Dictionary`").
-      The row now reads "Choose from `Dictionary Value`". Then tap the arrow
-      on the action and set **Prompt** to "Which dex?".
-   2. Add **Get Dictionary Value** and drag it beneath **Choose from List**.
-      It arrives reading "Get Value for **key** in `Selected Item`" — the
-      key is empty and the source is wrong. Fix both:
-      1. Tap the `Selected Item` chip (after "in"), then tap **Clear**. Tap
-         the faded placeholder — a panel slides up listing all the workflow's
-         results — and pick `Dictionary`.
-      2. Tap the faded **key** field — a small, horizontally scrollable bar
-         appears at the bottom of the screen — and pick `Selected Item`,
-         scrolling if needed.
-      The row now reads "Get Value for `Selected Item` in `Dictionary`".
-   3. Add **Set Variable**
-      below it. Tap **Variable Name** and type `repo`. As in the other branch,
-      the row now reads "Set variable `repo` to `Dictionary Value`".
+1. Add **Get Dictionary Value**. Tap the highlighted word **Value** and change
+   it to **All Keys**, then repoint its source to `Dictionary`. The row reads
+   "Get All Keys in `Dictionary`".
+2. Add **Count**. The row reads "Count Items in `Dictionary Value`".
+3. Add **If**. This adds three connected rows at once — **If**, **Otherwise**,
+   and **End If**: actions between **If** and **Otherwise** run when the
+   condition is true; actions between **Otherwise** and **End If** run when it
+   isn't. Tap the faded **Number** and enter **1**. The row reads
+   "If `Count` is 1" — ignore the **+** after it.
+4. Drag each of the following actions into its branch: new actions land at
+   the bottom of the shortcut, so touch and hold each one and drag it up
+   until it sits indented directly beneath the row it belongs under.
 
-Whichever branch runs, the shortcut now holds the destination repo path in the
-`repo` variable.
+Between **If** and **Otherwise** (one instance — use it without asking):
+
+5. Add **Get Dictionary Value**, dragging it beneath **If**. Change **Value**
+   to **All Values**, and repoint its source to `Dictionary` if needed. The
+   row reads "Get All Values in `Dictionary`".
+6. Add **Set Variable** below it, named `repo`. The row reads
+   "Set variable `repo` to `Dictionary Value`".
+
+Between **Otherwise** and **End If** (several instances — ask which):
+
+7. Add **Choose from List**, dragging it beneath **Otherwise**. Repoint its
+   input to the result of step 1 (use **Select Variable** and tap the token
+   beneath "Get All Keys in `Dictionary`"). Tap the arrow on the action and
+   set **Prompt** to `Which dex?`. The row reads
+   "Choose from `Dictionary Value`".
+8. Add **Get Dictionary Value** below it. Repoint its source (after "in") to
+   `Dictionary`. Tap the faded **key** field and pick `Selected Item` from
+   the horizontally scrollable bar at the bottom of the screen. The row reads
+   "Get Value for `Selected Item` in `Dictionary`".
+9. Add **Set Variable** below it, named `repo`. The row reads
+   "Set variable `repo` to `Dictionary Value`".
 
 ### Step 4: Capture the "why"
 
 This step asks for an optional note with each capture.
 
-1. Add **Ask for Input**.
-2. Set its type to **Text** and its prompt to "Why? (optional)". Leave the
-   default answer empty.
+1. Add **Ask for Input**. Set its type to **Text** and its prompt to
+   `Why? (optional)`. Leave the default answer empty. The row reads
+   "Ask for **Text** with "Why? (optional)"".
 
 ### Step 5: File it
 
 These actions write the capture into the instance repo.
 
-1. Add **Date** (set to **Current Date**).
-2. Add **Format Date**. Set its format to **Custom** and the format string to
-   `yyyyMMdd-HHmmss`.
-3. Add **Set Variable** below it. Tap **Variable Name** and type `stamp`.
-4. Add **Get Images from Input**. It arrives reading "Get images from
-   `stamp`" — repoint it to `Shortcut Input`.
-5. Add **Count**. It should read "Count Items in `Images`" — if it connected
-   to anything else, repoint it to `Images`.
+1. Add **Date**. The row reads "Current Date".
+2. Add **Format Date**. Set **Date Format** to **Custom** and the format
+   string to `yyyyMMdd-HHmmss`. The row reads "Format `Date`".
+3. Add **Set Variable** below it, named `stamp`. The row reads
+   "Set variable `stamp` to `Formatted Date`".
+4. Add **Get Images from Input**. Repoint it to `Shortcut Input`. The row
+   reads "Get images from `Shortcut Input`".
+5. Add **Count**. The row reads "Count Items in `Images`" — repoint it to
+   `Images` if it connected to anything else.
 6. Add **If**, with the condition **is greater than** and the number **0**.
-   As in Step 3, drag each of the following actions into the right branch.
+   The row reads "If `Count` is greater than 0". As in Step 3, drag each of
+   the following actions into its branch.
 
 Between **If** and **Otherwise** (an image was shared):
 
-7. Add **Resize Image**, dragging it beneath **If**. If its input isn't
-   `Images`, repoint it to `Images`. Set the width to `2048` and leave the
-   height automatic.
-8. Add **Convert Image** below it, converting to **JPEG**.
-9. Add **Set Variable** below it. Tap **Variable Name** and type `blob`. The
-   row reads "Set variable `blob` to `Converted Image`".
+7. Add **Resize Image**, dragging it beneath **If**. Repoint it to `Images`
+   if needed. Set the width to `2048` and leave the height on **Auto
+   Height**. The row reads "Resize `Images`".
+8. Add **Convert Image** below it, converting to **JPEG**. The row reads
+   "Convert `Resized Image` to **JPEG**".
+9. Add **Set Variable** below it, named `blob`. The row reads
+   "Set variable `blob` to `Converted Image`".
 10. Add **Text** below that, containing exactly `.jpg`.
-11. Add **Set Variable** below it. Tap **Variable Name** and type `ext`. The
-    row reads "Set variable `ext` to `Text`".
+11. Add **Set Variable** below it, named `ext`. The row reads
+    "Set variable `ext` to `Text`".
 
 Between **Otherwise** and **End If** (not an image):
 
 12. Add **Get URLs from Input**, dragging it beneath **Otherwise**. Repoint
-    its input to `Shortcut Input`.
-13. Add **Count** below it. It should read "Count Items in `URLs`" — repoint
+    it to `Shortcut Input`. The row reads "Get URLs from `Shortcut Input`".
+13. Add **Count** below it. The row reads "Count Items in `URLs`" — repoint
     it to `URLs` if it connected to anything else.
-14. Add **If** below it, reading "If `Count` is **Number**"; tap the faded
-    **Number** and enter **0**. Delete its **Otherwise** row. This If sits
-    nested inside the outer **Otherwise**.
+14. Add **If** below it. Tap the faded **Number** and enter **0**. Delete its
+    **Otherwise** row. This If sits nested inside the outer **Otherwise**.
+    The row reads "If `Count` is 0".
 
     Inside it:
 
     1. Add **Get Details of Files**. Set the detail to **File Extension**,
-       and repoint its input to `Shortcut Input`.
+       and repoint its input to `Shortcut Input`. The row reads
+       "Get **File Extension** of `Shortcut Input`".
     2. Add **If** below it, with the condition **has any value**. Delete its
-       **Otherwise** row too.
+       **Otherwise** row too. The row reads
+       "If `File Extension` has any value".
 
        Inside it (a file was shared):
 
-       1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
-          **Variable Name** and type `blob`. The row reads
+       1. Add **Set Variable** named `blob`, repointing its input to
+          `Shortcut Input`. The row reads
           "Set variable `blob` to `Shortcut Input`".
        2. Add **Text** below that, containing `.` immediately followed by
           the **File Extension** variable.
-       3. Add **Set Variable** below it. Tap **Variable Name** and type
-          `ext`.
+       3. Add **Set Variable** below it, named `ext`. The row reads
+          "Set variable `ext` to `Text`".
 
     The bottom of the shortcut now reads: two nested **End If** rows, then
     the outer **End If**.
 
 Below the outer **End If**:
 
-15. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
-    bar doesn't list it), and set the condition to **has any value**. Drag
-    the following actions into its branches.
+15. Add **If**. Repoint its input to `blob`, and set the condition to
+    **has any value**. The row reads "If `blob` has any value". Drag the
+    following actions into its branches.
 
     Between **If** and **Otherwise** (a binary was shared):
 
@@ -243,10 +214,11 @@ Below the outer **End If**:
        2. Method: **GET**
        3. Headers: key = `Authorization`, text = `Bearer` + space + the
           `token` variable
-    2. Add **Get Dictionary Value** below it, key `id`, in `Contents of URL`
-       (the action above — repoint if it connected elsewhere).
-    3. Add **Set Variable** below it. Tap **Variable Name** and type
-       `release`.
+    2. Add **Get Dictionary Value** below it. Type `id` into the key field;
+       its source is `Contents of URL` (repoint if it connected elsewhere).
+       The row reads "Get Value for `id` in `Contents of URL`".
+    3. Add **Set Variable** below it, named `release`. The row reads
+       "Set variable `release` to `Dictionary Value`".
     4. Add **Get Contents of URL** below that. Configure:
        1. URL: `https://uploads.github.com/repos/` + the `repo` variable +
           `/releases/` + the `release` variable + `/assets?name=` + the
@@ -255,10 +227,12 @@ Below the outer **End If**:
        3. Headers:
           - key = `Authorization`, text = `Bearer` + space + the `token` variable
           - key = `Content-Type`, text = `application/octet-stream`
-       4. Request Body: **File**, and set the file to the `blob` variable.
-    5. Add **Get Dictionary Value** below it, key `url`, in `Contents of URL`
-       (the POST directly above).
-    6. Add **Set Variable** below it. Tap **Variable Name** and type `asset`.
+       4. Request Body: **File**, set to the `blob` variable.
+    5. Add **Get Dictionary Value** below it. Type `url` into the key field;
+       its source is `Contents of URL` (the POST directly above). The row
+       reads "Get Value for `url` in `Contents of URL`".
+    6. Add **Set Variable** below it, named `asset`. The row reads
+       "Set variable `asset` to `Dictionary Value`".
     7. Add **Text** below that, containing exactly five lines then your
        note:
 
@@ -273,20 +247,21 @@ Below the outer **End If**:
 
        Each bracketed name is that variable; type the surrounding characters
        literally. `[stamp][ext]` sit together with no space.
-    8. Add **Set Variable** below it. Tap **Variable Name** and type
-       `payload`.
+    8. Add **Set Variable** below it, named `payload`. The row reads
+       "Set variable `payload` to `Text`".
 
     Between **Otherwise** and **End If** (a link or text):
 
     9. Add **Text**. First line: the `Shortcut Input` variable. Then an
        empty line, then the `Ask for Input` variable.
-    10. Add **Set Variable** below it. Tap **Variable Name** and type
-        `payload`.
+    10. Add **Set Variable** below it, named `payload`. The row reads
+        "Set variable `payload` to `Text`".
 
 Below that **End If**, at the top level of the shortcut:
 
 16. Add **Base64 Encode**. Repoint its input to `payload`. Expand its
-    options and set **Line Breaks** to **None**.
+    options and set **Line Breaks** to **None**. The row reads
+    "Base64 Encode `payload`".
 17. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
        `/contents/inbox/` + the `stamp` variable + `.md`
