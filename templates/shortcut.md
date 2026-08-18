@@ -20,30 +20,28 @@ Create a token that the shortcut uses to file captures:
 5. Under **Permissions**, set **Contents** and **Issues** to **Read and write**.
 6. Generate the token and copy it.
 
-Fine-grained tokens work for one account or organization at a time. Every repo in
-one shortcut must belong to the same owner.
+Fine-grained tokens work for one account or organization at a time. Every repo
+in one shortcut must belong to the same owner.
 
 ## Create the shortcut
 
 Open the Shortcuts app and create a new shortcut. Work through the sections
-below in order. Actions are added by searching the actions panel, except the
-Share Sheet setting at the end.
+below in order. Every action is added the same way: search the actions panel
+for the term given, then tap the action to add it. The only exception is the
+Share Sheet setting at the end, which isn't an action.
 
-Two things to know about how Shortcuts works before you start:
+Three things to know about how Shortcuts works before you start:
 
 - A shortcut is a chain: each action automatically passes its result to the
-  action below it. When these instructions say to add several actions in a
-  row, that automatic hand-off is doing the wiring — you rarely connect
-  anything by hand.
-- **Set Variable** is how you save a result for use later, further down the
-  chain. It's an ordinary action: it takes whatever the action above produced
-  and gives it a name you choose.
-- Shortcuts often guesses which earlier result an action should use, and it
-  sometimes guesses wrong. You can always repoint it: tap the blue variable
-  chip inside the action, tap **Select Variable** in the options that appear,
-  and the editor switches to a selection mode showing a result bubble beneath
-  every earlier action — tap the bubble you want. These instructions call that
-  "point it at ...".
+  action below it. When these instructions add several actions in a row, that
+  automatic hand-off does the wiring.
+- **Set Variable** saves a result under a name so a later step can use it. It's
+  an ordinary action: it takes whatever the action above produced and names it.
+- Shortcuts sometimes connects an action to the wrong earlier result. To
+  repoint it: tap the blue variable chip, tap **Clear** (the panel closes and
+  the field shows a faded placeholder), tap the faded placeholder, then pick
+  the variable you want from the bar that appears — it lists every result in
+  the workflow by name. These instructions call that "repoint it to ...".
 
 ### List your volumes
 
@@ -52,7 +50,7 @@ shortcut serve any number of volumes, and it's the only thing you edit when you
 add a volume later.
 
 1. Search the actions panel for "dictionary" and add **Dictionary**.
-2. For each volume, tap **Add new item** and:
+2. For each volume, tap **Add new item**, then:
    1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
       aren't used here.)
    2. Set the key to the volume's display name.
@@ -70,8 +68,8 @@ You'll store the token in one place and give it a name, so the final step can
 use it — and so there's exactly one box to update if you ever replace the
 token.
 
-1. Search the actions panel for "text" and add **Text**. It appears as an
-   empty text box — paste your token into it.
+1. Search the actions panel for "text" and add **Text**. It appears as an empty
+   text box — paste your token into it.
 2. Search the actions panel for "set variable" and add **Set Variable** directly
    below. This is a second, separate action: it takes the result of the action
    above it (your token) and saves it under a name.
@@ -86,40 +84,42 @@ your dictionary has only one volume in it.
 1. Search the actions panel for "dictionary value" and add
    **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
-   **All Keys**. It now produces the list of your volume names.
-3. The action now reads "Get All Keys in **Token**". That's Shortcuts guessing
-   the wrong source — it should read your volume list, not your token. Fix it:
-   1. Tap the blue **Token** chip inside the action.
-   2. In the options that appear, tap **Select Variable**.
-   3. The editor switches to selection mode, with a result bubble under each
-      earlier action. Tap the **Dictionary** bubble under your Dictionary
-      action.
-   The action now reads "Get All Keys in **Dictionary**" — that's correct.
-4. Search the actions panel for "count" and add **Count**. Leave it counting
-   **Items** — it
-   connects itself to the list of names above.
+   **All Keys**.
+3. The action now reads "Get All Keys in `token`". Shortcuts has guessed the
+   wrong source — it should read your volume list, not your token. Fix it:
+   1. Tap the blue `token` chip, then tap **Clear**. The panel closes and the
+      field shows a faded **Dictionary** placeholder.
+   2. Tap the faded placeholder. A bar appears listing the workflow's results
+      by name — for example `token`, `Dictionary`, `Text`.
+   3. Pick `Dictionary`.
+   The action now reads "Get All Keys in `Dictionary`" — that's correct. It
+   produces the list of your volume names.
+4. Search the actions panel for "count" and add **Count**. It arrives reading
+   "Count Items in `Dictionary Value`" — that's correct: `Dictionary Value` is
+   the list of names produced by the previous step. Leave it as is.
 5. Search the actions panel for "if" and add **If**. Set its condition to
-   **is** and the number
-   to **1**. Everything you add next goes inside one of its two branches.
+   **is** and the number to **1**. Everything you add next goes inside one of
+   its two branches.
 6. Inside the **If** branch (one volume — use it without asking):
    1. Search the actions panel for "dictionary value" and add
-      **Get Dictionary Value**. Change **Value** to **All Values** and point
-      its dictionary field at your **Dictionary**, so it reads "Get All Values
-      in **Dictionary**". With one volume, the "list" of values is just that
-      volume's repo path.
+      **Get Dictionary Value**. Change **Value** to **All Values**, and if its
+      source isn't `Dictionary`, repoint it to `Dictionary`. It should read
+      "Get All Values in `Dictionary`". With one volume, the "list" of values
+      is just that volume's repo path.
    2. Search the actions panel for "set variable" and add **Set Variable**
-      below it. Name the variable `repo`.
+      below it. Tap **Variable Name** and type `repo`.
 7. Inside the **Otherwise** branch (several volumes — ask which):
    1. Search the actions panel for "choose from list" and add
-      **Choose from List**. Point its list field at the **All Keys** result
-      from step 2, and set the prompt to "Which dex?".
+      **Choose from List**. If its list isn't `Dictionary Value` (the volume
+      names), repoint it to `Dictionary Value`. Set its **Prompt** to
+      "Which dex?".
    2. Search the actions panel for "dictionary value" and add
-      **Get Dictionary Value**, leaving its mode as **Value**. Point its
-      dictionary field at your **Dictionary**, and in its key field insert
-      **Chosen Item**, so it reads "Get Value for **Chosen Item** in
-      **Dictionary**".
+      **Get Dictionary Value**, leaving its mode as **Value**. Repoint its
+      source to `Dictionary` if needed, and in its key field pick
+      `Chosen Item` from the variables bar. It should read "Get Value for
+      `Chosen Item` in `Dictionary`".
    3. Search the actions panel for "set variable" and add **Set Variable**
-      below it. Name the variable `repo`.
+      below it. Tap **Variable Name** and type `repo`.
 
 Whichever branch runs, the shortcut now holds the destination repo path in the
 `repo` variable.
@@ -139,11 +139,11 @@ This step sends the capture: it opens a GitHub issue on the chosen volume,
 which the volume's workflow files into its inbox and then closes.
 
 1. Search the actions panel for "get contents" and add **Get Contents of URL**.
-2. In the URL field: type `https://api.github.com/repos/`, insert the **repo**
-   variable, then type `/issues`.
+2. In the URL field: type `https://api.github.com/repos/`, insert the `repo`
+   variable from the variables bar, then type `/issues`.
 3. Tap the arrow to expand the options and set **Method** to **POST**.
 4. Add two headers:
-   - `Authorization`: type `Bearer `, then insert the **token** variable.
+   - `Authorization`: type `Bearer `, then insert the `token` variable.
    - `Accept`: `application/vnd.github+json`
 5. Set **Request Body** to **JSON** and add two text fields:
    - `title`: insert **Shortcut Input**
@@ -156,12 +156,12 @@ what kinds of shares it accepts. It's a shortcut setting, not an action — you
 won't find it by searching the actions panel.
 
 1. Tap the name at the top and rename the shortcut to **Send to Dex**.
-2. Dismiss the action-search panel if it's covering the bottom of the editor
-   (swipe it down or tap outside it).
+2. Dismiss the actions panel if it's covering the bottom of the editor (swipe
+   it down or tap outside it).
 3. Tap the details button at the bottom of the editor, turn on
    **Show in Share Sheet**, then tap **Done**.
-4. A **Receive [input] from Share Sheet** header appears above your first
-   action. Tap its highlighted input-types chip and turn on:
+4. A **Receive input from Share Sheet** header appears above your first action.
+   Tap its highlighted input-types chip and turn on:
    - **Safari web pages**
    - **URLs**
    - **Articles**
