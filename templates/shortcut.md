@@ -97,10 +97,18 @@ your dictionary has only one volume in it.
 4. Search the actions panel for "count" and add **Count**. It arrives reading
    "Count Items in `Dictionary Value`" — that's correct: `Dictionary Value` is
    the list of names produced by the previous step. Leave it as is.
-5. Search the actions panel for "if" and add **If**. Set its condition to
-   **is** and the number to **1**. Everything you add next goes inside one of
-   its two branches.
-6. Inside the **If** branch (one volume — use it without asking):
+5. Search the actions panel for "if" and add **If**. This adds three
+   connected rows at once — **If**, **Otherwise**, and **End If** — which
+   form two branches: actions placed between **If** and **Otherwise** run
+   when the condition is true; actions between **Otherwise** and **End If**
+   run when it isn't.
+6. In the **If** row, tap **Condition** and choose **is**, then tap the number
+   field and enter **1**. The row now reads "If `Count` is 1".
+7. Get each of the next actions into the right branch. Use the **+** that
+   shows inside the branch to add there directly — or, if an action lands at
+   the bottom of the shortcut instead, touch and hold it and drag it up until
+   it sits indented beneath the row it belongs under.
+8. Between **If** and **Otherwise** (one volume — use it without asking):
    1. Search the actions panel for "dictionary value" and add
       **Get Dictionary Value**. Change **Value** to **All Values**, and if its
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
@@ -108,7 +116,7 @@ your dictionary has only one volume in it.
       is just that volume's repo path.
    2. Search the actions panel for "set variable" and add **Set Variable**
       below it. Tap **Variable Name** and type `repo`.
-7. Inside the **Otherwise** branch (several volumes — ask which):
+9. Between **Otherwise** and **End If** (several volumes — ask which):
    1. Search the actions panel for "choose from list" and add
       **Choose from List**. If its list isn't `Dictionary Value` (the volume
       names), repoint it to `Dictionary Value`. Set its **Prompt** to
