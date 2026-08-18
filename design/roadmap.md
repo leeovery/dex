@@ -22,7 +22,10 @@ state formats). This file holds what's *next*, not what is.
   whisper), blog (trafilatura + wayback + og:image), github
   (repos/profiles/gists/issues), arxiv, tweet (fxtwitter + t.co follow +
   photos). To design: instagram, PDF, generic files, and a clean way to add
-  more. Also enrichment depth: the blog driver fetches only the shared URL,
+  more. Tweet driver: traverse threads — walking up the reply chain from a
+  shared post is cheap (each post names its parent); walking down from a
+  thread's first post needs design. Engagement counts stay unrecorded
+  (snapshot noise) except where a driver's requirements say otherwise. Also enrichment depth: the blog driver fetches only the shared URL,
   so product sites that spread substance across landing/pricing/docs come in
   thin — consider a site driver that pulls a small judged set of pages
   (capped, never a crawler). This is the core value of the system — solve it

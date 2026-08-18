@@ -29,7 +29,12 @@ description: Health-check and repair this dex instance. Use when the owner asks 
      the history section marked superseded, never silently delete.
 6. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
-7. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
+7. Coarse-topic check: when a topic has grown unwieldy or a coherent
+   sub-cluster has formed inside it, split it — create the finer-grained
+   topic(s), reassign members from their digests, rewrite the affected pages
+   with cross-links, and update the index. The taxonomy is flat; a "subtopic"
+   is just a sharper topic.
+8. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
    pins always win.
-8. Append a `wiki/log.md` line; commit and push. Report findings and fixes to
+9. Append a `wiki/log.md` line; commit and push. Report findings and fixes to
    the owner in plain words — no jargon.

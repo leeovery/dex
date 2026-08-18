@@ -77,7 +77,11 @@ prefix today's date — so ids stay one-to-one with files.
    Topics: use canonical names from `state/taxonomy.json` when it exists;
    otherwise 2–5 kebab-case candidates.
 5. **Place.** Taxonomy exists → append the id to each matching topic's items.
-   Create a new topic only once several items justify a page.
+   Create a new topic only once several items justify a page. When you do
+   create one, sweep the existing digests (`state/digests/`) for items that
+   belong to it — including `uncategorized-shares` — and move them in: a new
+   topic usually reveals items that were previously overlooked or coarsely
+   filed.
 6. **Update the wiki.** Splice cited sentence(s) into affected pages —
    rewrite-not-append if "current state" changes. Pages citing a media item
    should usually embed it (relative image links). Update `wiki/index.md`;
