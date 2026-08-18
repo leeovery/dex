@@ -10,8 +10,8 @@ volume, maintained by Claude.
   who/when/why, and woven into the wiki.
 - **Ask questions** — open a Claude session on this repo (Cowork works) and ask.
   Answers come from the wiki with citations, newest knowledge first.
-- **Health check** — occasionally ask Claude to "run a lint"; it finds and fixes
-  broken links, stale pages, and contradictions.
+- **Health check** — now and then, ask Claude to check the knowledge base over;
+  it finds and fixes broken links, stale pages, and contradictions.
 
 What belongs here is defined in [`CLAUDE.md`](./CLAUDE.md) (the Scope section).
 The machinery lives in the shared engine and never needs touching.
