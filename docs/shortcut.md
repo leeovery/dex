@@ -149,63 +149,62 @@ These actions write the capture into the instance repo.
    string to `yyyyMMdd-HHmmss`. The row reads "Format `Date`".
 3. Add **Set Variable** below it, named `stamp`. The row reads
    "Set variable `stamp` to `Formatted Date`".
-4. Add **Get Images from Input**. Repoint it to `Shortcut Input`. The row
+4. Add **Get URLs from Input**. Repoint it to `Shortcut Input`. The row
+   reads "Get URLs from `Shortcut Input`".
+5. Add **Count**. Repoint it to `URLs` if it connected to anything else.
+   The row reads "Count Items in `URLs`".
+6. Add **If**. Tap the faded **Number** and enter **0**. Delete its
+   **Otherwise** row. The row reads "If `Count` is 0".
+
+Place the next actions inside it. They run when no URL was shared:
+
+7. Add **Get Images from Input**. Repoint it to `Shortcut Input`. The row
    reads "Get images from `Shortcut Input`".
-5. Add **Count**. Repoint it to `Images` if it connected to anything else.
-   The row reads "Count Items in `Images`".
-6. Add **If**, with the condition **is greater than** and the number **0**.
-   The row reads "If `Count` is greater than 0".
+8. Add **Count** below it. Repoint it to `Images` if it connected to
+   anything else. The row reads "Count Items in `Images`".
+9. Add **If** below it, with the condition **is greater than** and the
+   number **0**. The row reads "If `Count` is greater than 0".
 
-Place the next actions between **If** and **Otherwise**. They run when an
-image was shared:
+Place the next actions between that **If** and its **Otherwise**. They run
+when an image was shared:
 
-7. Add **Resize Image**. Repoint it to `Images`
-   if needed. Set the width to `2048` and leave the height on **Auto
-   Height**. The row reads "Resize `Images`".
-8. Add **Convert Image** below it, converting to **JPEG**. The row reads
-   "Convert `Resized Image` to **JPEG**".
-9. Add **Set Variable** below it, named `blob`. The row reads
-   "Set variable `blob` to `Converted Image`".
-10. Add **Text** below that, containing exactly `.jpg`.
-11. Add **Set Variable** below it, named `ext`. The row reads
+10. Add **Resize Image**. Repoint it to `Images` if needed. Set the width to
+    `2048` and leave the height on **Auto Height**. The row reads
+    "Resize `Images`".
+11. Add **Convert Image** below it, converting to **JPEG**. The row reads
+    "Convert `Resized Image` to **JPEG**".
+12. Add **Set Variable** below it, named `blob`. The row reads
+    "Set variable `blob` to `Converted Image`".
+13. Add **Text** below that, containing exactly `.jpg`.
+14. Add **Set Variable** below it, named `ext`. The row reads
     "Set variable `ext` to `Text`".
 
-Place the next actions between **Otherwise** and **End If**. They run when
-the share isn't an image:
+Place the next actions between its **Otherwise** and **End If**. They run
+when the share isn't an image:
 
-12. Add **Get URLs from Input**. Repoint
-    it to `Shortcut Input`. The row reads "Get URLs from `Shortcut Input`".
-13. Add **Count** below it. Repoint it to `URLs` if it connected to
-    anything else. The row reads "Count Items in `URLs`".
-14. Add **If** below it. Tap the faded **Number** and enter **0**. Delete its
-    **Otherwise** row. This If sits nested inside the outer **Otherwise**.
-    The row reads "If `Count` is 0".
+15. Add **Get Details of Files**. Set the detail to **File Extension**, and
+    repoint its input to `Shortcut Input`. The row reads
+    "Get **File Extension** of `Shortcut Input`".
+16. Add **If** below it, with the condition **has any value**. Delete its
+    **Otherwise** row. The row reads "If `File Extension` has any value".
 
-    Place the next actions inside it. They run when no URL was shared:
+    Place the next actions inside it. They run when a file was shared:
 
-    1. Add **Get Details of Files**. Set the detail to **File Extension**,
-       and repoint its input to `Shortcut Input`. The row reads
-       "Get **File Extension** of `Shortcut Input`".
-    2. Add **If** below it, with the condition **has any value**. Delete its
-       **Otherwise** row too. The row reads
-       "If `File Extension` has any value".
+    1. Add **Set Variable** named `blob`, repointing its input to
+       `Shortcut Input`. The row reads
+       "Set variable `blob` to `Shortcut Input`".
+    2. Add **Text** below that, containing `.` immediately followed by
+       the **File Extension** variable.
+    3. Add **Set Variable** below it, named `ext`. The row reads
+       "Set variable `ext` to `Text`".
 
-       Place the next actions inside it. They run when a file was shared:
+The bottom of the shortcut now reads three **End If** rows in a row: the
+file-check **End If**, the image **End If**, then the URL-check **End If**,
+which returns to the top level.
 
-       1. Add **Set Variable** named `blob`, repointing its input to
-          `Shortcut Input`. The row reads
-          "Set variable `blob` to `Shortcut Input`".
-       2. Add **Text** below that, containing `.` immediately followed by
-          the **File Extension** variable.
-       3. Add **Set Variable** below it, named `ext`. The row reads
-          "Set variable `ext` to `Text`".
+Below that last **End If**:
 
-    The bottom of the shortcut now reads three **End If** rows in a row —
-    the two nested ones, then the outer one, which returns to the top level.
-
-Below the outer **End If**:
-
-15. Add **If**. Repoint its input to `blob`, and set the condition to
+17. Add **If**. Repoint its input to `blob`, and set the condition to
     **has any value**. The row reads "If `blob` has any value".
 
     Place the next actions between **If** and **Otherwise**. They run when a
@@ -263,10 +262,10 @@ Below the outer **End If**:
 
 Below that **End If**, at the top level of the shortcut:
 
-16. Add **Base64 Encode**. Repoint its input to `payload`. Expand its
+18. Add **Base64 Encode**. Repoint its input to `payload`. Expand its
     options and set **Line Breaks** to **None**. The row reads
     "Base64 Encode `payload`".
-17. Add **Get Contents of URL** below it. Configure:
+19. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
        `/contents/inbox/` + the `stamp` variable + `.md`
     2. Method: **PUT**
