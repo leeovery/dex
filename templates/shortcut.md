@@ -25,74 +25,100 @@ one shortcut must belong to the same owner.
 
 ## Create the shortcut
 
-Open the Shortcuts app and create a new shortcut. Add the actions below in
-order by searching the actions panel; the Share Sheet wiring comes last.
+Open the Shortcuts app and create a new shortcut. Work through the sections
+below in order. Actions are added by searching the actions panel, except the
+Share Sheet setting at the end.
 
-1. **List your volumes.** The dictionary is the shortcut's list of knowledge
-   bases — it's what makes one shortcut serve any number of volumes, and it's
-   the only thing you edit when you add a volume later. Add **Dictionary**,
-   then add one item per volume:
-   1. Tap **Add new item**.
-   2. Choose **Text** as the item type (the other types — Number, Array,
-      Dictionary, Boolean — aren't used here).
-   3. Set the key to the volume's display name and the text value to its repo
-      path. For example:
-      - key `Engineering`, text `you/dex-engineering`
-      - key `Marketing`, text `you/dex-marketing`
-2. **Store the token.** The shortcut authenticates to GitHub with the token you
-   created earlier; keeping it in one Text action means one place to update if
-   you ever rotate it. Add **Text**, paste your token into it, then add
-   **Set Variable** and name the variable `token`.
-3. **Count the volumes.** The next two steps let the shortcut skip the picker
-   when there's nothing to pick. Add **Get Dictionary Keys**, then add
-   **Count** (set to count **Items**).
-4. **Pick the destination — only if there's a choice.** Add **If**, with the
-   condition **Count is 1**:
-   1. In the **If** branch (one volume — use it without asking): add
-      **Get Item from List** (First Item, from the keys), then
-      **Get Dictionary Value** for it, then **Set Variable** named `repo`.
-   2. In the **Otherwise** branch (several volumes — show the picker): add
-      **Choose from List** (over the keys, with the prompt "Which dex?"), then
-      **Get Dictionary Value** for the Chosen Item, then **Set Variable** named
-      `repo`.
-5. **Capture the "why".** A one-line note about why something caught your eye
-   is often the most valuable part of a capture — it travels with the link into
-   the knowledge base. Add **Ask for Input** (type **Text**), with the prompt
-   "Why? (optional)". Leave the default answer empty.
-6. **File it.** This is the step that actually sends the capture: it opens a
-   GitHub issue on the chosen volume, which the volume's workflow files into
-   its inbox and closes. Add **Get Contents of URL** and configure it:
-   1. URL: type `https://api.github.com/repos/`, insert the **repo** variable,
-      then type `/issues`.
-   2. Tap the arrow to expand the options. Set **Method** to **POST**.
-   3. Add two headers:
-      - `Authorization`: type `Bearer `, then insert the **token** variable.
-      - `Accept`: `application/vnd.github+json`
-   4. Set **Request Body** to **JSON** and add two text fields:
-      - `title`: insert **Shortcut Input**
-      - `body`: insert **Provided Input**
-7. **Name it.** Tap the name at the top and rename the shortcut to
-   **Send to Dex**.
-8. **Wire up the Share Sheet.** This makes the shortcut appear when you tap
-   Share in other apps, and defines what kinds of shares it accepts. It's a
-   shortcut setting, not an action — you won't find it by searching the
-   actions panel.
-   1. Dismiss the action-search panel if it's covering the bottom of the
-      editor (swipe it down or tap outside it).
-   2. Tap the details button at the bottom of the editor and turn on
-      **Show in Share Sheet**, then tap **Done**.
-   3. A **Receive [input] from Share Sheet** header appears above your first
-      action. Tap its highlighted input-types chip.
-   4. Turn on:
-      - **Safari web pages**
-      - **URLs**
-      - **Articles**
-      - **Text**
-      - **Rich text**
-      - **App Store apps**
-   5. Turn everything else off — images, files, and PDFs share as data, not
-      links, and this capture path can't carry them.
-   6. Set **If there's no input** to **Stop and Respond**.
+### List your volumes
+
+The dictionary is the shortcut's list of knowledge bases. It's what lets one
+shortcut serve any number of volumes, and it's the only thing you edit when you
+add a volume later.
+
+1. Add a **Dictionary** action.
+2. For each volume, tap **Add new item** and:
+   1. Choose **Text** as the item type. (Number, Array, Dictionary, and Boolean
+      aren't used here.)
+   2. Set the key to the volume's display name.
+   3. Set the text value to the volume's repo path.
+
+For example:
+
+- key `Engineering`, text `you/dex-engineering`
+- key `Marketing`, text `you/dex-marketing`
+
+### Store the token
+
+The shortcut authenticates to GitHub with the token you created earlier.
+Keeping it in a single Text action gives you one place to update if you ever
+rotate it.
+
+1. Add a **Text** action and paste your token into it.
+2. Add **Set Variable** and name the variable `token`.
+
+### Route to the right volume
+
+These actions pick the destination volume — and skip the picker entirely when
+there's only one volume to pick.
+
+1. Add **Get Dictionary Keys**.
+2. Add **Count**, set to count **Items**.
+3. Add **If**, with the condition **Count is 1**.
+4. In the **If** branch (one volume, so use it without asking):
+   1. Add **Get Item from List**, set to **First Item**, from the keys.
+   2. Add **Get Dictionary Value** for that item.
+   3. Add **Set Variable** and name it `repo`.
+5. In the **Otherwise** branch (several volumes, so show the picker):
+   1. Add **Choose from List** over the keys, with the prompt "Which dex?".
+   2. Add **Get Dictionary Value** for the Chosen Item.
+   3. Add **Set Variable** and name it `repo`.
+
+### Capture the "why"
+
+A one-line note about why something caught your eye is often the most valuable
+part of a capture — it travels with the link into the knowledge base.
+
+1. Add **Ask for Input**, type **Text**, with the prompt "Why? (optional)".
+2. Leave the default answer empty.
+
+### File it
+
+This step sends the capture: it opens a GitHub issue on the chosen volume,
+which the volume's workflow files into its inbox and then closes.
+
+1. Add **Get Contents of URL**.
+2. In the URL field: type `https://api.github.com/repos/`, insert the **repo**
+   variable, then type `/issues`.
+3. Tap the arrow to expand the options and set **Method** to **POST**.
+4. Add two headers:
+   - `Authorization`: type `Bearer `, then insert the **token** variable.
+   - `Accept`: `application/vnd.github+json`
+5. Set **Request Body** to **JSON** and add two text fields:
+   - `title`: insert **Shortcut Input**
+   - `body`: insert **Provided Input**
+
+### Name it and add it to the Share Sheet
+
+This makes the shortcut appear when you tap Share in other apps, and defines
+what kinds of shares it accepts. It's a shortcut setting, not an action — you
+won't find it by searching the actions panel.
+
+1. Tap the name at the top and rename the shortcut to **Send to Dex**.
+2. Dismiss the action-search panel if it's covering the bottom of the editor
+   (swipe it down or tap outside it).
+3. Tap the details button at the bottom of the editor, turn on
+   **Show in Share Sheet**, then tap **Done**.
+4. A **Receive [input] from Share Sheet** header appears above your first
+   action. Tap its highlighted input-types chip and turn on:
+   - **Safari web pages**
+   - **URLs**
+   - **Articles**
+   - **Text**
+   - **Rich text**
+   - **App Store apps**
+5. Turn everything else off. Images, files, and PDFs share as data, not links —
+   this capture path can't carry them.
+6. Set **If there's no input** to **Stop and Respond**.
 
 ## Try it
 
