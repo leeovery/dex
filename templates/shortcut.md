@@ -236,15 +236,14 @@ is cleared automatically when the shortcut is shared — so your token never
 travels with it.
 
 1. In the info panel, tap **Import Questions**, then **Add New Question**.
-2. Choose the token **Text** parameter from the list, tap its name in the
-   Import Questions area, and set the **Question Text** to something like
-   "Paste your GitHub token (see Before you begin in the setup guide)".
-   Confirm, then tap **Done**.
-3. Set your Dictionary to example rows before sharing, or add import questions
-   for its values the same way — repo paths aren't secret, and importers can
-   edit them after import either way.
-4. Share as an iCloud link. The token field arrives blank and the importer is
-   prompted for their own.
+2. Working top to bottom: choose the **Dictionary** parameter, tap its name in
+   the Import Questions area, and set the **Question Text** to something like
+   "Your volume(s): display name and owner/repo path". Confirm.
+3. Tap **Add New Question** again, choose the token **Text** parameter, and set
+   its **Question Text** to something like "Paste your GitHub token (see
+   Before you begin in the setup guide)". Confirm, then tap **Done**.
+4. Share as an iCloud link. Both fields arrive cleared and the importer is
+   prompted for their own values.
 
 ## Try it
 
