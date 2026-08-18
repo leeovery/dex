@@ -246,9 +246,8 @@ Between **Otherwise** and **End If** (not an image — a link, text, or a file):
        **File Extension** variable (from step 12).
     3. Add **Set Variable** below it. Tap **Variable Name** and type `ext`.
 
-After the outer **End If**: if a binary was shared, upload it as an asset and
-write a `.md` that points at it; otherwise write the link/note `.md`. Either
-way the result lands in the `payload` variable.
+Then, below the outer **End If**, build the capture file's content and save it
+as `payload`:
 
 14. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
     bar doesn't list it), and set the condition to **has any value**. Drag

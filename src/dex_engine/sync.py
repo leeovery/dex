@@ -37,6 +37,8 @@ def main() -> None:
     for skill in skills.iterdir():
         if skill.is_dir():
             _copy_tree(skill, ROOT / ".claude" / "skills" / skill.name, changed)
+    _write_if_changed(ROOT / ".claude" / "dex-contract.md",
+                      (tpl / "dex-contract.md").read_text(), changed)
     _write_if_changed(ROOT / "bin" / "dex", (tpl / "dex").read_text(), changed)
     os.chmod(ROOT / "bin" / "dex", 0o755)
     old_shim = ROOT / "bin" / "kb"

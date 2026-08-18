@@ -1,6 +1,14 @@
-# media is LFS-tracked; capture notes and knowledge stay plain git
+# media is LFS-tracked; capture notes, transcripts, and knowledge stay plain git
 media/** filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-* filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.png filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.jpg filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.jpeg filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.webp filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.gif filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.pdf filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.mp4 filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.mov filter=lfs diff=lfs merge=lfs -text
+enrichment/**/media-*.heic filter=lfs diff=lfs merge=lfs -text
 raw/**/*.png filter=lfs diff=lfs merge=lfs -text
 raw/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 raw/**/*.jpeg filter=lfs diff=lfs merge=lfs -text

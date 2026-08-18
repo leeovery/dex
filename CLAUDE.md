@@ -10,10 +10,14 @@ repos that run this machinery; see `~/Code/dex/CLAUDE.md` for the workspace.
   `dex-lint`, `dex-exclude`, `dex-inbox`, `dex-sync`), exposed as entry points
   in `pyproject.toml` and run in instances through the `bin/dex` shim
   (`uvx --from` this repo).
-- `templates/` — what instances get: the `dex` shim, `gitattributes`, and
+- `templates/` — what instances get: the `dex` shim, `gitattributes`,
+  `dex-contract.md` (the shared instance contract, synced to
+  `.claude/dex-contract.md` and imported by every instance's CLAUDE.md), and
   `skills/` (each skill dir synced recursively into `.claude/skills/`,
   including `references/`). `CLAUDE.md` and `instance-README.md` are scaffold
-  seeds — copied at instance creation, instance-owned afterwards.
+  seeds — copied at instance creation, instance-owned afterwards (they hold
+  only identity, scope, and instance-specifics; everything shared lives in
+  the synced contract).
 - `docs/` — human guides only: `shortcut.md` (build the phone shortcut),
   `capture.md` (the capture protocol any client implements), `backfill.md`
   (bulk imports).

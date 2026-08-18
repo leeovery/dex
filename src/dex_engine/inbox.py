@@ -108,6 +108,7 @@ def _download(asset_url: str, token: str) -> bytes:
 
 
 def _parse(text: str) -> tuple[dict, str]:
+    text = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---"):
         return {}, text
     lines = text.split("\n")
@@ -146,6 +147,11 @@ def _lfs_staged(rel: str) -> bool:
 
 def _materialize(path: Path, fm: dict, body: str, token: str) -> bool:
     asset_url = fm["asset"]
+    if not re.fullmatch(r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+",
+                        asset_url):
+        print(f"  FAIL {path.name}: malformed asset URL {asset_url!r} — the capture "
+              f"client's upload step likely failed; the binary may be lost")
+        return False
     st, meta = _api(asset_url, token)
     name = fm.get("name") or (meta["name"] if meta else "")
     if not name:
@@ -234,6 +240,18 @@ def main() -> None:
                      "origin remote on github.com")
         sys.exit(0 if _ensure_release(repo, token) else 1)
 
+    legacy = ROOT / "state" / "inbox"
+    if legacy.is_dir():
+        INBOX.mkdir(exist_ok=True)
+        moved = 0
+        for p in sorted(legacy.iterdir()):
+            if p.is_file() and p.name != ".gitkeep" and not (INBOX / p.name).exists():
+                p.rename(INBOX / p.name)
+                moved += 1
+        if moved:
+            print(f"migrated {moved} capture(s) from the legacy state/inbox/ path "
+                  f"to inbox/ (a capture client may still point at the old path).")
+
     if not INBOX.is_dir():
         print("no inbox/ here — run from an instance root.")
         return
@@ -249,7 +267,12 @@ def main() -> None:
 
     failures = 0
     for p, fm, body in staged:
-        if not _materialize(p, fm, body, token):
+        try:
+            ok = _materialize(p, fm, body, token)
+        except Exception as e:
+            print(f"  FAIL {p.name}: {e}")
+            ok = False
+        if not ok:
             failures += 1
 
     if staged:
@@ -259,8 +282,13 @@ def main() -> None:
         print(f"inbox: {len(captures)} capture(s), none with staged assets.")
 
     if token and repo:
-        _ensure_release(repo, token, quiet_if_present=True)
-        _report_orphans(repo, token)
+        if _ensure_release(repo, token, quiet_if_present=True) is None:
+            failures += 1
+        else:
+            _report_orphans(repo, token)
+    else:
+        print("note: no GitHub auth here — the inbox-release and orphaned-asset "
+              "checks were skipped, not passed.")
     if failures:
         sys.exit(1)
 

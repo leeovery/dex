@@ -25,7 +25,9 @@ Start every ingest with:
    `media: media/<item-id>/<file>`. Text captures pass through untouched. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports missing
    auth or a failure, fix that with the owner before continuing — never work
-   around it by hand-downloading.
+   around it by hand-downloading. If it materialized anything, commit and push
+   immediately — the remote asset is already deleted, so the repo copy is now
+   the only copy.
 
 Then process every capture with the one procedure below, and delete each
 capture file when its item is done (the capture is preserved in git history;
@@ -35,7 +37,9 @@ Items handed directly in a session (a URL pasted in, an image or file dropped
 in) follow the same procedure — no inbox involved. For session-provided media,
 do what `bin/dex inbox` would have done: file it at `media/<item-id>/<name>`
 (`item-id = sha1("media/<name>")[:6]`) and `git add` it so LFS applies, then
-continue from step 1.
+continue from step 1. If `media/<item-id>/` already exists for a *different*
+file (generic names like `screenshot.png` collide), rename yours first —
+prefix today's date — so ids stay one-to-one with files.
 
 ## Per capture
 
