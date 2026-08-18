@@ -3,4 +3,4 @@
 #   bin/dex normalize | enrich [run|whisper|status|inventory|...] | lint [--write] | exclude <file.json> | inbox [ensure] | sync
 cmd=$1; shift 2>/dev/null
 [ -n "$cmd" ] || { echo "usage: bin/dex <normalize|enrich|lint|exclude|inbox|sync> [args]"; exit 1; }
-exec uvx --from git+https://github.com/leeovery/dex "kb-$cmd" "$@"
+exec uvx --from git+https://github.com/leeovery/dex "dex-$cmd" "$@"
