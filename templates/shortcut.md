@@ -44,9 +44,12 @@ And three things to know about how Shortcuts behaves:
   an ordinary action: it takes whatever the action above produced and names it.
 - Shortcuts sometimes connects an action to the wrong earlier result. To
   repoint it: tap the blue variable chip, tap **Clear** (the panel closes and
-  the field shows a faded placeholder), tap the faded placeholder, then pick
-  the variable you want from the bar that appears — it lists every result in
-  the workflow by name. These instructions call that "repoint it to ...".
+  the field shows a faded placeholder), then tap the faded placeholder and a
+  bar of options appears. If the result you need is listed in the bar, pick
+  it. If it isn't, tap **Select Variable** — the editor switches to a view
+  with a blue token beneath every action — and tap the token beneath the
+  action whose result you want. These instructions call that
+  "repoint it to ...".
 
 ### Step 1: List your volumes
 
@@ -124,9 +127,17 @@ your dictionary has only one volume in it.
       "Set `repo` to `Dictionary Value`" — that's correct: it saves the repo
       path under the name `repo`.
 9. Between **Otherwise** and **End If** (several volumes — ask which):
-   1. Add **Choose from List**. If its list isn't `Dictionary Value` (the volume
-      names), repoint it to `Dictionary Value`. Set its **Prompt** to
-      "Which dex?".
+   1. Add **Choose from List** and drag it beneath **Otherwise**. It arrives
+      reading "Choose from `Count`" — the wrong source. Fix it:
+      1. Tap the `Count` chip, then tap **Clear**. The row now shows a faded
+         **Choose** placeholder.
+      2. Tap the faded placeholder. The bar that appears won't list what we
+         need, so tap **Select Variable**.
+      3. In the selection view, tap the blue token beneath your first
+         **Get Dictionary Value** action (the one reading "Get All Keys in
+         `Dictionary`").
+      The row now reads "Choose from `Dictionary Value`". Then tap the arrow
+      on the action and set **Prompt** to "Which dex?".
    2. Add **Get Dictionary Value**, leaving its mode as **Value**. Repoint its
       source to `Dictionary` if needed, and in its key field pick
       `Chosen Item` from the variables bar. It should read "Get Value for
