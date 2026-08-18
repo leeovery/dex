@@ -27,7 +27,11 @@ one shortcut must belong to the same owner.
 
 Open the Shortcuts app and create a new shortcut. Add the actions below in
 order by searching the actions panel; the Share Sheet wiring comes last.
-1. Add **Dictionary**, then add one item per volume:
+
+1. **List your volumes.** The dictionary is the shortcut's list of knowledge
+   bases — it's what makes one shortcut serve any number of volumes, and it's
+   the only thing you edit when you add a volume later. Add **Dictionary**,
+   then add one item per volume:
    1. Tap **Add new item**.
    2. Choose **Text** as the item type (the other types — Number, Array,
       Dictionary, Boolean — aren't used here).
@@ -35,19 +39,29 @@ order by searching the actions panel; the Share Sheet wiring comes last.
       path. For example:
       - key `Engineering`, text `you/dex-engineering`
       - key `Marketing`, text `you/dex-marketing`
-2. Add **Text**, paste your token into it, then add **Set Variable** and name the
-   variable `token`.
-3. Add **Get Dictionary Keys**, then add **Count** (set to count **Items**).
-4. Add **If**, with the condition **Count is 1**:
-   1. In the **If** branch: add **Get Item from List** (First Item, from the
-      keys), then **Get Dictionary Value** for it, then **Set Variable** named
+2. **Store the token.** The shortcut authenticates to GitHub with the token you
+   created earlier; keeping it in one Text action means one place to update if
+   you ever rotate it. Add **Text**, paste your token into it, then add
+   **Set Variable** and name the variable `token`.
+3. **Count the volumes.** The next two steps let the shortcut skip the picker
+   when there's nothing to pick. Add **Get Dictionary Keys**, then add
+   **Count** (set to count **Items**).
+4. **Pick the destination — only if there's a choice.** Add **If**, with the
+   condition **Count is 1**:
+   1. In the **If** branch (one volume — use it without asking): add
+      **Get Item from List** (First Item, from the keys), then
+      **Get Dictionary Value** for it, then **Set Variable** named `repo`.
+   2. In the **Otherwise** branch (several volumes — show the picker): add
+      **Choose from List** (over the keys, with the prompt "Which dex?"), then
+      **Get Dictionary Value** for the Chosen Item, then **Set Variable** named
       `repo`.
-   2. In the **Otherwise** branch: add **Choose from List** (over the keys, with
-      the prompt "Which dex?"), then **Get Dictionary Value** for the Chosen
-      Item, then **Set Variable** named `repo`.
-5. Add **Ask for Input** (type **Text**), with the prompt "Why? (optional)".
-   Leave the default answer empty.
-6. Add **Get Contents of URL** and configure it:
+5. **Capture the "why".** A one-line note about why something caught your eye
+   is often the most valuable part of a capture — it travels with the link into
+   the knowledge base. Add **Ask for Input** (type **Text**), with the prompt
+   "Why? (optional)". Leave the default answer empty.
+6. **File it.** This is the step that actually sends the capture: it opens a
+   GitHub issue on the chosen volume, which the volume's workflow files into
+   its inbox and closes. Add **Get Contents of URL** and configure it:
    1. URL: type `https://api.github.com/repos/`, insert the **repo** variable,
       then type `/issues`.
    2. Tap the arrow to expand the options. Set **Method** to **POST**.
@@ -57,9 +71,12 @@ order by searching the actions panel; the Share Sheet wiring comes last.
    4. Set **Request Body** to **JSON** and add two text fields:
       - `title`: insert **Shortcut Input**
       - `body`: insert **Provided Input**
-7. Name the shortcut **Send to Dex** (tap the name at the top to rename it).
-8. Turn on Share Sheet input. This is a shortcut setting, not an action — you
-   won't find it by searching the actions panel.
+7. **Name it.** Tap the name at the top and rename the shortcut to
+   **Send to Dex**.
+8. **Wire up the Share Sheet.** This makes the shortcut appear when you tap
+   Share in other apps, and defines what kinds of shares it accepts. It's a
+   shortcut setting, not an action — you won't find it by searching the
+   actions panel.
    1. Dismiss the action-search panel if it's covering the bottom of the
       editor (swipe it down or tap outside it).
    2. Tap the details button at the bottom of the editor and turn on
