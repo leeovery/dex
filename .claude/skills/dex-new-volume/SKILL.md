@@ -54,11 +54,8 @@ Then:
 Walk them through, concretely:
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token scoped
    to ONLY this volume repo, permissions: Contents R/W + Issues R/W.
-2. iOS Shortcut (3 actions): Receive from Share Sheet (URLs/Text) → Ask for Input
-   (Text, "Why? (optional)") → Get Contents of URL:
-   POST `https://api.github.com/repos/<owner>/<volume>/issues`,
-   headers `Authorization: Bearer <PAT>` + `Accept: application/vnd.github+json`,
-   Request Body JSON with `title` = Shortcut Input, `body` = Provided Input.
+2. iOS Shortcut: walk them through `templates/shortcut.md` (the universal
+   recipe — dictionary of volumes, auto-skips the picker when there's only one).
 3. Tell them plainly: never share the Shortcut or its iCloud link publicly — shared
    shortcuts embed the PAT.
 

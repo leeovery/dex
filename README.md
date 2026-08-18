@@ -41,7 +41,8 @@ Then say:
 
 Claude interviews you — what to call it, what it covers, where it should live — and
 sets up everything: the repo, the structure, the scope rules, and (if you want) a
-one-tap "save to my dex" shortcut for your phone. From then on you talk to your
+one-tap "save to my dex" shortcut for your phone (recipe: `templates/shortcut.md` —
+one shortcut serves one volume silently or several with a picker). From then on you talk to your
 knowledge base, never to the machinery.
 
 ## Living with it
