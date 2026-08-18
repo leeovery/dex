@@ -238,15 +238,17 @@ travels with it.
 1. In the info panel, tap **Import Questions**, then **Add New Question**.
 2. Working top to bottom: choose the **Dictionary** parameter (shown as
    "Dictionary items"). Set the **Question Text** to:
-   `Your instances — one item each: key = display name, text = owner/repo`
-   In the **Default Answer**, tap **Add new item** and add one example row
-   (key `Engineering`, text `your-github-username/your-dex-instance`) so importers edit
-   a template instead of starting blank. Confirm.
+   `For each dex instance you have (one or more), add an item of type Text: key = its name (e.g. Engineering), text = its GitHub repo as owner/repo`
+   Leave the **Default Answer** empty — the question text is the guidance.
+   Confirm.
 3. Tap **Add New Question** again, choose the token **Text** parameter, and set
    its **Question Text** to something like "Paste your GitHub token (see
    Before you begin in the setup guide)". Confirm, then tap **Done**.
-4. Share as an iCloud link. Both fields arrive cleared and the importer is
-   prompted for their own values.
+4. Share as an iCloud link. On import, the questions appear as a
+   **Customize Shortcut** screen: for the instances question the importer taps
+   **Add new item**, chooses **Text**, and fills the key (name) and text
+   (owner/repo) — repeating for each instance — then pastes their token for
+   the second question.
 
 ## Try it
 
