@@ -118,8 +118,7 @@ your dictionary has only one volume in it.
 8. Between **If** and **Otherwise** (one volume — use it without asking):
    1. Add **Get Dictionary Value**. Change **Value** to **All Values**, and if its
       source isn't `Dictionary`, repoint it to `Dictionary`. It should read
-      "Get All Values in `Dictionary`". With one volume, the "list" of values
-      is just that volume's repo path.
+      "Get All Values in `Dictionary`".
    2. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`.
 9. Between **Otherwise** and **End If** (several volumes — ask which):
