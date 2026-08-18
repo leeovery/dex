@@ -41,7 +41,7 @@ printf '# Pins\n\nHuman corrections as claim+anchor; regeneration must re-apply 
 ```
 
 Then:
-- Fill CLAUDE.md: volume name, domain, and the Scope section exactly as interviewed.
+- Fill CLAUDE.md: volume name, domain, and the In-scope list exactly as interviewed.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
   and offer to set repo notifications to Ignore (inbox issue traffic is noise):
   `gh api -X PUT /repos/<owner>/<name>/subscription -F ignored=true`.

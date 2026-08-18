@@ -13,5 +13,5 @@ volume, maintained by Claude.
 - **Health check** — now and then, ask Claude to check the knowledge base over;
   it finds and fixes broken links, stale pages, and contradictions.
 
-What belongs here is defined in [`CLAUDE.md`](./CLAUDE.md) (the Scope section).
+What belongs here is defined in [`CLAUDE.md`](./CLAUDE.md) (the In-scope list).
 The machinery lives in the shared engine and never needs touching.

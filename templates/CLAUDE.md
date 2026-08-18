@@ -4,11 +4,12 @@ A personal, LLM-maintained knowledge base. You (Claude) ARE the application: you
 operate this repo per the contract below. Engine (mechanical pipeline):
 github.com/leeovery/dex, run via `bin/kb <cmd>` from the repo root.
 
-## Scope
+## In scope
 
-- **In**: <define>
+- <topic>
+- <topic>
 
-Anything not covered above is out of scope. When unsure, ask the owner rather
+Anything not listed is out of scope. When unsure, ask the owner rather
 than guessing.
 
 ## Operations

@@ -10,7 +10,7 @@ steps; never invent inputs. All commands run from the volume root.
 
 ## Per item
 
-1. **Scope check** against CLAUDE.md's Scope. Unsure → ask the owner. Rejected
+1. **Scope check** against CLAUDE.md's In-scope list. Unsure → ask the owner. Rejected
    inbox line → remove it and say why.
 2. **Corpus item.** Canonicalize the URL (strip utm/tracking params). Compute
    `shortid = sha1("manual/<canonical-url>")[:6]`. Write
