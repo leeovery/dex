@@ -1,6 +1,6 @@
 ---
 name: dex-ingest
-description: Ingest new knowledge into this dex instance — capture files in state/inbox/, a URL or text dropped into the session, or exports in raw/. Use when the user says "add this to dex", "ingest", or when the inbox has captures waiting.
+description: Ingest new knowledge into this dex instance — capture files in inbox/, a URL or text dropped into the session, or exports in raw/. Use when the user says "add this to dex", "ingest", or when the inbox has captures waiting.
 ---
 
 # Ingest
@@ -10,7 +10,7 @@ steps; never invent inputs. All commands run from the instance root.
 
 ## The inbox
 
-`state/inbox/` holds one `.md` file per capture, written directly by capture
+`inbox/` holds one `.md` file per capture, written directly by capture
 clients (the Send To Dex shortcut, or anything else that PUTs via the GitHub
 contents API). Every capture has the same shape: the body is the captured URL
 and/or the owner's note. A capture that arrived with a binary (image, PDF, any

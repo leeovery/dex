@@ -38,7 +38,7 @@ curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/dex -o bin/dex && chmod +x bin/dex
 bin/dex sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, .gitattributes
 printf '.DS_Store\n.env\n' > .gitignore
-mkdir -p state/inbox && touch state/inbox/.gitkeep
+mkdir -p inbox && touch inbox/.gitkeep
 git lfs install --local   # media/ and image captures are LFS-tracked
 printf '{\n  "name_map": {},\n  "internal_domains": [],\n  "noise_prefixes": []\n}\n' > state/normalize-config.json
 printf '# Index\n\nNo pages yet — first ingest pending.\n' > wiki/index.md

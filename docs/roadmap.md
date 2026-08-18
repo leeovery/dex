@@ -8,7 +8,7 @@ discussion before building.
 Binary captures no longer enter git history as raw blobs. The unified design
 ("one method for receiving content" — Lee):
 
-- **Every capture is one `.md` in `state/inbox/`** — body = URL and/or note
+- **Every capture is one `.md` in `inbox/`** — body = URL and/or note
   (the note always lives in the body now; the note-as-commit-message hack is
   gone). A capture that carried a binary adds frontmatter: `asset:` (API URL
   of a release asset on the repo's standing `inbox` release) + `name:`.

@@ -183,7 +183,7 @@ part of a capture — it travels with the link into the knowledge base.
 
 ### Step 5: File it
 
-Every capture files exactly one small `.md` into `state/inbox/` — that's the
+Every capture files exactly one small `.md` into `inbox/` — that's the
 capture, whatever was shared. A link or note goes straight into the file's
 body along with your "why" note. A shared image (resized) or file (a PDF, for
 example) is first uploaded as an asset on the instance's standing **inbox
@@ -309,7 +309,7 @@ Finally, the single upload — identical for every kind of capture:
     breaks that GitHub rejects as invalid base64.
 16. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
-       `/contents/state/inbox/` + the `stamp` variable + `.md`
+       `/contents/inbox/` + the `stamp` variable + `.md`
     2. Method: **PUT**
     3. Headers:
        - key `Authorization`, text `Bearer` + space + the `token` variable
@@ -386,7 +386,7 @@ travels with it.
 ## Try it
 
 Share any page from Safari. Within seconds a new commit appears on the
-instance repo adding a `.md` file under `state/inbox/` — that's the capture,
+instance repo adding a `.md` file under `inbox/` — that's the capture,
 with your note in its body, waiting for the next ingest. Share a photo to see
 the binary path: the resized image appears as an asset on the repo's **inbox**
 release, and the committed `.md` points at it. The next ingest moves the
@@ -397,7 +397,7 @@ binary into the repo (under `media/`, LFS-tracked) and deletes the asset.
 - Never share a shortcut whose token field lacks an import question — shared
   shortcuts embed whatever is in their fields. With the import question set
   (above), the token field is cleared on share and sharing is safe.
-- Any HTTP client can capture the same way: PUT a `.md` into `state/inbox/`
+- Any HTTP client can capture the same way: PUT a `.md` into `inbox/`
   via the contents API — and for a binary, first upload it as an asset on the
   `inbox` release and reference it from the `.md`'s frontmatter (`asset:` its
   API URL, `name:` its filename). A bookmarklet or CLI alias works as well as

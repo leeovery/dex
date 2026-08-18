@@ -1,6 +1,6 @@
 """Reconcile the capture inbox: materialize staged binary captures.
 
-Every capture is one .md file in state/inbox/. Text captures carry a URL
+Every capture is one .md file in inbox/. Text captures carry a URL
 and/or note in the body. A capture that arrived with a binary (image, PDF,
 any file) additionally carries frontmatter naming a release asset staged on
 the instance's standing "inbox" release:
@@ -38,7 +38,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path.cwd()
-INBOX = ROOT / "state" / "inbox"
+INBOX = ROOT / "inbox"
 API = "https://api.github.com"
 TAG = "inbox"
 UA = "dex-engine-inbox"
@@ -235,7 +235,7 @@ def main() -> None:
         sys.exit(0 if _ensure_release(repo, token) else 1)
 
     if not INBOX.is_dir():
-        print("no state/inbox/ here — run from an instance root.")
+        print("no inbox/ here — run from an instance root.")
         return
 
     captures = sorted(INBOX.glob("*.md"))

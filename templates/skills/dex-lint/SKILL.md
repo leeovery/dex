@@ -5,10 +5,13 @@ description: Health-check and repair this dex instance. Use when the owner asks 
 
 # Health check (lint)
 
-1. `bin/dex sync` — refresh engine-managed machinery (skills, shim, inbox
-   workflow); commit if anything changed.
-2. Run `bin/dex lint` from the instance root — the mechanical report.
-3. Fix, in order:
+1. `bin/dex sync` — refresh engine-managed machinery (skills, shim,
+   .gitattributes); commit if anything changed.
+2. `git pull`, then `bin/dex inbox` — reconciles any staged captures and
+   reports orphaned assets on the inbox release (an upload whose capture
+   pointer never landed); raise those with the owner.
+3. Run `bin/dex lint` from the instance root — the mechanical report.
+4. Fix, in order:
    - **Broken wikilinks** — typo → correct it; genuinely missing target → create
      the page if its members justify one, otherwise de-link.
    - **Bad citations** (id not in corpus) — find the right id or remove the claim.
@@ -19,9 +22,9 @@ description: Health-check and repair this dex instance. Use when the owner asks 
    - **Stale pages** (members newer than the page) — fold the newer items in via
      rewrite-not-append; if the new material supersedes old claims, move them to
      the history section marked superseded, never silently delete.
-4. Judgment sweep over every page you touched: cross-page contradictions
+5. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
-5. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
+6. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
    pins always win.
-6. Append a `wiki/log.md` line; commit. Report findings and fixes to the owner in
+7. Append a `wiki/log.md` line; commit. Report findings and fixes to the owner in
    plain words — no jargon.

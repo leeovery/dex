@@ -107,7 +107,7 @@ Instances run the engine's mechanical commands via a `bin/dex` shim
 | `dex-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | refresh engine-managed instance machinery (skills, `bin/dex`, `.gitattributes`) |
 
-Capture inbox: every capture is one `.md` in `state/inbox/`, written via the
+Capture inbox: every capture is one `.md` in `inbox/`, written via the
 GitHub contents API — body = URL and/or note; a capture that carried a binary
 (image, PDF, any file) stages it as an asset on the repo's standing `inbox`
 release and references it in frontmatter. No server-side machinery at all: the
@@ -115,9 +115,10 @@ PUT is the commit, and ingest moves staged binaries into `media/` where LFS
 applies. Suggestion is untrusted by design — scope filtering happens at
 ingest, inside the instance.
 
-Instance layout: `CLAUDE.md` (scope + operations contract) · `raw/` (verbatim
-exports) · `corpus/` (append-only items) · `enrichment/` · `wiki/`
+Instance layout: `CLAUDE.md` (scope + operations contract) · `inbox/` (pending
+captures) · `raw/` (verbatim exports) · `corpus/` (append-only items) ·
+`enrichment/` · `media/` (captured binaries, LFS) · `wiki/`
 (topics/entities/syntheses plus index, log, pins) · `state/` (digests, taxonomy,
-ledgers, inbox, normalize-config.json).
+ledgers, normalize-config.json).
 
 </details>

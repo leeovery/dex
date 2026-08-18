@@ -17,7 +17,7 @@ update both files.
 
 Three operations. Detailed procedures live in skills — load them, don't improvise:
 
-- **ingest** (`.claude/skills/dex-ingest`) — new items from `state/inbox/` capture files, a URL
+- **ingest** (`.claude/skills/dex-ingest`) — new items from `inbox/` capture files, a URL
   dropped in session, or exports in `raw/`. Capture provenance → enrich → digest →
   place → update affected wiki pages, index, log.
 - **query** (`.claude/skills/dex-query`) — answer from the wiki: `wiki/index.md`
@@ -31,7 +31,7 @@ Three operations. Detailed procedures live in skills — load them, don't improv
 ## Dataflow
 
 ```
-raw/ (verbatim exports) + state/inbox/ (capture files; staged binaries land in media/<id>/, LFS)
+raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<id>/, LFS)
   →  corpus/ (one item per share, provenance frontmatter; media/ holds captured binaries)
   →  enrichment/<id>/ (fetched content + media descriptions)
   →  state/digests/<id>.md (fact index)
