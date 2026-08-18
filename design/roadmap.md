@@ -38,6 +38,13 @@ state formats). This file holds what's *next*, not what is.
   screenshot-capture fallback (works today). Requirements when built:
   caption, full carousels, likes/follower counts; videos = metadata + link
   only.
+- **Update channel: main vs pinned releases** — instances track the engine's
+  `main` on every `bin/dex` run (uvx from git), and synced machinery follows
+  via the weekly self-triggered health check. No staged rollout: a bad push
+  reaches every instance at its next command run. Option: the shim pins a
+  release tag and `dex-sync` bumps the pin, making mint releases the actual
+  distribution channel. Trade-off: deliberate rollout vs the freshness the
+  current single-maintainer loop relies on.
 - **Paid media/object storage** — S3 or Cloudflare R2 as a media store
   replacing/augmenting LFS (LFS free tier = 1GB), and/or as capture staging.
   Storage is one substitutable ingest step — capture clients and pointers are
