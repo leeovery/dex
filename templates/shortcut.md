@@ -225,7 +225,8 @@ won't find it by searching the actions panel.
    (These share as data or aren't knowledge sources; what stays on — Text,
    Rich text, Safari web pages, URLs, Articles, App Store apps — all arrive as
    text or links, which this capture path can carry.)
-6. Set **If there's no input** to **Stop and Respond**.
+6. Tap the blue tick in the top-right corner to confirm the toggles.
+7. Set **If there's no input** to **Stop and Respond**.
 
 ## Try it
 
