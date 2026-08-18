@@ -232,10 +232,12 @@ Between **Otherwise** and **End If** (not an image — a link, text, or a file):
     shared link or text it produces nothing — which is what the next check
     uses.
 13. Add **If** below it, with the condition **has any value**. This If sits
-    nested inside **Otherwise**; its own **Otherwise** stays empty (a link or
-    note needs no preparation here).
+    nested inside **Otherwise**. Delete its **Otherwise** row so the block is
+    just **If** … **End If** — a link or note needs no preparation here. The
+    bottom of the shortcut then reads: the nested **End If**, immediately
+    followed by the outer **End If**.
 
-    Between this **If** and its **Otherwise** (a file was shared):
+    Inside this **If** (a file was shared):
 
     1. Add **Set Variable**. Repoint its input to `Shortcut Input`, tap
        **Variable Name** and type `blob`. The row reads
