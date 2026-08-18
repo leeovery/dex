@@ -61,8 +61,7 @@ knowledge base, never to the machinery.
 
 One **dex**, many brains: each knowledge base is its own private *instance* repo
 (dex-cooking, dex-woodworking, one for your partner's business...) and this public
-repo is the shared engine they all run on. Fix the engine once, every instance
-benefits.
+repo is the shared engine they all run on.
 
 ## How it works
 
