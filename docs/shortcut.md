@@ -70,8 +70,7 @@ And three things to know about how Shortcuts behaves:
 
 ### Step 1: List your instances
 
-The dictionary is the shortcut's list of knowledge bases. It's what lets one
-shortcut serve any number of instances, and it's the only thing you edit when you
+The dictionary lists your instances. It's the only thing you edit when you
 add an instance later.
 
 1. Add **Dictionary**.
@@ -88,10 +87,7 @@ For example:
 
 ### Step 2: Store the token
 
-The shortcut proves who it is to GitHub with the token you created earlier.
-You'll store the token in one place and give it a name, so the final step can
-use it — and so there's exactly one box to update if you ever replace the
-token.
+Store the token once, under a name, so later steps can use it.
 
 1. Add **Text**. It appears as an empty
    text box — paste your token into it.
@@ -109,18 +105,15 @@ your dictionary has only one instance in it.
 1. Add **Get Dictionary Value**.
 2. In that action, tap the highlighted word **Value** and change it to
    **All Keys**.
-3. The action now reads "Get All Keys in `token`". Shortcuts has guessed the
-   wrong source — it should read your instance list, not your token. Fix it:
+3. The action now reads "Get All Keys in `token`" — the wrong source. Fix it:
    1. Tap the blue `token` chip, then tap **Clear**. The panel closes and the
       field shows a faded **Dictionary** placeholder.
    2. Tap the faded placeholder. A bar appears listing the workflow's results
       by name — for example `token`, `Dictionary`, `Text`.
    3. Pick `Dictionary`.
-   The action now reads "Get All Keys in `Dictionary`" — that's correct. It
-   produces the list of your instance names.
+   The action now reads "Get All Keys in `Dictionary`" — that's correct.
 4. Add **Count**. It arrives reading
-   "Count Items in `Dictionary Value`" — that's correct: `Dictionary Value` is
-   the list of names produced by the previous step. Leave it as is.
+   "Count Items in `Dictionary Value`" — that's correct. Leave it as is.
 5. Add **If**. This adds three
    connected rows at once — **If**, **Otherwise**, and **End If** — which
    form two branches: actions placed between **If** and **Otherwise** run
@@ -141,8 +134,7 @@ your dictionary has only one instance in it.
       "Get All Values in `Dictionary`".
    2. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`. The row now reads
-      "Set variable `repo` to `Dictionary Value`" — that's correct: it saves the repo
-      path under the name `repo`.
+      "Set variable `repo` to `Dictionary Value`" — that's correct.
 9. Between **Otherwise** and **End If** (several instances — ask which):
    1. Add **Choose from List** and drag it beneath **Otherwise**. It arrives
       reading "Choose from `Count`" — the wrong source. Fix it:
@@ -174,8 +166,7 @@ Whichever branch runs, the shortcut now holds the destination repo path in the
 
 ### Step 4: Capture the "why"
 
-A one-line note about why something caught your eye is often the most valuable
-part of a capture — it travels with the link into the knowledge base.
+This step asks for an optional note with each capture.
 
 1. Add **Ask for Input**.
 2. Set its type to **Text** and its prompt to "Why? (optional)". Leave the
@@ -183,32 +174,16 @@ part of a capture — it travels with the link into the knowledge base.
 
 ### Step 5: File it
 
-Every capture files exactly one small `.md` into `inbox/` — that's the
-capture, whatever was shared. A link or note goes straight into the file's
-body along with your "why" note. A shared image (resized) or file (a PDF, for
-example) is first uploaded as an asset on the instance's standing **inbox
-release** (dex creates this release during instance setup), and the `.md`
-references it — the next ingest moves the binary into the repo proper and
-deletes the asset. The branches below only prepare variables; one shared
-upload at the end sends the same `.md` for every kind of capture.
-
-First, a timestamp for unique filenames:
+These actions write the capture into the instance repo.
 
 1. Add **Date** (set to **Current Date**).
 2. Add **Format Date**. Set its format to **Custom** and the format string to
    `yyyyMMdd-HHmmss`.
 3. Add **Set Variable** below it. Tap **Variable Name** and type `stamp`.
-
-Then work out whether a binary was shared, and hold it as `blob` with its
-filename ending as `ext`:
-
 4. Add **Get Images from Input**. It arrives reading "Get images from
-   `stamp`" — the wrong source. Repoint it: tap the `stamp` chip, tap
-   **Clear**, tap the faded placeholder, and pick `Shortcut Input` from the
-   options that appear.
-5. Add **Count**. It should read "Count Items in `Images`" — `Images` is the
-   result of Get Images from Input. If it connected to anything else, repoint
-   it to `Images`.
+   `stamp`" — repoint it to `Shortcut Input`.
+5. Add **Count**. It should read "Count Items in `Images`" — if it connected
+   to anything else, repoint it to `Images`.
 6. Add **If**, with the condition **is greater than** and the number **0**.
    As in Step 3, drag each of the following actions into the right branch.
 
@@ -216,7 +191,7 @@ Between **If** and **Otherwise** (an image was shared):
 
 7. Add **Resize Image**, dragging it beneath **If**. If its input isn't
    `Images`, repoint it to `Images`. Set the width to `2048` and leave the
-   height automatic — this caps what each capture adds to the repo.
+   height automatic.
 8. Add **Convert Image** below it, converting to **JPEG**.
 9. Add **Set Variable** below it. Tap **Variable Name** and type `blob`. The
    row reads "Set variable `blob` to `Converted Image`".
@@ -224,26 +199,20 @@ Between **If** and **Otherwise** (an image was shared):
 11. Add **Set Variable** below it. Tap **Variable Name** and type `ext`. The
     row reads "Set variable `ext` to `Text`".
 
-Between **Otherwise** and **End If** (not an image — a link, text, or a file):
-
-A Safari link share also carries a webpage "file" (its file extension reads
-`html`), so these steps check for a URL first — a capture only counts as a
-file when there is no URL.
+Between **Otherwise** and **End If** (not an image):
 
 12. Add **Get URLs from Input**, dragging it beneath **Otherwise**. Repoint
-    its input to `Shortcut Input`. For a shared link this produces the URL;
-    for a shared file it produces nothing.
+    its input to `Shortcut Input`.
 13. Add **Count** below it. It should read "Count Items in `URLs`" — repoint
     it to `URLs` if it connected to anything else.
 14. Add **If** below it, reading "If `Count` is **Number**"; tap the faded
-    **Number** and enter **0**. Delete its **Otherwise** row. This If — no
-    URL was shared — sits nested inside the outer **Otherwise**.
+    **Number** and enter **0**. Delete its **Otherwise** row. This If sits
+    nested inside the outer **Otherwise**.
 
     Inside it:
 
     1. Add **Get Details of Files**. Set the detail to **File Extension**,
-       and repoint its input to `Shortcut Input`. For a shared file this
-       produces its extension (`pdf`); for shared text it produces nothing.
+       and repoint its input to `Shortcut Input`.
     2. Add **If** below it, with the condition **has any value**. Delete its
        **Otherwise** row too.
 
@@ -253,16 +222,14 @@ file when there is no URL.
           **Variable Name** and type `blob`. The row reads
           "Set variable `blob` to `Shortcut Input`".
        2. Add **Text** below that, containing `.` immediately followed by
-          the **File Extension** variable (from the Get Details of Files
-          above).
+          the **File Extension** variable.
        3. Add **Set Variable** below it. Tap **Variable Name** and type
           `ext`.
 
     The bottom of the shortcut now reads: two nested **End If** rows, then
     the outer **End If**.
 
-Then, below the outer **End If**, build the capture file's content and save it
-as `payload`:
+Below the outer **End If**:
 
 15. Add **If**. Repoint its input to `blob` (use **Select Variable** if the
     bar doesn't list it), and set the condition to **has any value**. Drag
@@ -276,7 +243,6 @@ as `payload`:
        2. Method: **GET**
        3. Headers: key `Authorization`, text `Bearer` + space + the `token`
           variable
-       This fetches the instance's standing inbox release.
     2. Add **Get Dictionary Value** below it, key `id`, in `Contents of URL`
        (the action above — repoint if it connected elsewhere).
     3. Add **Set Variable** below it. Tap **Variable Name** and type
@@ -290,12 +256,11 @@ as `payload`:
           - key `Authorization`, text `Bearer` + space + the `token` variable
           - key `Content-Type`, text `application/octet-stream`
        4. Request Body: **File**, and set the file to the `blob` variable.
-       This uploads the binary itself — no base64, one request.
     5. Add **Get Dictionary Value** below it, key `url`, in `Contents of URL`
        (the POST directly above).
     6. Add **Set Variable** below it. Tap **Variable Name** and type `asset`.
-    7. Add **Text** below that — the capture file's content, exactly five
-       lines then your note:
+    7. Add **Text** below that, containing exactly five lines then your
+       note:
 
        ```
        ---
@@ -306,8 +271,8 @@ as `payload`:
        [Ask for Input]
        ```
 
-       where each bracketed name is that variable (type the surrounding
-       characters literally; `[stamp][ext]` sit together with no space).
+       Each bracketed name is that variable; type the surrounding characters
+       literally. `[stamp][ext]` sit together with no space.
     8. Add **Set Variable** below it. Tap **Variable Name** and type
        `payload`.
 
@@ -318,13 +283,10 @@ as `payload`:
     10. Add **Set Variable** below it. Tap **Variable Name** and type
         `payload`.
 
-Finally, the single upload. These last two actions sit below the **End If**,
-outside every branch, at the top level of the shortcut — they run for every
-kind of capture:
+Below that **End If**, at the top level of the shortcut:
 
-16. Add **Base64 Encode**. Repoint its input to `payload`, and expand its
-    options and set **Line Breaks** to **None** — the default inserts line
-    breaks that GitHub rejects as invalid base64.
+16. Add **Base64 Encode**. Repoint its input to `payload`. Expand its
+    options and set **Line Breaks** to **None**.
 17. Add **Get Contents of URL** below it. Configure:
     1. URL: `https://api.github.com/repos/` + the `repo` variable +
        `/contents/inbox/` + the `stamp` variable + `.md`
@@ -333,8 +295,7 @@ kind of capture:
        - key `Authorization`, text `Bearer` + space + the `token` variable
        - key `Accept`, text `application/vnd.github+json`
     4. Request Body **JSON**, two text fields:
-       - key `message`, text the literal word `capture` — the API requires a
-         commit message; this constant is it
+       - key `message`, text the literal word `capture`
        - key `content`, text = the `Base64 Encoded` variable (the action
          above)
 
