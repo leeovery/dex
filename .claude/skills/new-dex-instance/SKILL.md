@@ -53,7 +53,7 @@ Then:
 Walk them through, concretely:
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token scoped
    to ONLY this instance repo, permissions: Contents R/W.
-2. iOS Shortcut: walk them through `templates/shortcut.md` (the universal
+2. iOS Shortcut: walk them through `docs/shortcut.md` (the universal
    recipe — dictionary of instances, auto-skips the picker when there's only one).
 3. Tell them plainly: never share the Shortcut or its iCloud link publicly — shared
    shortcuts embed the PAT.
