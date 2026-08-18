@@ -142,10 +142,9 @@ your dictionary has only one volume in it.
       It arrives reading "Get Value for **key** in `Selected Item`" — the
       key is empty and the source is wrong. Fix both:
       1. Tap the `Selected Item` chip (after "in"), then tap **Clear**. Tap
-         the faded placeholder and pick `Dictionary` — via **Select Variable**
-         and the token beneath your Dictionary action if the bar doesn't list
-         it.
-      2. Tap the faded **key** field and pick `Selected Item` the same way.
+         the faded placeholder — here the bar lists all the workflow's
+         results — and pick `Dictionary`.
+      2. Tap the faded **key** field and pick `Selected Item` from its bar.
       The row now reads "Get Value for `Selected Item` in `Dictionary`".
    3. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`. As in the other branch,
