@@ -1,4 +1,4 @@
-# Send to Dex — one-tap capture from iPhone or iPad
+# Send To Dex — one-tap capture from iPhone or iPad
 
 Share a link from any app to file it in your volume's inbox, ready for the next
 ingest. One shortcut handles any number of volumes: with one volume it files
@@ -12,7 +12,7 @@ Create a token that the shortcut uses to file captures:
    tap **Generate new token**.
 2. Name the token so future-you knows what it is — for example `send-to-dex` —
    and add a description like "Files captures from my phone into dex volume
-   inboxes. Lives inside the Send to Dex shortcut."
+   inboxes. Lives inside the Send To Dex shortcut."
 3. Set **Expiration** to **No expiration**. The shortcut breaks silently the day
    a token expires; if you prefer an expiring token, set a calendar reminder to
    rotate it.
@@ -198,7 +198,7 @@ This makes the shortcut appear when you tap Share in other apps, and defines
 what kinds of shares it accepts. It's a shortcut setting, not an action — you
 won't find it by searching the actions panel.
 
-1. Tap the name at the top and rename the shortcut to **Send to Dex**.
+1. Tap the name at the top and rename the shortcut to **Send To Dex**.
 2. Dismiss the actions panel if it's covering the bottom of the editor (swipe
    it down or tap outside it).
 3. Tap the small info button (an ⓘ in a circle) at the bottom of the editor,
@@ -226,7 +226,22 @@ won't find it by searching the actions panel.
 7. Tap **Continue** (after "If there's no input:") and change it to
    **Stop and Respond**. It asks for a response — the message shown if the
    shortcut is ever run without anything shared. Enter:
-   `Nothing to send — share a link to use Send to Dex.`
+   `Nothing to send — share a link to use Send To Dex.`
+
+### Optional: make it shareable with import questions
+
+In the same info panel (the ⓘ button), **Import Questions** let a shared copy of
+the shortcut ask its new owner for their own values at import time — so you can
+share the shortcut without your token or volumes in it.
+
+1. Blank the token Text box and set your Dictionary to example rows (or leave
+   one generic row).
+2. Add an import question for the token Text action, e.g. "Paste your GitHub
+   token (see Before you begin)".
+3. Add an import question for the Dictionary, e.g. "Your volumes: display name
+   -> owner/repo".
+4. Share that copy as an iCloud link. Importers get prompted for their own
+   values; your real shortcut (with your token) stays private.
 
 ## Try it
 
@@ -238,8 +253,9 @@ closes itself.
 
 - To silence GitHub's issue notifications, set the volume repo's **Watch**
   setting to **Ignore**.
-- Don't share the shortcut or its iCloud link — shared shortcuts embed your
-  token. Share this recipe instead, or a copy with a placeholder token.
+- Never share your live shortcut or its iCloud link — shared shortcuts embed
+  whatever token is inside. Share a blanked copy with import questions (above),
+  or this recipe.
 - Text shares work for short snippets. GitHub caps issue titles at about 256
   characters, so long text fails — share a link to the source instead.
 - Any HTTP client can capture the same way: POST an issue with the URL as the
