@@ -27,10 +27,10 @@ one shortcut must belong to the same owner.
 
 Open the Shortcuts app and create a new shortcut. Add the actions below in
 order by searching the actions panel; the Share Sheet wiring comes last.
-1. Add **Dictionary**. Add one row per volume: the key is a display name, the
-   value is the repo path.
-   For example: `Engineering` → `you/dex-engineering`, `Marketing` →
-   `you/dex-marketing`.
+1. Add **Dictionary**. Add one row per volume — the key is a display name, the
+   value is the repo path. For example:
+   - `Engineering` → `you/dex-engineering`
+   - `Marketing` → `you/dex-marketing`
 2. Add **Text**, paste your token into it, then add **Set Variable** and name the
    variable `token`.
 3. Add **Get Dictionary Keys**, then add **Count** (set to count **Items**).
@@ -62,11 +62,16 @@ order by searching the actions panel; the Share Sheet wiring comes last.
       **Show in Share Sheet**, then tap **Done**.
    3. A **Receive [input] from Share Sheet** header appears above your first
       action. Tap its highlighted input-types chip.
-   4. Turn on **Safari web pages**, **URLs**, **Articles**, **Text**,
-      **Rich text**, and **App Store apps**. Turn everything else off — images,
-      files, and PDFs share as data, not links, and this capture path can't
-      carry them.
-   5. Set **If there's no input** to **Stop and Respond**.
+   4. Turn on:
+      - **Safari web pages**
+      - **URLs**
+      - **Articles**
+      - **Text**
+      - **Rich text**
+      - **App Store apps**
+   5. Turn everything else off — images, files, and PDFs share as data, not
+      links, and this capture path can't carry them.
+   6. Set **If there's no input** to **Stop and Respond**.
 
 ## Try it
 
