@@ -138,10 +138,15 @@ your dictionary has only one volume in it.
          `Dictionary`").
       The row now reads "Choose from `Dictionary Value`". Then tap the arrow
       on the action and set **Prompt** to "Which dex?".
-   2. Add **Get Dictionary Value**, leaving its mode as **Value**. Repoint its
-      source to `Dictionary` if needed, and in its key field pick
-      `Chosen Item` from the variables bar. It should read "Get Value for
-      `Chosen Item` in `Dictionary`".
+   2. Add **Get Dictionary Value** and drag it beneath **Choose from List**.
+      It arrives reading "Get Value for **key** in `Selected Item`" — the
+      key is empty and the source is wrong. Fix both:
+      1. Tap the `Selected Item` chip (after "in"), then tap **Clear**. Tap
+         the faded placeholder and pick `Dictionary` — via **Select Variable**
+         and the token beneath your Dictionary action if the bar doesn't list
+         it.
+      2. Tap the faded **key** field and pick `Selected Item` the same way.
+      The row now reads "Get Value for `Selected Item` in `Dictionary`".
    3. Add **Set Variable**
       below it. Tap **Variable Name** and type `repo`. As in the other branch,
       the row now reads "Set `repo` to `Dictionary Value`".
