@@ -201,8 +201,8 @@ the share isn't an image:
        3. Add **Set Variable** below it, named `ext`. The row reads
           "Set variable `ext` to `Text`".
 
-    The bottom of the shortcut now reads: two nested **End If** rows, then
-    the outer **End If**.
+    The bottom of the shortcut now reads three **End If** rows in a row —
+    the two nested ones, then the outer one, which returns to the top level.
 
 Below the outer **End If**:
 
