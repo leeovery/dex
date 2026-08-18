@@ -207,15 +207,24 @@ won't find it by searching the actions panel.
 4. Scroll back to the top of the action list, above your Dictionary. A new
    action has appeared there reading "Receive **Apps and 18 more** from
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
-   **Apps and 18 more** chip and turn on:
-   - **Safari web pages**
-   - **URLs**
-   - **Articles**
-   - **Text**
-   - **Rich text**
-   - **App Store apps**
-5. Turn everything else off. Images, files, and PDFs share as data, not links —
-   this capture path can't carry them.
+   **Apps and 18 more** chip.
+5. Everything is toggled on by default. Turn OFF the following, in the order
+   they appear, and leave everything else on:
+   - **Images**
+   - **Media**
+   - **Files**
+   - **Folders**
+   - **PDFs**
+   - **Map links**
+   - **Locations**
+   - **Contacts**
+   - **Email addresses**
+   - **Phone numbers**
+   - **Dates**
+   - **iTunes products**
+   (These share as data or aren't knowledge sources; what stays on — Text,
+   Rich text, Safari web pages, URLs, Articles, App Store apps — all arrive as
+   text or links, which this capture path can carry.)
 6. Set **If there's no input** to **Stop and Respond**.
 
 ## Try it
