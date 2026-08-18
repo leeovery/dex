@@ -2,7 +2,7 @@ diff_exclude = ["design/"]
 
 [release]
 version_file = "pyproject.toml"
-version_pattern = 'version = "'
+version_pattern = 'version = "{version}"'
 
 [release.hooks]
 pre_tag = "uv build"
