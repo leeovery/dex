@@ -12,9 +12,9 @@ them a short "how to use it" note.
 
 1. **Name** — suggest `dex-<domain>` (dex-marketing, dex-cooking). Keep the dex
    brand; the domain is the qualifier.
-2. **What it covers** — get 2-4 bullets IN and, just as important, 2-4 OUT. Out-scope
-   drives the ingest filter forever. Probe for the fuzzy edges ("does business-of-X
-   count? adjacent domain Y?").
+2. **What it covers** — 2-4 bullets. Anything not covered is out of scope by
+   default; at ingest time the agent asks the owner about borderline items rather
+   than guessing.
 3. **Where it lives** — local path (default `~/Code/<name>`), and GitHub: private
    repo (default), or local-only for now.
 4. **Capture** — do they want the one-tap phone shortcut? (Requires a GitHub repo

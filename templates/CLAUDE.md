@@ -7,9 +7,9 @@ github.com/leeovery/dex, run via `bin/kb <cmd>` from the repo root.
 ## Scope
 
 - **In**: <define>
-- **Out**: <define>
 
-Judge every ingest against this. When unsure, ask the owner rather than guessing.
+Anything not covered above is out of scope. When unsure, ask the owner rather
+than guessing.
 
 ## Operations
 
