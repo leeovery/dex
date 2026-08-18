@@ -176,9 +176,13 @@ which the volume's workflow files into its inbox and then closes.
 2. Tap the faded **URL** field and type `https://api.github.com/repos/`, pick
    `repo` from the bar at the bottom of the screen, then type `/issues`.
 3. Tap the arrow to expand the options and set **Method** to **POST**.
-4. Add two headers:
-   - `Authorization`: type `Bearer `, then insert the `token` variable.
-   - `Accept`: `application/vnd.github+json`
+4. Add two headers. Each header is a pair of fields — a key and a text value —
+   and no colons are typed anywhere:
+   1. Tap **Add new header**. In the key field type `Authorization`. In the
+      text field type `Bearer`, then a space, then pick `token` from the bar
+      at the bottom of the screen.
+   2. Tap **Add new header** again. In the key field type `Accept`. In the
+      text field type `application/vnd.github+json`.
 5. Set **Request Body** to **JSON** and add two text fields:
    - `title`: insert **Shortcut Input**
    - `body`: insert **Provided Input**
