@@ -309,7 +309,7 @@ won't find it by searching the actions panel.
 6. Tap the blue tick in the top-right corner to confirm the toggles.
 7. Tap **Continue** (after "If there's no input:") and change it to
    **Stop and Respond**. It asks for a response — enter:
-   `Nothing to send — share a link to use Send To Dex.`
+   `Nothing to send to Dex.`
 
 ### Optional: make it shareable with import questions
 
