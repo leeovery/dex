@@ -102,6 +102,11 @@ trigger that keeps it regular.
 
 ## Backfills (exports in raw/)
 
+Getting exports: Discord via
+[DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter), as
+JSON — the format `bin/dex normalize` reads. Other sources: convert to that
+shape, or feed items through capture / a session instead.
+
 `bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex exclude
 <file.json>`) → `bin/dex enrich run` → digest/place/assemble at scale. For 500+
 items: work in waves; write work manifests BEFORE dispatching any parallel

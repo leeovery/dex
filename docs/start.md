@@ -103,13 +103,8 @@ Walk them through, concretely:
 
 ## 7. Backfill (if any)
 
-Exports go in `raw/`, then run the pipeline: `bin/dex normalize` →
-scope-filter pass (agent judgment, exclusions via `bin/dex exclude`) →
-`bin/dex enrich run` → digest every item → taxonomy → assemble wiki pages →
-verify. For large backfills (500+ items): work in waves; verify coverage
-mechanically between waves; write work manifests BEFORE dispatching parallel
-agents; every agent contract includes "if an input is missing, STOP — do not
-improvise".
+Exports go in `raw/`; then follow the Backfills section of the instance's
+dex-ingest skill (`.claude/skills/dex-ingest/SKILL.md`).
 
 ## 8. Hand-off note (end your final message with this)
 

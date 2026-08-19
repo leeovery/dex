@@ -21,8 +21,8 @@ the engine stays unaware of which ones exist.
   the synced contract).
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
-  capture), `shortcut.md` (build the phone shortcut), `capture.md` (the
-  capture protocol any client implements), and `backfill.md` (bulk imports).
+  capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
+  capture protocol any client implements).
 - `design/roadmap.md` — queued design work, operational facts, pending tasks.
 - `example/` — a toy instance showing the shapes.
 
