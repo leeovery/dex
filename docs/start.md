@@ -113,11 +113,12 @@ Each person captures with their own token. Walk them through, concretely:
 
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token
    scoped to ONLY this instance repo, permissions: Contents R/W.
-2. iOS Shortcut: install from the ready-made link pinned at the top of
-   `docs/shortcut.md`; the import questions take their instances and token.
-3. Tell them plainly: their configured copy embeds their PAT — sharing it
-   is safe only because the import questions clear those fields; never
-   remove the import questions from a copy that gets shared.
+2. Install the shortcut from the link pinned at the top of
+   `docs/shortcut.md` — on import it asks for their instances and token.
+3. Using it: share anything from any app and pick **Send To Dex**. If it
+   isn't in the share sheet, scroll to the very bottom, tap **Edit
+   Actions**, add Send To Dex, and drag it to the top so it's always in
+   reach.
 
 ---
 
