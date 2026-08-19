@@ -39,7 +39,7 @@ Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and foll
 
 Claude asks whether you're creating a new dex or joining an existing one,
 interviews you, and sets everything up. Prefer to drive it yourself? Open
-[docs/start.md](docs/start.md) and follow the links.
+[docs/start.md](docs/start.md) and follow it.
 
 ## Living with it
 

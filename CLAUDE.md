@@ -20,10 +20,9 @@ the engine stays unaware of which ones exist.
   only identity, scope, and instance-specifics; everything shared lives in
   the synced contract).
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
-  raw by the getting-started prompt) routing to `create.md` (new instance)
-  or `setup.md` (join an existing one on this machine), plus `shortcut.md`
-  (build the phone shortcut), `capture.md` (the capture protocol any client
-  implements), and `backfill.md` (bulk imports).
+  raw by the getting-started prompt: dependencies, create or join, schedule,
+  capture), `shortcut.md` (build the phone shortcut), `capture.md` (the
+  capture protocol any client implements), and `backfill.md` (bulk imports).
 - `design/roadmap.md` — queued design work, operational facts, pending tasks.
 - `example/` — a toy instance showing the shapes.
 
