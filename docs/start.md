@@ -35,8 +35,9 @@ to `{repo}` (existing) or be able to create a repo (new).
 
 ## Step 3: A Home
 
-Ask where the dex should live, suggesting `~/Code`. Set `{home}` = the
-answer; create the directory if it doesn't exist. If the session can't
+Ask where the dex should live, suggesting `~/Code/dex` — one home for all
+their dex instances, co-located. Set `{home}` = the answer; create the
+directory if it doesn't exist. If the session can't
 write to `{home}`, report it and ask the owner to grant access rather than
 choosing somewhere else silently.
 
