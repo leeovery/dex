@@ -27,7 +27,9 @@ state formats). This file holds what's *next*, not what is.
   driver registry per source kind. Existing drivers: youtube (captions +
   whisper), blog (trafilatura + wayback + og:image), github
   (repos/profiles/gists/issues), arxiv, tweet (fxtwitter + t.co follow +
-  photos). To design: instagram, PDF, generic files, podcasts (audio fetch +
+  photos). PDF is the most-wanted next: the phone shortcut currently keeps
+  PDFs toggled off on iOS because ingestion wouldn't handle them properly —
+  capture side is ready the day the driver exists. To design: instagram, PDF, generic files, podcasts (audio fetch +
   whisper + show-notes links — today a Spotify/Apple link captures only
   the episode page), and a clean way to add more. Tweet driver: traverse threads — walking up the reply chain from a
   shared post is cheap (each post names its parent); walking down from a
@@ -37,6 +39,23 @@ state formats). This file holds what's *next*, not what is.
   thin — consider a site driver that pulls a small judged set of pages
   (capped, never a crawler). This is the core value of the system — solve it
   properly.
+- **Per-instance context instructions (beyond scope)** — some instances need
+  more than a scope list: standing context that steers scanning, enrichment,
+  and digestion (e.g. which link shapes are noise here, what the community's
+  shorthand means, what depth a domain deserves). To design: a designated
+  content file the skills consult when present (not README — that's
+  human-facing and already multi-purpose), offered as an option during
+  setup/ingest, shipped as an empty slot in the template. Hard constraint:
+  content only — machinery stays identical across instances; most instances
+  never fill it.
+
+- **Source removal** — no story yet for removing an entire source after
+  ingestion (a Discord channel that turns noisy, an exporter that was a
+  mistake). Exists today at item level only (`bin/dex exclude`) and URL
+  level (`internal_domains`). To design: bulk exclusion by source/channel,
+  what happens to digests, citations, and pages that lean on removed items,
+  and whether raw/ keeps or drops the export archive.
+
 - **Instagram driver** — shape not agreed. Facts: no official API for
   arbitrary public posts (Graph API = own business accounts only). Options
   mapped: instaloader + dedicated session (residential IP only, flagging
