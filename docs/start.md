@@ -8,5 +8,5 @@ https://raw.githubusercontent.com/leeovery/dex/main/docs/setup.md
 and follow it.
 
 **New** — fetch
-https://raw.githubusercontent.com/leeovery/dex/main/.claude/skills/new-dex-instance/SKILL.md
+https://raw.githubusercontent.com/leeovery/dex/main/docs/create.md
 and follow it.

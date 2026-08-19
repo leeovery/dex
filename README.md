@@ -28,21 +28,17 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-Paste this into a Claude session — Claude Cowork recommended (toggle
-**Cowork**, point it at a folder like `~/Code`, allow access, set approvals
-to automatic):
+Let Claude set it up for you. Paste this into a Claude session — Claude Code
+works fine, and we recommend Claude Cowork so your dex can run itself on a
+schedule:
 
-> Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md
-> and follow it.
+```
+Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.
+```
 
-Creating a new dex: Claude interviews you — what to call it, what it covers,
-where it lives — then builds everything: the private repo, the structure, the
-scope rules, the schedule it runs itself on, and (if you want) the one-tap
-"save to my dex" phone shortcut. Joining an existing dex (yours on another
-machine, or one someone shared with you): add "My instance repo is
-`owner/repo`" to the prompt. Tools it needs (git, git-lfs, uv, gh) are
-checked and installed as part of the flow. From then on you talk to your
-knowledge base, never to the machinery.
+Claude asks whether you're creating a new dex or joining an existing one,
+interviews you, and sets everything up. Prefer to drive it yourself? Open
+[docs/start.md](docs/start.md) and follow the links.
 
 ## Living with it
 

@@ -19,13 +19,13 @@ the engine stays unaware of which ones exist.
   seeds — copied at instance creation, instance-owned afterwards (they hold
   only identity, scope, and instance-specifics; everything shared lives in
   the synced contract).
-- `docs/` — human guides only: `shortcut.md` (build the phone shortcut),
-  `capture.md` (the capture protocol any client implements), `backfill.md`
-  (bulk imports).
+- `docs/` — human guides only: `start.md` (the single entry point, fetched
+  raw by the getting-started prompt) routing to `create.md` (new instance)
+  or `setup.md` (join an existing one on this machine), plus `shortcut.md`
+  (build the phone shortcut), `capture.md` (the capture protocol any client
+  implements), and `backfill.md` (bulk imports).
 - `design/roadmap.md` — queued design work, operational facts, pending tasks.
 - `example/` — a toy instance showing the shapes.
-- `.claude/skills/new-dex-instance/` — the scaffolding skill; runs here, never
-  synced to instances.
 
 ## Design (current, in force)
 

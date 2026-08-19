@@ -1,9 +1,4 @@
----
-name: new-dex-instance
-description: Set up a new dex knowledge base (an instance) end-to-end — interview the user, scaffold the repo, configure capture. Use when the user wants a new knowledge base, brain, or dex instance ("set up a dex for marketing", "make a knowledge base for my business").
----
-
-# Set up a new dex instance
+# Create a new dex instance
 
 You do ALL the work — the user never runs commands. Interview, then build, then hand
 them a short "how to use it" note.
