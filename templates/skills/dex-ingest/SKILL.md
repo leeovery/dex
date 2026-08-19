@@ -70,23 +70,28 @@ prefix today's date — so ids stay one-to-one with files.
    composition, typography, layout. This is the media's "transcript"; make it
    substantive enough to stand in for the media in text-only contexts. PDFs
    and other files get the same treatment (read them directly).
-4. **Digest.** Read the enrichment fully — including viewing any media — and
+4. **Harvest links.** Read the fetched content: substantive URLs found in it
+   (post text, video description, transcript or caption mentions) join the
+   corpus item's `urls` — then run `bin/dex enrich run` again so each becomes
+   a first-class source under the same item. One hop from the share, never
+   further: links found inside a *linked* page are not followed.
+5. **Digest.** Read the enrichment fully — including viewing any media — and
    write `state/digests/<id>.md` per `references/state-formats.md`: frontmatter
    (id, date, `signal: high|medium|low`, topics, entities, and `media:` listing
    any media paths) + 3–15 standalone fact bullets with concrete specifics.
    Topics: use canonical names from `state/taxonomy.json` when it exists;
    otherwise 2–5 kebab-case candidates.
-5. **Place.** Taxonomy exists → append the id to each matching topic's items.
+6. **Place.** Taxonomy exists → append the id to each matching topic's items.
    Create a new topic only once several items justify a page. When you do
    create one, sweep the existing digests (`state/digests/`) for items that
    belong to it — including `uncategorized-shares` — and move them in: a new
    topic usually reveals items that were previously overlooked or coarsely
    filed.
-6. **Update the wiki.** Splice cited sentence(s) into affected pages —
+7. **Update the wiki.** Splice cited sentence(s) into affected pages —
    rewrite-not-append if "current state" changes. Pages citing a media item
    should usually embed it (relative image links). Update `wiki/index.md`;
    append a `wiki/log.md` line; delete the capture file.
-7. **Commit + push**: `ingest: <short title>`.
+8. **Commit + push**: `ingest: <short title>`.
 
 ## After the last capture
 

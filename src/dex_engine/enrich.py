@@ -177,6 +177,9 @@ def fetch_youtube(url: str) -> tuple[str, dict, str]:
     body = clean_vtt(vtt)
     if len(body) < 200:
         return ("nocaptions", meta, "")
+    desc = (info.get("description") or "").strip()
+    if desc:
+        body = f"## Description\n\n{desc}\n\n## Transcript\n\n{body}"
     return ("done", meta, body)
 
 

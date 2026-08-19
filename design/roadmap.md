@@ -22,8 +22,9 @@ state formats). This file holds what's *next*, not what is.
   driver registry per source kind. Existing drivers: youtube (captions +
   whisper), blog (trafilatura + wayback + og:image), github
   (repos/profiles/gists/issues), arxiv, tweet (fxtwitter + t.co follow +
-  photos). To design: instagram, PDF, generic files, and a clean way to add
-  more. Tweet driver: traverse threads — walking up the reply chain from a
+  photos). To design: instagram, PDF, generic files, podcasts (audio fetch +
+  whisper + show-notes links — today a Spotify/Apple link captures only
+  the episode page), and a clean way to add more. Tweet driver: traverse threads — walking up the reply chain from a
   shared post is cheap (each post names its parent); walking down from a
   thread's first post needs design. Engagement counts stay unrecorded
   (snapshot noise) except where a driver's requirements say otherwise. Also enrichment depth: the blog driver fetches only the shared URL,
