@@ -59,8 +59,8 @@ release).
 
 #### If `{mode}` is `new`
 
-Interview first (one round, not twenty questions; use your ask-user tool
-where available):
+Interview first. Ask all five questions together, in one round — not one
+at a time (use your ask-user tool where available):
 
 1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the
    dex brand; the domain is the qualifier. Set `{name}` = the answer.
