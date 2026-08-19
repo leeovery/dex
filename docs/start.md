@@ -133,7 +133,8 @@ instance's dex-ingest skill (`.claude/skills/dex-ingest/SKILL.md`).
 
 ## Step 8: Hand-Off
 
-End your final message with, in a few lines: `{instance}` (where it lives),
-its scope as written, the schedule it runs on, how to save things (shortcut
-+ "add this to dex" in a session), and how to ask questions. Health checks
-run themselves on the schedule. The owner never touches the machinery.
+End your final message with, in a few lines: `{instance}` (where it
+lives), its scope as written, the schedule it runs on, how to save things
+(the shortcut, or "add this to dex" in a session), and how to ask
+questions. Health checks run themselves on the schedule. The owner never
+touches the machinery.
