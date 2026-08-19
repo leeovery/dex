@@ -1,9 +1,9 @@
 # Set up this machine to run a dex instance
 
-You are Claude, setting up a dex knowledge-base instance for its owner. The
-owner's prompt names the instance repo as `owner/repo`. Work in the folder
-the session has access to; report every blocker loudly and never work around
-a failure silently.
+This guide sets up a dex knowledge-base instance for its owner. The owner's
+prompt names the instance repo as `owner/repo`. Work in the folder the
+session has access to; report every blocker loudly and never work around a
+failure silently.
 
 ## 1. Tools
 
