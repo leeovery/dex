@@ -38,6 +38,20 @@ state formats). This file holds what's *next*, not what is.
   screenshot-capture fallback (works today). Requirements when built:
   caption, full carousels, likes/follower counts; videos = metadata + link
   only.
+- **Resurfacing and the owner's reading queue** — the corpus tracks machine
+  ingestion but not owner engagement: saved things vanish from mind exactly
+  like bookmarks and screenshot folders did. To design: (1) an owner
+  read/intent flag per item as derived state — fed by the capture note
+  ("read later", "try on project X") and a presumed-unread default for
+  substantive items, cleared conversationally; (2) resurfacing views over it:
+  index leads with "new this week" / "waiting for you", query answers end
+  with related-but-unread items, and a periodic digest page composed by the
+  scheduled session (rides the scheduled-ingestion design). Recall queries
+  ("what did I share about X", "what came in last month") answer from
+  corpus+digests — make that an explicit mode in dex-query. Principle: one
+  store (the corpus); queue, digest, and index sections are regenerable
+  views. A TUI/newsletter delivery layer waits until the digest proves what
+  the owner actually wants to see.
 - **Update channel: main vs pinned releases** — instances track the engine's
   `main` on every `bin/dex` run (uvx from git), and synced machinery follows
   via the weekly self-triggered health check. No staged rollout: a bad push
