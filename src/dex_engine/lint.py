@@ -27,6 +27,13 @@ LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 def main() -> None:
     tax_path = ROOT / "state" / "taxonomy.json"
     if not tax_path.exists():
+        stranded = sorted(p.stem for p in (ROOT / "corpus").glob("*/*.md"))
+        if stranded:
+            print(f"broken mid-ingest: {len(stranded)} corpus item(s) but no "
+                  "state/taxonomy.json — placement never ran:")
+            for item in stranded:
+                print(f"  - {item}")
+            sys.exit(1)
         print("fresh instance: no state/taxonomy.json yet — nothing to lint.")
         return
     tax = json.loads(tax_path.read_text())
