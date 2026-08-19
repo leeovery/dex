@@ -101,10 +101,12 @@ seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
 ## Step 5: Schedule It
 
 Read `{instance}/.claude/skills/dex-run/SKILL.md` and follow its first run.
-It asks the owner how often the instance should run, then schedules in
-place when the host supports recurring runs (Claude Cowork does) — or, when
-it can't (Claude Code), runs once and hands the owner the one-line Cowork
-instruction that arms the schedule.
+It asks the owner how often the instance should run, then arms the schedule:
+a local scheduled task in the Claude desktop app (Code tab → Routines).
+Create it for the owner when this session can; otherwise hand them the
+skill's exact form values to enter. Finish with one Run now so they can
+answer permission prompts with "always allow" — scheduled firings must
+never stall on approval.
 
 ---
 

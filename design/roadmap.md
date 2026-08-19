@@ -7,16 +7,21 @@ state formats). This file holds what's *next*, not what is.
 
 ## Queued discussions (not yet designed)
 
-- **Scheduled ingestion** — captures land in `inbox/` but nothing ingests
-  them until a session runs, so the wiki drifts stale between sessions. To
-  design: how ingest runs on a regular schedule. Candidates: Claude Cowork
-  scheduled sessions (first to test), headless Claude Code on a cron/launchd
-  timer, a scheduled cloud session. Decide alongside: schedule vs
-  capture-triggered, and how failures surface — ingest is a judgment
-  operation (scope checks, digests, wiki edits), not a blind pipeline, so
-  whatever runs it must be a full Claude session operating the instance
-  contract. The same schedule carries the health check (today it rides a
-  7-day staleness trigger at the end of ingest).
+- **Self-tuning cadence** — a scheduled run can reschedule its own task
+  (`update_scheduled_task` is available to desktop scheduled sessions):
+  hourly while captures flow, daily when quiet. Design once real run
+  history exists.
+
+- **App-only owner surfaces** — for an owner who lives in the Claude app,
+  two query-surface candidates to test: a Cowork session on the instance
+  folder (the sandbox's egress proxy allows github.com, so pull-first
+  freshness may work over an HTTPS remote with a token), or a claude.ai
+  Project with `wiki/` synced via the GitHub integration (read-only,
+  manual sync, token-capped). The local scheduled task keeps the folder
+  fresh either way. Cloud runners (Claude Code routines, Cowork cloud
+  tasks, Managed Agents) remain the path for owners with no computer —
+  they need a clone-first run mode and a stored per-instance PAT; not
+  built, not needed yet.
 
 - **Driver-based ingestion architecture** — the enricher should be an explicit
   driver registry per source kind. Existing drivers: youtube (captions +
@@ -85,3 +90,21 @@ state formats). This file holds what's *next*, not what is.
 - Get Images from Input dereferences URL inputs (fetches them); the X app's
   share URL redirects through a non-HTTPS scheme and errors. Links must be
   detected and diverted before any Get Images call.
+- Desktop scheduled tasks (Claude app, Code tab → Routines → Local) run as
+  real local Claude Code sessions: full user PATH, gh auth, git-lfs, uv,
+  unrestricted network. File-backed at
+  `~/.claude/scheduled-tasks/<name>/SKILL.md` (frontmatter + prompt body;
+  schedule/folder/model live outside the file). Presets
+  manual/hourly/daily/weekdays/weekly; finer cron by asking a desktop
+  session. Fire only while the app is open and the machine awake; one
+  catch-up run on wake covers the most recent miss (7-day window).
+- Cowork scheduled tasks are cloud unless a local folder is declared at
+  creation (can't be added later). "Run on your computer" there means an
+  Ubuntu aarch64 VM with the folder mounted at the identical path: egress
+  proxy allows github.com only (not raw.githubusercontent.com or any other
+  subdomain), git/uv/ffmpeg/python present, no gh, no git-lfs, no root.
+  Git over HTTPS to github.com works; enrichment fetches and the
+  release-asset API are blocked.
+- Cowork cloud containers have full network and git/git-lfs/uv/ffmpeg —
+  the engine builds and runs there via uvx — but no gh; auth would need a
+  stored per-instance PAT.

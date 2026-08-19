@@ -1,6 +1,6 @@
 ---
 name: dex-run
-description: Operate this dex instance unattended — for schedulers (Claude Cowork, cron) or "run the instance". First run sets up the schedule with the owner; every run pulls, ingests, health-checks when due, pushes, reports.
+description: Operate this dex instance unattended — for schedulers (a desktop scheduled task, cron) or "run the instance". First run sets up the schedule with the owner; every run pulls, ingests, health-checks when due, pushes, reports.
 ---
 
 # Scheduled run
@@ -11,16 +11,25 @@ report of why not.
 ## First run (interactive, no schedule established yet)
 
 Ask the owner how often this instance should run, with a recommendation:
-every 2 hours for an instance receiving captures daily; once a day for a
-quiet one. Then:
+hourly for an instance receiving captures daily; once a day for a quiet one.
+Then arm the schedule: a **local scheduled task** in the Claude desktop app
+(Code tab → Routines → New routine → Local), which runs this skill on the
+owner's machine with their full environment. The task:
 
-- Host can schedule recurring runs (Claude Cowork can): create the recurring
-  run of this skill yourself, then do a run.
-- Host cannot schedule (Claude Code, a one-off session): do a run now, then
-  end by giving the owner the arming instruction — open Claude Cowork, point
-  it at this instance's folder, and paste:
-  "In this folder: read .claude/skills/dex-run/SKILL.md and follow it."
-  The first run there establishes the schedule.
+- Name `<instance>-run`; folder = this instance; worktree off; permission
+  mode Auto; the chosen frequency; instructions exactly:
+  "This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
+  and perform its Every-run procedure exactly. Never ask the owner
+  questions; report what was done."
+- In a desktop session that can create scheduled tasks, create it yourself;
+  otherwise hand the owner those exact form values to enter. Either way,
+  have them Run now once and answer permission prompts with "always allow"
+  so scheduled firings never stall.
+- Local tasks fire only while the app is open and the machine awake; a
+  missed schedule catches up once on wake. Captures wait in the inbox
+  meanwhile — nothing is lost.
+
+Then do a run now, whatever the host.
 
 ## Every run
 

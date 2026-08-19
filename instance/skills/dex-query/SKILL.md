@@ -14,17 +14,20 @@ corpus is the rolodex of everything ever shared; recall answers never depend
 on the wiki. For "brief me on it", read the item's `enrichment/<id>/` — the
 full fetched source — and summarize from that.
 
-1. Read `wiki/index.md` first; open the relevant pages; follow `[[wikilinks]]`.
+1. **Pull.** `git pull` before reading — another surface (a scheduled run,
+   another machine) may have ingested since this folder last synced. If the
+   pull fails, answer anyway and say the answer is as of the last local sync.
+2. Read `wiki/index.md` first; open the relevant pages; follow `[[wikilinks]]`.
    For depth, read the cited items' digests (`state/digests/<id>.md`) and, when
    needed, their full sources (`enrichment/<id>/`).
-2. **Recency rules**: newest material wins for "current state"; when items
+3. **Recency rules**: newest material wins for "current state"; when items
    conflict across time, surface the conflict with dates — it is information.
    Cite item ids in backticks throughout.
-3. Wiki thin or silent on the subject? Sweep `state/digests/` directly (grep by
+4. Wiki thin or silent on the subject? Sweep `state/digests/` directly (grep by
    keywords) and say the answer came from digests rather than pages.
-4. **Compound**: if the answer required real synthesis (not just reading one
+5. **Compound**: if the answer required real synthesis (not just reading one
    page), file it as `wiki/syntheses/<slug>.md` — frontmatter `type: synthesis`,
    `question:`, `generated:` date; body cites item ids and wikilinks related
    topics. Add to index, log it, commit and push. Syntheses are question-shaped, dated
    snapshots; the health check refreshes them as new material lands.
-5. Never cite wiki pages as sources — item ids only.
+6. Never cite wiki pages as sources — item ids only.

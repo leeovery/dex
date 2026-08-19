@@ -28,10 +28,10 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-Let Claude set it up for you. Claude Cowork is the right home for it — it
-can run your dex on a schedule. Claude Code works just as well if you'd
-rather arm the schedule yourself (cron, launchd, whatever you like). Paste
-this into your session:
+Let Claude set it up for you. The Claude desktop app is the right home for
+it — a scheduled task there sweeps your captures on its own, and any
+session on the folder answers questions. The Claude Code CLI works just as
+well. Paste this into your session:
 
 ```
 Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.
