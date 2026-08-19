@@ -36,6 +36,9 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
 
 ## Invariants (non-negotiable)
 
+- An operation writes only inside this instance's root. Use absolute paths and
+  verify the working directory before every write batch — a persisted `cd` must
+  never land writes in a sibling instance or anywhere else.
 - Provenance (who/where/when) is captured at ingest — it cannot be reconstructed later.
 - `raw/` and `corpus/` are append-only. Fix normalizer bugs by re-running, never by
   hand-editing corpus items (exclusions: `bin/dex exclude` + `state/exclusions.tsv`).

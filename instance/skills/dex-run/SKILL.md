@@ -16,15 +16,21 @@ Then arm the schedule: a **local scheduled task** in the Claude desktop app
 (Code tab → Routines → New routine → Local), which runs this skill on the
 owner's machine with their full environment. The task:
 
-- Name `<instance>-run`; folder = this instance; worktree off; permission
-  mode Auto; the chosen frequency; instructions exactly:
-  "This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
+- Name `<instance>-run`; the chosen frequency; instructions exactly:
+  "Work in the folder <absolute path to this instance>.
+  This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
   and perform its Every-run procedure exactly. Never ask the owner
   questions; report what was done."
+  The first line is load-bearing: task creation from a session cannot set
+  the task's folder (no folder parameter), so the prompt must carry it.
 - In a desktop session that can create scheduled tasks, create it yourself;
-  otherwise hand the owner those exact form values to enter. Either way,
-  have them Run now once and answer permission prompts with "always allow"
-  so scheduled firings never stall.
+  otherwise hand the owner those exact values for the New-routine form
+  (Local; worktree off; permission mode Auto).
+- The created task's Folder field will show the session's folder, not the
+  instance. Walk the owner through fixing it: open the task → Edit → the
+  Folder field sits below the prompt → set it to the instance → save.
+- Then have the owner Run now once, answering permission prompts with
+  "always allow", so scheduled firings never stall.
 - Local tasks fire only while the app is open and the machine awake; a
   missed schedule catches up once on wake. Captures wait in the inbox
   meanwhile — nothing is lost.
