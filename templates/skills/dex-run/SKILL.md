@@ -12,10 +12,15 @@ report of why not.
 
 Ask the owner how often this instance should run, with a recommendation:
 every 2 hours for an instance receiving captures daily; once a day for a
-quiet one. Then establish that schedule in the host's scheduler — if the
-host can schedule recurring runs (Claude Cowork can), create the recurring
-run of this skill yourself; otherwise give the owner the exact schedule to
-create. Then do a run.
+quiet one. Then:
+
+- Host can schedule recurring runs (Claude Cowork can): create the recurring
+  run of this skill yourself, then do a run.
+- Host cannot schedule (Claude Code, a one-off session): do a run now, then
+  end by giving the owner the arming instruction — open Claude Cowork, point
+  it at this instance's folder, and paste:
+  "In this folder: read .claude/skills/dex-run/SKILL.md and follow it."
+  The first run there establishes the schedule.
 
 ## Every run
 

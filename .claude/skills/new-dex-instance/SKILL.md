@@ -59,9 +59,10 @@ Then:
 ## 3. Schedule it
 
 Read `.claude/skills/dex-run/SKILL.md` in the new instance and follow its
-first run: it asks the owner how often the instance should run, establishes
-the schedule when the host supports it (Claude Cowork does), and does the
-first run.
+first run. It asks the owner how often the instance should run, then
+schedules in place when the host supports recurring runs (Claude Cowork
+does) — or, when it can't (Claude Code), runs once and hands the owner the
+one-line Cowork instruction that arms the schedule.
 
 ## 4. Capture setup (only their PAT needs their hands)
 
