@@ -8,17 +8,17 @@ the engine stays unaware of which ones exist.
 ## Structure
 
 - `src/dex_engine/` — the mechanical commands (`dex-normalize`, `dex-enrich`,
-  `dex-lint`, `dex-exclude`, `dex-inbox`, `dex-sync`), exposed as entry points
+  `dex-lint`, `dex-exclude`, `dex-inbox`, `dex-sync`, `dex-new`), exposed as entry points
   in `pyproject.toml` and run in instances through the `bin/dex` shim
   (`uvx --from` this repo).
-- `templates/` — what instances get: the `dex` shim, `gitattributes`,
-  `dex-contract.md` (the shared instance contract, synced to
-  `.claude/dex-contract.md` and imported by every instance's CLAUDE.md), and
-  `skills/` (each skill dir synced recursively into `.claude/skills/`,
-  including `references/`). `CLAUDE.md` and `instance-README.md` are scaffold
-  seeds — copied at instance creation, instance-owned afterwards (they hold
-  only identity, scope, and instance-specifics; everything shared lives in
-  the synced contract).
+- `instance/` — the template for a new instance, bundled into the wheel:
+  the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
+  contract, synced to `.claude/dex-contract.md` and imported by every
+  instance's CLAUDE.md), and `skills/` (each skill dir synced recursively
+  into `.claude/skills/`, including `references/`). `CLAUDE.md` and
+  `README.md` are scaffold seeds — written by `dex-new` at creation,
+  instance-owned afterwards (they hold only identity, scope, and
+  instance-specifics; everything shared lives in the synced contract).
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
@@ -53,12 +53,12 @@ the engine stays unaware of which ones exist.
   entry points, the `templates/dex` usage line, and the README command table
   together.
 - **Capture format or flow**: `docs/capture.md`, `docs/shortcut.md`,
-  `templates/skills/dex-ingest/` (SKILL.md + references), and
+  `instance/skills/dex-ingest/` (SKILL.md + references), and
   `src/dex_engine/inbox.py` describe one design — change them together.
-- **Corpus or state file shapes**: `templates/skills/dex-ingest/references/`
+- **Corpus or state file shapes**: `instance/skills/dex-ingest/references/`
   (`schema.md`, `state-formats.md`) is the contract; change it in the same
   commit as the code and skills that read those files.
-- **Anything under `templates/`**: after pushing, run `bin/dex sync` in every
+- **Anything under `instance/`**: after pushing, run `bin/dex sync` in every
   instance you maintain and commit there.
 - **Decisions**: record in `design/roadmap.md` — present tense, current design
   only; this file and the docs describe what IS, not what was.

@@ -73,25 +73,14 @@ at a time (use your ask-user tool where available):
 5. **Backfill** — any existing exports (chat exports, bookmarks dump) to
    ingest, or starting fresh from capture?
 
-Set `{instance}` = `{home}/{name}`. Then build, silently competent:
+Set `{instance}` = `{home}/{name}`. Scaffold it — from `{home}`:
 
 ```bash
-mkdir -p {instance} && cd {instance} && git init
-mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin media
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-README.md -o README.md
-curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/dex -o bin/dex && chmod +x bin/dex
-bin/dex sync   # pulls engine-managed machinery: skills, contract, .gitattributes
-printf '.DS_Store\n.env\n' > .gitignore
-mkdir -p inbox && touch inbox/.gitkeep
-git lfs install --local
-printf '{\n  "name_map": {},\n  "internal_domains": []\n}\n' > state/normalize-config.json
-printf '# Index\n\nNo pages yet — first ingest pending.\n' > wiki/index.md
-printf '# Ops log\n' > wiki/log.md
-printf '# Pins\n\nHuman corrections as claim+anchor; regeneration must re-apply these.\n' > wiki/pins.md
+uvx --from git+https://github.com/leeovery/dex dex-new {name}
 ```
 
-Then:
+This builds the whole instance from the engine's template: directory tree,
+seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
 
 - Fill CLAUDE.md: `{name}`, the domain, and the In-scope list exactly as
   interviewed.

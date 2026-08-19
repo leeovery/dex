@@ -11,6 +11,7 @@ dex-enrich = "dex_engine.enrich:main"
 dex-lint = "dex_engine.lint:main"
 dex-exclude = "dex_engine.exclude:main"
 dex-sync = "dex_engine.sync:main"
+dex-new = "dex_engine.new:main"
 dex-inbox = "dex_engine.inbox:main"
 
 [build-system]
@@ -21,4 +22,4 @@ build-backend = "hatchling.build"
 packages = ["src/dex_engine"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"templates" = "dex_engine/templates"
+"instance" = "dex_engine/instance"

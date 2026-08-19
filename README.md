@@ -86,7 +86,7 @@ What makes it trustworthy rather than vibes-in-a-wiki:
   smoothed over.
 
 See `example/` for a three-file toy instance showing the shapes, and
-`templates/skills/dex-ingest/references/schema.md` for the corpus format.
+`instance/skills/dex-ingest/references/schema.md` for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>
@@ -103,6 +103,7 @@ Instances run the engine's mechanical commands via a `bin/dex` shim
 | `dex-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
 | `dex-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | refresh engine-managed instance machinery (skills, `bin/dex`, `.gitattributes`) |
+| `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the
 GitHub contents API — body = URL and/or note; a capture that carried a binary
