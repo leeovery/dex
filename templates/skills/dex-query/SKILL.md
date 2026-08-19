@@ -1,9 +1,18 @@
 ---
 name: dex-query
-description: Answer a question from this dex instance's knowledge. Use for "what do we know about X", "what's the current thinking on Y", or any knowledge question in the instance's domain.
+description: Answer a question from this dex instance's knowledge. Use for "what do we know about X", "what's the current thinking on Y", recall questions like "what did I share about Z" or "what came in recently", or any knowledge question in the instance's domain.
 ---
 
 # Query
+
+Two modes. **Knowledge** ("what do we know about X") answers from the wiki.
+**Recall** ("what did I share about X", "that article from last week", "what
+came in this month") answers from the corpus: grep `state/digests/` and
+`corpus/` by keyword and date, and reply with the item — its date, URL, the
+owner's original note, key digest facts, and where the wiki filed it. The
+corpus is the rolodex of everything ever shared; recall answers never depend
+on the wiki. For "brief me on it", read the item's `enrichment/<id>/` — the
+full fetched source — and summarize from that.
 
 1. Read `wiki/index.md` first; open the relevant pages; follow `[[wikilinks]]`.
    For depth, read the cited items' digests (`state/digests/<id>.md`) and, when
