@@ -53,7 +53,7 @@ ask-user tool where available):
 Then build, silently competent:
 
 ```bash
-mkdir -p <home>/<name> && cd <home>/<name> && git init
+mkdir -p ~/Code/<name> && cd ~/Code/<name> && git init   # under the home chosen in step 3
 mkdir -p corpus enrichment wiki/topics wiki/entities wiki/syntheses state/digests raw bin media
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/CLAUDE.md -o CLAUDE.md
 curl -sL https://raw.githubusercontent.com/leeovery/dex/main/templates/instance-README.md -o README.md
