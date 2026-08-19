@@ -28,21 +28,20 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-You need [Claude Code](https://claude.com/claude-code) (or any Claude surface that can
-work with a git repo) and [uv](https://docs.astral.sh/uv/).
+Paste this into a Claude session — Claude Cowork recommended (toggle
+**Cowork**, point it at a folder like `~/Code`, allow access, set approvals
+to automatic):
 
-```bash
-git clone https://github.com/leeovery/dex && cd dex && claude
-```
+> Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md
+> and follow it.
 
-Then say:
-
-> **/new-dex-instance**
-
-Claude interviews you — what to call it, what it covers, where it should live — and
-sets up everything: the repo, the structure, the scope rules, and (if you want) a
-one-tap "save to my dex" shortcut for your phone (recipe: `docs/shortcut.md` —
-one shortcut serves one instance silently or several with a picker). From then on you talk to your
+Creating a new dex: Claude interviews you — what to call it, what it covers,
+where it lives — then builds everything: the private repo, the structure, the
+scope rules, the schedule it runs itself on, and (if you want) the one-tap
+"save to my dex" phone shortcut. Joining an existing dex (yours on another
+machine, or one someone shared with you): add "My instance repo is
+`owner/repo`" to the prompt. Tools it needs (git, git-lfs, uv, gh) are
+checked and installed as part of the flow. From then on you talk to your
 knowledge base, never to the machinery.
 
 ## Living with it

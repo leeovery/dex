@@ -10,8 +10,8 @@ instance, maintained by Claude.
   who/when/why, and woven into the wiki.
 - **Ask questions** — open a Claude session on this repo (Cowork works) and ask.
   Answers come from the wiki with citations, newest knowledge first.
-- **Health check** — now and then, ask Claude to check the knowledge base over;
-  it finds and fixes broken links, stale pages, and contradictions.
+- **Health check** — it checks itself over on a schedule (broken links, stale
+  pages, contradictions get found and fixed); you can also ask anytime.
 
 ## In scope
 
@@ -21,5 +21,13 @@ instance, maintained by Claude.
 Anything not listed is out of scope — Claude will ask rather than guess about
 borderline finds. Want more topics covered? Just say so: scope changes update
 both this README and [`CLAUDE.md`](./CLAUDE.md).
+
+## Run it on another machine
+
+Paste this into a Claude session (Cowork recommended — point it at a folder
+like `~/Code` first):
+
+> Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md
+> and follow it. My instance repo is `<owner>/<repo>`.
 
 The machinery lives in the shared engine and never needs touching.

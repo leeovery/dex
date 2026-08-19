@@ -40,7 +40,7 @@ bin/dex sync   # pulls engine-managed machinery: dex-ingest/query/lint skills, .
 printf '.DS_Store\n.env\n' > .gitignore
 mkdir -p inbox && touch inbox/.gitkeep
 git lfs install --local   # media/ and image captures are LFS-tracked
-printf '{\n  "name_map": {},\n  "internal_domains": [],\n  "noise_prefixes": []\n}\n' > state/normalize-config.json
+printf '{\n  "name_map": {},\n  "internal_domains": []\n}\n' > state/normalize-config.json
 printf '# Index\n\nNo pages yet — first ingest pending.\n' > wiki/index.md
 printf '# Ops log\n' > wiki/log.md
 printf '# Pins\n\nHuman corrections as claim+anchor; regeneration must re-apply these.\n' > wiki/pins.md
@@ -48,24 +48,33 @@ printf '# Pins\n\nHuman corrections as claim+anchor; regeneration must re-apply 
 
 Then:
 - Fill CLAUDE.md: instance name, domain, and the In-scope list exactly as interviewed.
-- Personalize README.md: owner/domain AND the same In-scope list — the two files
-  mirror each other; scope changes always update both.
+- Personalize README.md: owner/domain, the same In-scope list (the two files
+  mirror each other; scope changes always update both), and the `owner/repo`
+  in its "Run it on another machine" prompt.
 - Commit. If GitHub was wanted: `gh repo create <name> --private --source . --push`,
   then `bin/dex inbox ensure` — creates the standing "inbox" release that binary
   captures stage into.
   - Sanity check: `bin/dex lint` from the instance root (prints a fresh-instance notice).
 
-## 3. Capture setup (only their PAT needs their hands)
+## 3. Schedule it
+
+Read `.claude/skills/dex-run/SKILL.md` in the new instance and follow its
+first run: it asks the owner how often the instance should run, establishes
+the schedule when the host supports it (Claude Cowork does), and does the
+first run.
+
+## 4. Capture setup (only their PAT needs their hands)
 
 Walk them through, concretely:
 1. GitHub → Settings → Developer settings → Fine-grained tokens → new token scoped
    to ONLY this instance repo, permissions: Contents R/W.
-2. iOS Shortcut: walk them through `docs/shortcut.md` (the universal
-   recipe — dictionary of instances, auto-skips the picker when there's only one).
-3. Tell them plainly: never share the Shortcut or its iCloud link publicly — shared
-   shortcuts embed the PAT.
+2. iOS Shortcut: install from the ready-made link pinned at the top of
+   `docs/shortcut.md`; the import questions take their instances and token.
+3. Tell them plainly: their configured copy embeds their PAT — sharing it is
+   safe only because the import questions clear those fields; never remove
+   the import questions from a copy that gets shared.
 
-## 4. Backfill (if any)
+## 5. Backfill (if any)
 
 Exports go in `raw/`, then run the pipeline: `bin/dex normalize` → scope-filter pass
 (agent judgment, exclusions via `bin/dex exclude`) → `bin/dex enrich run` → digest every
@@ -74,8 +83,9 @@ work in waves; verify coverage mechanically between waves; write work manifests
 BEFORE dispatching parallel agents; every agent contract includes "if an input is
 missing, STOP — do not improvise".
 
-## 5. Hand-off note (end your final message with this)
+## 6. Hand-off note (end your final message with this)
 
-Tell the user, in a few lines: where the instance lives, its scope as written, how to
-save things (shortcut + "add this to dex" in a session), how to ask questions, and
-that "run a lint" is the periodic health check. They never touch the machinery.
+Tell the user, in a few lines: where the instance lives, its scope as written,
+the schedule it runs on, how to save things (shortcut + "add this to dex" in a
+session), and how to ask questions. Health checks run themselves on the
+schedule. They never touch the machinery.
