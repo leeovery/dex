@@ -20,9 +20,12 @@ first thing to check.
 
 ## 3. Clone
 
-From the session's folder: `gh repo clone owner/repo`, then `git lfs install
---local` inside the clone. Tell the owner the absolute path of the clone —
-it is their knowledge base's home on this machine.
+Ask the owner where the knowledge base should live, suggesting `~/Code`
+(create it if it doesn't exist). Clone there: `gh repo clone owner/repo`,
+then `git lfs install --local` inside the clone. Tell the owner the absolute
+path of the clone — it is their knowledge base's home on this machine. If
+the session can't write to the chosen location, report it and ask the owner
+to grant access rather than cloning somewhere else.
 
 ## 4. Bring the instance current
 
