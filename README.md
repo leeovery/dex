@@ -31,7 +31,8 @@ The LLM's job is everything else."*
 Let Claude set it up for you. The Claude desktop app is the right home for
 it — a scheduled task there sweeps your captures on its own, and any
 session on the folder answers questions. The Claude Code CLI works just as
-well. Paste this into your session:
+well. Start a session on your home folder (a session has to start somewhere;
+setup picks the dex's real home with you) and paste:
 
 ```
 Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.

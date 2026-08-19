@@ -22,8 +22,4 @@ Anything not listed is out of scope — Claude will ask rather than guess about
 borderline finds. Want more topics covered? Just say so: scope changes update
 both this README and [`CLAUDE.md`](./CLAUDE.md).
 
-## Run it on another machine
-
-Follow **Getting started** in the [engine README](https://github.com/leeovery/dex).
-
 The machinery lives in the shared engine and never needs touching.
