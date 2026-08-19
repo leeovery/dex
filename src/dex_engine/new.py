@@ -25,7 +25,6 @@ SEEDS = {
     "wiki/pins.md":
         "# Pins\n\nHuman corrections as claim+anchor; regeneration must "
         "re-apply these.\n",
-    "inbox/.gitkeep": "",
 }
 
 
@@ -39,6 +38,8 @@ def main() -> None:
     tpl = resources.files("dex_engine") / "instance"
     for d in TREE:
         (root / d).mkdir(parents=True, exist_ok=True)
+        # empty dirs don't survive git clone — keep the tree shape tracked
+        (root / d / ".gitkeep").write_text("")
     for rel, content in SEEDS.items():
         (root / rel).write_text(content)
     (root / "CLAUDE.md").write_text((tpl / "CLAUDE.md").read_text())
