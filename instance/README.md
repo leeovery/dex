@@ -24,10 +24,6 @@ both this README and [`CLAUDE.md`](./CLAUDE.md).
 
 ## Run it on another machine
 
-Paste this into a Claude Code session on the new machine (the desktop app's
-Code tab or the CLI):
-
-> Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md
-> and follow it. My instance repo is `<owner>/<repo>`.
+Follow **Getting started** in the [engine README](https://github.com/leeovery/dex).
 
 The machinery lives in the shared engine and never needs touching.
