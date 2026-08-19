@@ -28,9 +28,10 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-Let Claude set it up for you. Paste this into a Claude session — Claude Code
-works fine, and we recommend Claude Cowork so your dex can run itself on a
-schedule:
+Let Claude set it up for you. Claude Cowork is the right home for it — it
+can run your dex on a schedule. Claude Code works just as well if you'd
+rather arm the schedule yourself (cron, launchd, whatever you like). Paste
+this into your session:
 
 ```
 Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.
