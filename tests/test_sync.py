@@ -302,6 +302,29 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert sync(inst.root, template=template) == []
 
+    def test_retired_engine_skills_are_removed(self, inst, template):
+        retired = inst.root / ".claude" / "skills" / "dex-ingest"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("stale procedure\n")
+        changed = sync(inst.root, template=template)
+        assert not retired.exists()
+        assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
+
+    def test_non_engine_skills_are_never_touched(self, inst, template):
+        theirs = inst.root / ".claude" / "skills" / "my-own-skill"
+        theirs.mkdir(parents=True)
+        (theirs / "SKILL.md").write_text("instance-owned\n")
+        sync(inst.root, template=template)
+        assert (theirs / "SKILL.md").read_text() == "instance-owned\n"
+
+    def test_removals_render_on_the_sync_report(self, inst, template):
+        retired = inst.root / ".claude" / "skills" / "dex-ingest"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("stale\n")
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "removed .claude/skills/dex-ingest" in report
+
     def test_instance_owned_files_untouched(self, inst, template):
         (inst.root / "CLAUDE.md").write_text("mine\n")
         write_pin(inst.root, "v0.1.0")

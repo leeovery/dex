@@ -31,6 +31,7 @@ import argparse
 import contextlib
 import datetime
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -311,9 +312,13 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     """Refresh engine-managed machinery from the bundled instance template.
 
     Copies ``.claude/skills/dex-*`` (recursively), ``.claude/dex-contract.md``,
-    ``bin/dex`` (kept executable), and ``.gitattributes``. Instance-owned
-    files (CLAUDE.md, README, content, ``.dex-engine-pin``) are never
-    touched. ``dex-new`` calls this directly to seed a fresh instance.
+    ``bin/dex`` (kept executable), and ``.gitattributes`` — and REMOVES any
+    ``dex-*`` skill directory the template no longer ships (the ``dex-``
+    namespace under ``.claude/skills`` is engine-owned; a retired skill left
+    in place would keep loading its stale procedure in sessions).
+    Instance-owned files (CLAUDE.md, README, content, ``.dex-engine-pin``,
+    non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
+    to seed a fresh instance.
 
     Args:
         root: The instance root.
@@ -322,13 +327,18 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
             template of the running — pinned — version" means, §12).
 
     Returns:
-        Paths (relative to ``root``) that were written because they differed.
+        Change descriptions: paths (relative to ``root``) that were written
+        because they differed, plus ``removed <path>`` entries for retired
+        skills.
     """
     tpl = template if template is not None else _bundled_template()
     changed: list[str] = []
+    template_skills: set[str] = set()
     for skill in (tpl / "skills").iterdir():
         if skill.is_dir():
+            template_skills.add(skill.name)
             _copy_tree(root, skill, root / ".claude" / "skills" / skill.name, changed)
+    _remove_retired_skills(root, template_skills, changed)
     _write_if_changed(
         root,
         root / ".claude" / "dex-contract.md",
@@ -346,6 +356,20 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         changed,
     )
     return changed
+
+
+def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[str]) -> None:
+    skills_dir = root / ".claude" / "skills"
+    if not skills_dir.is_dir():
+        return
+    for existing in sorted(skills_dir.iterdir()):
+        if (
+            existing.is_dir()
+            and existing.name.startswith("dex-")
+            and existing.name not in template_skills
+        ):
+            shutil.rmtree(existing)
+            changed.append(f"removed .claude/skills/{existing.name} (retired engine skill)")
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +433,9 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     else:
         applied = migrations.run_pending(root, today=today, engine_version=running_version)
     changed = sync(root, template=template)
-    notes.extend(f"refreshed: {rel}" for rel in changed)
+    notes.extend(
+        rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed
+    )
     if changed or read_pin(root) != pin:
         notes.append("review + commit the refreshed files and the pin")
     payload = _report_payload(
