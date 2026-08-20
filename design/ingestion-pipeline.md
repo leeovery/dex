@@ -127,6 +127,13 @@ class Result:
     media: list[str]                   # URLs for the media stage
     children: list[Child]              # (url, via) — re-enter the queue
     needs: Need | None                 # capability job
+    reason: str | None                 # mirrors the ledger reason contract:
+                                       # required when a driver returns
+                                       # manual/skipped (the driver knows
+                                       # why), optional waiting/blocked/dead,
+                                       # forbidden otherwise. The run layer
+                                       # may append classifier context but
+                                       # never invents what the driver knew.
 
 @dataclass
 class WorkUnit:                        # what the pipeline hands a driver
