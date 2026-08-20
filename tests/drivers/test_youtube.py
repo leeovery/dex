@@ -137,6 +137,46 @@ class TestProbeClassification:
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
         assert result.status is Status.DEAD
 
+    def test_closed_account_is_dead(self):
+        failure = ProbeError(
+            "ERROR: This video is no longer available because the YouTube "
+            "account associated with this video has been closed"
+        )
+        result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.DEAD
+
+    def test_transient_network_failure_is_blocked_never_dead(self):
+        # THE regression pin for the probe path: the motivating-incident
+        # class was "cannot distinguish transient trouble from gone" (§5).
+        failure = ProbeError(
+            "ERROR: Unable to download webpage: <urlopen error [Errno 60] "
+            "Operation timed out> (caused by URLError(TimeoutError(60, "
+            "'Operation timed out')))"
+        )
+        result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.BLOCKED
+        assert result.status is not Status.DEAD
+
+    def test_extractor_breakage_is_blocked_never_dead(self):
+        # yt-dlp breaking against a YouTube change heals via a yt-dlp
+        # release — the video is not gone.
+        failure = ProbeError(
+            "ERROR: [youtube] dQw4w9WgXcA: Unable to extract player response; "
+            "please report this issue on https://github.com/yt-dlp/yt-dlp/issues"
+        )
+        result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.BLOCKED
+        assert "github.com" not in reason_of(result)  # the message URL was scrubbed
+
+    def test_geo_block_is_manual_with_reason(self):
+        failure = ProbeError(
+            "ERROR: Video unavailable. The uploader has not made this video "
+            "available in your country"
+        )
+        result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.MANUAL
+        assert "geo-blocked" in reason_of(result)
+
 
 class TestCaptionTrackFailures:
     def test_track_404_is_blocked_never_video_death(self):

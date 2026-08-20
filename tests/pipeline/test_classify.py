@@ -47,9 +47,18 @@ class TestClassifyHttp:
     def test_unlisted_failures_are_blocked_never_silently_terminal(self, code):
         assert classify_http(code).status is Status.BLOCKED
 
-    @pytest.mark.parametrize("code", [200, 301, 399])
-    def test_non_failing_codes_are_rejected(self, code):
-        with pytest.raises(ValueError, match=">= 400"):
+    @pytest.mark.parametrize("code", [101, 301, 302, 304, 399])
+    def test_surfaced_1xx_3xx_is_blocked_never_a_crash(self, code):
+        # Totality pin: a redirect-loop HTTPError surfaces as a non-2xx
+        # response; classification must map it, not raise — a raise here
+        # became a fake `error` in drivers and crashed the media stage.
+        classification = classify_http(code)
+        assert classification.status is Status.BLOCKED
+        assert classification.reason == f"unexpected HTTP {code}"
+
+    @pytest.mark.parametrize("code", [200, 204, 299])
+    def test_success_codes_are_rejected(self, code):
+        with pytest.raises(ValueError, match="non-success"):
             classify_http(code)
 
     def test_every_classification_states_a_reason(self):

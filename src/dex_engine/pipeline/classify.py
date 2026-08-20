@@ -43,8 +43,10 @@ THIN_EXTRACTION_REASON = "thin-extraction"
 PAYWALL_REASON = "payment/login required"
 
 
-# classify_http is for failures only; success/redirect handling is the
-# caller's business.
+# 2xx is the callers' success check (HttpResponse.ok); everything else —
+# including a surfaced 1xx/3xx — classifies, so the contract is total over
+# every non-success status a transport can hand back.
+_SUCCESS_FLOOR = 200
 _FAILURE_FLOOR = 400
 
 
@@ -66,25 +68,33 @@ class Classification:
 
 
 def classify_http(status_code: int) -> Classification:
-    """Classify a failing HTTP status code (§5).
+    """Classify a non-success HTTP status code (§5) — total over non-2xx.
 
     403/429/5xx → ``blocked`` (the world misbehaved; retried every run),
     404/410 → ``dead`` (confirmed gone), 401/402 → ``manual`` with
     ``payment/login required`` (x.com answers 402; retrying never resolves
-    it). Any other failing code is ``blocked``: the floor is that nothing is
-    ever silently mislabeled into a terminal state.
+    it). Any other failing code is ``blocked``, and so is a surfaced
+    1xx/3xx (a redirect loop's final 30x, an out-of-place informational
+    response): the floor is that nothing is ever silently mislabeled into a
+    terminal state, and no non-success status may crash a run.
 
     Args:
-        status_code: The HTTP response status, >= 400.
+        status_code: The HTTP response status; anything outside 2xx.
 
     Returns:
         The classification, reason included.
 
     Raises:
-        ValueError: ``status_code`` is not a failing (>= 400) status.
+        ValueError: ``status_code`` is a success (2xx) — that is the
+            caller's branch, not a classification.
     """
+    if _SUCCESS_FLOOR <= status_code < 300:  # noqa: PLR2004 — the 2xx band is self-naming
+        raise ValueError(f"classify_http is for non-success statuses, got {status_code}")
     if status_code < _FAILURE_FLOOR:
-        raise ValueError(f"classify_http is for failing statuses (>= 400), got {status_code}")
+        # A 1xx/3xx that reached a caller unresolved: the world is
+        # misbehaving (redirect loops, broken upgrade dances) — blocked,
+        # never an engine error, never terminal.
+        return Classification(status=Status.BLOCKED, reason=f"unexpected HTTP {status_code}")
     if status_code in (401, 402):
         return Classification(status=Status.MANUAL, reason=f"{PAYWALL_REASON} (HTTP {status_code})")
     if status_code in (404, 410):

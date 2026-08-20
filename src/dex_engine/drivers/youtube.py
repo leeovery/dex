@@ -36,6 +36,11 @@ _MIN_TRANSCRIPT_CHARS = 200
 
 _HTTP_CODE_RE = re.compile(r"HTTP Error (\d{3})")
 _LOGIN_MARKERS = ("private", "sign in", "members-only", "members only", "log in")
+_GEO_MARKERS = ("in your country", "in your region", "geo restricted", "geo-restricted")
+# `dead` needs an explicit confirmed-gone marker — anything else (transient
+# network trouble, yt-dlp extractor breakage) is the world misbehaving and
+# defaults to `blocked`: the motivating-incident class, again (§5).
+_GONE_MARKERS = ("video unavailable", "removed", "terminated")
 
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
@@ -151,14 +156,28 @@ class YouTubeDriver:
 
 
 def _classify_probe_failure(message: str) -> Classification:
-    """Map a yt-dlp failure message: HTTP code > login wall > confirmed gone."""
+    """Map a yt-dlp failure message: code > login > geo > confirmed gone > blocked.
+
+    ``dead`` requires an explicit confirmed-gone marker. The default is
+    ``blocked`` — a transient network error or an extractor-breakage message
+    mislabeled ``dead`` would be terminal and never retried, which is
+    exactly the incident class this design exists to kill (§5).
+    """
     code_match = _HTTP_CODE_RE.search(message)
     if code_match:
         return classify_http(int(code_match.group(1)))
     lowered = message.lower()
     if any(marker in lowered for marker in _LOGIN_MARKERS):
         return Classification(status=Status.MANUAL, reason=f"{PAYWALL_REASON} ({scrub(message)})")
-    return Classification(status=Status.DEAD, reason=scrub(message))
+    if any(marker in lowered for marker in _GEO_MARKERS):
+        # Checked before the gone markers: geo messages often open with
+        # "Video unavailable." and the specific diagnosis must win.
+        return Classification(status=Status.MANUAL, reason=f"geo-blocked ({scrub(message)})")
+    if any(marker in lowered for marker in _GONE_MARKERS) or (
+        "account" in lowered and "closed" in lowered
+    ):
+        return Classification(status=Status.DEAD, reason=scrub(message))
+    return Classification(status=Status.BLOCKED, reason=scrub(message))
 
 
 def _video_meta(info: dict) -> dict[str, str | int | None]:
