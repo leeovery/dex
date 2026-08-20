@@ -94,9 +94,3 @@ error-on-warning = true
 possibly-unresolved-reference = "error"
 unused-ignore-comment = "warn"
 
-[tool.ty.src]
-exclude = [
-    # Not source: a toy instance (markdown only) and build output.
-    "example/",
-    "dist/",
-]
