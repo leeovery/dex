@@ -61,6 +61,7 @@ from .types import (
     Result,
     SourceDriver,
     Status,
+    Transcriber,
     WorkUnit,
     version_newer,
 )
@@ -450,10 +451,11 @@ class _Drain:
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
 
-    def _note_first_run(self, transcriber: object) -> None:
-        availability = getattr(transcriber, "available", lambda: Availability(ok=True))()
-        if isinstance(availability, Availability) and availability.ok and availability.reason:
-            note = f"{getattr(transcriber, 'name', 'transcriber')}: {availability.reason}"
+    def _note_first_run(self, transcriber: Transcriber) -> None:
+        """Surface an ok-with-caveat availability (§6: the slow first run explained)."""
+        availability = transcriber.available()
+        if availability.ok and availability.reason:
+            note = f"{transcriber.name}: {availability.reason}"
             if note not in self.notes:
                 self.notes.append(note)
 

@@ -2,9 +2,10 @@
 
 Dependency direction, structurally enforced: ``types`` imports nothing from
 this package; ``ledger``/``classify``/``urls`` import only ``types``;
-``detect`` takes the driver list as an argument; only ``registry``/``run``
-import drivers — which prevents the normalize/detect/drivers
-circular-import trap.
+``detect`` takes the driver list as an argument; only ``registry``/``run``/
+``transcribe`` import drivers (transcribe reaches the transport seam and
+the shared yt-dlp classifier, both leaves) — which prevents the
+normalize/detect/drivers circular-import trap.
 
 Ledger persistence and the other submodules are used as modules:
 ``from dex_engine.pipeline import ledger``.
