@@ -22,10 +22,14 @@ This migration moves pre-rewrite instance state onto that vocabulary:
 - ``state/normalize-config.json`` → ``state/config.json``.
 
 Everything not provably safe is skipped-with-why for the session to repair
-(§12). A skipped ledger line stays in the file untranslated — later loads
-refuse it loudly until it is healed, which is the design, not an accident.
-Re-running is safe at any point: renames and translations are no-ops on
-already-migrated state, and the ledger rewrite is atomic.
+(§12). An untranslatable ledger line is **quarantined**: moved verbatim to
+``state/enrichment-ledger.unmigrated.jsonl`` (nothing destroyed) and named
+in the report with the repair procedure — review each line, re-add it with
+``enrich mark <url> <status> --reason …`` (the sanctioned correction verb),
+or accept the loss. The main ledger then loads clean, so every verb —
+including the repair verb itself — keeps working. Re-running is safe at
+any point: renames and translations are no-ops on already-migrated state,
+the ledger rewrite is atomic, and quarantine appends dedupe verbatim.
 """
 
 import contextlib
@@ -34,6 +38,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import tempfile
 import urllib.parse
 from collections.abc import Callable
@@ -251,13 +256,23 @@ def _corpus_owners(root: Path) -> dict[str, str]:
         with contextlib.suppress(corpus.CorpusSchemaError):
             item = corpus.read_item(path)
             for url in item.urls:
-                owners.setdefault(_legacy_uhash(url), item.id)
+                try:
+                    key = _legacy_uhash(url)
+                except ValueError:
+                    # One malformed hand-healed URL (urlsplit rejects e.g. a
+                    # bad IPv6 literal) must never abort the whole migration;
+                    # entries it would have owned surface as unattributable.
+                    continue
+                owners.setdefault(key, item.id)
     return owners
 
 
 # ---------------------------------------------------------------------------
 # Ledger translation
 # ---------------------------------------------------------------------------
+
+
+QUARANTINE_NAME = "enrichment-ledger.unmigrated.jsonl"
 
 
 def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
@@ -267,30 +282,61 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     owners = _corpus_owners(root)
     original = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
+    quarantined: list[str] = []
     translated = 0
     for lineno, line in enumerate(original.split("\n"), start=1):
         if not line.strip():
             continue
+        # Per-line notes buffer: flushed into the report only when the line
+        # actually translates — a skipped line must not leave phantom actions.
+        line_notes: list[str] = []
         try:
-            new_line = to_line(_translate_record(_load_record(line), owners=owners, notes=actions))
+            new_line = to_line(
+                _translate_record(_load_record(line), owners=owners, notes=line_notes)
+            )
         except _UntranslatableError as e:
+            quarantined.append(line)
             skipped.append(
                 Skipped(
                     what=f"ledger line {lineno}",
-                    why=f"{e} — left in place untranslated; ledger loads will refuse it "
-                    "until repaired",
+                    why=f"{e} — moved verbatim to state/{QUARANTINE_NAME}; review each "
+                    "line there and re-add it with `enrich mark <url> <status> "
+                    "--reason …`, or accept the loss",
                 )
             )
-            out_lines.append(line)
             continue
+        actions.extend(line_notes)
         if new_line != line:
             translated += 1
         out_lines.append(new_line)
+    # Quarantine BEFORE the main rewrite: an interruption between the two
+    # writes must never lose a line. Worst case a line exists in both files;
+    # the re-run's verbatim dedupe keeps the quarantine stable while the
+    # atomic rewrite removes it from the main ledger.
+    _append_quarantine(path.with_name(QUARANTINE_NAME), quarantined)
     new_text = "".join(out_line + "\n" for out_line in out_lines)
     if new_text != original:
         _atomic_write(path, new_text)
     if translated:
         actions.append(f"ledger: {translated} line(s) translated to the current schema (§5)")
+    if quarantined:
+        actions.append(
+            f"ledger: {len(quarantined)} line(s) quarantined to state/{QUARANTINE_NAME} — "
+            "the main ledger loads clean; repair from the skipped list"
+        )
+
+
+def _append_quarantine(path: Path, lines: list[str]) -> None:
+    """Append untranslatable lines verbatim, deduped against what is already there."""
+    if not lines:
+        return
+    existing = set(path.read_text(encoding="utf-8").split("\n")) if path.exists() else set()
+    fresh = [line for line in lines if line not in existing]
+    if not fresh:
+        return
+    with path.open("a", encoding="utf-8") as f:
+        for line in fresh:
+            f.write(line + "\n")
 
 
 def _load_record(line: str) -> dict[str, object]:
@@ -468,19 +514,28 @@ def _translate_title(
     return text
 
 
+# The current provenance vocabulary (§5) — frozen here like the legacy
+# canonicalization above: this migration's contract is "translate to the
+# schema shipping WITH it", so the copy cannot drift out from under it.
+_CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
+_CURRENT_VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
+
+
 def _translate_via(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> str | None:
     if "via" not in raw:
         return None
     text = _expect_str(raw, "via")
-    if text == "whisper":
-        # The old whisper flow stamped its ledger lines; the enrichment file
-        # frontmatter records the same provenance, so nothing is lost.
-        notes.append(
-            f"ledger {unit_hash}: via 'whisper' dropped — not current provenance "
-            "vocabulary; the enrichment file frontmatter still records it"
-        )
-        return None
-    return text
+    if text in _CURRENT_VIA or _CURRENT_VIA_MIGRATION.match(text):
+        return text
+    # The old engine stamped fetcher names here ('whisper', 'fxtwitter', …).
+    # Any value outside the current vocabulary is pre-migration provenance:
+    # dropped, never skipped-over — the enrichment file frontmatter records
+    # the same provenance, so nothing is lost.
+    notes.append(
+        f"ledger {unit_hash}: via {text!r} dropped — pre-migration provenance "
+        "vocabulary; the enrichment file frontmatter still records it"
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
