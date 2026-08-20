@@ -16,7 +16,7 @@ the engine stays unaware of which ones exist.
     `detect.py`, `registry.py` (explicit ordered driver list), `run.py`
     (the orchestrator; the pipeline's single broad except), `classify.py`
     (central failure classification + the scrubber), `transcribe.py`,
-    `urls.py`, `capture.py` (`enrich item new`), `issues.py` (the §13
+    `urls.py`, `capture.py` (`enrich item new`), `issues.py` (the
     issue filer).
   - `drivers/` — one per source shape: youtube, x, github, paper, podcast,
     web (catch-all, always last), file; `transport.py` is the HTTP seam.
@@ -81,6 +81,15 @@ the engine stays unaware of which ones exist.
   skills. Check changes against it; when a decision genuinely changes,
   record the new decision (roadmap for queued work) rather than silently
   diverging from the document.
+- **Comments earn their place — and never reference the design doc.** A
+  comment or docstring exists only for what the code cannot say: a
+  non-obvious constraint, a deliberate surprise, a wild-data fact, a why.
+  No narration, no restating the line below, no traceability breadcrumbs
+  ("§14", "phase-3 review", "per the design"). When a constraint from the
+  design matters at a call site, inline it in full, self-contained — the
+  design doc never ships to instances, so a pointer to it is broken on
+  arrival, and even in-repo it rots. This file and the roadmap are the only
+  places that may name the design doc.
 - **Commands** (add / rename / change behavior): update the `pyproject.toml`
   entry points, the `instance/dex` usage line, and the README command table
   together.
