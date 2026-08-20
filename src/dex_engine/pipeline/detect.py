@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from .types import Format, Kind, SourceDriver
 
-__all__ = ["CONTENT_TYPE_FORMATS", "Detection", "Sniff", "detect", "detect_kind"]
+__all__ = ["CONTENT_TYPE_FORMATS", "Detection", "Sniff", "canonical_url", "detect", "detect_kind"]
 
 # url -> media type ("application/pdf"), or None when the HEAD itself failed.
 # A failed sniff is INCONCLUSIVE, never classified: the GET that follows
@@ -67,6 +67,16 @@ def detect_kind(url: str, drivers: Sequence[SourceDriver]) -> Kind:
             registry (the catch-all matches everything); loud if it isn't.
     """
     return _match(url, drivers).kind
+
+
+def canonical_url(url: str, drivers: Sequence[SourceDriver]) -> str:
+    """Delegate canonicalization to the pattern-matched driver (§2).
+
+    The result keys the ledger hash. Deliberately pattern-based: sniffing
+    may reroute a URL's *kind* to ``file``, but never its key — the
+    catch-all's canonical is the base canonicalization either way.
+    """
+    return _match(url, drivers).canonical(url)
 
 
 def detect(url: str, drivers: Sequence[SourceDriver], *, sniff: Sniff | None = None) -> Detection:

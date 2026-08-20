@@ -2,7 +2,7 @@
 
 import pytest
 
-from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, detect, detect_kind
+from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, canonical_url, detect, detect_kind
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Format, Kind
 
@@ -96,6 +96,17 @@ class TestHeadSniff:
 
     def test_every_format_is_reachable_from_some_media_type(self):
         assert set(CONTENT_TYPE_FORMATS.values()) == set(Format)
+
+
+class TestCanonicalDelegation:
+    def test_delegates_to_the_matched_driver(self):
+        # youtu.be short links only rewrite when the YOUTUBE driver owns them.
+        assert canonical_url("https://youtu.be/abc?si=x", DRIVERS) == (
+            "https://youtube.com/watch?v=abc"
+        )
+        assert canonical_url("http://www.example.test/a/?ref=x", DRIVERS) == (
+            "https://example.test/a"
+        )
 
 
 class TestFileSeam:

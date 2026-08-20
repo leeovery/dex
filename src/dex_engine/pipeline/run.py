@@ -28,7 +28,7 @@ from dex_engine.render import surfaces
 
 from . import ledger
 from .classify import ProviderInputError, classify_connection, classify_http, scrub
-from .detect import Sniff, detect, detect_kind
+from .detect import Sniff, canonical_url, detect, detect_kind
 from .registry import driver_for
 from .types import (
     Availability,
@@ -45,7 +45,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import base_canonical, work_hash
+from .urls import work_hash
 
 __all__ = [
     "HARVEST_RULES_VERSION",
@@ -210,14 +210,8 @@ class _Drain:
         )
 
     def identify(self, url: str) -> tuple[str, str]:
-        """Canonical form and work hash — via the PATTERN driver's canonical.
-
-        Sniffing may reroute a URL's kind to ``file``, but never its hash:
-        the catch-all's canonical is the base canonicalization, so the key
-        is stable whether or not a HEAD was spent.
-        """
-        driver = driver_for(detect_kind(url, self.ctx.drivers), self.ctx.drivers)
-        canonical = driver.canonical(url) if driver is not None else base_canonical(url)
+        """Canonical form and work hash — delegation lives in detect (§2)."""
+        canonical = canonical_url(url, self.ctx.drivers)
         return canonical, work_hash(canonical)
 
     # -- the loop --------------------------------------------------------
@@ -417,14 +411,16 @@ class _Drain:
     def _media_failure(
         self, entry: LedgerEntry, prior: LedgerEntry | None, status: Status, reason: str
     ) -> None:
-        if status is Status.BLOCKED:
-            base = dataclasses.replace(entry, attempts=(prior.attempts if prior else None))
-            self._apply_blocked(base, reason)
-            return
-        if status is Status.MANUAL:
-            self.record_outcome(entry, status=Status.MANUAL, reason=reason)
-            return
-        self.record_outcome(entry, status=Status.DEAD, reason=reason)
+        match status:
+            case Status.BLOCKED:
+                base = dataclasses.replace(entry, attempts=(prior.attempts if prior else None))
+                self._apply_blocked(base, reason)
+            case Status.MANUAL | Status.DEAD:
+                self.record_outcome(entry, status=status, reason=reason)
+            case _:
+                # The classifier returns blocked/manual/dead only — anything
+                # else is an engine bug, not a quiet default.
+                raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
     def _media_slot(self, item_id: str) -> int | None:
         """The next free media index for the item, or None at the §7 cap."""

@@ -348,6 +348,8 @@ class TestInstance:
         assert inst.cache_dir == tmp_path / "cache"
         assert inst.ledger_path == tmp_path / "state" / "enrichment-ledger.jsonl"
         assert inst.config_path == tmp_path / "state" / "config.json"
+        assert inst.passes_path == tmp_path / "state" / "passes.jsonl"
+        assert inst.digests_dir == tmp_path / "state" / "digests"
 
     def test_fixture_builds_the_skeleton(self, instance: Instance):
         assert instance.corpus_dir.is_dir()

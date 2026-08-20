@@ -5,6 +5,7 @@ import urllib.parse
 from hypothesis import given
 from hypothesis import strategies as st
 
+from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.urls import base_canonical, host_of, work_hash
 
 
@@ -49,13 +50,19 @@ def _build_url(scheme, host, segments, params, fragment):
     return urllib.parse.urlunsplit((scheme, host, path, query, fragment))
 
 
-# URL strategy: hosts with optional www./m. prefixes, path segments, query
-# params mixing kept and stripped keys, an optional fragment.
+# URL strategy: hosts with optional www./m. prefixes (plus the real hosts
+# whose drivers canonicalize specially), path segments, query params mixing
+# kept and stripped keys, an optional fragment.
 _label = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789-", min_size=1, max_size=8)
-_host = st.builds(
-    _build_host,
-    st.lists(st.sampled_from(["www.", "m."]), max_size=2),
-    st.lists(_label, min_size=1, max_size=3),
+_host = st.one_of(
+    st.builds(
+        _build_host,
+        st.lists(st.sampled_from(["www.", "m."]), max_size=2),
+        st.lists(_label, min_size=1, max_size=3),
+    ),
+    st.sampled_from(
+        ["youtu.be", "youtube.com", "m.youtube.com", "x.com", "github.com", "arxiv.org"]
+    ),
 )
 _param = st.tuples(
     st.sampled_from(["a", "b", "v", "utm_source", "si", "ref", "q x"]),
@@ -82,6 +89,14 @@ class TestCanonicalIdempotency:
         keep = frozenset({"v"})
         once = base_canonical(url, keep_params=keep)
         assert base_canonical(once, keep_params=keep) == once
+
+    @given(_url)
+    def test_every_registered_driver_canonical_is_idempotent(self, url):
+        # Canonicalization keys the ledger hash — a non-idempotent case IS a
+        # duplicate-entry bug (§15).
+        for driver in DRIVERS:
+            once = driver.canonical(url)
+            assert driver.canonical(once) == once
 
 
 class TestWorkHash:
