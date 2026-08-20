@@ -42,7 +42,7 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.conftest import FakeDriver
-from tests.drivers.conftest import FakeTransport
+from tests.drivers.conftest import FakeTransport, fixture_text
 from tests.pipeline.test_issues import FakeGh
 
 TODAY = datetime.date(2026, 8, 20)
@@ -1316,3 +1316,138 @@ class TestRedetection:
         assert entry.reason == "thin-extraction"
         assert entry.kind is Kind.WEB
         assert "re-detected" not in report
+
+    def _requeue(self, ctx, url, **overrides):
+        entry = entry_for(ctx, url)
+        requeued = dataclasses.replace(
+            entry, status=Status.QUEUED, path=None, title=None, rerun=True, **overrides
+        )
+        ledger.append(ctx.instance.ledger_path, requeued)
+
+    def test_cross_run_redetect_unlinks_the_stale_old_kind_output(self, instance):
+        # Run 1: an ordinary web page, extracted and listed. The world then
+        # changes — the URL serves a PDF — and a reseeded rerun corrects the
+        # kind. The superseded web output must leave the disk AND the item's
+        # enrichment: listing; the ledger audit trail is the history.
+        article = fixture_text("web", "article.html")
+        responses = {
+            self.PDF_URL: HttpResponse(
+                status=200, content_type="text/html", body=article.encode()
+            )
+        }
+        transport = FakeTransport(responses)
+        item_path = write_item(instance, urls=[self.PDF_URL])
+        quiet = Config(media_fetch=MediaFetch.NONE)  # the fixture's og:image is not under test
+        ctx = make_ctx(
+            instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+        )
+        run_mod.run(ctx)
+        first = entry_for(ctx, self.PDF_URL)
+        assert first.kind is Kind.WEB
+        assert first.status is Status.DONE
+        web_out = instance.root / str(first.path)
+        assert web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [web_out.name]
+
+        responses[self.PDF_URL] = HttpResponse(
+            status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+        )
+        self._requeue(ctx, self.PDF_URL, via="migration-2")
+        run_mod.run(
+            make_ctx(
+                instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+            )
+        )
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.kind is Kind.FILE
+        assert entry.status is Status.DONE
+        assert not web_out.exists()  # the correction superseded it
+        assert corpus.read_item(item_path).enrichment == [f"file-{entry.hash[:6]}.md"]
+
+    def test_cross_run_re_correction_succeeds_after_a_requeue(self, instance):
+        # The guard is per-run state, not ledger history: a unit corrected
+        # to file months ago (via sniff on its lines) that now serves HTML
+        # corrects BACK to web on a later requeue — never a false
+        # "re-detection loop".
+        responses = {
+            self.PDF_URL: HttpResponse(
+                status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+            )
+        }
+        transport = FakeTransport(responses)
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        run_mod.run(ctx)
+        corrected = entry_for(ctx, self.PDF_URL)
+        assert (corrected.kind, corrected.via) == (Kind.FILE, "sniff")
+
+        article = fixture_text("web", "article.html")
+        responses[self.PDF_URL] = HttpResponse(
+            status=200, content_type="text/html", body=article.encode()
+        )
+        self._requeue(ctx, self.PDF_URL)  # keeps via: sniff — provenance, not a lock
+        report = run_mod.run(
+            make_ctx(
+                instance,
+                FakeDriver(),
+                drivers=self._drivers(instance, transport),
+                config=Config(media_fetch=MediaFetch.NONE),
+            )
+        )
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.kind is Kind.WEB
+        assert entry.status is Status.DONE
+        assert "re-detection loop" not in report
+        assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
+
+    def test_redetected_rerun_spends_one_cohort_slot(self, instance):
+        url = self.PDF_URL
+        transport = FakeTransport(
+            {
+                url: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(url),
+                url=url,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.0.1",
+                date=TODAY,
+                via="migration-2",
+                rerun=True,
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        assert entry_for(ctx, url).status is Status.DONE  # popped twice, completed
+        assert "rerun cohort: 1 of 1 drained" in report
+        assert "2 of" not in report
+
+    def test_limit_defers_the_corrected_unit_to_the_next_run(self, instance):
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx, limit=1)  # the web fetch spends the whole budget
+        deferred = entry_for(ctx, self.PDF_URL)
+        assert (deferred.kind, deferred.status, deferred.via) == (
+            Kind.FILE,
+            Status.QUEUED,
+            "sniff",
+        )
+        assert "re-detected" in report
+        assert not (instance.enrichment_dir / ITEM / f"file-{deferred.hash[:6]}.md").exists()
+        # The next run drains the corrected unit.
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport)))
+        assert entry_for(ctx, self.PDF_URL).status is Status.DONE

@@ -244,6 +244,11 @@ class _Drain:
     rerun_total: int = 0
     rerun_drained: int = 0
     rerun_counted: set[str] = field(default_factory=set)
+    # Hashes kind-corrected THIS run: the once-only guard is per-run state,
+    # not ledger history — within a run, a second correction is a ping-pong
+    # loop; across runs the world genuinely changes, and a unit may be
+    # legitimately re-corrected months later.
+    redetected_hashes: set[str] = field(default_factory=set)
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
@@ -640,19 +645,25 @@ class _Drain:
         self._admit_children(self.entries[entry.hash], result.children)
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
-        """Re-route a mid-fetch kind discovery through the queue, once only.
+        """Re-route a mid-fetch kind discovery through the queue, once per run.
 
         The corrected unit has the SAME URL and therefore the same hash — a
         child emission would dedupe against the existing entry and vanish.
         The mechanics are a superseding ledger line instead: same hash,
         corrected kind (+format), ``status: queued``, ``via: "sniff"`` —
         last-per-hash means the unit simply BECOMES the corrected kind and
-        drains through its driver in this same run. Once only: a unit whose
-        latest line already carries ``via: "sniff"`` was corrected before,
-        and two drivers re-detecting each other's content must park for
-        judgment, never ping-pong.
+        drains through its driver in this same run. Once per run: a second
+        correction of the same hash within one run is two drivers
+        re-detecting each other's content — park for judgment, never
+        ping-pong. Across runs a unit may correct again: the world
+        genuinely changes, and ``via`` is provenance history, not a lock.
+
+        The previous kind's output is unlinked: the correction supersedes
+        it, and leaving it beside the new output would hand the digest
+        layer superseded content. The ledger's audit trail preserves the
+        history; the disk does not.
         """
-        if entry.via == "sniff":
+        if entry.hash in self.redetected_hashes:
             self.record_outcome(
                 entry,
                 status=Status.MANUAL,
@@ -662,6 +673,18 @@ class _Drain:
                 ),
             )
             return
+        self.redetected_hashes.add(entry.hash)
+        stale = (
+            self.ctx.instance.enrichment_dir
+            / entry.item
+            / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        )
+        if entry.kind is not redetect.kind and stale.exists():
+            stale.unlink()
+            # The item's `enrichment:` listing is derived from disk — make
+            # sure the refresh runs for this item even when the corrected
+            # unit's own drain is deferred past a --limit.
+            self.written_items.add(entry.item)
         self.record(
             LedgerEntry(
                 hash=entry.hash,
