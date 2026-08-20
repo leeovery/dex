@@ -134,6 +134,11 @@ class Result:
                                        # forbidden otherwise. The run layer
                                        # may append classifier context but
                                        # never invents what the driver knew.
+    assets: list[Asset]                # extraction assets (bytes) — drivers
+                                       # never touch disk; the run layer
+                                       # writes them under the §7 caps,
+                                       # ledgered via: extract-asset.
+                                       # Success-only, validated.
 
 @dataclass
 class WorkUnit:                        # what the pipeline hands a driver
@@ -156,6 +161,10 @@ class Availability:                    # never tuple[bool, str] — weak-type tr
 
 class Transcriber(Protocol):           # a CAPABILITY, not a source
     name: str
+    model: str                         # what gets stamped into the §6
+                                       # via/model frontmatter — the
+                                       # stamping is unimplementable
+                                       # without it
     def available(self) -> Availability: ...
     def transcribe(self, audio: Path, initial_prompt: str) -> str: ...
 
@@ -453,9 +462,22 @@ corrected ledger entry — last-per-hash makes this the mechanism, not a hack.
 
 Provider contract: `available()` failures (model missing, broken install)
 park jobs as `waiting` with the reason — the wait list is normally empty for
-transcription, not absent. A provider catches bad-input cases (corrupt audio,
-malformed file) and returns `manual` itself; an uncaught crash is an engine
-bug and takes the `error` path (issue filed, retry on new engine).
+transcription, not absent. A provider raises `ProviderInputError` for
+bad-input cases (corrupt audio, malformed file) → the run layer maps it
+`manual`; **`ProviderUnavailableError`** for call-time availability
+failures (API 5xx/429, missing binary, model-download failure) → the job
+**re-parks `waiting`** with the reason, never burning blocked attempts; an
+uncaught crash is an engine bug and takes the `error` path (issue filed,
+retry on new engine). The availability seam is **per-format** —
+`available(need, format)` — so a PDF wait never wakes for a CSV-only
+provider. **Acquisition failures are not provider failures**: a failed
+audio download (yt-dlp breakage, blocked enclosure GET) classifies through
+the normal §5 lifecycle — `blocked` with attempts, escalating to `manual`
+at 5 — never as no-clock waiting. Config keys: `transcribe_base_url`,
+`transcribe_api_key`, `transcribe_api_model` (the API-side model name;
+local size names stay in `transcribe_model`). A waiting-transcribe park
+that carries an enclosure pointer **always writes its park file** — §9's
+round-trip depends on the frontmatter pointer existing, show notes or not.
 
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
