@@ -137,6 +137,18 @@ class TestSeedAndDone:
         assert len(entries) == 1
         assert entries[work_hash(URL)].item == "2026-08-19-first-aaaaaa"
 
+    def test_one_malformed_capture_url_parks_that_url_never_aborts(self, instance):
+        bad_url = "https://[bad-ipv6"
+        write_item(instance, urls=[bad_url, URL])
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)  # completes — no abort
+        entries = ledger.load(instance.ledger_path)
+        bad = entries[work_hash(bad_url)]
+        assert bad.status is Status.MANUAL
+        assert "unfetchable capture URL" in (bad.reason or "")
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+        assert "unfetchable capture URL" in report  # parked rows are printed
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731
@@ -616,6 +628,12 @@ class TestIsDrainable:
         assert is_drainable(error, ctx) is False  # ctx runs 0.2.0 — same engine
         newer = make_ctx(instance, FakeDriver(), engine_version="0.3.0")
         assert is_drainable(error, newer) is True
+
+    def test_unparseable_stored_engine_is_drainable_once_not_a_crash(self, instance):
+        # A hand-healed line with a garbage engine value must not crash
+        # queue-building; the retry re-stamps a valid engine and heals it.
+        relic = self.base_entry(status=Status.ERROR, error="boom", engine="hand-healed")
+        assert is_drainable(relic, self.ctx(instance)) is True
 
 
 class TestVerbs:

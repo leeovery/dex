@@ -135,7 +135,13 @@ def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
         case Status.WAITING:
             return entry.needs is not None and ctx.provider_available(entry.needs).ok
         case Status.ERROR:
-            return version_newer(ctx.engine_version, entry.engine)
+            try:
+                return version_newer(ctx.engine_version, entry.engine)
+            except ValueError:
+                # An unparseable stored engine (hand-healed line, ancient
+                # relic) must not crash queue-building. Drainable once: the
+                # retry re-stamps a valid engine, healing the field.
+                return True
         case Status.DONE | Status.DEAD | Status.SKIPPED | Status.MANUAL:
             return False
         case _:
@@ -189,7 +195,31 @@ class _Drain:
             item = corpus.read_item(path)
             self.item_paths[item.id] = path
             for url in item.urls:
-                self._seed_url(item.id, url)
+                try:
+                    self._seed_url(item.id, url)
+                except ValueError as e:
+                    # One malformed capture URL parks THAT URL; it never
+                    # aborts the run (frontmatter is immutable provenance —
+                    # garbage in it is judgment work, hence manual).
+                    self._park_bad_seed(item.id, url, e)
+
+    def _park_bad_seed(self, item_id: str, url: str, exc: ValueError) -> None:
+        unit_hash = work_hash(url)  # canonicalization failed — key on the raw URL
+        if unit_hash in self.entries:
+            return
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=url,
+                item=item_id,
+                kind=Kind.WEB,  # pattern-undetectable; the catch-all's kind
+                status=Status.MANUAL,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                reason=f"unfetchable capture URL: {scrub(str(exc))}",
+            ),
+            count=True,
+        )
 
     def _seed_url(self, item_id: str, url: str) -> None:
         canonical, unit_hash = self.identify(url)
