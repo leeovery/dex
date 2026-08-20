@@ -29,9 +29,11 @@ step 4.
      state; the message names the file, line, and likely missing migration
      (usually: run `bin/dex sync`).
    - **Quarantine not empty** (`state/enrichment-ledger.unmigrated.jsonl`)
-     — review each line, re-add what should live via
-     `bin/dex enrich mark <url> <status> --reason ...`, or accept the
-     loss; then empty the file.
+     — cross-check each orphaned line against `state/exclusions.tsv`
+     first: a line referencing an excluded item is a confirmed loss —
+     close it out, never re-add it. Then review what remains, re-add what
+     should live via `bin/dex enrich mark <url> <status> --reason ...`,
+     or accept the loss; then empty the file.
    - **Broken wikilinks** — typo → correct it; genuinely missing target →
      create the page if its members justify one, otherwise de-link.
    - **Bad citations** (id not in corpus) — find the right id or remove

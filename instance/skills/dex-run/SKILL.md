@@ -61,10 +61,12 @@ Then do a run now, whatever the host.
      repaired with judgment now, before other work builds on them — the
      code declined what it could not do safely and said so; do not ignore
      it. If quarantined ledger lines exist
-     (`state/enrichment-ledger.unmigrated.jsonl`), review each line,
-     re-add what should live via
-     `bin/dex enrich mark <url> <status> --reason ...` (or accept the
-     loss), then empty the file.
+     (`state/enrichment-ledger.unmigrated.jsonl`), cross-check each
+     orphaned line against `state/exclusions.tsv` first — a line
+     referencing an excluded item is a confirmed loss: close it out,
+     never re-add it. Then review what remains, re-add what should live
+     via `bin/dex enrich mark <url> <status> --reason ...` (or accept the
+     loss), and empty the file.
    - **Commit the refreshed files and the pin** — this skill owns that
      commit step; sync itself never commits. Message: `sync: engine <tag>`
      (or `sync: machinery refresh` when unpinned).
