@@ -1,0 +1,13 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "500",
+    "url": "https://x.com/frank/status/500",
+    "text": "",
+    "created_at": "Thu Aug 20 11:00:00 +0000 2026",
+    "author": {"name": "Frank Mills", "screen_name": "frank"},
+    "replying_to": null,
+    "replying_to_status": null
+  }
+}
