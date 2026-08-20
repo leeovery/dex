@@ -295,7 +295,11 @@ union merges). Superseded lines until then are the audit trail.
   // outputs — success only
   "path": "enrichment/<id>/web-73bd78.md",
   "title": "…",
-  "error": "…"                 // scrubbed message — error entries only
+  "error": "…",                // scrubbed message — error entries only
+  "reason": "…"                // the stated parking reason (§1): REQUIRED on
+                               // manual/skipped, optional on
+                               // waiting/blocked/dead, forbidden on
+                               // done/queued/error (error has its own field)
 }
 ```
 
@@ -625,8 +629,12 @@ Shipping migrations for this rewrite:
    needs: transcribe` and `toolong → waiting, needs: transcribe` — both
    **immediately drainable** now (whisper-local exists; chunking removed the
    length limit), resurrecting work the old system permanently gave up on.
-   Old `error` entries adopt retry-on-new-engine semantics. Must precede any
-   requeue (else reruns write `x-….md` beside stale `tweet-….md`).
+   Old `error` entries adopt retry-on-new-engine semantics. The old ledger
+   used `error` as an informal reason field on non-error statuses (28 wild
+   lines: dead/nocaptions/done/skipped/manual, plus one `note` field) —
+   migration 1 **ports those values into `reason`**, never destroys them.
+   Must precede any requeue (else reruns write `x-….md` beside stale
+   `tweet-….md`).
 2. **Rerun seed** — two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed
