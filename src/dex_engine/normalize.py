@@ -55,9 +55,12 @@ def is_internal(url: str) -> bool:
 # Kind detection is the shared pipeline module's job (design §2): the private
 # kind_of copy — and its divergence from the enricher's — is deleted. Kinds
 # are stamped pattern-only here and are provisional forever; the ledger is
-# authoritative. NOTE: this stamps the post-rename vocabulary (x/web);
-# migration 1 rewrites pre-rename corpus frontmatter to match, and
-# regeneration re-derives through this same module, so the two converge.
+# authoritative. This is vocabulary + two deliberate convergences, not a
+# pure no-op: it stamps the post-rename names (x/web), gist.github.com
+# moves blog->github (this module's old copy missed gists), and the
+# enricher's side of the m.youtube.com split moves blog->youtube. Migration
+# 1 rewrites pre-rename corpus frontmatter to match, and regeneration
+# re-derives through this same module, so the two converge.
 def kind_of(url: str) -> str:
     return str(detect_kind(url, DRIVERS))
 
