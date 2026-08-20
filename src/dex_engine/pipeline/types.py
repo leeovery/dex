@@ -107,9 +107,11 @@ class MediaFetch(StrEnum):
     LEAD = "lead"
 
 
-# `queued` is a birth state, not a driver outcome (§2): drivers may return
-# every status except it.
-DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED}
+# `queued` is a birth state, not a driver outcome, and `error` is RAISED,
+# never returned — a Result has no error channel, so a returned `error`
+# could only carry a fabricated message; the run loop's single broad except
+# is the one place errors are made (§2/§5).
+DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +259,8 @@ class Result:
     def __post_init__(self) -> None:
         if self.status not in DRIVER_STATUSES:
             raise ValueError(
-                f"drivers may not return status {self.status!r} — "
-                "'queued' is a birth state, not a driver outcome (§2)"
+                f"drivers may not return status {self.status!r} — 'queued' is a birth "
+                "state and 'error' is raised, never returned (§2/§5)"
             )
         if self.status is Status.WAITING and self.needs is None:
             raise ValueError("status 'waiting' requires needs (§5)")

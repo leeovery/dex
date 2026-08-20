@@ -284,15 +284,12 @@ class _Drain:
                 self._apply_blocked(entry, result.reason)
             case Status.DEAD | Status.SKIPPED | Status.MANUAL:
                 self.record_outcome(entry, status=result.status, reason=result.reason)
-            case Status.ERROR:
-                self.record_outcome(
-                    entry,
-                    status=Status.ERROR,
-                    error=f"driver for kind {entry.kind} reported an engine error",
+            case Status.QUEUED | Status.ERROR:
+                # Result.__post_init__ forbids both driver outcomes (§2/§5):
+                # queued is a birth state; errors are raised, never returned.
+                raise RuntimeError(
+                    f"unreachable: Result validation rejects {result.status.value!r}"
                 )
-            case Status.QUEUED:
-                # Result.__post_init__ forbids this driver outcome (§2).
-                raise RuntimeError("unreachable: Result validation rejects 'queued'")
             case _:
                 assert_never(result.status)
 

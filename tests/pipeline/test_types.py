@@ -59,9 +59,11 @@ class TestEnums:
         with pytest.raises(ValueError, match="blog"):
             Kind("blog")
 
-    def test_driver_statuses_exclude_only_queued(self):
+    def test_driver_statuses_exclude_queued_and_error(self):
+        # queued is a birth state; error is raised, never returned (§2/§5).
         assert Status.QUEUED not in DRIVER_STATUSES
-        assert frozenset(Status) - {Status.QUEUED} == DRIVER_STATUSES
+        assert Status.ERROR not in DRIVER_STATUSES
+        assert frozenset(Status) - {Status.QUEUED, Status.ERROR} == DRIVER_STATUSES
 
 
 class TestAvailability:
@@ -187,11 +189,15 @@ class TestResultReason:
         assert Result(status=Status.DEAD, meta={}).reason is None
         assert Result(status=Status.DEAD, meta={}, reason="HTTP 404").reason == "HTTP 404"
 
-    def test_reason_is_forbidden_on_done_and_error(self):
+    def test_reason_is_forbidden_on_done(self):
         with pytest.raises(ValueError, match="forbidden"):
             Result(status=Status.DONE, meta={}, body="text", reason="unneeded")
-        with pytest.raises(ValueError, match="forbidden"):
-            Result(status=Status.ERROR, meta={}, reason="unneeded")
+
+    def test_error_is_not_a_driver_outcome_at_all(self):
+        # Errors are raised, never returned — a Result has no error channel,
+        # so a returned 'error' could only fabricate its message (§2/§5).
+        with pytest.raises(ValueError, match="raised, never returned"):
+            Result(status=Status.ERROR, meta={})
 
 
 class TestLedgerEntryInvariants:
