@@ -899,11 +899,18 @@ class _Drain:
         return None
 
     def fetched_count(self, item_id: str) -> int:
-        """Fetched-page entries for the item: media and cap-skips don't count."""
+        """Fetched-page entries for the item — what the 12-URL cap bounds.
+
+        Media downloads, extraction-asset byte-writes, and cap-skip marker
+        lines don't count: none of them is a fetched page, and a document
+        rich in embedded images must not spend the item's URL budget.
+        """
         return sum(
             1
             for entry in self.entries.values()
-            if entry.item == item_id and entry.via != "media" and entry.status is not Status.SKIPPED
+            if entry.item == item_id
+            and entry.via not in ("media", "extract-asset")
+            and entry.status is not Status.SKIPPED
         )
 
     # -- recording -------------------------------------------------------

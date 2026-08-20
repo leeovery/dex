@@ -623,6 +623,19 @@ class TestExtractAssets:
 
         return fetch
 
+    def test_assets_do_not_count_toward_the_url_cap(self, instance):
+        # The 12-URL cap bounds fetched PAGES; asset entries are byte-writes
+        # of embedded images — a document rich in assets must not spend the
+        # item's URL budget.
+        write_item(instance)
+        assets = [Asset(data=b"png", suggested_ext="png"), Asset(data=b"jpg", suggested_ext="jpg")]
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
+        run_mod.run(ctx)
+        drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
+        assert drain.fetched_count(ITEM) == 1  # the page alone; both assets excluded
+        ledgered = ledger.load(ctx.instance.ledger_path)
+        assert sum(1 for e in ledgered.values() if e.via == "extract-asset") == 2
+
     def test_assets_write_under_media_caps_ledgered_extract_asset(self, instance):
         write_item(instance)
         assets = [
