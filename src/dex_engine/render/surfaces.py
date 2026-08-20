@@ -630,7 +630,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           "unindexed": [str],
           "ghost_index": [str],
           "stale_pages": [{"page": str, "newer": int}],
-          "count_drift": [{"page": str, "recorded": str, "actual": int}],
+          "count_drift": [{"page": str, "recorded": str, "actual": int}],  # actual = member count
           "restated": [{"page": str, "first": str, "second": str}],
           # state checks
           "ledger_entries": int,
@@ -682,9 +682,9 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
                  for row in stale[:_HEALTH_LIST_CAP])
     drift = _health_rows(surface, payload, "count_drift", ("page", "recorded"),
                          int_keys=("actual",))
-    lines.append(_health_count("item-count drift (frontmatter items: vs citations)", len(drift)))
+    lines.append(_health_count("item-count drift (frontmatter items: vs members)", len(drift)))
     lines.extend(
-        f"  {row['page']}: items: {row['recorded']}, cites {row['actual']}"
+        f"  {row['page']}: items: {row['recorded']}, members {row['actual']}"
         for row in drift[:_HEALTH_LIST_CAP]
     )
     restated = _health_rows(surface, payload, "restated", ("page", "first", "second"))

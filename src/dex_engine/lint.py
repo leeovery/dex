@@ -5,8 +5,9 @@ Checks (§14's grown set):
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
   citation everywhere, index included), coverage orphans, index consistency,
-  stale pages, page item-count drift (frontmatter ``items:`` vs actual
-  citations), and difflib same-page sentence similarity ("possible restated
+  stale pages, page item-count drift (frontmatter ``items:`` vs the page's
+  MEMBER count — its taxonomy topic's items, or its entity-members list;
+  never its citation count), and difflib sentence similarity ("possible restated
   fact — merge?").
 
   state — ledger schema validation (via ``ledger.load``), waiting cohorts and
@@ -16,7 +17,7 @@ Checks (§14's grown set):
   ``enrich status``).
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
-counts are set to the actual distinct citations, and a page that cites items
+counts are set to the derived member count, and a page that cites items
 but carries no ``generated:`` date gains one (today) so staleness has a
 baseline. Existing ``generated:`` dates are never rewritten — they are the
 staleness reference, and resetting them would mask exactly what the stale
@@ -49,8 +50,11 @@ LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 # A backticked bare 6-hex token: shortid-shaped, a probable malformed
 # citation anywhere it appears (§14) — full ids never match this.
 SHORTID_RE = re.compile(r"`([0-9a-f]{6})`")
+# Frontmatter fields — matched inside the frontmatter block ONLY, never
+# against page bodies (a body line reading `items: 99` is prose).
 GENERATED_RE = re.compile(r"^generated: (\d{4}-\d{2}-\d{2})$", re.MULTILINE)
 TOPIC_RE = re.compile(r"^topic: (.+)$", re.MULTILINE)
+ENTITY_RE = re.compile(r"^entity: (.+)$", re.MULTILINE)
 ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 
 # Same-page sentence similarity (§14): difflib, no models. Sentences shorter
@@ -114,9 +118,12 @@ def run_lint(
     if special is not None:
         return special
     taxonomy = json.loads((instance.state_dir / "taxonomy.json").read_text(encoding="utf-8"))
+    entity_members = _entity_members(instance)
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
-    scan = _scan_wiki(pages, taxonomy, corpus_ids, write=write, today=today)
+    scan = _scan_wiki(
+        pages, taxonomy, entity_members, corpus_ids, write=write, today=today
+    )
 
     ledgered = set(
         taxonomy.get("topics", {}).get("uncategorized-shares", {}).get("items", [])
@@ -194,9 +201,32 @@ def _pages(instance: Instance) -> dict[str, Path]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_wiki(
+def _entity_members(instance: Instance) -> dict[str, list[str]]:
+    path = instance.state_dir / "entity-members.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: expected an object of entity -> item list")
+    return {
+        name: members for name, members in raw.items() if isinstance(members, list)
+    }
+
+
+def _frontmatter(text: str) -> str | None:
+    """The frontmatter block's inner text, or None without a complete fence."""
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 3)
+    if end == -1:
+        return None
+    return text[4:end]
+
+
+def _scan_wiki(  # noqa: PLR0913 — one argument per data source the scan reads
     pages: dict[str, Path],
     taxonomy: dict[str, object],
+    entity_members: dict[str, list[str]],
     corpus_ids: set[str],
     *,
     write: bool,
@@ -221,10 +251,42 @@ def _scan_wiki(
         scan.shortid_citations += [
             {"page": name, "token": token} for token in sorted(set(SHORTID_RE.findall(text)))
         ]
-        _scan_staleness(scan, name, text, topics if isinstance(topics, dict) else {})
-        text = _scan_counts(scan, name, path, text, len(ids), write=write, today=today)
+        frontmatter = _frontmatter(text)
+        _scan_staleness(scan, name, frontmatter, topics if isinstance(topics, dict) else {})
+        expected = _expected_members(
+            frontmatter, topics if isinstance(topics, dict) else {}, entity_members
+        )
+        text = _scan_counts(
+            scan, name, path, text, expected=expected, cites=len(ids), write=write, today=today
+        )
         scan.restated += _restated_pairs(name, text)
     return scan
+
+
+def _expected_members(
+    frontmatter: str | None,
+    topics: dict[str, object],
+    entity_members: dict[str, list[str]],
+) -> int | None:
+    """The member count the page's ``items:`` field records, or None.
+
+    ``items:`` counts MEMBERS, not citations — the wild convention: a topic
+    page records its taxonomy topic's item count, an entity page its
+    ``entity-members.json`` list length (a page routinely cites fewer items
+    than its topic holds). None = underivable (no resolvable topic/entity):
+    the check skips rather than inventing an expectation.
+    """
+    if frontmatter is None:
+        return None
+    topic = TOPIC_RE.search(frontmatter)
+    if topic and topic.group(1) in topics:
+        entry = topics[topic.group(1)]
+        items = entry.get("items", []) if isinstance(entry, dict) else []
+        return len(items) if isinstance(items, list) else None
+    entity = ENTITY_RE.search(frontmatter)
+    if entity and entity.group(1) in entity_members:
+        return len(entity_members[entity.group(1)])
+    return None
 
 
 def _scan_links(
@@ -243,9 +305,13 @@ def _scan_links(
             scan.broken_links.append({"page": name, "target": target})
 
 
-def _scan_staleness(scan: _WikiScan, name: str, text: str, topics: dict[str, object]) -> None:
-    generated = GENERATED_RE.search(text)
-    topic = TOPIC_RE.search(text)
+def _scan_staleness(
+    scan: _WikiScan, name: str, frontmatter: str | None, topics: dict[str, object]
+) -> None:
+    if frontmatter is None:
+        return
+    generated = GENERATED_RE.search(frontmatter)
+    topic = TOPIC_RE.search(frontmatter)
     if not generated or not topic or topic.group(1) not in topics:
         return
     members = topics[topic.group(1)]
@@ -255,39 +321,62 @@ def _scan_staleness(scan: _WikiScan, name: str, text: str, topics: dict[str, obj
         scan.stale_pages.append({"page": name, "newer": newer})
 
 
-def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity, text, count, and both seams
+def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity, text, both counts, and both seams
     scan: _WikiScan,
     name: str,
     path: Path,
     text: str,
-    actual: int,
     *,
+    expected: int | None,
+    cites: int,
     write: bool,
     today: Callable[[], datetime.date],
 ) -> str:
     """The item-count consistency check, with the ``--write`` reconcile (§14).
 
-    Returns the (possibly rewritten) page text so downstream checks see what
-    is now on disk.
+    ``items:`` records the page's MEMBER count (taxonomy topic / entity
+    members), never its citation count. Only the frontmatter block is read
+    or rewritten. Returns the (possibly rewritten) page text so downstream
+    checks see what is now on disk.
     """
-    recorded = ITEMS_RE.search(text)
-    if recorded is not None and int(recorded.group(1)) != actual:
-        scan.count_drift.append({"page": name, "recorded": recorded.group(1), "actual": actual})
+    frontmatter = _frontmatter(text)
+    if frontmatter is None:
+        if cites:
+            # No complete fence → nothing derivable can be maintained; a
+            # rewrite here would be guessing at structure, so it is a note
+            # even under --write — never a claimed repair.
+            scan.notes.append(
+                f"{name}: cites items but has no complete frontmatter fence — "
+                "items:/generated: cannot be maintained"
+            )
+        return text
+    updated = frontmatter
+    recorded = ITEMS_RE.search(frontmatter)
+    if (
+        recorded is not None
+        and expected is not None
+        and int(recorded.group(1)) != expected
+    ):
+        scan.count_drift.append(
+            {"page": name, "recorded": recorded.group(1), "actual": expected}
+        )
         if write:
-            text = ITEMS_RE.sub(f"items: {actual}", text, count=1)
-            path.write_text(text, encoding="utf-8")
-            scan.reconciled.append(f"{name}: items: {recorded.group(1)} -> {actual}")
-    if actual and GENERATED_RE.search(text) is None:
-        if write and text.startswith("---\n"):
+            updated = ITEMS_RE.sub(f"items: {expected}", updated, count=1)
+            scan.reconciled.append(f"{name}: items: {recorded.group(1)} -> {expected}")
+    if cites and GENERATED_RE.search(frontmatter) is None:
+        if write:
             stamp = f"generated: {today().isoformat()}"
-            text = text.replace("\n---\n", f"\n{stamp}\n---\n", 1)
-            path.write_text(text, encoding="utf-8")
+            updated = updated + f"\n{stamp}"
             scan.reconciled.append(f"{name}: {stamp} added (was missing)")
         else:
             scan.notes.append(
                 f"{name}: cites items but has no generated: date — staleness cannot "
                 "be computed (lint --write adds one)"
             )
+    if updated != frontmatter:
+        fence_end = text.find("\n---\n", 3)
+        text = "---\n" + updated + text[fence_end:]
+        path.write_text(text, encoding="utf-8")
     return text
 
 

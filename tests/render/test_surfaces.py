@@ -305,8 +305,8 @@ class TestHealthReport:
         assert "ghost index entries — 1" in out
         assert "stale pages (members newer than the page) — 1" in out
         assert "pour-over: 2 newer item(s)" in out
-        assert "item-count drift (frontmatter items: vs citations) — 1" in out
-        assert "pour-over: items: 3, cites 5" in out
+        assert "item-count drift (frontmatter items: vs members) — 1" in out
+        assert "pour-over: items: 3, members 5" in out
         assert "possible restated facts (same page — merge?) — 1" in out
         assert "ledger — 42 entries, schema valid" in out
         assert "waiting cohorts: transcribe 3" in out

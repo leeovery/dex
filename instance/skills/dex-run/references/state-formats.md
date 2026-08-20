@@ -64,6 +64,35 @@ Topic and entity names are kebab-case and define the wikilink namespace: a
 
 Which items mention each entity; feeds entity pages.
 
+## Wiki page frontmatter — derived fields, lint-repaired
+
+Every topic/entity page opens with a frontmatter fence; syntheses carry
+their own (`type: synthesis`, `question:`, `generated:` — see dex-query).
+Bodies are the most freehand artifact in the system, on purpose; these
+fields are derived and mechanically checkable:
+
+```yaml
+---
+topic: agent-architecture     # topic pages: the taxonomy topic name
+# — or —
+entity: anthropic             # entity pages: the entity name
+kind: org                     # entity pages may echo the entity kind
+generated: 2026-08-18         # when the page content was last regenerated;
+                              #   the staleness check compares member item
+                              #   dates against it
+items: 215                    # the page's MEMBER count — the taxonomy
+                              #   topic's items length (topic pages) or the
+                              #   entity-members list length (entity pages).
+                              #   NOT the citation count: a page routinely
+                              #   cites fewer items than its topic holds.
+---
+```
+
+`bin/dex lint` verifies `items:` against the member count and flags drift;
+`lint --write` reconciles it mechanically and adds a missing `generated:`
+(existing `generated:` dates are never rewritten — they are the staleness
+reference). Maintain page *bodies* by hand; leave these fields to lint.
+
 ## `state/config.json` — instance configuration, owner-editable
 
 Renamed from `normalize-config.json` (migration 1). Parsed loudly: an

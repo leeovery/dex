@@ -150,14 +150,60 @@ class TestWikiChecks:
         assert "stale pages (members newer than the page) — 1" in outcome.report
         assert "brewing: 1 newer item(s)" in outcome.report
 
-    def test_count_drift_detected(self, instance):
+    def test_count_drift_compares_members_not_citations(self, instance):
+        # items: records the topic's MEMBER count; a page routinely cites
+        # fewer items than its topic holds, and that is not drift.
+        second = "2026-08-19-second-bbbbbb"
         write_corpus_stub(instance)
-        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_corpus_stub(instance, second)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM, second]}})
         write_page(instance, "brewing", page_text(items=3, body=f"cite `{ITEM}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "brewing: items: 3, cites 1" in outcome.report
+        assert "brewing: items: 3, members 2" in outcome.report
         assert outcome.exit_code == 0  # drift is repairable, not a failure
+
+    def test_matching_member_count_is_never_drift(self, instance):
+        second = "2026-08-19-second-bbbbbb"
+        write_corpus_stub(instance)
+        write_corpus_stub(instance, second)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM, second]}})
+        # Cites 1 of 2 members — items: 2 is correct under member semantics.
+        write_page(instance, "brewing", page_text(items=2, body=f"cite `{ITEM}`\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+
+    def test_entity_pages_count_against_entity_members(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, entities={"anthropic": {"kind": "org", "raw": []}})
+        (instance.state_dir / "entity-members.json").write_text(
+            json.dumps({"anthropic": [ITEM, "2026-08-19-second-bbbbbb"]})
+        )
+        text = f"---\nentity: anthropic\ngenerated: 2026-08-01\nitems: 5\n---\ncite `{ITEM}`\n"
+        write_page(instance, "anthropic", text, group="entities")
+        write_index(instance, "[[anthropic]]\n")
+        outcome = lint(instance)
+        assert "anthropic: items: 5, members 2" in outcome.report
+
+    def test_unresolvable_pages_skip_the_count_check(self, instance):
+        write_taxonomy(instance)  # no topics at all
+        write_page(instance, "loose-page", page_text(items=9, body="prose only\n"))
+        write_index(instance, "[[loose-page]]\n")
+        outcome = lint(instance)
+        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+
+    def test_body_lines_are_not_frontmatter(self, instance):
+        # A body line reading `items: 99` is prose — it must never be
+        # flagged, let alone "repaired".
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        body = f"cite `{ITEM}`\nThe config sets items: 99 for the demo.\n"
+        write_page(instance, "brewing", page_text(items=1, body=body))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance, write=True)
+        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+        assert "items: 99" in (instance.root / "wiki" / "topics" / "brewing.md").read_text()
 
     def test_restated_facts_flagged_within_a_page(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
@@ -181,7 +227,7 @@ class TestWikiChecks:
 
 
 class TestWrite:
-    def test_write_reconciles_items_counts(self, instance):
+    def test_write_reconciles_items_to_the_member_count(self, instance):
         write_corpus_stub(instance)
         write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
         write_page(instance, "brewing", page_text(items=3, body=f"cite `{ITEM}`\n"))
@@ -192,9 +238,20 @@ class TestWrite:
         assert "items: 1" in rewritten
         assert "items: 3" not in rewritten
         # A second run is clean — the reconcile converged.
-        assert "item-count drift (frontmatter items: vs citations) — none" in lint(
+        assert "item-count drift (frontmatter items: vs members) — none" in lint(
             instance
         ).report
+
+    def test_missing_closing_fence_is_a_note_never_a_claimed_repair(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        broken = f"---\ntopic: brewing\nitems: 3\ncite `{ITEM}`\n"  # no closing fence
+        write_page(instance, "brewing", broken)
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance, write=True)
+        assert "added" not in outcome.report
+        assert "no complete frontmatter fence" in outcome.report
+        assert (instance.root / "wiki" / "topics" / "brewing.md").read_text() == broken
 
     def test_write_adds_missing_generated_date(self, instance):
         write_corpus_stub(instance)
