@@ -801,7 +801,18 @@ Skill changes shipping with this:
   removing a decision; lint verifies their shape instead). Frontmatter
   thereby converges on the same guarantee as the ledger: a malformed item
   can't be written, because structure never passes through freehand
-  writing.
+  writing. Corollary, closing a drift current practice shows: **the item
+  body is the owner's note verbatim and stays that way** — Claude's
+  interpretive context (what a linked video is, how a thread relates)
+  belongs in the digest, not the item body; thread context itself lives in
+  the enrichment via walk-up. After creation, exactly two frontmatter
+  fields ever change (`status`, `enrichment:` listing), both derived from
+  disk, both written by corpus.py.
+- **Wiki frontmatter's derived fields are lint-repaired, not carefully
+  authored**: `lint --write` reconciles `items:` counts and `generated:`
+  dates mechanically at health checks (the field the 2026-08-20 analysis
+  found drifting on 16 pages). Wiki *bodies* remain the most freehand
+  artifact in the system, on purpose — synthesis is the judgment.
 - **Shipping obligations in the same change**: `dex-contract.md` updated
   (operations become capture/run/query/lint; dataflow adds `cache/`, the
   new state files, and ledger-only promoted URLs; the "never hand-edit
