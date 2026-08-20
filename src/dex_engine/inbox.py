@@ -203,12 +203,16 @@ def _note_document_format(rel: str, dest: Path) -> None:
     # extract queue). The item id does not exist yet at materialization
     # time, so the ledger write happens there; this hook is the detection
     # half, so the operator sees the routing decision at inbox time.
-    # Never fatal: a detection hiccup must not fail a materialization.
+    # Never fatal — but the net is the ONE expected failure (an unreadable
+    # file), not a broad except: the pipeline's single sanctioned broad
+    # catch lives in run.py, and a sniff_format crash here is an engine bug
+    # that must stay loud.
+    from dex_engine.pipeline.detect import sniff_format
     try:
-        from dex_engine.pipeline.detect import sniff_format
-        fmt = sniff_format(dest.read_bytes(), name=dest.name)
-    except Exception:
+        data = dest.read_bytes()
+    except OSError:
         return
+    fmt = sniff_format(data, name=dest.name)
     if fmt is not None:
         print(f"  note {dest.name}: {fmt.value} document — queues for extraction "
               f"at the next enrich run (via the item's media list)")
