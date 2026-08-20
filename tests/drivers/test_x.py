@@ -154,12 +154,39 @@ class TestClassifiedFailures:
 
 
 class TestEdges:
-    def test_post_with_no_text_is_manual_with_reason(self):
+    def test_post_with_no_text_and_no_media_is_manual_with_reason(self):
         url = "https://x.com/frank/status/500"
         responses = {API + "frank/status/500": api_fixture("no-text-500.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert result.status is Status.MANUAL
         assert "no text" in reason_of(result)
+
+    def test_photo_only_post_is_done_with_attributed_body_and_media(self):
+        url = "https://x.com/gina/status/600"
+        tweet = {
+            "id": "600",
+            "text": "",
+            "created_at": "Thu Aug 20 12:00:00 +0000 2026",
+            "author": {"name": "Gina Ruiz", "screen_name": "gina"},
+            "replying_to": None,
+            "replying_to_status": None,
+            "media": {
+                "photos": [
+                    {"type": "photo", "url": "https://pbs.example.test/media/p600.jpg"},
+                    {"type": "photo", "url": "https://pbs.example.test/media/p601.jpg"},
+                ]
+            },
+        }
+        responses = {API + "gina/status/600": json_response({"tweet": tweet})}
+        result = driver_for(responses).fetch(make_unit(url, Kind.X))
+        assert result.status is Status.DONE
+        body = body_of(result)
+        assert "@gina" in body
+        assert "(photo post)" in body
+        assert result.media == [
+            "https://pbs.example.test/media/p600.jpg",
+            "https://pbs.example.test/media/p601.jpg",
+        ]
 
     def test_non_status_url_is_manual(self):
         result = driver_for({}).fetch(make_unit("https://x.com/carol", Kind.X))

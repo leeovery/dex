@@ -116,7 +116,9 @@ class XDriver:
 
 def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]) -> Result:
     """Assemble the Result: reading-order body, pooled media, attribution meta."""
-    has_text = any(_text_of(post) or isinstance(post.get("quote"), dict) for post in posts)
+    has_content = any(
+        _text_of(post) or isinstance(post.get("quote"), dict) or _photo_urls(post) for post in posts
+    )
     body = "\n\n".join(_render_post(post) for post in reversed(posts))  # root -> captured
     author = captured.get("author") or {}
     meta: dict[str, str | int | None] = {
@@ -127,8 +129,10 @@ def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | 
     if len(posts) > 1:
         meta["thread_length"] = len(posts)
     meta.update(walk_meta)
-    if not has_text:
-        return Result(status=Status.MANUAL, meta=meta, reason="fxtwitter returned no text")
+    if not has_content:
+        return Result(status=Status.MANUAL, meta=meta, reason="fxtwitter returned no text or media")
+    # Photo-only posts are DONE, not manual: the body stays a minimal
+    # attributed record and the media stage fetches the photos themselves.
     media = [url for post in posts for url in _photo_urls(post)]  # captured post's first (§8)
     return Result(status=Status.DONE, meta=meta, body=body, media=media)
 
@@ -140,6 +144,9 @@ def _render_post(post: dict) -> str:
     if text:
         lines.append("")
         lines.append(text)
+    elif _photo_urls(post):
+        lines.append("")
+        lines.append("(photo post)")
     quote = post.get("quote")
     if isinstance(quote, dict):
         quote_author = quote.get("author") or {}
