@@ -910,6 +910,7 @@ the tree green:
 
 1. **Foundations** — `pipeline/types.py` (enums, dataclasses, validation),
    `pipeline/ledger.py` (from_line/to_line, compact, invariant tests),
+   `corpus.py` (CorpusItem parse/serialize, byte-exact body round-trip),
    `render/kernel.py` + `surfaces.py` (everything downstream reports
    through them), tooling (ruff, type checker, pytest config,
    dependency-groups, uv.lock). Hypothesis properties land here.
