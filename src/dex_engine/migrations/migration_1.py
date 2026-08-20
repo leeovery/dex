@@ -19,7 +19,9 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   engine is stamped ``0.0.1`` — the only version the pre-rewrite engine
   ever shipped as, which is exactly what gives old ``error`` entries their
   retry-on-new-engine semantics;
-- ``state/normalize-config.json`` → ``state/config.json``.
+- ``state/normalize-config.json`` → ``state/config.json``, dropping the
+  ``name_map`` key on the way — never applied by any engine version, and
+  source-specific to the Discord/Space backfill.
 
 Everything not provably safe is skipped-with-why for the session to repair.
 An untranslatable ledger line is **quarantined**: moved verbatim to
@@ -588,6 +590,12 @@ def _as_need(text: str) -> Need:
 # ---------------------------------------------------------------------------
 
 
+_NAME_MAP_NOTE = (
+    "config: name_map removed — never applied by any engine version; "
+    "source-specific to the Discord/Space backfill"
+)
+
+
 def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
     from dex_engine.pipeline.types import Config  # noqa: PLC0415 — narrow import, used only here
 
@@ -596,7 +604,21 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
     if not old.exists():
         return
     try:
-        Config.load(old)
+        raw = json.loads(old.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        skipped.append(
+            Skipped(
+                what="state/normalize-config.json",
+                why=f"not valid JSON ({e}) — repair it, then rename to config.json",
+            )
+        )
+        return
+    # name_map is dropped, not carried: no engine version ever applied it,
+    # and the current config schema rejects unknown keys loudly — carrying
+    # it forward would brick every command on the migrated instance.
+    dropped_name_map = isinstance(raw, dict) and raw.pop("name_map", None) is not None
+    try:
+        Config.from_raw(raw, source="state/normalize-config.json")
     except ValueError as e:
         skipped.append(
             Skipped(
@@ -607,7 +629,11 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
         )
         return
     if new.exists():
-        if new.read_bytes() == old.read_bytes():
+        try:
+            existing = json.loads(new.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = None
+        if existing == raw:
             old.unlink()
             actions.append(
                 "config: removed normalize-config.json — config.json already holds "
@@ -622,8 +648,11 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
                 )
             )
         return
-    old.rename(new)
+    _atomic_write(new, json.dumps(raw, indent=2) + "\n")
+    old.unlink()
     actions.append("config: normalize-config.json → config.json")
+    if dropped_name_map:
+        actions.append(_NAME_MAP_NOTE)
 
 
 # ---------------------------------------------------------------------------

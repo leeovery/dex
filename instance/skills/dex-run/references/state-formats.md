@@ -106,7 +106,6 @@ this file — they propose changes in the run report.
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) credentials + model id |
 | `report_issues` | auto-file engine bugs upstream (default `true`) |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
-| `name_map` | raw sharer name → display name (backfills) |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
 

@@ -372,7 +372,6 @@ class TestConfig:
         assert config.transcribe_api_model is None
         assert config.report_issues is True
         assert config.providers == {}
-        assert config.name_map == {}
         assert config.internal_domains == []
         assert config.noise_prefixes == []
 
@@ -386,7 +385,6 @@ class TestConfig:
                     "transcribe_api_model": "whisper-large-v3",
                     "report_issues": False,
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
-                    "name_map": {"lee.overy": "Lee"},
                     "internal_domains": ["example.internal"],
                     "noise_prefixes": ["Updated room membership"],
                 }
@@ -398,9 +396,16 @@ class TestConfig:
         assert config.transcribe_api_model == "whisper-large-v3"
         assert config.report_issues is False
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
-        assert config.name_map == {"lee.overy": "Lee"}
         assert config.internal_domains == ["example.internal"]
         assert config.noise_prefixes == ["Updated room membership"]
+
+    def test_deleted_name_map_key_is_rejected(self, tmp_path: Path):
+        # name_map was deleted (never applied by any engine version);
+        # migration 1 drops it — a survivor must fail loudly, not lurk.
+        path = tmp_path / "config.json"
+        path.write_text('{"name_map": {}}')
+        with pytest.raises(ValueError, match="name_map"):
+            Config.load(path)
 
     def test_invalid_json_is_loud(self, tmp_path: Path):
         path = tmp_path / "config.json"

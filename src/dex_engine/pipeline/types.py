@@ -573,7 +573,6 @@ class Config:
     transcribe_api_model: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
-    name_map: dict[str, str] = field(default_factory=dict)
     internal_domains: list[str] = field(default_factory=list)
     noise_prefixes: list[str] = field(default_factory=list)
 
@@ -597,8 +596,27 @@ class Config:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
             raise ValueError(f"{path}: invalid JSON: {e}") from e
+        return cls.from_raw(raw, source=str(path))
+
+    @classmethod
+    def from_raw(cls, raw: object, *, source: str) -> "Config":
+        """Validate already-parsed config content; ``source`` names it in errors.
+
+        The migration path uses this to validate content it is about to
+        write, without a file round-trip.
+
+        Args:
+            raw: The parsed JSON value (must be an object).
+            source: Where the content came from, for error messages.
+
+        Returns:
+            The parsed configuration.
+
+        Raises:
+            ValueError: Unknown keys, or a value of the wrong shape.
+        """
         if not isinstance(raw, dict):
-            raise ValueError(f"{path}: expected a JSON object, got {type(raw).__name__}")
+            raise ValueError(f"{source}: expected a JSON object, got {type(raw).__name__}")
         known = {
             "media_fetch",
             "transcribe_model",
@@ -607,96 +625,86 @@ class Config:
             "transcribe_api_model",
             "report_issues",
             "providers",
-            "name_map",
             "internal_domains",
             "noise_prefixes",
         }
         unknown = sorted(set(raw) - known)
         if unknown:
             raise ValueError(
-                f"{path}: unknown config keys {unknown} — "
+                f"{source}: unknown config keys {unknown} — "
                 f"known keys are {sorted(known)} (a typo'd key would otherwise be silently dead)"
             )
         return cls(
-            media_fetch=_config_enum(path, raw, "media_fetch", default=MediaFetch.LEAD),
-            transcribe_model=_config_str(path, raw, "transcribe_model", default="medium"),
-            transcribe_base_url=_config_opt_str(path, raw, "transcribe_base_url"),
-            transcribe_api_key=_config_opt_str(path, raw, "transcribe_api_key"),
-            transcribe_api_model=_config_opt_str(path, raw, "transcribe_api_model"),
-            report_issues=_config_bool(path, raw, "report_issues", default=True),
-            providers=_config_providers(path, raw),
-            name_map=_config_str_map(path, raw, "name_map"),
-            internal_domains=_config_str_list(path, raw, "internal_domains"),
-            noise_prefixes=_config_str_list(path, raw, "noise_prefixes"),
+            media_fetch=_config_enum(source, raw, "media_fetch", default=MediaFetch.LEAD),
+            transcribe_model=_config_str(source, raw, "transcribe_model", default="medium"),
+            transcribe_base_url=_config_opt_str(source, raw, "transcribe_base_url"),
+            transcribe_api_key=_config_opt_str(source, raw, "transcribe_api_key"),
+            transcribe_api_model=_config_opt_str(source, raw, "transcribe_api_model"),
+            report_issues=_config_bool(source, raw, "report_issues", default=True),
+            providers=_config_providers(source, raw),
+            internal_domains=_config_str_list(source, raw, "internal_domains"),
+            noise_prefixes=_config_str_list(source, raw, "noise_prefixes"),
         )
 
 
 def _config_enum(
-    path: Path, raw: dict[str, object], key: str, *, default: MediaFetch
+    source: str, raw: dict[str, object], key: str, *, default: MediaFetch
 ) -> MediaFetch:
     if key not in raw:
         return default
     value = raw[key]
     if not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     try:
         return MediaFetch(value)
     except ValueError as e:
         options = ", ".join(m.value for m in MediaFetch)
-        raise ValueError(f"{path}: {key} must be one of {options}, got {value!r}") from e
+        raise ValueError(f"{source}: {key} must be one of {options}, got {value!r}") from e
 
 
-def _config_str(path: Path, raw: dict[str, object], key: str, *, default: str) -> str:
+def _config_str(source: str, raw: dict[str, object], key: str, *, default: str) -> str:
     value = raw.get(key, default)
     if not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     return value
 
 
-def _config_opt_str(path: Path, raw: dict[str, object], key: str) -> str | None:
+def _config_opt_str(source: str, raw: dict[str, object], key: str) -> str | None:
     value = raw.get(key)
     if value is not None and not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     return value or None  # an empty string is "not configured", not a credential
 
 
-def _config_bool(path: Path, raw: dict[str, object], key: str, *, default: bool) -> bool:
+def _config_bool(source: str, raw: dict[str, object], key: str, *, default: bool) -> bool:
     value = raw.get(key, default)
     if not isinstance(value, bool):
-        raise ValueError(f"{path}: {key} must be a boolean, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a boolean, got {type(value).__name__}")
     return value
 
 
-def _config_str_list(path: Path, raw: dict[str, object], key: str) -> list[str]:
+def _config_str_list(source: str, raw: dict[str, object], key: str) -> list[str]:
     value = raw.get(key, [])
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise ValueError(f"{path}: {key} must be a list of strings")
+        raise ValueError(f"{source}: {key} must be a list of strings")
     return value
 
 
-def _config_str_map(path: Path, raw: dict[str, object], key: str) -> dict[str, str]:
-    value = raw.get(key, {})
-    if not isinstance(value, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
-    ):
-        raise ValueError(f"{path}: {key} must be an object of string -> string")
-    return value
 
-
-def _config_providers(path: Path, raw: dict[str, object]) -> dict[str, list[str]]:
+def _config_providers(source: str, raw: dict[str, object]) -> dict[str, list[str]]:
     value = raw.get("providers", {})
     if not isinstance(value, dict) or not all(
         isinstance(cap, str) and isinstance(names, list) and all(isinstance(n, str) for n in names)
         for cap, names in value.items()
     ):
         raise ValueError(
-            f"{path}: providers must be an object of capability -> list of provider names"
+            f"{source}: providers must be an object of capability -> list of provider names"
         )
     capabilities = {need.value for need in Need}
     unknown = sorted(set(value) - capabilities)
     if unknown:
         raise ValueError(
-            f"{path}: providers key(s) {unknown} are not capabilities — "
+            f"{source}: providers key(s) {unknown} are not capabilities — "
             f"known capabilities: {sorted(capabilities)} (a typo'd key would silently "
             "never resolve)"
         )

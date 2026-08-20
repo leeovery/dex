@@ -10,13 +10,14 @@ nocaptions/toolong statuses), error-as-reason on non-error statuses, the
 
 import datetime
 import json
+from typing import ClassVar
 
 import pytest
 
 from dex_engine.corpus import read_item
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Config, Kind, LedgerEntry, Need, Status
 
 ENGINE = "0.5.0"
 
@@ -508,15 +509,33 @@ class TestConfigRename:
         '{\n  "name_map": {"u1": "lee"},\n  "internal_domains": ["a.test"],\n'
         '  "noise_prefixes": ["fwd:"]\n}\n'
     )
+    # What the migration writes: OLD minus name_map (dropped, not carried).
+    CLEANED: ClassVar[dict] = {"internal_domains": ["a.test"], "noise_prefixes": ["fwd:"]}
 
-    def test_renamed_carrying_content(self, tmp_path, migration):
+    def test_renamed_carrying_content_minus_name_map(self, tmp_path, migration):
         state = tmp_path / "state"
         state.mkdir()
         (state / "normalize-config.json").write_text(self.OLD)
         report = migration.apply(tmp_path)
         assert not (state / "normalize-config.json").exists()
-        assert (state / "config.json").read_text() == self.OLD
+        assert json.loads((state / "config.json").read_text()) == self.CLEANED
+        Config.load(state / "config.json")  # the migrated file parses loudly clean
         assert any("normalize-config.json → config.json" in action for action in report.actions)
+        assert any(
+            "name_map removed — never applied by any engine version" in action
+            and "Discord/Space backfill" in action
+            for action in report.actions
+        )
+
+    def test_config_without_name_map_gets_no_note(self, tmp_path, migration):
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / "normalize-config.json").write_text('{"internal_domains": ["a.test"]}\n')
+        report = migration.apply(tmp_path)
+        assert json.loads((state / "config.json").read_text()) == {
+            "internal_domains": ["a.test"]
+        }
+        assert not any("name_map" in action for action in report.actions)
 
     def test_unknown_key_skipped_for_the_session(self, tmp_path, migration):
         state = tmp_path / "state"
@@ -528,10 +547,12 @@ class TestConfigRename:
         assert any("does not fit the new config schema" in s.why for s in report.skipped)
 
     def test_identical_racing_copy_settled(self, tmp_path, migration):
+        # The racing machine ran THIS migration first, so its config.json
+        # already holds the cleaned (name_map-free) content.
         state = tmp_path / "state"
         state.mkdir()
         (state / "normalize-config.json").write_text(self.OLD)
-        (state / "config.json").write_text(self.OLD)
+        (state / "config.json").write_text(json.dumps(self.CLEANED, indent=2) + "\n")
         report = migration.apply(tmp_path)
         assert not (state / "normalize-config.json").exists()
         assert any("racing machine" in action for action in report.actions)

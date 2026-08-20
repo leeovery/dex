@@ -47,7 +47,7 @@ class TestScaffold:
         scaffold(root, run=RecordingRun(), template=TEMPLATE)
         assert not (root / "state" / "normalize-config.json").exists()
         config = root / "state" / "config.json"
-        assert json.loads(config.read_text()) == {"name_map": {}, "internal_domains": []}
+        assert json.loads(config.read_text()) == {"internal_domains": []}
         Config.load(config)  # the seed parses under the loud loader
 
     def test_cache_is_gitignored_from_birth(self, tmp_path):

@@ -37,7 +37,7 @@ SEEDS = {
     # Instance config: config.json from birth — migration 1 renames the
     # old normalize-config.json in pre-rewrite instances; new ones never
     # carry the old name.
-    "state/config.json": '{\n  "name_map": {},\n  "internal_domains": []\n}\n',
+    "state/config.json": '{\n  "internal_domains": []\n}\n',
     "wiki/index.md": "# Index\n\nNo pages yet — first ingest pending.\n",
     "wiki/log.md": "# Ops log\n",
     "wiki/pins.md": "# Pins\n\nHuman corrections as claim+anchor; regeneration must "
