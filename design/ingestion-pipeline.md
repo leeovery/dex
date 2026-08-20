@@ -618,12 +618,26 @@ Shipping migrations for this rewrite:
    length limit), resurrecting work the old system permanently gave up on.
    Old `error` entries adopt retry-on-new-engine semantics. Must precede any
    requeue (else reruns write `x-….md` beside stale `tweet-….md`).
-2. **Rerun seed** — every web item enriched before the link-keeping fix gets
-   its existing **URL-keyed work units requeued** (`status: queued,
-   rerun: true, via: migration-2`) — real URLs through the front door, never
-   item-keyed pseudo-entries. The draining session re-fetches with current
-   code (links kept; stored text is the fallback for dead URLs) and
-   completes the cognitive steps from the run report, same as any capture.
+2. **Rerun seed** — two known-deficient cohorts get their existing
+   **URL-keyed work units requeued** (`status: queued, rerun: true,
+   via: migration-2`) — real URLs through the front door, never item-keyed
+   pseudo-entries:
+   - every **web** item enriched before the link-keeping fix (stored
+     enrichments have hyperlinks stripped);
+   - every **x** item enriched before thread walk-up existed (stored
+     enrichments are single posts that may have been threads; the rerun
+     walks up and re-harvests, so e.g. a thread's YouTube link now becomes
+     a child and gets transcribed).
+   Only `done` entries are seeded — old `error` entries already retry under
+   the new-engine rule, and `manual` entries stay parked for judgment. The
+   draining session re-fetches with current code (stored text is the
+   fallback for URLs now dead) and completes the cognitive steps from the
+   run report, same as any capture. Legacy items whose `urls:` lists carry
+   hand-walked thread parents keep them (frontmatter is immutable
+   provenance, even where the old process polluted it); each such URL
+   reruns and walks up independently — accepted chain-context duplication.
+   Per-driver politeness sleeps make large cohorts slow by design; drain
+   across runs with `--limit` where a cohort is big.
 
 Resurrected transcription backlogs are bounded: the transcribe drain takes a
 per-run cap (default 10) so a first sync never monopolizes a machine.
