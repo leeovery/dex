@@ -214,7 +214,7 @@ class TestSyncReport:
                         "anomalies": ["ledger line 40 had both error and path"],
                     }
                 ],
-                "skills_synced": 6,
+                "machinery_changes": 6,
             },
         )
         assert "sync — pin bumped v0.2.1 → v0.3.0" in out
@@ -223,11 +223,11 @@ class TestSyncReport:
         assert "repair with judgment" in out
         assert "corpus/2025/odd.md — frontmatter does not parse" in out
         assert "REVIEW REQUIRED" in out
-        assert "skills synced: 6" in out
+        assert "machinery changes: 6" in out
         assert_no_trailing_whitespace(out)
 
     def test_steady_state_sync(self):
-        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "skills_synced": 6})
+        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 6})
         assert "sync — engine pinned at v0.3.0" in out
         assert "migrations applied — none (state already current)" in out
 
@@ -237,7 +237,7 @@ class TestSyncReport:
             "sync-report",
             {
                 "migrations": [],
-                "skills_synced": 3,
+                "machinery_changes": 3,
                 "notes": ["no release tags on the remote yet — running unpinned"],
             },
         )
@@ -248,18 +248,18 @@ class TestSyncReport:
         with pytest.raises(PayloadError, match="previous requires pin"):
             render(
                 "sync-report",
-                {"previous": "v0.1.0", "migrations": [], "skills_synced": 0},
+                {"previous": "v0.1.0", "migrations": [], "machinery_changes": 0},
             )
 
-    def test_missing_skills_synced_is_loud(self):
-        with pytest.raises(PayloadError, match="skills_synced"):
+    def test_missing_machinery_changes_is_loud(self):
+        with pytest.raises(PayloadError, match="machinery_changes"):
             render("sync-report", {"pin": "v0.3.0", "migrations": []})
 
     def test_migration_without_intent_is_loud(self):
         with pytest.raises(PayloadError, match="intent"):
             render(
                 "sync-report",
-                {"pin": "v1", "migrations": [{"number": 1}], "skills_synced": 0},
+                {"pin": "v1", "migrations": [{"number": 1}], "machinery_changes": 0},
             )
 
 

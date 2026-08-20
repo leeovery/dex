@@ -310,6 +310,18 @@ class TestTemplateSync:
         assert not retired.exists()
         assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
 
+    def test_retired_skill_symlinks_unlink_without_following(self, inst, template):
+        target = inst.root / "elsewhere"
+        target.mkdir()
+        (target / "SKILL.md").write_text("linked content\n")
+        skills = inst.root / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        (skills / "dex-ingest").symlink_to(target)
+        changed = sync(inst.root, template=template)
+        assert not (skills / "dex-ingest").exists()
+        assert (target / "SKILL.md").exists()  # the link's target is untouched
+        assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
+
     def test_non_engine_skills_are_never_touched(self, inst, template):
         theirs = inst.root / ".claude" / "skills" / "my-own-skill"
         theirs.mkdir(parents=True)
@@ -336,7 +348,7 @@ class TestTemplateSync:
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "refreshed: bin/dex" in report
-        assert "skills synced: 6" in report
+        assert "machinery changes: 6" in report
 
 
 class TestMain:

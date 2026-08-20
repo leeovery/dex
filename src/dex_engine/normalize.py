@@ -336,7 +336,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         config = Config.load(instance.config_path)
         lines = run_normalize(instance, config)
-    except (ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-normalize: {e}")
     sys.stdout.write("\n".join(lines) + "\n")
 

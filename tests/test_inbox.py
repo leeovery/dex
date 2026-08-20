@@ -28,6 +28,9 @@ class FakeGithub:
         self.deleted: list[str] = []
         self.api_calls: list[tuple[str, str]] = []
         self.git_calls: list[list[str]] = []
+        # Every seam call in one interleaved log, so ordering across seams
+        # (git-add BEFORE asset delete) is assertable.
+        self.ops: list[tuple] = []
         self.lines: list[str] = []
         self.downloads = 0
         self.download_data = DATA
@@ -37,6 +40,7 @@ class FakeGithub:
     def api(self, url, token, method="GET", data=None):  # noqa: ARG002 — the fake ignores POST bodies
         assert token, "api must never be called without auth"
         self.api_calls.append((method, url))
+        self.ops.append(("api", method, url))
         if method == "DELETE":
             self.deleted.append(url)
             asset_id = int(url.rsplit("/", 1)[-1])
@@ -62,6 +66,7 @@ class FakeGithub:
 
     def git(self, args):
         self.git_calls.append(list(args))
+        self.ops.append(("git", *args))
         if args[0] == "remote":
             return 0, f"git@github.com:{REPO}.git\n"
         if args[0] == "check-attr":
@@ -124,9 +129,11 @@ class TestMaterialize:
         assert code == 0
         # The binary landed at the derived path.
         assert (instance.root / REL).read_bytes() == DATA
-        # LFS verification ran BEFORE the delete (order is load-bearing).
-        add_index = gh.git_calls.index(["add", "--", REL])
-        assert add_index >= 0
+        # LFS verification ran BEFORE the delete (order is load-bearing: a
+        # file that failed to stage must keep its only remote copy).
+        add_at = gh.ops.index(("git", "add", "--", REL))
+        delete_at = gh.ops.index(("api", "DELETE", ASSET_URL))
+        assert add_at < delete_at
         assert gh.deleted == [ASSET_URL]
         # The pointer was rewritten to media:.
         fm, body = parse_capture(capture.read_text())

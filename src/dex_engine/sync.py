@@ -368,7 +368,12 @@ def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[
             and existing.name.startswith("dex-")
             and existing.name not in template_skills
         ):
-            shutil.rmtree(existing)
+            if existing.is_symlink():
+                # rmtree refuses symlinks; unlink drops the link and leaves
+                # whatever it pointed at alone.
+                existing.unlink()
+            else:
+                shutil.rmtree(existing)
             changed.append(f"removed .claude/skills/{existing.name} (retired engine skill)")
 
 
@@ -442,7 +447,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
         pin=read_pin(root),
         previous=previous_pin,
         applied=applied,
-        skills_synced=len(changed),
+        machinery_changes=len(changed),
         notes=notes,
     )
     return surfaces.render("sync-report", payload)
@@ -453,7 +458,7 @@ def _report_payload(
     pin: str | None,
     previous: str | None,
     applied: list[AppliedMigration],
-    skills_synced: int,
+    machinery_changes: int,
     notes: list[str],
 ) -> dict[str, object]:
     migrations_payload: list[dict[str, object]] = [
@@ -468,7 +473,7 @@ def _report_payload(
     ]
     payload: dict[str, object] = {
         "migrations": migrations_payload,
-        "skills_synced": skills_synced,
+        "machinery_changes": machinery_changes,
     }
     if pin is not None:
         payload["pin"] = pin
@@ -512,7 +517,7 @@ def main(argv: list[str] | None = None) -> None:
             echo=print,
             previous_pin=args.previous_pin,
         )
-    except (ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-sync: {e}")
     if report is not None:
         sys.stdout.write(report if report.endswith("\n") else report + "\n")

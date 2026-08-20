@@ -425,7 +425,7 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
 
 
 def _render_sync_report(payload: Mapping[str, object]) -> str:
-    """Render the sync report: pin state, migrations applied, skills synced.
+    """Render the sync report: pin state, migrations applied, machinery changes.
 
     Payload::
 
@@ -440,7 +440,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
              "skipped": [{"what": str, "why": str}],  # optional
              "anomalies": [str]}                   # optional
           ],
-          "skills_synced": int,
+          "machinery_changes": int,   # template files written + retired skills removed
           "notes": [str],             # optional
         }
 
@@ -451,7 +451,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     _check_keys(
         surface,
         payload,
-        required=frozenset({"migrations", "skills_synced"}),
+        required=frozenset({"migrations", "machinery_changes"}),
         optional=frozenset({"pin", "previous", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
@@ -459,7 +459,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     if previous is not None and pin is None:
         _fail(surface, "previous requires pin — a bump lands on a pinned tag")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
-    skills_synced = _int_at(surface, payload, "skills_synced")
+    machinery_changes = _int_at(surface, payload, "machinery_changes")
     notes = _str_list_at(surface, payload, "notes")
 
     if pin is None:
@@ -474,7 +474,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
             lines.extend(_sync_migration_lines(surface, migration, where=f"migrations[{i}]."))
     else:
         lines.append("migrations applied — none (state already current)")
-    lines.append(f"skills synced: {skills_synced}")
+    lines.append(f"machinery changes: {machinery_changes}")
     if notes:
         lines.append("notes:")
         lines.extend(_bullets(notes))
