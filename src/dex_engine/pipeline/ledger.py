@@ -10,8 +10,11 @@ version are injected (§14) so date-stamping and retry-on-new-engine are
 testable.
 """
 
+import contextlib
 import datetime
 import json
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -60,6 +63,7 @@ _ALL_KEYS = frozenset(
         "path",
         "title",
         "error",
+        "reason",
     )
 )
 
@@ -104,8 +108,9 @@ def from_line(line: str) -> LedgerEntry:
     unknown = sorted(set(raw) - _ALL_KEYS)
     if unknown:
         raise LedgerSchemaError(
-            f"ledger line has unknown field(s) {unknown}; "
-            f"the running engine may be older than the line's writer: {line!r}"
+            f"ledger line has unknown field(s) {unknown}; either the running engine is "
+            f"older than the line's writer (sync), or the line predates the current "
+            f"schema and carries pre-migration extra fields — {_MIGRATION_HINT}: {line!r}"
         )
 
     try:
@@ -127,6 +132,7 @@ def from_line(line: str) -> LedgerEntry:
             path=None if "path" not in raw else _expect_str(raw, "path"),
             title=None if "title" not in raw else _expect_str(raw, "title"),
             error=None if "error" not in raw else _expect_str(raw, "error"),
+            reason=None if "reason" not in raw else _expect_str(raw, "reason"),
         )
     except ValueError as e:
         raise LedgerSchemaError(f"nonconforming ledger line ({e}); {_MIGRATION_HINT}") from e
@@ -177,6 +183,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("path", entry.path),
         ("title", entry.title),
         ("error", entry.error),
+        ("reason", entry.reason),
     )
     record = {key: value for key, value in fields if value is not None}
     return json.dumps(record, ensure_ascii=False)
@@ -236,8 +243,25 @@ def compact(path: Path) -> int:
         return 0
     lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
     entries = load(path)
-    path.write_text("".join(to_line(entry) + "\n" for entry in entries.values()), encoding="utf-8")
+    _atomic_write(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
     return len(lines) - len(entries)
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically: same-dir temp file, then replace.
+
+    A crash mid-write must never lose the ledger — the original file stays
+    intact until the finished temp file replaces it in one step.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        tmp.replace(path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
 
 
 def stamp(

@@ -76,6 +76,12 @@ class TestWrapWithPrefix:
         with pytest.raises(ValueError, match="room"):
             wrap_with_prefix("x", width=4, prefix="    ", hang=1)
 
+    def test_negative_hang_is_loud(self):
+        # A negative hang would inflate the budget past the width — the one
+        # overflow this module exists to prevent.
+        with pytest.raises(ValueError, match="hang"):
+            wrap_with_prefix("word " * 10, width=10, prefix="  ", hang=-4)
+
 
 class TestTable:
     def test_columns_align_to_the_widest_cell(self):
@@ -115,6 +121,11 @@ class TestTable:
         with pytest.raises(ValueError, match="aligns"):
             table([["a", "b"]], aligns=["l", "c"])
 
+    @pytest.mark.parametrize("kwargs", [{"gap": -1}, {"indent": -2}])
+    def test_negative_gap_or_indent_is_loud(self, kwargs):
+        with pytest.raises(ValueError, match=">= 0"):
+            table([["a", "b"]], **kwargs)
+
 
 class TestKvBlock:
     def test_keys_pad_to_one_shared_column(self):
@@ -135,9 +146,20 @@ class TestKvBlock:
         with pytest.raises(ValueError, match="non-empty"):
             kv_block([])
 
-    def test_no_room_for_values_is_loud(self):
-        with pytest.raises(ValueError, match="budget"):
+    def test_no_room_for_values_is_loud_and_names_the_key(self):
+        with pytest.raises(ValueError, match=r"kv_block.*a-very-long-key"):
             kv_block([("a-very-long-key", "value")], width=10)
+
+    def test_over_wide_key_with_empty_value_is_equally_loud(self):
+        # An empty value must not smuggle an over-wide key column past the
+        # width guarantee.
+        with pytest.raises(ValueError, match=r"kv_block.*a-very-long-key"):
+            kv_block([("a-very-long-key", "")], width=10)
+
+    @pytest.mark.parametrize("kwargs", [{"gap": -1}, {"indent": -2}])
+    def test_negative_gap_or_indent_is_loud(self, kwargs):
+        with pytest.raises(ValueError, match=">= 0"):
+            kv_block([("k", "v")], **kwargs)
 
 
 class TestTree:
@@ -170,6 +192,10 @@ class TestTree:
     def test_node_titles_must_be_single_line(self):
         with pytest.raises(ValueError, match="title"):
             TreeNode(title="a\nb")
+
+    def test_negative_indent_is_loud(self):
+        with pytest.raises(ValueError, match=">= 0"):
+            tree([TreeNode(title="a")], indent=-1)
 
 
 def test_default_width_is_a_sane_terminal_width():

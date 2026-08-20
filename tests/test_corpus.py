@@ -227,6 +227,13 @@ class TestFiles:
         with pytest.raises(CorpusSchemaError, match=r"broken\.md"):
             read_item(path)
 
+    def test_write_item_is_atomic_and_cleans_its_temp_file(self, instance: Instance):
+        path = instance.corpus_dir / "2026" / "2026-08-19-example-55ad7b.md"
+        write_item(path, item())
+        write_item(path, item(status="enriched", enrichment=["web-73bd78.md"]))
+        assert [p.name for p in path.parent.iterdir()] == [path.name]
+        assert read_item(path).status == "enriched"
+
 
 # ---------------------------------------------------------------------------
 # Hypothesis property (§15): parse∘serialize over generated items preserves

@@ -102,6 +102,16 @@ class TestEnrichReport:
         with pytest.raises(PayloadError, match=r"items\[0\]"):
             render("enrich-report", {"counts": {}, "items": [{"id": "x"}], "parked": []})
 
+    def test_multiline_string_field_is_a_payload_error_not_a_kernel_error(self):
+        items = [{"id": "x", "reason": "fresh\nand multiline"}]
+        with pytest.raises(PayloadError, match="single-line"):
+            render("enrich-report", {"counts": {}, "items": items, "parked": []})
+
+    def test_multiline_note_is_a_payload_error(self):
+        notes = ["a note\nwith a newline"]
+        with pytest.raises(PayloadError, match=r"notes\[0\]"):
+            render("enrich-report", {"counts": {}, "items": [], "parked": [], "notes": notes})
+
 
 class TestStatusSurface:
     def test_summary_with_waiting_and_orphans(self):
@@ -128,6 +138,10 @@ class TestStatusSurface:
     def test_bad_waiting_need_is_loud(self):
         with pytest.raises(PayloadError, match="summarize"):
             render("status", {"counts": {}, "waiting": {"summarize": 1}})
+
+    def test_empty_orphan_id_is_a_payload_error_not_a_kernel_error(self):
+        with pytest.raises(PayloadError, match=r"orphans\[0\]"):
+            render("status", {"counts": {}, "orphans": [""]})
 
     def test_negative_count_is_loud(self):
         with pytest.raises(PayloadError, match="counts"):
@@ -167,6 +181,14 @@ class TestCapabilityReport:
     def test_bad_provider_state_is_loud(self):
         capability = {"name": "extract", "providers": [{"name": "anydoc", "state": "installed"}]}
         with pytest.raises(PayloadError, match="installed"):
+            render("capability-report", {"capabilities": [capability]})
+
+    def test_mistyped_provider_note_is_loud(self):
+        capability = {
+            "name": "extract",
+            "providers": [{"name": "anydoc", "state": "available", "note": 42}],
+        }
+        with pytest.raises(PayloadError, match="note"):
             render("capability-report", {"capabilities": [capability]})
 
     def test_no_capabilities_is_loud(self):

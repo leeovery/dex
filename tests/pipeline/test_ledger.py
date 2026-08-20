@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ledger import LedgerSchemaError
-from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Format, Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
 
@@ -32,14 +32,20 @@ def entry(**overrides: object) -> LedgerEntry:
 
 
 FULL_ENTRY = entry(
-    kind=Kind.X,
+    kind=Kind.FILE,
+    format=Format.PDF,
     status=Status.DONE,
     via="migration-2",
     parent="a1b2c3d4e5",
     depth=2,
     rerun=True,
-    path="enrichment/2026-08-19-example-55ad7b/x-73bd78.md",
-    title="A thread",
+    path="enrichment/2026-08-19-example-55ad7b/file-73bd78.md",
+    title="A whitepaper",
+)
+
+PARKED_ENTRY = entry(
+    status=Status.MANUAL,
+    reason="thin-extraction",
 )
 
 
@@ -54,7 +60,8 @@ class TestToLine:
 
     def test_enums_and_dates_serialize_as_plain_strings(self):
         record = json.loads(ledger.to_line(FULL_ENTRY))
-        assert record["kind"] == "x"
+        assert record["kind"] == "file"
+        assert record["format"] == "pdf"
         assert record["status"] == "done"
         assert record["date"] == "2026-08-20"
 
@@ -65,6 +72,7 @@ class TestToLine:
             "url",
             "item",
             "kind",
+            "format",
             "status",
             "engine",
             "date",
@@ -76,6 +84,20 @@ class TestToLine:
             "title",
         ]
 
+    def test_reason_serializes_last_after_error_slot(self):
+        blocked = entry(status=Status.BLOCKED, attempts=2, reason="403 challenge")
+        assert list(json.loads(ledger.to_line(blocked))) == [
+            "hash",
+            "url",
+            "item",
+            "kind",
+            "status",
+            "attempts",
+            "engine",
+            "date",
+            "reason",
+        ]
+
 
 class TestFromLine:
     def test_round_trip(self):
@@ -84,6 +106,10 @@ class TestFromLine:
     def test_waiting_with_needs_round_trips(self):
         waiting = entry(status=Status.WAITING, needs=Need.TRANSCRIBE)
         assert ledger.from_line(ledger.to_line(waiting)) == waiting
+
+    def test_parked_reason_round_trips(self):
+        assert ledger.from_line(ledger.to_line(PARKED_ENTRY)) == PARKED_ENTRY
+        assert json.loads(ledger.to_line(PARKED_ENTRY))["reason"] == "thin-extraction"
 
     def test_not_json_is_a_schema_error(self):
         with pytest.raises(LedgerSchemaError, match="unparseable"):
@@ -185,6 +211,12 @@ class TestLoadAppendCompact:
         assert ledger.compact(instance.ledger_path) == 0
         assert not instance.ledger_path.exists()
 
+    def test_compact_writes_atomically_and_cleans_its_temp_file(self, instance: Instance):
+        ledger.append(instance.ledger_path, entry())
+        ledger.append(instance.ledger_path, entry(status=Status.DEAD))
+        ledger.compact(instance.ledger_path)
+        assert [p.name for p in instance.state_dir.iterdir()] == ["enrichment-ledger.jsonl"]
+
 
 class TestStamp:
     def test_stamp_uses_the_injected_clock_and_engine(self):
@@ -210,27 +242,43 @@ _HASHES = ("aaaa000000", "bbbb111111", "cccc222222", "dddd333333")
 _WORK_KINDS = [k for k in Kind if k not in (Kind.IMAGE, Kind.TEXT)]
 
 
+_REASON_OPTIONAL = (Status.WAITING, Status.BLOCKED, Status.DEAD)
+
+
 @st.composite
 def entries(draw: st.DrawFn) -> LedgerEntry:
     status = draw(st.sampled_from(list(Status)))
-    is_done = status is Status.DONE
+    kind = draw(st.sampled_from(_WORK_KINDS))
+    provenance = draw(
+        st.none() | st.tuples(st.sampled_from(_HASHES), st.integers(min_value=0, max_value=4))
+    )
+    parent, depth = provenance if provenance is not None else (None, None)
+    path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
+    if status in (Status.MANUAL, Status.SKIPPED):
+        reason = draw(st.text(min_size=1))
+    elif status in _REASON_OPTIONAL:
+        reason = draw(st.none() | st.text(min_size=1))
+    else:
+        reason = None
     return LedgerEntry(
         hash=draw(st.sampled_from(_HASHES)),
         url=draw(st.text(min_size=1)),
         item=draw(st.text(min_size=1)),
-        kind=draw(st.sampled_from(_WORK_KINDS)),
+        kind=kind,
+        format=draw(st.none() | st.sampled_from(list(Format))) if kind is Kind.FILE else None,
         status=status,
         needs=draw(st.sampled_from(list(Need))) if status is Status.WAITING else None,
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         via=draw(st.sampled_from([None, "harvest", "thread", "media", "sniff", "migration-1"])),
-        parent=draw(st.none() | st.sampled_from(_HASHES)),
-        depth=draw(st.none() | st.integers(min_value=0, max_value=4)),
+        parent=parent,
+        depth=depth,
         rerun=draw(st.booleans()),
-        path=draw(st.none() | st.text(min_size=1)) if is_done else None,
-        title=draw(st.none() | st.text(min_size=1)) if is_done else None,
+        path=path,
+        title=draw(st.none() | st.text(min_size=1)) if path is not None else None,
         error=draw(st.text(min_size=1)) if status is Status.ERROR else None,
+        reason=reason,
     )
 
 

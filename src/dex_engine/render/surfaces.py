@@ -85,6 +85,10 @@ def _str_at(surface: str, obj: Mapping[str, object], key: str, where: str = "") 
     value = obj[key]
     if not isinstance(value, str) or not value:
         _fail(surface, f"{where}{key} must be a non-empty string, got {value!r}")
+    if "\n" in value:
+        # Validated here so the kernel's single-line ValueErrors can never
+        # escape a surface as anything but a PayloadError.
+        _fail(surface, f"{where}{key} must be single-line, got {value!r}")
     return value
 
 
@@ -110,6 +114,12 @@ def _str_list_at(surface: str, obj: Mapping[str, object], key: str, where: str =
     value = obj.get(key, [])
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         _fail(surface, f"{where}{key} must be a list of strings, got {value!r}")
+    for i, element in enumerate(value):
+        if not element or "\n" in element:
+            _fail(
+                surface,
+                f"{where}{key}[{i}] must be a non-empty single-line string, got {element!r}",
+            )
     return value
 
 
@@ -408,7 +418,7 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
             if state not in _PROVIDER_STATES:
                 options = ", ".join(sorted(_PROVIDER_STATES))
                 _fail(surface, f"{pwhere}state must be one of {options}, got {state!r}")
-            note = str(provider.get("note", ""))
+            note = _str_at(surface, provider, "note", pwhere) if "note" in provider else ""
             if state == "active":
                 parts.append(f"{pname} (active)")
             elif note:

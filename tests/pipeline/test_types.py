@@ -12,6 +12,7 @@ from dex_engine.pipeline.types import (
     Availability,
     Child,
     Config,
+    Format,
     Instance,
     Kind,
     LedgerEntry,
@@ -71,19 +72,61 @@ class TestAvailability:
             availability.ok = False  # ty: ignore[invalid-assignment]
 
 
+def unit(**overrides: object) -> WorkUnit:
+    base = WorkUnit(
+        hash="73bd784849",
+        url="https://example.test",
+        kind=Kind.WEB,
+        item="2026-08-19-example-55ad7b",
+        depth=0,
+    )
+    return dataclasses.replace(base, **overrides)
+
+
 class TestWorkUnit:
     def test_carries_no_ledger_bookkeeping(self):
-        unit = WorkUnit(
-            hash="73bd784849",
-            url="https://example.test",
-            kind=Kind.WEB,
-            item="2026-08-19-example-55ad7b",
-            depth=0,
-        )
-        assert unit.format is None
-        assert unit.parent is None
+        work = unit()
+        assert work.format is None
+        assert work.parent is None
         for bookkeeping in ("attempts", "engine", "rerun"):
-            assert not hasattr(unit, bookkeeping)
+            assert not hasattr(work, bookkeeping)
+
+    @pytest.mark.parametrize("kind", [Kind.IMAGE, Kind.TEXT])
+    def test_corpus_only_kinds_never_become_work_units(self, kind):
+        with pytest.raises(ValueError, match="never becomes"):
+            unit(kind=kind)
+
+    def test_format_is_file_work_only(self):
+        with pytest.raises(ValueError, match="file-work only"):
+            unit(format=Format.PDF)
+        assert unit(kind=Kind.FILE, format=Format.PDF).format is Format.PDF
+        assert unit(kind=Kind.FILE).format is None
+
+    @pytest.mark.parametrize("bad", ["", "xyz", "73BD784849", "73bd78484", "73bd7848499"])
+    def test_hash_must_be_ten_lowercase_hex(self, bad):
+        with pytest.raises(ValueError, match="hash"):
+            unit(hash=bad)
+
+    def test_url_and_item_must_not_be_empty(self):
+        with pytest.raises(ValueError, match="url"):
+            unit(url="")
+        with pytest.raises(ValueError, match="item"):
+            unit(item="")
+
+    def test_depth_must_be_a_nonnegative_integer(self):
+        with pytest.raises(ValueError, match=">= 0"):
+            unit(depth=-1, parent="a1b2c3d4e5")
+        with pytest.raises(ValueError, match="boolean"):
+            unit(depth=True, parent="a1b2c3d4e5")
+
+    def test_parent_and_depth_travel_together(self):
+        # Depth 0 is the shared URL — it has no parent; spawned units have both.
+        with pytest.raises(ValueError, match="parent and depth"):
+            unit(parent="a1b2c3d4e5")
+        with pytest.raises(ValueError, match="parent and depth"):
+            unit(depth=1)
+        spawned = unit(depth=1, parent="a1b2c3d4e5")
+        assert spawned.parent == "a1b2c3d4e5"
 
 
 class TestChild:
@@ -182,6 +225,81 @@ class TestLedgerEntryInvariants:
         with pytest.raises(ValueError, match="via"):
             entry(via="freehand")
 
+    def test_title_without_path_is_rejected(self):
+        with pytest.raises(ValueError, match="travel together"):
+            entry(status=Status.DONE, title="orphaned title")
+
+    @pytest.mark.parametrize("kind", [Kind.IMAGE, Kind.TEXT])
+    def test_corpus_only_kinds_never_become_entries(self, kind):
+        with pytest.raises(ValueError, match="never becomes"):
+            entry(kind=kind)
+
+    def test_format_is_file_work_only(self):
+        with pytest.raises(ValueError, match="file-work only"):
+            entry(format=Format.PDF)
+        assert entry(kind=Kind.FILE, format=Format.PDF).format is Format.PDF
+
+    @pytest.mark.parametrize("bad", ["", "xyz", "73BD784849", "73bd78484", "73bd7848499"])
+    def test_hash_must_be_ten_lowercase_hex(self, bad):
+        with pytest.raises(ValueError, match="hash"):
+            entry(hash=bad)
+
+    def test_url_and_item_must_not_be_empty(self):
+        with pytest.raises(ValueError, match="url"):
+            entry(url="")
+        with pytest.raises(ValueError, match="item"):
+            entry(item="")
+
+    def test_attempts_must_not_be_a_boolean(self):
+        # attempts=True would serialize as JSON `true` — a line the boundary
+        # itself refuses to re-parse.
+        with pytest.raises(ValueError, match="boolean"):
+            entry(status=Status.BLOCKED, attempts=True)
+
+    def test_depth_must_be_a_nonnegative_integer(self):
+        with pytest.raises(ValueError, match=">= 0"):
+            entry(parent="a1b2c3d4e5", depth=-1)
+        with pytest.raises(ValueError, match="boolean"):
+            entry(parent="a1b2c3d4e5", depth=True)
+
+    def test_parent_and_depth_are_paired_provenance(self):
+        with pytest.raises(ValueError, match="both or neither"):
+            entry(parent="a1b2c3d4e5")
+        with pytest.raises(ValueError, match="both or neither"):
+            entry(depth=2)
+        child = entry(parent="a1b2c3d4e5", depth=2)
+        assert (child.parent, child.depth) == ("a1b2c3d4e5", 2)
+
+
+class TestLedgerEntryReason:
+    @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
+    def test_reason_is_required_on_deliberate_parking(self, status):
+        with pytest.raises(ValueError, match="stated reason"):
+            entry(status=status)
+        with pytest.raises(ValueError, match="stated reason"):
+            entry(status=status, reason="")
+        assert entry(status=status, reason="thin-extraction").reason == "thin-extraction"
+
+    def test_reason_is_optional_on_waiting_blocked_dead(self):
+        waiting = entry(status=Status.WAITING, needs=Need.TRANSCRIBE)
+        assert waiting.reason is None
+        assert (
+            entry(status=Status.WAITING, needs=Need.TRANSCRIBE, reason="model missing").reason
+            == "model missing"
+        )
+        assert entry(status=Status.BLOCKED, attempts=1, reason="403 challenge").reason
+        assert entry(status=Status.DEAD).reason is None
+        assert entry(status=Status.DEAD, reason="NXDOMAIN").reason == "NXDOMAIN"
+
+    @pytest.mark.parametrize("status", [Status.DONE, Status.QUEUED])
+    def test_reason_is_forbidden_on_done_and_queued(self, status):
+        with pytest.raises(ValueError, match="forbidden"):
+            entry(status=status, reason="unneeded")
+
+    def test_reason_and_error_never_coexist(self):
+        with pytest.raises(ValueError, match="forbidden"):
+            entry(status=Status.ERROR, error="scrubbed: boom", reason="also a reason")
+
 
 class TestMigrationReport:
     def test_defaults(self):
@@ -220,6 +338,7 @@ class TestConfig:
         assert config.providers == {}
         assert config.name_map == {}
         assert config.internal_domains == []
+        assert config.noise_prefixes == []
 
     def test_full_file_parses(self, tmp_path: Path):
         path = tmp_path / "config.json"
@@ -232,6 +351,7 @@ class TestConfig:
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
                     "name_map": {"lee.overy": "Lee"},
                     "internal_domains": ["example.internal"],
+                    "noise_prefixes": ["Updated room membership"],
                 }
             )
         )
@@ -242,6 +362,7 @@ class TestConfig:
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
         assert config.name_map == {"lee.overy": "Lee"}
         assert config.internal_domains == ["example.internal"]
+        assert config.noise_prefixes == ["Updated room membership"]
 
     def test_invalid_json_is_loud(self, tmp_path: Path):
         path = tmp_path / "config.json"
@@ -277,6 +398,12 @@ class TestConfig:
         path = tmp_path / "config.json"
         path.write_text(json.dumps({"providers": {"transcribe": "whisper-local"}}))
         with pytest.raises(ValueError, match="providers"):
+            Config.load(path)
+
+    def test_typoed_provider_capability_is_loud(self, tmp_path: Path):
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"providers": {"transcibe": ["whisper-local"]}}))
+        with pytest.raises(ValueError, match="transcibe"):
             Config.load(path)
 
 

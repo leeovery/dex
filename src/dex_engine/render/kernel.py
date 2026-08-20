@@ -95,8 +95,13 @@ def wrap_with_prefix(
     one unused column on the first line buys arithmetic that cannot overflow.
 
     Raises:
-        ValueError: The prefix and hang leave no room within the width.
+        ValueError: ``hang`` is negative, or the prefix and hang leave no
+            room within the width.
     """
+    if hang < 0:
+        # A negative hang would INCREASE the wrap budget past the width — the
+        # one overflow this module exists to make impossible.
+        raise ValueError(f"wrap_with_prefix: hang must be >= 0, got {hang}")
     budget = width - len(prefix) - hang
     if budget < 1:
         raise ValueError(
@@ -129,8 +134,11 @@ def table(
         The rendered table, newline-terminated, no trailing spaces.
 
     Raises:
-        ValueError: No rows, ragged rows, a multi-line cell, or a bad align.
+        ValueError: No rows, ragged rows, a multi-line cell, a bad align, or
+            a negative gap/indent.
     """
+    if gap < 0 or indent < 0:
+        raise ValueError(f"table: gap and indent must be >= 0, got gap={gap}, indent={indent}")
     if not rows:
         raise ValueError("table: rows must be non-empty")
     columns = len(rows[0])
@@ -174,23 +182,35 @@ def kv_block(
     value column. An empty value renders the bare key.
 
     Raises:
-        ValueError: No pairs, a multi-line key, or a key column that leaves
-            no room for values within the width.
+        ValueError: No pairs, a multi-line key, a negative gap/indent, or a
+            key column that leaves no room for values within the width.
     """
+    if gap < 0 or indent < 0:
+        raise ValueError(f"kv_block: gap and indent must be >= 0, got gap={gap}, indent={indent}")
     if not pairs:
         raise ValueError("kv_block: pairs must be non-empty")
     if any("\n" in key for key, _ in pairs):
         raise ValueError("kv_block: keys must be single-line")
     key_width = max(len(key) for key, _ in pairs)
+    budget = width - indent - key_width - gap
+    if budget < 1:
+        widest = max(pairs, key=lambda pair: len(pair[0]))[0]
+        # Checked for every pair — an empty value must not smuggle an
+        # over-wide key column past the width guarantee.
+        raise ValueError(
+            f"kv_block: key {widest!r} plus indent/gap leave no room for values "
+            f"within width {width}"
+        )
+    head_width = indent + key_width + gap
     lines: list[str] = []
     for key, value in pairs:
         head = " " * indent + key.ljust(key_width) + " " * gap
         if not value.strip():
             lines.append(head.rstrip())
             continue
-        wrapped = wrap(value, width - len(head))
+        wrapped = wrap(value, budget)
         lines.append((head + wrapped[0]).rstrip())
-        lines.extend((" " * len(head) + seg).rstrip() for seg in wrapped[1:])
+        lines.extend((" " * head_width + seg).rstrip() for seg in wrapped[1:])
     return "\n".join(lines) + "\n"
 
 
@@ -214,8 +234,10 @@ def tree(nodes: list[TreeNode], *, indent: int = 0) -> str:
     ``└─``.
 
     Raises:
-        ValueError: ``nodes`` is empty.
+        ValueError: ``nodes`` is empty, or ``indent`` is negative.
     """
+    if indent < 0:
+        raise ValueError(f"tree: indent must be >= 0, got {indent}")
     if not nodes:
         raise ValueError("tree: nodes must be non-empty")
     lines: list[str] = []

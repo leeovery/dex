@@ -128,6 +128,44 @@ def _validate_via(via: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Shared work-unit identity invariants (§2/§3/§5), enforced on WorkUnit and
+# LedgerEntry alike.
+# ---------------------------------------------------------------------------
+
+# sha1(work key)[:10] — the ledger key format.
+_HASH_RE = re.compile(r"^[0-9a-f]{10}$")
+# Corpus-frontmatter vocabulary only; never work units (§3).
+_NON_WORK_KINDS = frozenset({Kind.IMAGE, Kind.TEXT})
+
+
+def _validate_unit_identity(
+    *, unit_hash: str, url: str, item: str, kind: Kind, unit_format: Format | None
+) -> None:
+    if not _HASH_RE.match(unit_hash):
+        raise ValueError(
+            f"hash must be 10 lowercase hex characters (sha1(work key)[:10], §5), got {unit_hash!r}"
+        )
+    if not url:
+        raise ValueError("url must not be empty")
+    if not item:
+        raise ValueError("item must not be empty")
+    if kind in _NON_WORK_KINDS:
+        raise ValueError(
+            f"kind {kind!r} is corpus-frontmatter vocabulary only and never becomes "
+            "a work unit (§3)"
+        )
+    if unit_format is not None and kind is not Kind.FILE:
+        raise ValueError(f"format is file-work only (§5), got kind {kind!r}")
+
+
+def _validate_depth(depth: int) -> None:
+    if isinstance(depth, bool):
+        raise ValueError("depth must be an integer, not a boolean")
+    if depth < 0:
+        raise ValueError(f"depth must be >= 0, got {depth}")
+
+
+# ---------------------------------------------------------------------------
 # Work-unit dataclasses (§2). All frozen, slots, kw_only.
 # ---------------------------------------------------------------------------
 
@@ -155,6 +193,21 @@ class WorkUnit:
     item: str
     depth: int
     parent: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_unit_identity(
+            unit_hash=self.hash,
+            url=self.url,
+            item=self.item,
+            kind=self.kind,
+            unit_format=self.format,
+        )
+        _validate_depth(self.depth)
+        if (self.parent is None) != (self.depth == 0):
+            raise ValueError(
+                "parent and depth travel together: depth 0 is the shared URL (no "
+                "parent); spawned units carry both (§2)"
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -223,6 +276,14 @@ class Extraction:
 # ---------------------------------------------------------------------------
 
 
+# The stated-reason contract (§1/§5): manual and skipped entries exist only
+# by deliberate decision, so the decision must be recorded; waiting/blocked/
+# dead may carry one; done/queued need none, and error entries carry the
+# scrubbed `error` field instead — reason and error never coexist.
+_REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
+_REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LedgerEntry:
     """One work unit in the enrichment ledger (§5)."""
@@ -246,32 +307,62 @@ class LedgerEntry:
     path: str | None = None
     title: str | None = None
     error: str | None = None
+    # the stated parking reason (§1) — see _REASON_REQUIRED/_REASON_FORBIDDEN
+    reason: str | None = None
 
     def __post_init__(self) -> None:
+        _validate_unit_identity(
+            unit_hash=self.hash,
+            url=self.url,
+            item=self.item,
+            kind=self.kind,
+            unit_format=self.format,
+        )
         if not self.engine:
             raise ValueError("every ledger entry records the engine version that wrote it (§5)")
-        if self.status is Status.WAITING and self.needs is None:
-            raise ValueError("status 'waiting' requires needs (§5)")
-        if self.needs is not None and self.status is not Status.WAITING:
-            raise ValueError(
-                f"needs={self.needs!r} is waiting-only, got status {self.status!r} (§5)"
-            )
-        if self.status is Status.BLOCKED and (self.attempts is None or self.attempts < 1):
-            raise ValueError("status 'blocked' requires attempts >= 1 (§5)")
-        if self.attempts is not None and self.status is not Status.BLOCKED:
-            raise ValueError(
-                f"attempts is blocked-only bookkeeping, got status {self.status!r} (§5)"
-            )
-        if self.status is Status.ERROR and not self.error:
-            raise ValueError("status 'error' requires a scrubbed error message (§5)")
-        if self.error is not None and self.status is not Status.ERROR:
-            raise ValueError(f"error message is error-only, got status {self.status!r} (§5)")
-        if (self.path is not None or self.title is not None) and self.status is not Status.DONE:
-            raise ValueError(
-                f"outputs (path/title) are success-only, got status {self.status!r} (§5)"
-            )
-        if self.via is not None:
-            _validate_via(self.via)
+        _validate_entry_queue_fields(self)
+        _validate_entry_outcome_fields(self)
+        _validate_entry_provenance(self)
+
+
+def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
+    if entry.status is Status.WAITING and entry.needs is None:
+        raise ValueError("status 'waiting' requires needs (§5)")
+    if entry.needs is not None and entry.status is not Status.WAITING:
+        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r} (§5)")
+    if isinstance(entry.attempts, bool):
+        raise ValueError("attempts must be an integer, not a boolean")
+    if entry.status is Status.BLOCKED and (entry.attempts is None or entry.attempts < 1):
+        raise ValueError("status 'blocked' requires attempts >= 1 (§5)")
+    if entry.attempts is not None and entry.status is not Status.BLOCKED:
+        raise ValueError(f"attempts is blocked-only bookkeeping, got status {entry.status!r} (§5)")
+
+
+def _validate_entry_outcome_fields(entry: LedgerEntry) -> None:
+    if entry.status is Status.ERROR and not entry.error:
+        raise ValueError("status 'error' requires a scrubbed error message (§5)")
+    if entry.error is not None and entry.status is not Status.ERROR:
+        raise ValueError(f"error message is error-only, got status {entry.status!r} (§5)")
+    if entry.status in _REASON_REQUIRED and not entry.reason:
+        raise ValueError(f"status {entry.status!r} requires a stated reason (§1/§5)")
+    if entry.status in _REASON_FORBIDDEN and entry.reason is not None:
+        raise ValueError(
+            f"reason is forbidden on status {entry.status!r} (§5) — error entries carry "
+            "the scrubbed 'error' field instead; done/queued park nothing"
+        )
+    if (entry.path is not None or entry.title is not None) and entry.status is not Status.DONE:
+        raise ValueError(f"outputs (path/title) are success-only, got status {entry.status!r} (§5)")
+    if entry.title is not None and entry.path is None:
+        raise ValueError("title without path: outputs travel together (§5)")
+
+
+def _validate_entry_provenance(entry: LedgerEntry) -> None:
+    if entry.via is not None:
+        _validate_via(entry.via)
+    if entry.depth is not None:
+        _validate_depth(entry.depth)
+    if (entry.parent is None) != (entry.depth is None):
+        raise ValueError("parent and depth are paired provenance — both or neither (§5)")
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +447,7 @@ class Config:
     providers: dict[str, list[str]] = field(default_factory=dict)
     name_map: dict[str, str] = field(default_factory=dict)
     internal_domains: list[str] = field(default_factory=list)
+    noise_prefixes: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -386,6 +478,7 @@ class Config:
             "providers",
             "name_map",
             "internal_domains",
+            "noise_prefixes",
         }
         unknown = sorted(set(raw) - known)
         if unknown:
@@ -400,6 +493,7 @@ class Config:
             providers=_config_providers(path, raw),
             name_map=_config_str_map(path, raw, "name_map"),
             internal_domains=_config_str_list(path, raw, "internal_domains"),
+            noise_prefixes=_config_str_list(path, raw, "noise_prefixes"),
         )
 
 
@@ -456,6 +550,14 @@ def _config_providers(path: Path, raw: dict[str, object]) -> dict[str, list[str]
     ):
         raise ValueError(
             f"{path}: providers must be an object of capability -> list of provider names"
+        )
+    capabilities = {need.value for need in Need}
+    unknown = sorted(set(value) - capabilities)
+    if unknown:
+        raise ValueError(
+            f"{path}: providers key(s) {unknown} are not capabilities — "
+            f"known capabilities: {sorted(capabilities)} (a typo'd key would silently "
+            "never resolve)"
         )
     return value
 
