@@ -7,7 +7,6 @@ Thin by design (§14): parse arguments, build ``Instance``/``Config``/
 import argparse
 import datetime
 import sys
-from importlib import metadata
 from pathlib import Path
 
 from .capabilities import Capabilities
@@ -24,20 +23,9 @@ from .pipeline.run import (
 )
 from .pipeline.transcribe import TRANSCRIBE_RUN_CAP
 from .pipeline.types import Config, Instance, Need, Status
+from .version import engine_version
 
 __all__ = ["build_parser", "engine_version", "main"]
-
-
-def engine_version() -> str:
-    """The installed engine version — the value stamped into every ledger line.
-
-    Raises:
-        RuntimeError: The package is not installed (not a dex environment).
-    """
-    try:
-        return metadata.version("dex-engine")
-    except metadata.PackageNotFoundError as e:
-        raise RuntimeError("dex-engine is not installed — run it via the bin/dex shim") from e
 
 
 def build_parser() -> argparse.ArgumentParser:
