@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from dex_engine.migrations import MigrationError
 from dex_engine.migrations.migration_2 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.types import Kind, LedgerEntry, Status
@@ -20,6 +21,21 @@ def fixed_today() -> datetime.date:
 @pytest.fixture
 def migration():
     return build(today=fixed_today, engine_version=ENGINE)
+
+
+class TestBuildGuard:
+    def test_refuses_the_pre_rewrite_marker_version(self):
+        # Seeds stamped 0.0.1 would satisfy this migration's own membership
+        # test — a mis-built engine must be refused loudly, never seeded.
+        with pytest.raises(MigrationError, match="pre-rewrite marker"):
+            build(today=fixed_today, engine_version="0.0.1")
+
+    def test_refuses_the_v_prefixed_marker_too(self):
+        with pytest.raises(MigrationError, match="pre-rewrite marker"):
+            build(today=fixed_today, engine_version="v0.0.1")
+
+    def test_accepts_rewrite_versions(self):
+        assert build(today=fixed_today, engine_version="0.1.0").number == 2
 
 
 def entry(  # noqa: PLR0913 — one keyword per exercised §5 schema slot

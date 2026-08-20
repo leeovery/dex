@@ -29,6 +29,7 @@ import datetime
 from collections.abc import Callable
 from pathlib import Path
 
+from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line
 from dex_engine.pipeline.types import (
     Kind,
@@ -57,7 +58,21 @@ def build(
     today: Callable[[], datetime.date],
     engine_version: str,
 ) -> "RerunSeed":
-    """Build migration 2 with the injected clock and running engine version."""
+    """Build migration 2 with the injected clock and running engine version.
+
+    Raises:
+        MigrationError: The running engine identifies as 0.0.1 — the
+            pre-rewrite marker. Seeds stamped with it would satisfy this
+            migration's own membership test and corrupt it: a re-run would
+            reseed the seeds. The rewrite ships as >= 0.1.0 by construction
+            (pyproject); hitting this guard means a mis-built engine.
+    """
+    if parse_version(engine_version) == _PRE_REWRITE:
+        raise MigrationError(
+            f"migration 2 refuses to run as engine {engine_version!r}: that version is "
+            "the pre-rewrite marker (migration 1's stamp, §12) — seeds stamped with it "
+            "would corrupt their own membership test; a rewrite engine is >= 0.1.0"
+        )
     return RerunSeed(today=today, engine_version=engine_version)
 
 
@@ -116,8 +131,12 @@ class RerunSeed:
 def _latest_per_hash(path: Path, skipped: list[Skipped]) -> dict[str, LedgerEntry]:
     """Last-per-hash over readable lines; unreadable lines are skipped-with-why.
 
-    Not ``ledger.load``: a line migration 1 left untranslated would abort the
-    whole load, and this migration must still seed everything readable.
+    Not ``ledger.load``: a hand-tampered line would abort the whole load,
+    and this migration must still seed everything readable. Known wrinkle:
+    when a hash's *latest* line is the unreadable one, an earlier superseded
+    line gets promoted to "latest" here and may seed. Harmless — the seed is
+    a real URL through the front door, and the pipeline re-classifies it
+    with current code; worst case is one redundant fetch.
     """
     latest: dict[str, LedgerEntry] = {}
     for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
