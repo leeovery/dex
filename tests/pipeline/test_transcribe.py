@@ -140,15 +140,50 @@ class TestYoutubeDrain:
         assert "HTTP 429" in (entry.reason or "")
         assert audio_files(instance) == [f"{work_hash(VIDEO_URL)}.m4a"]  # retries reuse it (§9)
 
-    def test_transient_acquisition_failure_stays_waiting(self, instance):
+    def test_transient_acquisition_failure_takes_the_blocked_lifecycle(self, instance):
+        # §6: acquisition failures are NOT provider failures — a failed
+        # audio download is §5 blocked with attempts, never no-clock waiting.
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)
         download = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
         ctx = transcribe_ctx(instance, download=download)
         run_mod.run_transcribe(ctx)
         entry = entry_for(ctx, VIDEO_URL)
-        assert entry.status is Status.WAITING
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert (entry.reason or "").startswith("audio acquisition failed")
+
+    def test_acquisition_failures_escalate_manual_at_five(self, instance):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        for expected_attempts in range(1, run_mod.MAX_BLOCKED_ATTEMPTS):
+            run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+            entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+            assert entry.status is Status.BLOCKED
+            assert entry.attempts == expected_attempts
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert entry.status is Status.MANUAL
+        assert f"still blocked after {run_mod.MAX_BLOCKED_ATTEMPTS} attempts" in (
+            entry.reason or ""
+        )
         assert "audio acquisition failed" in (entry.reason or "")
+        # Manual is terminal for the mechanical drain — no further attempts.
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.MANUAL
+
+    def test_blocked_acquisition_retry_routes_back_to_the_drain_and_completes(self, instance):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.BLOCKED
+        # The world recovers: the blocked retry goes straight back through
+        # the transcribe path (never the driver) and completes.
+        ctx = transcribe_ctx(instance)
+        run_mod.run_transcribe(ctx)
+        assert entry_for(ctx, VIDEO_URL).status is Status.DONE
 
     def test_confirmed_gone_video_is_dead(self, instance):
         write_item(instance, urls=[VIDEO_URL])
@@ -356,14 +391,15 @@ class TestPodcastDrain:
         assert "Ledgers as Work Queues" in prompt
         assert audio_files(instance) == []  # deleted on success (§9)
 
-    def test_enclosure_fetch_failure_stays_waiting_with_reason(self, instance):
+    def test_enclosure_fetch_failure_takes_the_blocked_lifecycle(self, instance):
         self.park_via_driver(instance)
         transport = FakeTransport({self.ENCLOSURE: OSError("connection reset")})
         ctx = transcribe_ctx(instance, transport=transport)
         run_mod.run_transcribe(ctx)
         entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
-        assert entry.status is Status.WAITING
-        assert "audio acquisition failed" in (entry.reason or "")
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert (entry.reason or "").startswith("audio acquisition failed")
 
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
         # A 404ing enclosure is often an expired signed URL — the episode is

@@ -104,6 +104,22 @@ HARVEST_RULES_VERSION = 1
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
+# A failed audio download takes the §5 blocked lifecycle (§6: acquisition
+# failures are NOT provider failures — never no-clock waiting). The blocked
+# line cannot carry `needs` (waiting-only, §5), so this reason prefix is the
+# marker that routes the retry back to the transcribe path — the one place
+# it is written and matched.
+_ACQUISITION_FAILED_PREFIX = "audio acquisition failed: "
+
+
+def _is_transcribe_job(entry: LedgerEntry) -> bool:
+    """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
+    if entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE:
+        return True
+    return entry.status is Status.BLOCKED and (entry.reason or "").startswith(
+        _ACQUISITION_FAILED_PREFIX
+    )
+
 
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
     """The null provider seam: nothing mechanical is wired (tests, bare contexts).
@@ -336,7 +352,7 @@ class _Drain:
             # normal retry rules, and via is the only mark they carry.
             self._download_media(entry, prior=entry)
             return
-        transcribe_job = entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE
+        transcribe_job = _is_transcribe_job(entry)
         if transcribe_job and not self._transcribe_slot():
             return  # stays waiting untouched; the deferral is noted once
         try:
@@ -395,11 +411,12 @@ class _Drain:
         return True
 
     def _transcribe_unit(self, entry: LedgerEntry) -> None:
-        """Drain one waiting/transcribe entry through the capability (§6).
+        """Drain one transcribe job through the capability (§6).
 
-        Acquisition failures and call-time capability failures keep the
-        entry ``waiting`` with the stated reason (retried next run — no
-        clock); confirmed-gone sources and judgment cases park honestly;
+        Call-time capability failures keep the entry ``waiting`` with the
+        stated reason (retried next run — no clock); acquisition failures
+        take the §5 blocked lifecycle (attempts, manual at 5);
+        confirmed-gone sources and judgment cases park honestly;
         ``ProviderInputError`` propagates for the manual mapping (§5).
         """
         self.transcribed += 1
@@ -481,15 +498,11 @@ class _Drain:
     def _apply_acquisition_failure(self, entry: LedgerEntry, failure: Classification) -> None:
         match failure.status:
             case Status.BLOCKED:
-                # Transient acquisition trouble: the capability got no input.
-                # The entry stays waiting (no attempts clock) and retries
-                # next run with the reason on the parked list.
-                self.record_outcome(
-                    entry,
-                    status=Status.WAITING,
-                    needs=Need.TRANSCRIBE,
-                    reason=f"audio acquisition failed: {failure.reason}",
-                )
+                # §6: acquisition failures are not provider failures — the
+                # normal §5 blocked lifecycle applies, attempts and all,
+                # escalating manual at 5. The reason prefix routes the
+                # retry back here (see _is_transcribe_job).
+                self._apply_blocked(entry, f"{_ACQUISITION_FAILED_PREFIX}{failure.reason}")
             case Status.DEAD if entry.kind is Kind.PODCAST:
                 # A 404ing enclosure is often just an expired signed URL —
                 # the EPISODE is not confirmed gone. Manual, with the
@@ -987,9 +1000,7 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
         drain.notes.append(f"no transcription provider available — {availability.reason}")
         return surfaces.render("enrich-report", drain.report_payload())
     targets = {
-        unit_hash
-        for unit_hash, entry in drain.entries.items()
-        if entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE
+        unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)
     }
     drain.drain(limit=limit, only=targets)
     return surfaces.render("enrich-report", drain.report_payload())
