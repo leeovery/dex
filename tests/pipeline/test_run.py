@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dex_engine import corpus
 from dex_engine.drivers.transport import HttpResponse
@@ -423,6 +425,65 @@ class TestRerun:
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
         assert "cognitive work — none" in report
+
+    @given(
+        pages=st.dictionaries(
+            keys=st.integers(min_value=0, max_value=30),
+            values=st.text(alphabet="abcdefgh .\n", min_size=1, max_size=120),
+            min_size=1,
+            max_size=4,
+        )
+    )
+    @settings(max_examples=20, deadline=None)
+    def test_identical_rerun_is_byte_idempotent(self, tmp_path_factory, pages):
+        # The property behind the fixed examples above: over generated
+        # ledgers and fetch results, an identical rerun leaves every output
+        # byte-identical (no rewrite at all) and mints no new units — only
+        # audit-trail lines for hashes that already exist.
+        root = tmp_path_factory.mktemp("rerun-property")
+        instance = Instance(root=root)
+        for directory in (
+            instance.corpus_dir,
+            instance.state_dir,
+            instance.enrichment_dir,
+            instance.cache_dir,
+        ):
+            directory.mkdir()
+        urls = {f"https://example.test/p{n}": body for n, body in pages.items()}
+        write_item(instance, urls=list(urls))
+
+        def fetch(unit):
+            return Result(status=Status.DONE, meta={"title": "t"}, body=urls[unit.url])
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        item_dir = instance.enrichment_dir / ITEM
+        snapshot = {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in item_dir.iterdir()
+        }
+        before = ledger.load(instance.ledger_path)
+        for entry in before.values():
+            ledger.append(
+                instance.ledger_path,
+                dataclasses.replace(
+                    entry,
+                    status=Status.QUEUED,
+                    path=None,
+                    title=None,
+                    rerun=True,
+                    via="migration-2",
+                ),
+            )
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        after = ledger.load(instance.ledger_path)
+        assert {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in item_dir.iterdir()
+        } == snapshot
+        assert set(after) == set(before)  # no new units minted, audit lines only
+        assert all(entry.status is Status.DONE for entry in after.values())
 
     def test_changed_rerun_overwrites_in_place_never_duplicates(self, instance):
         write_item(instance)
