@@ -279,12 +279,18 @@ def _itunes_episode(
             return _itunes_entry(entry)
     if title is not None:
         # Fall back to containment: Spotify og-titles sometimes carry show
-        # suffixes the index does not.
+        # suffixes the index does not. The LONGEST normalized match wins —
+        # "Episode 10 — The Show" contains both "Episode 1" and
+        # "Episode 10", and first-wins would resolve the wrong episode.
         wanted = _normalize(title)
+        best: dict | None = None
+        best_length = 0
         for entry in episodes:
             have = _normalize(str(entry.get("trackName") or ""))
-            if have and (have in wanted or wanted in have):
-                return _itunes_entry(entry)
+            if have and (have in wanted or wanted in have) and len(have) > best_length:
+                best, best_length = entry, len(have)
+        if best is not None:
+            return _itunes_entry(best)
     return None
 
 
@@ -361,11 +367,20 @@ def _match_by_title(items: list[ET.Element], title: str | None) -> ET.Element | 
     wanted = _normalize(title) if title is not None else ""
     if not wanted:
         return None
+    best: ET.Element | None = None
+    best_length = 0
     for item in items:
         have = _normalize(_text(item.find("title")) or "")
-        if have and (have == wanted or have in wanted or wanted in have):
+        if not have:
+            continue
+        if have == wanted:
             return item
-    return None
+        # Containment prefers the LONGEST normalized match, as in the
+        # iTunes matcher: "Episode 1" is inside "Episode 10 — The Show"
+        # too, and first-wins would resolve the wrong episode.
+        if (have in wanted or wanted in have) and len(have) > best_length:
+            best, best_length = item, len(have)
+    return best
 
 
 def _episode(item: ET.Element, *, show: str | None) -> _Episode | Result:

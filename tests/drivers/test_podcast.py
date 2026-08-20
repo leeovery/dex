@@ -1,6 +1,8 @@
 """Tests for the podcast driver (§9): resolution paths, honest failures."""
 
-from dex_engine.drivers.podcast import PodcastDriver
+import xml.etree.ElementTree as ET
+
+from dex_engine.drivers.podcast import PodcastDriver, _itunes_episode, _match_by_title
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.types import Kind, Need, Status
 from tests.drivers.conftest import FakeTransport, fixture_text, html_response, make_unit, reason_of
@@ -147,6 +149,44 @@ class TestSpotifyResolution:
         result = d.fetch(make_unit(SPOTIFY_URL, Kind.PODCAST))
         assert result.status is Status.MANUAL
         assert "no episode title" in reason_of(result)
+
+
+def feed_item(title: str) -> ET.Element:
+    return ET.fromstring(f"<item><title>{title}</title></item>")  # noqa: S314 — test-authored XML
+
+
+class TestContainmentMatching:
+    """The longest normalized match wins — never the first containment hit."""
+
+    def test_itunes_search_prefers_the_longest_match(self):
+        payload = {
+            "results": [
+                {"wrapperType": "podcastEpisode", "trackName": "Episode 1", "trackId": 1},
+                {"wrapperType": "podcastEpisode", "trackName": "Episode 10", "trackId": 10},
+            ]
+        }
+        episode = _itunes_episode(payload, title="Episode 10 — The Show")
+        assert episode is not None
+        assert episode.title == "Episode 10"
+
+    def test_feed_title_match_prefers_the_longest_match(self):
+        items = [feed_item(title) for title in ("Episode 1", "Episode 10")]
+        match = _match_by_title(items, "Episode 10 — The Show")
+        assert match is not None
+        title = match.find("title")
+        assert title is not None
+        assert title.text == "Episode 10"
+
+    def test_exact_feed_title_still_wins_outright(self):
+        items = [
+            feed_item(title)
+            for title in ("Episode 10 — The Show — Extended", "Episode 10 — The Show")
+        ]
+        match = _match_by_title(items, "Episode 10 — The Show")
+        assert match is not None
+        title = match.find("title")
+        assert title is not None
+        assert title.text == "Episode 10 — The Show"
 
 
 class TestRssIshResolution:
