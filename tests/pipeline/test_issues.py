@@ -330,6 +330,23 @@ class TestSoftEdge:
         outcome = _report([_event()], missing, tmp_path)
         assert any("issue filing failed" in note for note in outcome.notes)
 
+    def test_torn_but_valid_json_memory_line_is_never_fatal(self, tmp_path):
+        # A record can be valid JSON yet miss fields (union merges, hand
+        # damage) — that must degrade to a note, never a KeyError that
+        # kills the run and loses the report.
+        (tmp_path / "issue-reports.jsonl").write_text('{"note": "torn record"}\n')
+        gh = FakeGh()
+        outcome = _report([_event()], gh, tmp_path)
+        assert outcome.filed == 0
+        note = next(n for n in outcome.notes if "issue filing failed" in n)
+        assert "issue-reports.jsonl:1" in note
+        assert "missing field(s)" in note
+
+    def test_unparseable_memory_line_is_never_fatal(self, tmp_path):
+        (tmp_path / "issue-reports.jsonl").write_text('{"fingerprint": "ab\n')
+        outcome = _report([_event()], FakeGh(), tmp_path)
+        assert any("issue filing failed" in n for n in outcome.notes)
+
     def test_notes_are_scrubbed(self, tmp_path):
         def leaky(_args):
             raise OSError("/Users/someone/.config/gh token missing")

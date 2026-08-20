@@ -983,3 +983,9 @@ class TestIssueFiling:
         report = run_mod.run(self._crashing_ctx(instance, refuse_gh))
         assert "issue filing failed" in report
         assert "error" in report  # the unit outcome is still ledgered and reported
+
+    def test_torn_memory_never_loses_the_run_report(self, instance):
+        (instance.state_dir / "issue-reports.jsonl").write_text('{"note": "torn"}\n')
+        report = run_mod.run(self._crashing_ctx(instance, FakeGh()))
+        assert "issue filing failed" in report
+        assert "enrich run" in report  # the report itself survived

@@ -196,12 +196,22 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
         return records
     # Newline-delimited alone — splitlines() would shear records on unicode
     # separators inside JSON strings (the standing state-JSONL rule).
-    for line in path.read_text(encoding="utf-8").split("\n"):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
         if not line.strip():
             continue
         raw = json.loads(line)
         if not isinstance(raw, dict):
-            raise ValueError(f"issue-reports record is not an object: {line!r}")
+            raise ValueError(f"{path.name}:{lineno}: issue-reports record is not an object")
+        # Everything raised here must be in the filer's never-fatal catch
+        # set — a torn-but-valid-JSON record (union merges, hand damage)
+        # must degrade to an "issue filing failed" note, never kill the run.
+        missing = [
+            key for key in ("fingerprint", "action", "engine", "date") if key not in raw
+        ]
+        if missing:
+            raise ValueError(
+                f"{path.name}:{lineno}: issue-reports record missing field(s) {missing}"
+            )
         issue = raw.get("issue")
         records.append(
             _MemoryRecord(
