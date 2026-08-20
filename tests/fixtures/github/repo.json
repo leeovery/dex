@@ -1,0 +1,8 @@
+{
+  "full_name": "acme/pipeline-kit",
+  "description": "Driver-based ingestion machinery: detect, fetch, classify, ledger.",
+  "stargazers_count": 2481,
+  "archived": false,
+  "topics": ["ingestion", "pipelines", "ledger", "python", "knowledge-base", "etl", "cli", "jsonl", "extra-topic"],
+  "default_branch": "main"
+}

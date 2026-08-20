@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
 __all__ = [
     "DRIVER_STATUSES",
@@ -31,6 +32,7 @@ __all__ = [
     "Need",
     "Result",
     "Skipped",
+    "SourceDriver",
     "Status",
     "WorkUnit",
     "parse_version",
@@ -105,9 +107,11 @@ class MediaFetch(StrEnum):
     LEAD = "lead"
 
 
-# `queued` is a birth state, not a driver outcome (§2): drivers may return
-# every status except it.
-DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED}
+# `queued` is a birth state, not a driver outcome, and `error` is RAISED,
+# never returned — a Result has no error channel, so a returned `error`
+# could only carry a fabricated message; the run loop's single broad except
+# is the one place errors are made (§2/§5).
+DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +135,14 @@ def _validate_via(via: str) -> None:
 # Shared work-unit identity invariants (§2/§3/§5), enforced on WorkUnit and
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
+
+# The stated-reason contract (§1/§5), shared by Result and LedgerEntry:
+# manual and skipped exist only by deliberate decision, so the decision must
+# be recorded; waiting/blocked/dead may carry one; done/queued need none, and
+# error carries the scrubbed `error` field instead (ledger) or no reason at
+# all (results) — reason and error never coexist.
+_REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
+_REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
 # sha1(work key)[:10] — the ledger key format.
 _HASH_RE = re.compile(r"^[0-9a-f]{10}$")
@@ -227,7 +239,14 @@ class Child:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Result:
-    """What a driver's ``fetch`` returns."""
+    """What a driver's ``fetch`` returns.
+
+    ``reason`` mirrors the ledger's stated-reason contract (§2/§5): required
+    when a driver returns ``manual``/``skipped`` (the driver knows why),
+    optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
+    run layer may append classifier context to it but never invents what the
+    driver knew.
+    """
 
     status: Status
     meta: dict[str, str | int | None]
@@ -235,12 +254,13 @@ class Result:
     media: list[str] = field(default_factory=list)
     children: list[Child] = field(default_factory=list)
     needs: Need | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in DRIVER_STATUSES:
             raise ValueError(
-                f"drivers may not return status {self.status!r} — "
-                "'queued' is a birth state, not a driver outcome (§2)"
+                f"drivers may not return status {self.status!r} — 'queued' is a birth "
+                "state and 'error' is raised, never returned (§2/§5)"
             )
         if self.status is Status.WAITING and self.needs is None:
             raise ValueError("status 'waiting' requires needs (§5)")
@@ -248,6 +268,12 @@ class Result:
             raise ValueError(
                 f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
             )
+        if self.status in _REASON_REQUIRED and not self.reason:
+            raise ValueError(
+                f"a driver returning status {self.status!r} must state its reason (§2/§5)"
+            )
+        if self.status in _REASON_FORBIDDEN and self.reason is not None:
+            raise ValueError(f"reason is forbidden on a {self.status!r} result (§2/§5)")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -270,18 +296,36 @@ class Extraction:
 
 
 # ---------------------------------------------------------------------------
+# Driver interface (§2): structural, one per source shape. Conformance is
+# verified at the typed registry literal (pipeline/registry.py) — the one
+# assignment where the checker matches every driver against this Protocol.
+# ---------------------------------------------------------------------------
+
+
+class SourceDriver(Protocol):
+    """One source driver: pattern match, canonicalization, fetch."""
+
+    kind: Kind
+    sleep: float  # per-driver politeness delay, seconds
+
+    def matches(self, url: str) -> bool:
+        """True when this driver owns ``url`` (checked in registry order)."""
+        ...
+
+    def canonical(self, url: str) -> str:
+        """The canonical form of ``url`` — it keys the ledger hash."""
+        ...
+
+    def fetch(self, unit: WorkUnit) -> Result:
+        """Fetch one unit of work; never touches the ledger or the disk."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # Ledger entry (§5): frozen, validated — the schema comments are runtime
 # invariants, enforced here so a malformed entry cannot exist in memory.
 # Serialization happens in exactly one place: pipeline/ledger.py.
 # ---------------------------------------------------------------------------
-
-
-# The stated-reason contract (§1/§5): manual and skipped entries exist only
-# by deliberate decision, so the decision must be recorded; waiting/blocked/
-# dead may carry one; done/queued need none, and error entries carry the
-# scrubbed `error` field instead — reason and error never coexist.
-_REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
-_REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -424,6 +468,16 @@ class Instance:
     def ledger_path(self) -> Path:
         """``state/enrichment-ledger.jsonl`` — the work queue (§5)."""
         return self.state_dir / "enrichment-ledger.jsonl"
+
+    @property
+    def passes_path(self) -> Path:
+        """``state/passes.jsonl`` — per-item stage records (§4)."""
+        return self.state_dir / "passes.jsonl"
+
+    @property
+    def digests_dir(self) -> Path:
+        """``state/digests/`` — per-item fact indexes (the digest step's output)."""
+        return self.state_dir / "digests"
 
     @property
     def config_path(self) -> Path:

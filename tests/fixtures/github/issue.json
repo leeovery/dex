@@ -1,0 +1,6 @@
+{
+  "number": 42,
+  "title": "enricher ledgers 403 challenges as dead",
+  "body": "During the dex-curated install the enricher fetched the owner's own site,\ngot a transient Cloudflare 403, and wrote status dead — terminal, never\nretried. Classification needs to be centralized and code-visible.",
+  "state": "closed"
+}

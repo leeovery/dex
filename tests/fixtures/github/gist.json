@@ -1,0 +1,14 @@
+{
+  "id": "abc123def456",
+  "description": "ledger compaction one-liner",
+  "files": {
+    "compact.py": {
+      "filename": "compact.py",
+      "content": "entries = {}\nfor line in path.read_text().split(\"\\n\"):\n    if line.strip():\n        e = json.loads(line)\n        entries[e[\"hash\"]] = line\n"
+    },
+    "notes.md": {
+      "filename": "notes.md",
+      "content": "Last-per-hash wins; superseded lines are the audit trail.\n"
+    }
+  }
+}

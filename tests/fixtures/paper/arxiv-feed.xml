@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <link href="http://arxiv.org/api/query?search_query%3D%26id_list%3D2408.12345" rel="self" type="application/atom+xml"/>
+  <title type="html">ArXiv Query: search_query=&amp;id_list=2408.12345</title>
+  <id>http://arxiv.org/api/abc</id>
+  <updated>2026-08-19T00:00:00-04:00</updated>
+  <entry>
+    <id>http://arxiv.org/abs/2408.12345v2</id>
+    <updated>2026-08-01T12:00:00Z</updated>
+    <published>2026-07-15T09:30:00Z</published>
+    <title>Ledger-Driven Ingestion:
+  Honest Failure Classification for Long-Lived Corpora</title>
+    <summary>  We present a driver-based ingestion architecture in which the
+enrichment ledger is the work queue rather than a receipt log. We show that
+centralizing failure classification eliminates a class of silent
+mislabelings, and that retry-on-newer-engine semantics close the
+self-healing loop with zero redundant work.
+</summary>
+    <author><name>A. Researcher</name></author>
+    <author><name>B. Engineer</name></author>
+  </entry>
+</feed>

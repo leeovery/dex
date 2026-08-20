@@ -1,0 +1,18 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "200",
+    "url": "https://x.com/bob/status/200",
+    "text": "Second: record why something parked, or the report is a guess.",
+    "created_at": "Wed Aug 19 16:08:00 +0000 2026",
+    "author": {"name": "Bob Novak", "screen_name": "bob"},
+    "replying_to": "alice",
+    "replying_to_status": "100",
+    "media": {
+      "photos": [
+        {"type": "photo", "url": "https://pbs.example.test/media/p200.jpg"}
+      ]
+    }
+  }
+}
