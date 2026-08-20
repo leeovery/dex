@@ -66,7 +66,7 @@ at a time (use your ask-user tool where available):
 1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the
    dex brand; the domain is the qualifier. Set `{name}` = the answer.
 2. **What it covers** — 2-4 bullets. Anything not covered is out of scope
-   by default; at ingest time the agent asks the owner about borderline
+   by default; at processing time the agent asks the owner about borderline
    items rather than guessing.
 3. **GitHub** — private repo (default), or local-only for now.
 4. **Capture** — do they want the one-tap phone shortcut? (Needs a GitHub
@@ -130,7 +130,7 @@ Each person captures with their own token. Walk them through, concretely:
 #### If the owner has exports to ingest
 
 Exports go in `{instance}/raw/`; then follow the Backfills section of the
-instance's dex-ingest skill (`.claude/skills/dex-ingest/SKILL.md`).
+instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 
 ---
 
@@ -138,6 +138,7 @@ instance's dex-ingest skill (`.claude/skills/dex-ingest/SKILL.md`).
 
 End your final message with, in a few lines: `{instance}` (where it
 lives), its scope as written, the schedule it runs on, how to save things
-(the shortcut, or "add this to dex" in a session), and how to ask
-questions. Health checks run themselves on the schedule. The owner never
-touches the machinery.
+(the shortcut, or "add this to dex" in a session — either way the save is
+instant and processing happens on the schedule), and how to ask questions.
+Health checks run themselves on the schedule. The owner never touches the
+machinery.

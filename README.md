@@ -87,37 +87,56 @@ What makes it trustworthy rather than vibes-in-a-wiki:
   smoothed over.
 
 See `example/` for a three-file toy instance showing the shapes, and
-`instance/skills/dex-ingest/references/schema.md` for the corpus format.
+`instance/skills/dex-run/references/schema.md` for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>
 
 Instances run the engine's mechanical commands via a `bin/dex` shim
-(`uvx --from git+https://github.com/leeovery/dex dex-<cmd>`, cwd = instance root):
+(`uvx --from git+https://github.com/leeovery/dex@<pinned-tag> dex-<cmd>`,
+cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 
 | command | does |
 |---|---|
+| `dex-enrich run` | drain the ledger work queue: fetch behind every corpus URL and file — captions, articles (Wayback fallback), GitHub, papers, X thread walk-up, podcast audio → transcript, document extraction — and report the session's cognitive work list |
+| `dex-enrich status` | ledger summary, waiting cohorts, interrupted-session backstop, capability report |
+| `dex-enrich transcribe` | drain the waiting transcription cohort (whisper local floor / OpenAI-compatible API; `--limit`, `--model`) |
+| `dex-enrich fetch` | fetch extra URLs into an existing item, ledgered as children (the harvest verb) |
+| `dex-enrich compact` | rewrite the ledger to the latest line per unit (settles union merges) |
+| `dex-enrich mark` | heal one ledger entry — the sanctioned correction verb |
+| `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
+| `dex-enrich item new` | create a corpus item from a capture file (id rules + provenance; code writes frontmatter) |
 | `dex-normalize` | raw chat exports → corpus items (DiscordChatExporter JSON) |
-| `dex-enrich run` | fetch behind every corpus URL: YouTube captions, article text (with Wayback fallback), GitHub repos/profiles, arXiv papers, tweets |
-| `dex-enrich whisper` | transcribe caption-less media (OpenAI key in instance `.env`) |
-| `dex-lint` | broken wikilinks, bad citations, orphan items, index drift, stale pages |
+| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, quarantine, pass records (`--write` reconciles derived wiki frontmatter) |
 | `dex-exclude <json>` | permanently purge out-of-scope items (survives re-normalization) |
 | `dex-inbox` | materialize staged binary captures: release asset → `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
-| `dex-sync` | refresh engine-managed instance machinery (skills, `bin/dex`, `.gitattributes`) |
+| `dex-sync` | pin check + engine upgrade, migrations, machinery refresh, sync report — step 0 of every run |
+| `dex-render` | render a named report surface from a JSON payload, verbatim (skills never hand-draw tables) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 
+The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
+queue, append-only, last-line-per-unit): drivers per source shape, one
+central failure classifier (blocked ≠ dead, ever), capabilities with a free
+local floor (faster-whisper transcription; document extraction), and an
+issue filer that reports engine bugs upstream — sanitized by construction —
+so every instance heals through releases and sync. Design:
+`design/ingestion-pipeline.md`.
+
 Capture inbox: every capture is one `.md` in `inbox/`, written via the
-GitHub contents API — body = URL and/or note; a capture that carried a binary
+GitHub contents API (the phone shortcut) or committed directly by the
+dex-capture skill — body = URL and/or note; a capture that carried a binary
 (image, PDF, any file) stages it as an asset on the repo's standing `inbox`
 release and references it in frontmatter. No server-side machinery at all: the
-PUT is the commit, and ingest moves staged binaries into `media/` where LFS
-applies. Suggestion is untrusted by design — scope filtering happens at
-ingest, inside the instance. Full protocol: `docs/capture.md`.
+PUT is the commit, and the next run moves staged binaries into `media/` where
+LFS applies. Suggestion is untrusted by design — scope filtering happens at
+processing time, inside the instance. Full protocol: `docs/capture.md`.
 
 Instance layout: `CLAUDE.md` (scope + operations contract) · `inbox/` (pending
 captures) · `raw/` (verbatim exports) · `corpus/` (append-only items) ·
 `enrichment/` · `media/` (captured binaries, LFS) · `wiki/`
-(topics/entities/syntheses plus index, log, pins) · `state/` (digests, taxonomy,
-ledgers, normalize-config.json).
+(topics/entities/syntheses plus index, log, pins) · `state/` (digests,
+taxonomy, the ledger and other append-only JSONL, config.json) · `cache/`
+(gitignored ephemera) · `.dex-engine-pin` (the engine release this instance
+runs).
 
 </details>
