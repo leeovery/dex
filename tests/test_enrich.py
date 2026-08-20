@@ -13,6 +13,11 @@ class TestParser:
         args = build_parser().parse_args(["run", "--limit", "5"])
         assert (args.command, args.limit) == ("run", 5)
 
+    def test_status_accepts_item(self):
+        args = build_parser().parse_args(["status", "--item", "2026-08-19-x-55ad7b"])
+        assert (args.command, args.item) == ("status", "2026-08-19-x-55ad7b")
+        assert build_parser().parse_args(["status"]).item is None
+
     def test_fetch_takes_item_urls_parent_force(self):
         args = build_parser().parse_args(
             ["fetch", "2026-08-19-x-55ad7b", "https://a.test", "https://b.test", "--force"]
@@ -76,6 +81,12 @@ class TestMain:
         assert out.startswith("ledger — 0 entries")
         assert "capabilities" in out  # how a free-floor instance learns what a key buys
         assert "transcribe" in out
+
+    def test_status_item_renders_the_item_view(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        main(["status", "--item", "2026-08-19-x-55ad7b"])
+        out = capsys.readouterr().out
+        assert out.startswith("item 2026-08-19-x-55ad7b — no ledger work units")
 
     def test_transcribe_on_an_empty_instance_reports_cleanly(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

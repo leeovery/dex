@@ -40,6 +40,7 @@ class TestRenderDispatch:
         assert set(SURFACES) == {
             "enrich-report",
             "status",
+            "item-status",
             "capability-report",
             "sync-report",
             "ingest-receipt",
@@ -288,6 +289,65 @@ HEALTH_PAYLOAD = {
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
 }
+
+
+class TestItemStatus:
+    def test_full_item_view(self):
+        out = render(
+            "item-status",
+            {
+                "item": "2026-08-19-example-55ad7b",
+                "units": [
+                    {"url": "https://example.test/post", "status": "done",
+                     "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md"},
+                    {"url": "https://youtube.test/w", "status": "waiting",
+                     "needs": "transcribe", "via": "harvest", "depth": 1},
+                    {"url": "https://paywalled.test/a", "status": "manual",
+                     "reason": "thin-extraction"},
+                ],
+            },
+        )
+        assert out.startswith("item 2026-08-19-example-55ad7b — 3 units")
+        assert "done" in out
+        assert "→ enrichment/2026-08-19-example-55ad7b/web-73bd78.md" in out
+        assert "needs transcribe" in out
+        assert "(via harvest, depth" in out  # provenance may wrap at width
+        assert "manual" in out
+        assert "thin-extraction" in out
+
+    def test_no_units_reads_honestly(self):
+        out = render("item-status", {"item": "2026-08-19-note-aaaaaa", "units": []})
+        assert "no ledger work units" in out
+        assert "no-source capture" in out
+
+    def test_units_are_required(self):
+        with pytest.raises(PayloadError, match="units"):
+            render("item-status", {"item": "2026-08-19-note-aaaaaa"})
+
+    def test_bad_status_is_loud(self):
+        with pytest.raises(PayloadError, match="finished"):
+            render(
+                "item-status",
+                {"item": "x-a", "units": [{"url": "https://a.test", "status": "finished"}]},
+            )
+
+    def test_bad_needs_is_loud(self):
+        with pytest.raises(PayloadError, match="transcode"):
+            render(
+                "item-status",
+                {"item": "x-a",
+                 "units": [{"url": "https://a.test", "status": "waiting",
+                            "needs": "transcode"}]},
+            )
+
+    def test_unknown_unit_key_is_loud(self):
+        with pytest.raises(PayloadError, match="parent"):
+            render(
+                "item-status",
+                {"item": "x-a",
+                 "units": [{"url": "https://a.test", "status": "done",
+                            "parent": "abc"}]},
+            )
 
 
 class TestHealthReport:

@@ -42,8 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="max units this run (big cohorts drain across runs)"
     )
 
-    commands.add_parser(
+    status_parser = commands.add_parser(
         "status", help="ledger summary + interrupted-session backstop + capability report"
+    )
+    status_parser.add_argument(
+        "--item",
+        default=None,
+        help="show one item's ledger view instead: every unit it owns, with "
+        "provenance and outputs (what was fetched is a ledger fact)",
     )
 
     transcribe_parser = commands.add_parser(
@@ -131,7 +137,7 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
         case "run":
             return run(ctx, limit=args.limit)
         case "status":
-            return status_report(ctx)
+            return status_report(ctx, item_id=args.item)
         case "transcribe":
             return run_transcribe(ctx, limit=args.limit)
         case "fetch":

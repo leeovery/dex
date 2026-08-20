@@ -360,6 +360,90 @@ def _render_status(payload: Mapping[str, object]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# item-status — one item's ledger view (`enrich status --item <id>`)
+# ---------------------------------------------------------------------------
+
+
+def _render_item_status(payload: Mapping[str, object]) -> str:
+    """Render one item's ledger units: what was fetched, parked, and written.
+
+    "What was fetched for this item" is a ledger query — promoted URLs live
+    in the ledger only, never in corpus frontmatter, so this surface is
+    where an item's full fetch history shows.
+
+    Payload::
+
+        {
+          "item": str,
+          "units": [
+            {"url": str, "status": str,        # required per unit
+             "via": str, "depth": int,         # optional provenance
+             "needs": str,                     # optional: waiting capability
+             "reason": str,                    # optional: parking reason
+             "path": str}                      # optional: output written
+          ],
+        }
+    """
+    surface = "item-status"
+    _check_keys(surface, payload, required=frozenset({"item", "units"}))
+    item = _str_at(surface, payload, "item")
+    units = _obj_list_at(surface, payload, "units", required=True)
+    if not units:
+        return (
+            f"item {item} — no ledger work units "
+            "(a no-source capture, or `enrich run` has not seeded it yet)\n"
+        )
+    lines = [f"item {item} — {_plural(len(units), 'unit')}"]
+    width = max(len(_status_at(surface, unit, "status", f"units[{i}].").value)
+                for i, unit in enumerate(units))
+    for i, unit in enumerate(units):
+        lines.extend(_item_status_unit(surface, unit, where=f"units[{i}].", width=width))
+    return "\n".join(lines) + "\n"
+
+
+def _item_status_unit(
+    surface: str, unit: Mapping[str, object], *, where: str, width: int
+) -> list[str]:
+    _check_keys(
+        surface,
+        unit,
+        required=frozenset({"url", "status"}),
+        optional=frozenset({"via", "depth", "needs", "reason", "path"}),
+        where=where,
+    )
+    status = _status_at(surface, unit, "status", where)
+    detail = _str_at(surface, unit, "url", where)
+    annotations = []
+    if "needs" in unit:
+        need = _str_at(surface, unit, "needs", where)
+        if need not in {n.value for n in Need}:
+            options = ", ".join(n.value for n in Need)
+            _fail(surface, f"{where}needs must be one of {options}, got {need!r}")
+        annotations.append(f"needs {need}")
+    if "reason" in unit:
+        annotations.append(_str_at(surface, unit, "reason", where))
+    if annotations:
+        detail += " — " + "; ".join(annotations)
+    provenance = []
+    if "via" in unit:
+        provenance.append(f"via {_str_at(surface, unit, 'via', where)}")
+    if "depth" in unit:
+        provenance.append(f"depth {_int_at(surface, unit, 'depth', where)}")
+    if provenance:
+        detail += f" ({', '.join(provenance)})"
+    # The status gutter is alignment, not prose — built by hand because the
+    # wrap kernel collapses runs of whitespace inside its text.
+    gutter = f"  {status.value.ljust(width)}  "
+    blank = " " * len(gutter)
+    wrapped = kernel.wrap(detail, kernel.DEFAULT_WIDTH - len(gutter))
+    lines = [gutter + wrapped[0], *(blank + segment for segment in wrapped[1:])]
+    if "path" in unit:
+        path = _str_at(surface, unit, "path", where)
+        lines.extend(kernel.wrap_with_prefix(f"→ {path}", prefix=blank, hang=2))
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # capability-report
 # ---------------------------------------------------------------------------
 
@@ -810,6 +894,7 @@ def _needs_counts(
 SURFACES: dict[str, Callable[[Mapping[str, object]], str]] = {
     "enrich-report": _render_enrich_report,
     "status": _render_status,
+    "item-status": _render_item_status,
     "capability-report": _render_capability_report,
     "sync-report": _render_sync_report,
     "ingest-receipt": _render_ingest_receipt,

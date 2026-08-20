@@ -24,6 +24,7 @@ from dex_engine.pipeline.run import (
 )
 from dex_engine.pipeline.types import (
     Asset,
+    Child,
     Config,
     Instance,
     Kind,
@@ -928,6 +929,37 @@ class TestStatusReport:
         assert "transcribe" in report
         assert "2026-08-19-orphan-abcdef" in report
         assert "interrupted-session backstop" in report
+
+    def test_item_view_lists_every_unit_with_provenance(self, instance):
+        write_item(instance)
+
+        def fetch(unit):
+            if unit.depth == 0:
+                return Result(
+                    status=Status.DONE,
+                    meta={"title": "t"},
+                    body="substantial body " * 30,
+                    children=[Child(url="https://example.test/child", via="harvest")],
+                )
+            return Result(
+                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
+            )
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        report = run_mod.status_report(ctx, item_id=ITEM)
+        assert report.startswith(f"item {ITEM} — 2 units")
+        assert "done" in report
+        assert f"→ enrichment/{ITEM}/web-" in report
+        assert "waiting" in report
+        assert "needs transcribe" in report
+        assert "(via harvest, depth" in report
+        assert "capabilities" not in report  # a ledger query, not the summary
+
+    def test_item_view_without_units_is_honest(self, instance):
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.status_report(ctx, item_id="2026-08-19-note-aaaaaa")
+        assert "no ledger work units" in report
 
     def test_digested_items_are_not_orphans(self, instance):
         item_dir = instance.enrichment_dir / ITEM

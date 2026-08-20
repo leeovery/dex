@@ -1272,9 +1272,17 @@ def _admit_fetch(
     return unit_hash
 
 
-def status_report(ctx: RunContext) -> str:
-    """Ledger summary, digest backstop, and the capability report."""
+def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
+    """Ledger summary, digest backstop, and the capability report.
+
+    With ``item_id``, renders that item's ledger view instead: every unit
+    the item owns, with status, provenance, and outputs. "What was fetched
+    for this item" is a ledger query — promoted URLs never live in corpus
+    frontmatter.
+    """
     entries = ledger.load(ctx.instance.ledger_path)
+    if item_id is not None:
+        return _item_status(entries, item_id)
     counts: dict[str, int] = {}
     waiting: dict[str, int] = {}
     for entry in entries.values():
@@ -1291,6 +1299,28 @@ def status_report(ctx: RunContext) -> str:
     if ctx.capabilities is not None:
         report += "\n" + surfaces.render("capability-report", ctx.capabilities.report_payload())
     return report
+
+
+def _item_status(entries: dict[str, LedgerEntry], item_id: str) -> str:
+    units: list[dict[str, object]] = []
+    for entry in entries.values():
+        if entry.item != item_id:
+            continue
+        unit: dict[str, object] = {"url": entry.url, "status": entry.status.value}
+        if entry.via is not None:
+            unit["via"] = entry.via
+        if entry.depth is not None:
+            unit["depth"] = entry.depth
+        if entry.needs is not None:
+            unit["needs"] = entry.needs.value
+        if entry.reason is not None:
+            unit["reason"] = entry.reason
+        elif entry.error is not None:
+            unit["reason"] = entry.error
+        if entry.path is not None:
+            unit["path"] = entry.path
+        units.append(unit)
+    return surfaces.render("item-status", {"item": item_id, "units": units})
 
 
 def digest_orphans(instance: Instance) -> list[str]:
