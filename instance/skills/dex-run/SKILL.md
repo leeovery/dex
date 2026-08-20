@@ -1,12 +1,15 @@
 ---
 name: dex-run
-description: Operate this dex instance unattended — for schedulers (a desktop scheduled task, cron) or "run the instance". First run sets up the schedule with the owner; every run pulls, ingests, health-checks when due, pushes, reports.
+description: Operate this dex instance — sync, process the inbox, drain the pipeline, health-check, push. Use for schedulers (a desktop scheduled task, cron), "run the instance", "process now", or "process the inbox". First run sets up the schedule with the owner.
 ---
 
-# Scheduled run
+# Run
 
-One run leaves the instance clean: everything ingested and pushed, or a loud
-report of why not.
+One run leaves the instance clean: everything processable processed and
+pushed, or a loud report of why not. The pipeline's report — not the
+inbox — is the work list: `enrich run` names every item with new or
+changed content, and this session completes the cognitive steps for all
+of them.
 
 ## First run (interactive, no schedule established yet)
 
@@ -23,6 +26,12 @@ owner's machine with their full environment. The task:
   questions; report what was done."
   The first line is load-bearing: task creation from a session cannot set
   the task's folder (no folder parameter), so the prompt must carry it.
+- **Model**: recommend the owner set the task's model to **Opus-class or
+  above** — the run's core work is judgment (scope, harvest, digests, wiki
+  synthesis), and a lighter model degrades it invisibly. Skills cannot pin
+  a model; the scheduled task can. dex is not Claude-exclusive (any agent
+  runtime that reads skills could drive it) but is untested elsewhere —
+  say so rather than implying portability is verified.
 - In a desktop session that can create scheduled tasks, create it yourself;
   otherwise hand the owner those exact values for the New-routine form
   (Local; worktree off; permission mode Auto).
@@ -43,17 +52,100 @@ Then do a run now, whatever the host.
    folder containing this `.claude/`); change to it first if it isn't, and
    stay inside it for the whole run. Never enter another dex instance — if
    siblings exist nearby, ignore them; they might as well not exist.
-2. **Guard.** If the working tree is dirty before you start, stop and
-   report — a previous run may not have finished. Do not build on its state.
-3. **Pull.** `git pull`.
-4. **Ingest.** Process the inbox per the dex-ingest skill
-   (`.claude/skills/dex-ingest`) — every capture, end to end.
-5. **Health check.** If `wiki/log.md` shows no health check (a `| lint`
+
+2. **Sync first.** `bin/dex sync` — before anything else touches state,
+   because sync bumps the engine pin and runs migrations, and a run on
+   stale code writes stale vocabulary into state that newer code then
+   rejects. Then:
+   - **Review the sync report.** Any migration `skipped`/`anomalies` are
+     repaired with judgment now, before other work builds on them — the
+     code declined what it could not do safely and said so; do not ignore
+     it. If quarantined ledger lines exist
+     (`state/enrichment-ledger.unmigrated.jsonl`), review each line,
+     re-add what should live via
+     `bin/dex enrich mark <url> <status> --reason ...` (or accept the
+     loss), then empty the file.
+   - **Commit the refreshed files and the pin** — this skill owns that
+     commit step; sync itself never commits. Message: `sync: engine <tag>`
+     (or `sync: machinery refresh` when unpinned).
+
+3. **Guard.** The dirty-tree check runs *after* sync's commit,
+   deliberately: sync legitimately edits state (pin bump, migration
+   rewrites and seeds) before any guard could pass, so a guard placed
+   earlier would trip on its own machinery. After the sync commit, a
+   still-dirty tree means a previous run died mid-work — stop and report;
+   do not build on its state.
+
+4. **Pull.** `git pull` — captures arrive as commits.
+
+5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
+   needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports
+   missing auth or any FAIL line, stop and report — never work around it
+   by hand-downloading. Follow its output: when it materialized anything,
+   commit and push immediately, for the reason it states (the release
+   assets are deleted; the repo copy is the only copy until pushed).
+
+6. **Items.** For each capture file in `inbox/`: the scope check, then
+   `bin/dex enrich item new` — the per-item reference
+   (`references/ingest-item.md` in this skill's directory) prescribes
+   both. Item creation is mechanical and fast; it must precede the enrich
+   run so the pipeline seeds the new items' URLs.
+
+7. **Enrich.** `bin/dex enrich run`, and **read its report — it is the
+   work list**. Complete the per-item cognitive work
+   (`references/ingest-item.md`) for *everything* it names: fresh
+   captures, drained reruns, changed items, newly drained waiting
+   cohorts, and its listed cognitive jobs. Parked entries
+   (waiting/blocked/manual) each show a stated reason — manual ones are
+   yours to judge, per the reference's heal procedure.
+
+8. **Backstop.** `bin/dex enrich status` — any item listed under
+   "enrichment newer than digest" is an interrupted previous session:
+   complete its digest → place → wiki steps now.
+
+9. **Health check.** If `wiki/log.md` shows no health check (a `| lint`
    entry) in the past 7 days, run the dex-lint skill
    (`.claude/skills/dex-lint`) — including when the inbox was empty.
-6. **Verify.** Working tree clean, everything committed and pushed.
-7. **Report.** One short summary: what was ingested, what the health check
-   found, or "nothing to do". Report any failure — auth, network, a command —
-   loudly. Never work around a failure by hand; never leave work half-done
-   silently. A scheduled run never asks the owner questions — it acts or it
-   reports.
+
+10. **Verify.** Working tree clean, everything committed and pushed.
+
+11. **Report.** One short summary: what was ingested, what was parked and
+    why, what the health check found, or "nothing to do". Report any
+    failure — auth, network, a command — loudly. Never work around a
+    failure by hand; never leave work half-done silently. A scheduled run
+    never asks the owner questions — it acts or it reports.
+
+## Unattended rules
+
+- **Never edit `state/config.json`** (or any owner-editable config) in an
+  unattended run. A config change is a policy decision; the run's job is
+  to surface it: put the proposed change and its rationale in the report,
+  and the owner ratifies it in an attended session.
+- Borderline scope calls are skipped and reported, never guessed
+  (details in the reference).
+- Cap-fired events (depth/URL caps) are internal — they live in the
+  ledger for the health check and appear in no report you write.
+
+## Rendering
+
+Never hand-draw a table, receipt, or report — there is a surface for it.
+Write the payload JSON to `cache/`, run
+`bin/dex render --file cache/<name>.json` (the file is
+`{"surface": "<name>", "payload": {...}}`), and emit the output verbatim.
+Engine commands (`enrich run`, `sync`, `lint`) already render their own
+reports — reproduce those verbatim too.
+
+## Backfills (exports in raw/)
+
+Getting exports: Discord via
+[DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter), as
+JSON — the format `bin/dex normalize` reads. Other sources: convert to that
+shape, or feed items through capture instead.
+
+`bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex
+exclude <file.json>`) → `bin/dex enrich run` → the per-item work at scale.
+Per-driver politeness sleeps make large cohorts slow by design; drain
+across runs with `bin/dex enrich run --limit N`. For 500+ items: work in
+waves; write work manifests BEFORE dispatching any parallel agents; every
+agent contract includes "if an input is missing, STOP — do not improvise";
+verify coverage mechanically between waves.
