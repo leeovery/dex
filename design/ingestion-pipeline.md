@@ -327,8 +327,10 @@ incident was a classification bug in one fetcher; seven drivers classifying
 independently is seven chances to reintroduce it):
 - One `classify_http(status_code) -> Status` (+ DNS/connection-error
   mapping) in `pipeline/` — 403/429/5xx → `blocked`, 404/NXDOMAIN →
-  `dead` — routed through by every driver's HTTP path. The §15 regression
-  pin tests the classifier once and holds for all drivers.
+  `dead`, **402 → `manual`** (login-walls/paywalls — x.com answers 402;
+  retrying never resolves payment-required, so burning attempts on it
+  teaches nothing) — routed through by every driver's HTTP path. The §15
+  regression pin tests the classifier once and holds for all drivers.
 - **200-but-thin is `manual`, never `dead`** (learned from the 2026-08-20
   overnight runs: JS-rendered SPA pages were ledgered `dead` and their
   items stranded at `raw`): a successful fetch whose extraction comes back
@@ -464,6 +466,13 @@ silent `except: pass` dies here.
 - Quoted posts stay inline (blockquote); promoting a quote is a harvest
   judgment, not driver mechanics.
 - Chain media pooled, captured post's first, media-stage cap applies.
+- **Incomplete chains are recorded, never silently presented as complete**
+  (learned from a 2026-08-20 dex-marketing run — a thread's root promised
+  "8 things", six existed publicly): a parent fetch failing mid-walk is
+  mechanical — the driver records the gap in meta
+  (`chain_incomplete: true` + how far it got). A chain that's
+  *semantically* short (deleted/restricted posts detectable only by
+  reading) is cognitive — a digest note, per current practice.
 - **Walk-down is explicitly unsolved** (no clean API; no scraper
   dependency). Backlog.
 - Engagement counts stay unrecorded (snapshot noise), per the standing rule.
