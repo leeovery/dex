@@ -58,7 +58,6 @@ target-version = "py311"
 extend-exclude = [
     "src/dex_engine/exclude.py",
     "src/dex_engine/new.py",
-    "src/dex_engine/normalize.py",
 ]
 
 [tool.ruff.lint]
@@ -108,7 +107,6 @@ unused-ignore-comment = "warn"
 exclude = [
     "src/dex_engine/exclude.py",
     "src/dex_engine/new.py",
-    "src/dex_engine/normalize.py",
     "example/",
     "dist/",
 ]
