@@ -299,7 +299,15 @@ class Result:
                     f"a redetection travels with status 'queued' (a re-birth under the "
                     f"corrected kind), got {self.status!r}"
                 )
-            if self.body or self.media or self.children or self.assets or self.needs or self.reason:
+            if (
+                self.meta
+                or self.body
+                or self.media
+                or self.children
+                or self.assets
+                or self.needs
+                or self.reason
+            ):
                 raise ValueError(
                     "a redetection carries the corrected identity only — outputs belong "
                     "to the driver that owns the corrected kind"

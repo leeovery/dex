@@ -193,6 +193,16 @@ class TestRedetection:
                 redetect=Redetection(kind=Kind.WEB),
             )
 
+    def test_meta_is_forbidden_too(self):
+        # meta becomes enrichment frontmatter — smuggling it through a
+        # redetection would be output by another name.
+        with pytest.raises(ValueError, match="identity only"):
+            Result(
+                status=Status.QUEUED,
+                meta={"title": "smuggled"},
+                redetect=Redetection(kind=Kind.WEB),
+            )
+
     def test_non_work_kinds_are_rejected(self):
         with pytest.raises(ValueError, match="never becomes a work unit"):
             Redetection(kind=Kind.IMAGE)
