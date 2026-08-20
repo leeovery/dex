@@ -158,18 +158,38 @@ def classify_connection(exc: OSError) -> Classification:
     return Classification(status=Status.BLOCKED, reason=f"connection failed ({scrub(str(cause))})")
 
 
-# One scrubber feeds both the ledger `error` field and (phase 5) the issue
-# body (§5/§13). Code, not judgment, so it can't leak by judgment lapse.
+# One scrubber feeds both the ledger `error` field and the issue filer's
+# bodies (§5/§13). Code, not judgment, so it can't leak by judgment lapse.
 _URL_RE = re.compile(r"https?://\S+")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_HOME_RE = re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\Users\\)[^\s/\\]+")
+# A home-anchored path leaks the username AND everything under it (the
+# instance repo name, item slugs, media filenames) — redact to end-of-token,
+# never just the user segment.
+_HOME_RE = re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\Users\\)\S*")
+_TOKEN_RE = re.compile(r"\S+")
+# Instance content is owner data even in RELATIVE paths (they never touch
+# the home redaction): item ids embed note-derived slugs, media names are
+# owner-chosen, and dex-* names the owner's instance repo. Any token
+# carrying an instance-directory segment, a dex-* segment, or an
+# item-id-shaped substring is redacted whole.
+_INSTANCE_TOKEN_RE = re.compile(
+    r"(?:^|[^\w])(?:corpus|enrichment|media|inbox|cache|raw|state)[/\\]"
+    r"|(?:^|[^\w])dex-\w"
+    r"|\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6}"
+)
+
+
+def _redact_token(match: re.Match[str]) -> str:
+    token = match.group(0)
+    return "<path>" if _INSTANCE_TOKEN_RE.search(token) else token
 
 
 def scrub(text: str) -> str:
-    """Redact URLs, emails, and home paths; collapse to one line.
+    """Redact URLs, emails, home paths, and instance-content tokens; one line.
 
     Feeds every message that leaves the fetch path for the ledger ``error``
-    field (and, in a later phase, issue bodies).
+    field and the issue filer's bodies. Whole-token redaction is deliberate:
+    a partially redacted path still leaks the owner-authored tail.
 
     Args:
         text: The raw message (an exception string, typically).
@@ -180,4 +200,5 @@ def scrub(text: str) -> str:
     text = _URL_RE.sub("<url>", text)
     text = _EMAIL_RE.sub("<email>", text)
     text = _HOME_RE.sub("<home>", text)
+    text = _TOKEN_RE.sub(_redact_token, text)
     return " ".join(text.split())

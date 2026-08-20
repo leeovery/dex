@@ -133,13 +133,21 @@ def error_event(
         f"{_package_path(frame.filename)}:{frame.lineno} in {frame.name}"
         for frame in engine_frames
     )
+    if isinstance(exc, OSError):
+        # OSError messages embed the offending FILENAME (str(exc) renders
+        # `[Errno n] reason: 'path'`) — class + errno carry the diagnosis;
+        # the filename never leaves the instance.
+        errno = f": errno {exc.errno}" if exc.errno is not None else ""
+        message = f"{type(exc).__name__}{errno}"
+    else:
+        message = scrub(f"{type(exc).__name__}: {exc}")
     return ErrorEvent(
         unit_hash=unit_hash,
         kind=kind,
         format=unit_format,
         error_class=type(exc).__name__,
         function=engine_frames[-1].name if engine_frames else "unknown",
-        message=scrub(f"{type(exc).__name__}: {exc}"),
+        message=message,
         frames=frames or "no engine frames",
     )
 

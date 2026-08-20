@@ -229,6 +229,91 @@ class TestDedup:
         assert gh2.calls == []
 
 
+def _raised(exc: BaseException) -> BaseException:
+    """Raise-and-catch so a real traceback (with an engine frame) is attached."""
+    try:
+        try:
+            from_line("not json")  # puts a dex_engine frame on the stack
+        except ValueError:
+            raise exc from None
+    except BaseException as caught:  # noqa: BLE001 — the probe needs the exact instance back
+        return caught
+    raise AssertionError("unreachable")
+
+
+class TestSanitization:
+    """The reviewer's probe scenarios: what would actually reach the public repo."""
+
+    def _body(self, exc, tmp_path, *, kind=Kind.WEB, unit_format=None) -> str:
+        gh = FakeGh()
+        event = error_event(
+            unit_hash="deadbeefca", kind=kind, unit_format=unit_format, exc=_raised(exc)
+        )
+        _report([event], gh, tmp_path)
+        creates = gh.of("create")
+        assert len(creates) == 1
+        args = creates[0]
+        return args[args.index("--title") + 1] + "\n" + args[args.index("--body") + 1]
+
+    def test_oserror_sends_class_and_errno_only(self, tmp_path):
+        exc = OSError(
+            28,
+            "No space left on device",
+            "/Users/leeovery/Code/dex/dex-health/enrichment/"
+            "2026-08-18-lee-mri-results-and-diagnosis-abc123/web-9f2c11.md",
+        )
+        body = self._body(exc, tmp_path)
+        assert "message: OSError: errno 28" in body
+        for leak in ("leeovery", "dex-health", "mri", "diagnosis", "web-9f2c11"):
+            assert leak not in body
+
+    def test_relative_instance_paths_never_leak(self, tmp_path):
+        exc = ValueError(
+            "cannot write enrichment/2026-08-19-private-family-dispute-notes-9a1b2c/"
+            "x-112233.md: name too long"
+        )
+        body = self._body(exc, tmp_path, kind=Kind.X)
+        assert "private-family-dispute" not in body
+        assert "9a1b2c" not in body
+        assert "<path>" in body
+
+    def test_urls_and_emails_never_leak(self, tmp_path):
+        exc = RuntimeError(
+            "fetch of https://secret-internal.example.com/med/records?id=42 "
+            "failed for me@leeovery.com"
+        )
+        body = self._body(exc, tmp_path)
+        assert "secret-internal" not in body
+        assert "leeovery" not in body
+
+    def test_windows_home_paths_never_leak(self, tmp_path):
+        exc = ValueError(r"bad path C:\Users\leeovery\dex-health\inbox\therapy.md")
+        body = self._body(exc, tmp_path, kind=Kind.FILE, unit_format=Format.PDF)
+        for leak in ("leeovery", "dex-health", "therapy"):
+            assert leak not in body
+
+    def test_instance_repo_names_never_leak(self, tmp_path):
+        body = self._body(ValueError("repo dex-health unreachable"), tmp_path)
+        assert "dex-health" not in body
+
+    def test_bare_item_ids_never_leak(self, tmp_path):
+        body = self._body(
+            ValueError("unknown corpus item 2026-08-19-embarrassing-note-ab12cd"), tmp_path
+        )
+        assert "embarrassing-note" not in body
+
+    def test_engine_frames_survive_sanitization(self, tmp_path):
+        # The traceback is the diagnostic payload — sanitization must not
+        # eat the package-relative frame paths.
+        gh = FakeGh()
+        event = _capture(lambda: from_line("not json"))  # raised INSIDE engine code
+        _report([event], gh, tmp_path)
+        args = gh.of("create")[0]
+        body = args[args.index("--body") + 1]
+        assert "dex_engine/pipeline/ledger.py" in body
+        assert "in from_line" in body
+
+
 class TestSoftEdge:
     def test_gh_failure_is_a_note_never_fatal(self, tmp_path):
         def broken(_args):
