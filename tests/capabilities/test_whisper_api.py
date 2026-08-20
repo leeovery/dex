@@ -1,6 +1,7 @@
 """Tests for whisper-api: hermetic via fake transport + fake ffmpeg runner (§15)."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -167,15 +168,48 @@ class TestTranscribe:
         with pytest.raises(ProviderUnavailableError, match="unparseable"):
             api(FakePost([(200, b"<html>gateway</html>")])).transcribe(audio, "")
 
-    def test_ffmpeg_failure_is_bad_input(self, tmp_path):
+    def test_chunks_are_transcoded_to_mp3_never_stream_copied(self, tmp_path):
+        # The cache filename's extension is a guess (extensionless
+        # enclosures default .mp3): `-c copy` into that suffix fails on
+        # AAC-in-.mp3 — honest audio mislabeled manual. Transcoding decodes
+        # whatever the bytes really are.
+        audio = tmp_path / "episode.mp3"  # possibly AAC, despite the name
+        audio.write_bytes(b"x")
+        recorded: dict[str, list[str]] = {}
+
+        def segment(args: list[str]) -> None:
+            recorded["args"] = args
+            fake_segmenter(1)(args)
+
+        api(FakePost([ok("hi")]), segment=segment).transcribe(audio, "")
+        args = recorded["args"]
+        assert "copy" not in args
+        assert "libmp3lame" in args
+        assert "-vn" in args  # cover art is not audio
+        assert args[-1].endswith(".mp3")
+
+    def test_ffmpeg_segment_failure_is_bad_input(self, tmp_path):
         audio = tmp_path / "corrupt.mp3"
         audio.write_bytes(b"x")
 
-        def broken(_args: list[str]) -> None:
-            raise OSError("ffmpeg exploded")
+        def broken(args: list[str]) -> None:
+            raise subprocess.CalledProcessError(1, args, stderr=b"Invalid data found")
 
         with pytest.raises(ProviderInputError, match="segment"):
             api(FakePost([]), segment=broken).transcribe(audio, "")
+
+    def test_missing_ffmpeg_binary_keeps_the_job_waiting(self, tmp_path):
+        # An OSError from the runner means the BINARY is broken — an
+        # availability failure discovered at call time (§6), never a
+        # judgment on the audio.
+        audio = tmp_path / "fine.mp3"
+        audio.write_bytes(b"x")
+
+        def missing(_args: list[str]) -> None:
+            raise OSError("No such file or directory: 'ffmpeg'")
+
+        with pytest.raises(ProviderUnavailableError, match="not runnable"):
+            api(FakePost([]), segment=missing).transcribe(audio, "")
 
     def test_no_segments_produced_is_bad_input(self, tmp_path):
         audio = tmp_path / "empty.mp3"

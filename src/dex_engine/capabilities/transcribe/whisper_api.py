@@ -7,10 +7,12 @@ at import (§14). Pointed at Groq et al for GPU-fast pennies-per-hour runs;
 an explicitly configured base_url with no key is a keyless local server.
 
 **ffmpeg chunking** removes upload limits for any provider, including
-OpenAI's 25MB cap: the audio is always segmented (~20-minute chunks), each
-chunk transcribed with prompt continuity (the running transcript's tail
-primes the next chunk), and the transcripts concatenated. Audio at or under
-one chunk simply yields a single segment — one uniform path.
+OpenAI's 25MB cap: the audio is always segmented (~20-minute mp3 chunks,
+transcoded — the source extension is a guess and stream-copy into it would
+fail on honest audio), each chunk transcribed with prompt continuity (the
+running transcript's tail primes the next chunk), and the transcripts
+concatenated. Audio at or under one chunk simply yields a single segment —
+one uniform path.
 """
 
 import json
@@ -211,9 +213,9 @@ class WhisperApi:
         Raises:
             ProviderInputError: ffmpeg could not read/segment the audio, the
                 API rejected it (HTTP 400), or it held no speech — manual.
-            ProviderUnavailableError: The endpoint refused or failed
-                (auth, rate limit, outage, connection) — the job stays
-                waiting with the reason (§6).
+            ProviderUnavailableError: The ffmpeg binary is not runnable, or
+                the endpoint refused or failed (auth, rate limit, outage,
+                connection) — the job stays waiting with the reason (§6).
         """
         with tempfile.TemporaryDirectory(prefix="dex-whisper-") as workdir:
             chunks = self._chunk(audio, Path(workdir))
@@ -227,30 +229,41 @@ class WhisperApi:
         return text
 
     def _chunk(self, audio: Path, workdir: Path) -> list[Path]:
-        """Split the audio into ~20-minute segments, stream-copied (§6)."""
-        template = workdir / f"chunk-%03d{audio.suffix or '.mp3'}"
+        """Split the audio into ~20-minute mp3 segments, transcoded (§6).
+
+        Transcoded, never ``-c copy``: the cached filename's extension is a
+        guess (extensionless enclosures default to .mp3), and stream-copying
+        an AAC stream into a .mp3-named segment makes ffmpeg fail — valid
+        audio mislabeled ``manual``. Decoding whatever the bytes really are
+        and encoding mp3 also makes the uploaded extension honest.
+        """
+        template = workdir / "chunk-%03d.mp3"
         try:
             self._segment(
                 [
                     "-i",
                     str(audio),
+                    "-vn",  # cover-art video streams are not audio
+                    "-acodec",
+                    "libmp3lame",
+                    "-b:a",
+                    "96k",
                     "-f",
                     "segment",
                     "-segment_time",
                     str(CHUNK_SECONDS),
-                    "-c",
-                    "copy",
                     str(template),
                 ]
             )
-        except (OSError, subprocess.CalledProcessError) as e:
-            detail = (
-                e.stderr.decode(errors="replace")
-                if isinstance(e, subprocess.CalledProcessError) and e.stderr
-                else str(e)
-            )
+        except OSError as e:
+            # The binary is missing or not runnable: an availability failure
+            # discovered at call time — the job stays waiting (§6), never
+            # manual; the audio said nothing about itself yet.
+            raise ProviderUnavailableError(f"ffmpeg is not runnable: {scrub(str(e))}") from e
+        except subprocess.CalledProcessError as e:
+            detail = e.stderr.decode(errors="replace") if e.stderr else str(e)
             raise ProviderInputError(f"ffmpeg could not segment the audio: {scrub(detail)}") from e
-        chunks = sorted(workdir.glob(f"chunk-*{audio.suffix or '.mp3'}"))
+        chunks = sorted(workdir.glob("chunk-*.mp3"))
         if not chunks:
             raise ProviderInputError("ffmpeg produced no audio segments")
         return chunks
