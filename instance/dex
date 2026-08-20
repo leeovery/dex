@@ -1,6 +1,16 @@
 #!/bin/sh
 # dex engine dispatcher — run from the instance root.
-#   bin/dex normalize | enrich [run|whisper|status|inventory|...] | lint [--write] | exclude <file.json> | inbox [ensure] | sync
+#   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass] | lint [--write] | exclude <file.json> | inbox [ensure] | sync
+# Runs the release pinned in .dex-engine-pin (one line, written by sync);
+# falls back to tracking main until the first tag-aware sync pins one.
 cmd=$1; shift 2>/dev/null
 [ -n "$cmd" ] || { echo "usage: bin/dex <normalize|enrich|lint|exclude|inbox|sync> [args]"; exit 1; }
-exec uvx --from git+https://github.com/leeovery/dex "dex-$cmd" "$@"
+ref=main
+if [ -f .dex-engine-pin ]; then
+  # Field-split on space/CR/tab so hand-edited pins (CRLF, stray blanks)
+  # still yield a clean uvx ref; read strips nothing on its own.
+  pin=; rest=
+  IFS=$(printf ' \r\t') read -r pin rest < .dex-engine-pin || :
+  [ -n "$pin" ] && ref=$pin
+fi
+exec uvx --from "git+https://github.com/leeovery/dex@$ref" "dex-$cmd" "$@"
