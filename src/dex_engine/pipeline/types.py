@@ -27,6 +27,7 @@ __all__ = [
     "MediaFetch",
     "MigrationReport",
     "Need",
+    "Redetection",
     "Result",
     "Skipped",
     "SourceDriver",
@@ -108,7 +109,9 @@ class MediaFetch(StrEnum):
 # `queued` is a birth state, not a driver outcome, and `error` is RAISED,
 # never returned — a Result has no error channel, so a returned `error`
 # could only carry a fabricated message; the run loop's single broad except
-# is the one place errors are made.
+# is the one place errors are made. ONE exception: a Result carrying a
+# `redetect` returns `queued`, because a mid-fetch kind correction IS a
+# re-birth — the unit re-enters the queue under its corrected identity.
 DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
 
 
@@ -236,6 +239,29 @@ class Child:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Redetection:
+    """A mid-fetch kind correction: the content is not what detection said.
+
+    The canonical case: detection said web (a HEAD lied or was
+    inconclusive), the GET returned a PDF. The unit re-enters the queue
+    under the corrected identity — same URL, same hash — with
+    ``via: "sniff"`` provenance; the run layer enforces once-only.
+    """
+
+    kind: Kind
+    format: Format | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind in _NON_WORK_KINDS:
+            raise ValueError(
+                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
+                "never becomes a work unit"
+            )
+        if self.format is not None and self.kind is not Kind.FILE:
+            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Result:
     """What a driver's ``fetch`` returns.
 
@@ -244,6 +270,12 @@ class Result:
     optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
     run layer may append classifier context to it but never invents what the
     driver knew.
+
+    ``redetect`` is the mid-fetch kind-correction signal: the fetched bytes
+    are a different kind of content than detection assigned. It travels
+    with ``status: queued`` and nothing else — a redetection carries the
+    corrected identity only; outputs belong to the driver that owns the
+    corrected kind.
     """
 
     status: Status
@@ -258,12 +290,26 @@ class Result:
     assets: list["Asset"] = field(default_factory=list)
     needs: Need | None = None
     reason: str | None = None
+    redetect: Redetection | None = None
 
     def __post_init__(self) -> None:
+        if self.redetect is not None:
+            if self.status is not Status.QUEUED:
+                raise ValueError(
+                    f"a redetection travels with status 'queued' (a re-birth under the "
+                    f"corrected kind), got {self.status!r}"
+                )
+            if self.body or self.media or self.children or self.assets or self.needs or self.reason:
+                raise ValueError(
+                    "a redetection carries the corrected identity only — outputs belong "
+                    "to the driver that owns the corrected kind"
+                )
+            return
         if self.status not in DRIVER_STATUSES:
             raise ValueError(
                 f"drivers may not return status {self.status!r} — 'queued' is a birth "
-                "state and 'error' is raised, never returned"
+                "state (returnable only as a redetection) and 'error' is raised, never "
+                "returned"
             )
         if self.status is Status.WAITING and self.needs is None:
             raise ValueError("status 'waiting' requires needs")

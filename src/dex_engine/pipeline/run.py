@@ -58,6 +58,7 @@ from .types import (
     LedgerEntry,
     MediaFetch,
     Need,
+    Redetection,
     Result,
     SourceDriver,
     Status,
@@ -237,9 +238,12 @@ class _Drain:
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
-    # Rerun-cohort pacing bookkeeping (full drains only).
+    # Rerun-cohort pacing bookkeeping (full drains only). The counted set
+    # exists because a redetected unit re-enters the live queue and pops
+    # twice — one logical unit must spend one slot of the cohort, not two.
     rerun_total: int = 0
     rerun_drained: int = 0
+    rerun_counted: set[str] = field(default_factory=set)
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
@@ -385,7 +389,8 @@ class _Drain:
             if not is_drainable(entry, self.ctx):
                 continue  # superseded while queued
             processed += 1
-            if only is None and entry.rerun:
+            if only is None and entry.rerun and entry.hash not in self.rerun_counted:
+                self.rerun_counted.add(entry.hash)
                 self.rerun_drained += 1
             self._process(entry)
         self._note_rerun_cohort()
@@ -583,6 +588,9 @@ class _Drain:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
     def _apply(self, entry: LedgerEntry, result: Result) -> None:
+        if result.redetect is not None:
+            self._apply_redetection(entry, result.redetect)
+            return
         match result.status:
             case Status.DONE:
                 self._apply_done(entry, result)
@@ -605,8 +613,9 @@ class _Drain:
             case Status.DEAD | Status.SKIPPED | Status.MANUAL:
                 self.record_outcome(entry, status=result.status, reason=result.reason)
             case Status.QUEUED | Status.ERROR:
-                # Result.__post_init__ forbids both driver outcomes:
-                # queued is a birth state; errors are raised, never returned.
+                # Result.__post_init__ forbids both here: queued travels
+                # only with a redetection (routed above); errors are
+                # raised, never returned.
                 raise RuntimeError(
                     f"unreachable: Result validation rejects {result.status.value!r}"
                 )
@@ -629,6 +638,49 @@ class _Drain:
         if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
             self._media_stage(self.entries[entry.hash], result.media)
         self._admit_children(self.entries[entry.hash], result.children)
+
+    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
+        """Re-route a mid-fetch kind discovery through the queue, once only.
+
+        The corrected unit has the SAME URL and therefore the same hash — a
+        child emission would dedupe against the existing entry and vanish.
+        The mechanics are a superseding ledger line instead: same hash,
+        corrected kind (+format), ``status: queued``, ``via: "sniff"`` —
+        last-per-hash means the unit simply BECOMES the corrected kind and
+        drains through its driver in this same run. Once only: a unit whose
+        latest line already carries ``via: "sniff"`` was corrected before,
+        and two drivers re-detecting each other's content must park for
+        judgment, never ping-pong.
+        """
+        if entry.via == "sniff":
+            self.record_outcome(
+                entry,
+                status=Status.MANUAL,
+                reason=(
+                    f"re-detection loop — {entry.kind.value} and {redetect.kind.value} "
+                    "keep re-detecting each other's content; inspect by hand"
+                ),
+            )
+            return
+        self.record(
+            LedgerEntry(
+                hash=entry.hash,
+                url=entry.url,
+                item=entry.item,
+                kind=redetect.kind,
+                format=redetect.format,
+                status=Status.QUEUED,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                via="sniff",
+                parent=entry.parent,
+                depth=entry.depth,
+                rerun=entry.rerun,
+            )
+        )
+        self.queue.append(entry.hash)
+        corrected = redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
+        self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
     def _apply_blocked(self, entry: LedgerEntry, reason: str | None) -> None:
         attempts = (entry.attempts or 0) + 1

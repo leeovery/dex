@@ -19,6 +19,7 @@ from dex_engine.pipeline.types import (
     MediaFetch,
     MigrationReport,
     Need,
+    Redetection,
     Result,
     Skipped,
     Status,
@@ -167,6 +168,38 @@ class TestResult:
     def test_waiting_with_needs_ok(self):
         result = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
         assert result.needs is Need.TRANSCRIBE
+
+
+class TestRedetection:
+    def test_queued_with_redetect_is_the_sanctioned_re_birth(self):
+        result = Result(
+            status=Status.QUEUED,
+            meta={},
+            redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+        )
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.FILE
+
+    def test_redetect_requires_queued(self):
+        with pytest.raises(ValueError, match="queued"):
+            Result(status=Status.DONE, meta={}, redetect=Redetection(kind=Kind.WEB))
+
+    def test_redetect_carries_identity_only(self):
+        with pytest.raises(ValueError, match="identity only"):
+            Result(
+                status=Status.QUEUED,
+                meta={},
+                body="smuggled",
+                redetect=Redetection(kind=Kind.WEB),
+            )
+
+    def test_non_work_kinds_are_rejected(self):
+        with pytest.raises(ValueError, match="never becomes a work unit"):
+            Redetection(kind=Kind.IMAGE)
+
+    def test_format_is_file_work_only(self):
+        with pytest.raises(ValueError, match="file-work only"):
+            Redetection(kind=Kind.WEB, format=Format.PDF)
 
 
 class TestResultReason:
