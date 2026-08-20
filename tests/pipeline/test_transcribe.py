@@ -16,7 +16,16 @@ from dex_engine.pipeline.transcribe import (
     _cached_audio,
     read_enrichment,
 )
-from dex_engine.pipeline.types import Config, Format, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import (
+    Availability,
+    Config,
+    Format,
+    Instance,
+    Kind,
+    LedgerEntry,
+    Need,
+    Status,
+)
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeTranscriber, fixture_bytes
 from tests.conftest import FakeDriver
@@ -238,6 +247,44 @@ class TestYoutubeDrain:
         run_mod.run_transcribe(transcribe_ctx(instance), limit=1)
         statuses = sorted(e.status.value for e in ledger.load(instance.ledger_path).values())
         assert statuses == ["done", "waiting", "waiting"]
+
+    def test_failed_acquisitions_do_not_burn_the_limit_budget(self, instance):
+        # §12: the cap bounds attempts that REACH a provider — a failed
+        # download must not starve the drainable rest of the cohort.
+        urls = [f"https://youtube.com/watch?v=v{n:02d}" for n in range(3)]
+        write_item(instance, urls=urls)
+        for url in urls:
+            seed_waiting(instance, url)
+        good = FakeDownload()
+
+        def download(url, cache_dir, stem):
+            if url == urls[0]:
+                raise ProbeError("HTTP Error 429: Too Many Requests")
+            return good(url, cache_dir, stem)
+
+        run_mod.run_transcribe(transcribe_ctx(instance, download=download), limit=1)
+        statuses = sorted(e.status.value for e in ledger.load(instance.ledger_path).values())
+        # The first unit's failed acquisition spent nothing: the second
+        # reached the provider (the whole budget), the third deferred.
+        assert statuses == ["blocked", "done", "waiting"]
+
+    def test_provider_missing_passes_do_not_burn_the_run_cap(self, instance):
+        urls = [f"https://youtube.com/watch?v=v{n:02d}" for n in range(TRANSCRIBE_RUN_CAP + 2)]
+        write_item(instance, urls=urls)
+        for url in urls:
+            seed_waiting(instance, url)
+        # The drain seam reports available but no capability registry is
+        # wired: every unit re-parks waiting without reaching a provider —
+        # none of those passes may count against the §12 cap.
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            provider_available=lambda _need, _fmt: Availability(ok=True),
+        )
+        report = run_mod.run(ctx)
+        assert "transcription capped" not in report
+        entries = ledger.load(instance.ledger_path)
+        assert all(e.status is Status.WAITING for e in entries.values() if e.kind is Kind.YOUTUBE)
 
 
 class TestPodcastDrain:

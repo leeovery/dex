@@ -230,7 +230,8 @@ class _Drain:
     notes: list[str] = field(default_factory=list)
     sniff: Sniff | None = None
     # §12: transcription is capped per run so a resurrected backlog never
-    # monopolizes a machine; the dedicated verb bounds by --limit instead.
+    # monopolizes a machine (the dedicated verb sets this from --limit).
+    # Only attempts that REACH a provider spend it.
     transcribe_budget: int | None = TRANSCRIBE_RUN_CAP
     transcribed: int = 0
     deferred_transcriptions: int = 0
@@ -419,7 +420,6 @@ class _Drain:
         confirmed-gone sources and judgment cases park honestly;
         ``ProviderInputError`` propagates for the manual mapping (§5).
         """
-        self.transcribed += 1
         transcriber = self.ctx.capabilities.transcriber() if self.ctx.capabilities else None
         if transcriber is None:
             availability = self.ctx.provider_available(Need.TRANSCRIBE, None)
@@ -432,6 +432,10 @@ class _Drain:
         if isinstance(acquired, Classification):
             self._apply_acquisition_failure(entry, acquired)
             return
+        # The budget is spent HERE — only an attempt that reaches a
+        # provider burns the per-run cap (§12): failed acquisitions and
+        # provider-missing passes must not starve the drainable cohort.
+        self.transcribed += 1
         try:
             transcript = transcriber.transcribe(acquired.audio, acquired.prompt)
         except ProviderUnavailableError as e:
@@ -984,16 +988,18 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     Args:
         ctx: The run context (``--model`` overrides arrive already built
             into ``ctx.capabilities``).
-        limit: Per-run cap — default 10 (§12), so a resurrected backlog
-            never monopolizes a machine.
+        limit: Per-run cap on attempts that REACH a provider — default 10
+            (§12), so a resurrected backlog never monopolizes a machine.
+            Failed acquisitions and provider-missing passes don't burn it.
 
     Returns:
         The rendered enrich-report for the drained units.
     """
     drain = _Drain(ctx=ctx)
-    # The dedicated verb is bounded by --limit alone; the full-run budget
-    # exists so `enrich run` cannot be monopolized (§12).
-    drain.transcribe_budget = None
+    # The dedicated verb is bounded by --limit alone — wired through the
+    # same budget the full run uses, so both count provider-reaching
+    # attempts only (§12).
+    drain.transcribe_budget = limit
     drain.seed_from_corpus()
     availability = ctx.provider_available(Need.TRANSCRIBE, None)
     if not availability.ok:
@@ -1002,7 +1008,7 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     targets = {
         unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)
     }
-    drain.drain(limit=limit, only=targets)
+    drain.drain(only=targets)
     return surfaces.render("enrich-report", drain.report_payload())
 
 
