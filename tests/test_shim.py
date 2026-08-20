@@ -56,6 +56,18 @@ class TestShim:
         result = run_shim(tmp_path, fake_uvx, "lint")
         assert "@v0.2.0 dex-lint" in result.stdout
 
+    def test_crlf_pin_yields_a_clean_ref(self, tmp_path, fake_uvx):
+        # A hand-edited pin saved with CRLF must not smuggle \r into the ref.
+        (tmp_path / ".dex-engine-pin").write_bytes(b"v0.2.0\r\n")
+        result = run_shim(tmp_path, fake_uvx, "sync")
+        assert "@v0.2.0 dex-sync" in result.stdout
+        assert "\r" not in result.stdout
+
+    def test_surrounding_whitespace_is_stripped(self, tmp_path, fake_uvx):
+        (tmp_path / ".dex-engine-pin").write_text("  v0.2.0  \n")
+        result = run_shim(tmp_path, fake_uvx, "lint")
+        assert "@v0.2.0 dex-lint" in result.stdout
+
     def test_empty_pin_file_falls_back_to_main(self, tmp_path, fake_uvx):
         (tmp_path / ".dex-engine-pin").write_text("\n")
         result = run_shim(tmp_path, fake_uvx, "enrich")

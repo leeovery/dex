@@ -7,7 +7,10 @@ cmd=$1; shift 2>/dev/null
 [ -n "$cmd" ] || { echo "usage: bin/dex <normalize|enrich|lint|exclude|inbox|sync> [args]"; exit 1; }
 ref=main
 if [ -f .dex-engine-pin ]; then
-  IFS= read -r pin < .dex-engine-pin || :
+  # Field-split on space/CR/tab so hand-edited pins (CRLF, stray blanks)
+  # still yield a clean uvx ref; read strips nothing on its own.
+  pin=; rest=
+  IFS=$(printf ' \r\t') read -r pin rest < .dex-engine-pin || :
   [ -n "$pin" ] && ref=$pin
 fi
 exec uvx --from "git+https://github.com/leeovery/dex@$ref" "dex-$cmd" "$@"
