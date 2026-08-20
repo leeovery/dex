@@ -50,6 +50,14 @@ class TestDiscover:
             assert migration.intent
             assert "\n" not in migration.intent
 
+    def test_near_miss_migration_filenames_are_loud(self, tmp_path, monkeypatch):
+        # migration_01 / migration_x would silently never run — a latent
+        # packaging bug the discovery must refuse.
+        (tmp_path / "migration_01.py").write_text("")
+        monkeypatch.setattr("dex_engine.migrations.__path__", [str(tmp_path)])
+        with pytest.raises(MigrationError, match="plain integer"):
+            discover(today=fixed_today, engine_version=ENGINE)
+
 
 class TestAppliedLog:
     def test_missing_file_is_empty_log(self, tmp_path):

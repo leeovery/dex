@@ -105,6 +105,14 @@ def discover(
     for module_info in pkgutil.iter_modules(__path__):
         match = _MODULE_RE.match(module_info.name)
         if not match:
+            if module_info.name.startswith("migration"):
+                # A near-miss name (migration_01, migration_x) would silently
+                # never run — a packaging bug that must be loud, not latent.
+                raise MigrationError(
+                    f"module {module_info.name!r} looks like a migration but does not "
+                    "match migration_<n> with a plain integer (§12) — rename it or it "
+                    "will never be discovered"
+                )
             continue
         number = int(match.group(1))
         module = import_module(f"{__name__}.{module_info.name}")
@@ -174,7 +182,14 @@ def append_applied(
     engine: str,
     date: datetime.date,
 ) -> None:
-    """Append one ``{number, engine, date}`` record, creating the file if needed."""
+    """Append one ``{number, engine, date}`` record, creating the file if needed.
+
+    The append is not atomic: a crash mid-write can tear the record. That
+    window is accepted — a torn line fails :func:`read_applied` loudly with
+    the file and line named, and the repair is the same session-judgment
+    path as quarantined ledger lines (§12): fix or delete the torn line,
+    re-run sync; idempotent migrations make a lost record harmless.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"number": number, "engine": engine, "date": date.isoformat()}
     with path.open("a", encoding="utf-8") as f:
