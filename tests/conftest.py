@@ -11,7 +11,16 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.pipeline.types import Availability, Instance, Kind, Need, Result, Status, WorkUnit
+from dex_engine.pipeline.types import (
+    Availability,
+    Format,
+    Instance,
+    Kind,
+    Need,
+    Result,
+    Status,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical
 
 
@@ -65,7 +74,11 @@ class FlippableProvider:
         self.ok = False
         self.reason = "not installed"
 
-    def __call__(self, need: Need) -> Availability:  # noqa: ARG002 — one switch for every need
+    def __call__(
+        self,
+        need: Need,  # noqa: ARG002 — one switch for every need
+        fmt: Format | None = None,  # noqa: ARG002 — and every format
+    ) -> Availability:
         return Availability(ok=self.ok, reason=self.reason)
 
 

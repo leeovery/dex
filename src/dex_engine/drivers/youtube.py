@@ -26,7 +26,7 @@ from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .transport import Transport, urllib_transport
 
-__all__ = ["ProbeError", "YouTubeDriver", "clean_vtt", "yt_dlp_probe"]
+__all__ = ["ProbeError", "YouTubeDriver", "classify_probe_failure", "clean_vtt", "yt_dlp_probe"]
 
 _HOSTS = frozenset({"youtube.com", "youtu.be"})
 _KEEP_PARAMS = frozenset({"v"})
@@ -112,7 +112,7 @@ class YouTubeDriver:
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
-            failure = _classify_probe_failure(str(e))
+            failure = classify_probe_failure(str(e))
             return Result(status=failure.status, meta={}, reason=failure.reason)
         meta = _video_meta(info)
         track_url = _caption_track_url(info)
@@ -155,8 +155,11 @@ class YouTubeDriver:
         return Result(status=Status.DONE, meta=meta, body=_body(info, transcript))
 
 
-def _classify_probe_failure(message: str) -> Classification:
+def classify_probe_failure(message: str) -> Classification:
     """Map a yt-dlp failure message: code > login > geo > confirmed gone > blocked.
+
+    Public because the transcribe drain's audio acquisition (§6) fails in
+    exactly the same vocabulary — one classifier, not two.
 
     ``dead`` requires an explicit confirmed-gone marker. The default is
     ``blocked`` — a transient network error or an extractor-breakage message

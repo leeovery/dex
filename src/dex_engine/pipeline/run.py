@@ -23,17 +23,36 @@ from pathlib import Path
 from typing import assert_never
 
 from dex_engine import corpus
+from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.transport import Transport, urllib_transport
 from dex_engine.render import surfaces
 
 from . import ledger
-from .classify import ProviderInputError, classify_connection, classify_http, scrub
-from .detect import Sniff, canonical_url, detect, detect_kind
+from .classify import (
+    Classification,
+    ProviderInputError,
+    ProviderUnavailableError,
+    classify_connection,
+    classify_http,
+    scrub,
+)
+from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
 from .registry import driver_for
+from .transcribe import (
+    TRANSCRIBE_RUN_CAP,
+    Acquired,
+    DownloadAudio,
+    acquire_podcast_audio,
+    acquire_youtube_audio,
+    podcast_body,
+    youtube_body,
+    yt_dlp_audio,
+)
 from .types import (
     Availability,
     Child,
     Config,
+    Format,
     Instance,
     Kind,
     LedgerEntry,
@@ -62,6 +81,7 @@ __all__ = [
     "no_providers",
     "record_pass",
     "run",
+    "run_transcribe",
     "status_report",
 ]
 
@@ -84,16 +104,23 @@ _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
 
-def no_providers(need: Need) -> Availability:
-    """The phase-2 provider seam: no mechanical providers exist yet (§6)."""
-    return Availability(
-        ok=False, reason=f"no mechanical '{need}' provider registered (capabilities are phase 3)"
-    )
+def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
+    """The null provider seam: nothing mechanical is wired (tests, bare contexts).
+
+    The real seam is ``Capabilities.available`` — the CLI wires it (§6).
+    """
+    return Availability(ok=False, reason=f"no mechanical '{need}' provider wired")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RunContext:
-    """Everything a run needs, constructor-injected (§14) — no ambient state."""
+    """Everything a run needs, constructor-injected (§14) — no ambient state.
+
+    ``provider_available`` is the drain predicate's seam and
+    ``capabilities`` the registry the transcribe path calls; the CLI wires
+    both to the same :class:`~dex_engine.capabilities.Capabilities` so they
+    cannot disagree, and tests may fake either independently.
+    """
 
     instance: Instance
     config: Config
@@ -101,7 +128,9 @@ class RunContext:
     today: Callable[[], datetime.date]
     engine_version: str
     transport: Transport = urllib_transport
-    provider_available: Callable[[Need], Availability] = no_providers
+    provider_available: Callable[[Need, Format | None], Availability] = no_providers
+    capabilities: Capabilities | None = None
+    download_audio: DownloadAudio = yt_dlp_audio
     sleep: Callable[[float], None] = time.sleep
 
 
@@ -133,7 +162,7 @@ def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
         case Status.BLOCKED:
             return (entry.attempts or 0) < MAX_BLOCKED_ATTEMPTS
         case Status.WAITING:
-            return entry.needs is not None and ctx.provider_available(entry.needs).ok
+            return entry.needs is not None and ctx.provider_available(entry.needs, entry.format).ok
         case Status.ERROR:
             try:
                 return version_newer(ctx.engine_version, entry.engine)
@@ -181,7 +210,13 @@ class _Drain:
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
     outcomes: dict[str, _ItemOutcome] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
     sniff: Sniff | None = None
+    # §12: transcription is capped per run so a resurrected backlog never
+    # monopolizes a machine; the dedicated verb bounds by --limit instead.
+    transcribe_budget: int | None = TRANSCRIBE_RUN_CAP
+    transcribed: int = 0
+    deferred_transcriptions: int = 0
 
     def __post_init__(self) -> None:
         self.entries = ledger.load(self.ctx.instance.ledger_path)
@@ -190,7 +225,7 @@ class _Drain:
     # -- seeding ---------------------------------------------------------
 
     def seed_from_corpus(self) -> None:
-        """Every captured URL becomes a ledger entry from birth (§1)."""
+        """Every captured URL and media file becomes a ledger entry from birth (§1)."""
         for path in sorted(self.ctx.instance.corpus_dir.glob("*/*.md")):
             item = corpus.read_item(path)
             self.item_paths[item.id] = path
@@ -202,6 +237,38 @@ class _Drain:
                     # aborts the run (frontmatter is immutable provenance —
                     # garbage in it is judgment work, hence manual).
                     self._park_bad_seed(item.id, url, e)
+            for repo_path in item.media:
+                self._seed_media_file(item.id, repo_path)
+
+    def _seed_media_file(self, item_id: str, repo_path: str) -> None:
+        """Materialized files feed the pipeline (§14): format detect → extract queue.
+
+        Only document formats become work units — images and unknowns are
+        described cognitively at ingest (§3), never queued. An unreadable
+        file (un-pulled LFS) still seeds by its extension so the file
+        driver can park it with the pull hint rather than it vanishing.
+        """
+        work_key = f"file:{repo_path}"
+        unit_hash = work_hash(work_key)
+        if unit_hash in self.entries:
+            return
+        file_path = self.ctx.instance.root / repo_path
+        data = file_path.read_bytes() if file_path.is_file() else b""
+        fmt = sniff_format(data, name=repo_path.rsplit("/", 1)[-1])
+        if fmt is None:
+            return
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=work_key,
+                item=item_id,
+                kind=Kind.FILE,
+                format=fmt,
+                status=Status.QUEUED,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+            )
+        )
 
     def _park_bad_seed(self, item_id: str, url: str, exc: ValueError) -> None:
         unit_hash = work_hash(url)  # canonicalization failed — key on the raw URL
@@ -268,9 +335,33 @@ class _Drain:
             # normal retry rules, and via is the only mark they carry.
             self._download_media(entry, prior=entry)
             return
+        transcribe_job = entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE
+        if transcribe_job and not self._transcribe_slot():
+            return  # stays waiting untouched; the deferral is noted once
+        try:
+            # The try spans ALL per-unit processing (§5's "per-unit loop"):
+            # fetch/transcribe, output write, media stage, children
+            # admission. An engine bug anywhere in it ledgers `error` — the
+            # outcome line supersedes any partial one — never aborts the run.
+            if transcribe_job:
+                self._transcribe_unit(entry)
+            else:
+                self._drive_unit(entry)
+        except ProviderInputError as e:
+            self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
+        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline (§5)
+            self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
+
+    def _drive_unit(self, entry: LedgerEntry) -> None:
         driver = driver_for(entry.kind, self.ctx.drivers)
         if driver is None:
-            self._park_driverless(entry)
+            # Every work-unit kind has a driver in the shipped registry;
+            # a partial registry (tests, exotic wiring) parks honestly.
+            self.record_outcome(
+                entry,
+                status=Status.MANUAL,
+                reason=f"no driver for kind '{entry.kind}' in this registry",
+            )
             return
         unit = WorkUnit(
             hash=entry.hash,
@@ -282,43 +373,149 @@ class _Drain:
             parent=entry.parent,
         )
         try:
-            # The try spans ALL per-unit processing (§5's "per-unit loop"):
-            # fetch, output write, media stage, children admission. An
-            # engine bug anywhere in it ledgers `error` — the outcome line
-            # supersedes any partial one — and never aborts the run.
             self._apply(entry, driver.fetch(unit))
-        except ProviderInputError as e:
-            self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
-        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline (§5)
-            self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
-        self.ctx.sleep(driver.sleep)
+        finally:
+            # Politeness holds even when the fetch failed (§2).
+            self.ctx.sleep(driver.sleep)
 
-    def _park_driverless(self, entry: LedgerEntry) -> None:
-        """No driver ships for this kind yet (file/podcast until phase 3).
+    # -- the transcribe drain (§6) ----------------------------------------
 
-        Parked, never crashed: phase 3 requeues these entries when the
-        driver lands (file work drains as `waiting` the moment an extract
-        provider exists; other kinds are re-marked by the shipping phase).
+    def _transcribe_slot(self) -> bool:
+        """Whether the per-run transcription cap (§12) has room for one more."""
+        if self.transcribe_budget is not None and self.transcribed >= self.transcribe_budget:
+            if self.deferred_transcriptions == 0:
+                self.notes.append(
+                    f"transcription capped at {self.transcribe_budget} this run — "
+                    "the rest of the waiting cohort drains next run "
+                    "(or now: `dex enrich transcribe --limit N`)"
+                )
+            self.deferred_transcriptions += 1
+            return False
+        return True
+
+    def _transcribe_unit(self, entry: LedgerEntry) -> None:
+        """Drain one waiting/transcribe entry through the capability (§6).
+
+        Acquisition failures and call-time capability failures keep the
+        entry ``waiting`` with the stated reason (retried next run — no
+        clock); confirmed-gone sources and judgment cases park honestly;
+        ``ProviderInputError`` propagates for the manual mapping (§5).
         """
-        if entry.kind is Kind.FILE:
+        self.transcribed += 1
+        transcriber = self.ctx.capabilities.transcriber() if self.ctx.capabilities else None
+        if transcriber is None:
+            availability = self.ctx.provider_available(Need.TRANSCRIBE, None)
+            self.record_outcome(
+                entry, status=Status.WAITING, needs=Need.TRANSCRIBE, reason=availability.reason
+            )
+            return
+        self._note_first_run(transcriber)
+        acquired = self._acquire_audio(entry)
+        if isinstance(acquired, Classification):
+            self._apply_acquisition_failure(entry, acquired)
+            return
+        try:
+            transcript = transcriber.transcribe(acquired.audio, acquired.prompt)
+        except ProviderUnavailableError as e:
+            # §6: an available() failure discovered at call time — the
+            # mechanical provider is, in truth, not available. Audio stays
+            # cached (§9: retries don't re-download).
+            self.record_outcome(
+                entry, status=Status.WAITING, needs=Need.TRANSCRIBE, reason=scrub(str(e))
+            )
+            return
+        except OSError as e:
             self.record_outcome(
                 entry,
                 status=Status.WAITING,
-                needs=Need.EXTRACT,
-                reason=f"{entry.format or 'file'} extraction not yet available",
+                needs=Need.TRANSCRIBE,
+                reason=f"transcription failed: {classify_connection(e).reason}",
             )
             return
-        self.record_outcome(
-            entry,
-            status=Status.MANUAL,
-            reason=f"no driver for kind '{entry.kind}' yet (ships phase 3)",
+        meta = dict(acquired.meta)
+        meta["via"] = transcriber.name  # raw transcript, stamped via/model (§6)
+        meta["model"] = transcriber.model
+        body = (
+            youtube_body(acquired.prefix, transcript)
+            if entry.kind is Kind.YOUTUBE
+            else podcast_body(acquired.prefix, transcript)
         )
+        result = Result(status=Status.DONE, meta=meta, body=body)
+        path = self._write_output(entry, result)
+        title = meta.get("title")
+        self.record_outcome(
+            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
+        )
+        # §9 lifecycle: the transcript supersedes the audio — delete on
+        # success only; pending/failed audio stays cached for the retry.
+        acquired.audio.unlink(missing_ok=True)
+
+    def _note_first_run(self, transcriber: object) -> None:
+        availability = getattr(transcriber, "available", lambda: Availability(ok=True))()
+        if isinstance(availability, Availability) and availability.ok and availability.reason:
+            note = f"{getattr(transcriber, 'name', 'transcriber')}: {availability.reason}"
+            if note not in self.notes:
+                self.notes.append(note)
+
+    def _acquire_audio(self, entry: LedgerEntry) -> Acquired | Classification:
+        """Audio acquisition belongs to the drain, per kind (§6)."""
+        audio_dir = self.ctx.instance.cache_dir / "audio"
+        match entry.kind:
+            case Kind.YOUTUBE:
+                return acquire_youtube_audio(entry, audio_dir, self.ctx.download_audio)
+            case Kind.PODCAST:
+                name = f"{entry.kind.value}-{entry.hash[:6]}.md"
+                enrichment = self.ctx.instance.enrichment_dir / entry.item / name
+                return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
+            case _:
+                return Classification(
+                    status=Status.MANUAL,
+                    reason=(
+                        f"no audio-acquisition path for kind '{entry.kind}' — "
+                        "transcription covers youtube and podcast work"
+                    ),
+                )
+
+    def _apply_acquisition_failure(self, entry: LedgerEntry, failure: Classification) -> None:
+        match failure.status:
+            case Status.BLOCKED:
+                # Transient acquisition trouble: the capability got no input.
+                # The entry stays waiting (no attempts clock) and retries
+                # next run with the reason on the parked list.
+                self.record_outcome(
+                    entry,
+                    status=Status.WAITING,
+                    needs=Need.TRANSCRIBE,
+                    reason=f"audio acquisition failed: {failure.reason}",
+                )
+            case Status.DEAD if entry.kind is Kind.PODCAST:
+                # A 404ing enclosure is often just an expired signed URL —
+                # the EPISODE is not confirmed gone. Manual, with the
+                # re-resolve route stated (§9).
+                self.record_outcome(
+                    entry,
+                    status=Status.MANUAL,
+                    reason=(
+                        f"audio enclosure gone ({failure.reason}) — requeue the unit so "
+                        "the podcast driver re-resolves it, or rescue by hand"
+                    ),
+                )
+            case Status.DEAD | Status.MANUAL:
+                self.record_outcome(entry, status=failure.status, reason=failure.reason)
+            case _:
+                raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
     def _apply(self, entry: LedgerEntry, result: Result) -> None:
         match result.status:
             case Status.DONE:
                 self._apply_done(entry, result)
             case Status.WAITING:
+                if result.body is not None:
+                    # §9: a parking driver may still have real content (a
+                    # podcast's show notes, the enclosure pointer in meta) —
+                    # written now, completed by the drain; the item is not
+                    # yet cognitive work, so the write is not an outcome.
+                    self._write_output(entry, result, count=False)
                 self.record_outcome(
                     entry, status=Status.WAITING, needs=result.needs, reason=result.reason
                 )
@@ -346,6 +543,8 @@ class _Drain:
             path=path,
             title=title if isinstance(title, str) and path is not None else None,
         )
+        if result.assets:
+            self._write_assets(self.entries[entry.hash], result.assets)
         if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
             self._media_stage(self.entries[entry.hash], result.media)
         self._admit_children(self.entries[entry.hash], result.children)
@@ -366,28 +565,108 @@ class _Drain:
 
     # -- outputs ---------------------------------------------------------
 
-    def _write_output(self, entry: LedgerEntry, result: Result) -> str:
+    def _write_output(self, entry: LedgerEntry, result: Result, *, count: bool = True) -> str:
         """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns (§12).
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
         every run by definition, and an unchanged rerun must not rewrite the
-        file (nor report the item as changed).
+        file (nor report the item as changed). ``count=False`` writes
+        without registering an item outcome (a waiting park's partial
+        content is not cognitive work yet).
         """
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / entry.item / name
         body = result.body or ""
         content = _render_enrichment(entry.url, self.ctx.today(), result.meta, body)
-        outcome = self.outcomes.setdefault(entry.item, _ItemOutcome())
-        if out.exists():
-            old = out.read_text(encoding="utf-8")
-            if _mask_fetched(old) == _mask_fetched(content):
-                return str(out.relative_to(self.ctx.instance.root))
-            outcome.changed += 1
-        else:
-            outcome.new += 1
+        existed = out.exists()
+        if existed and _mask_fetched(out.read_text(encoding="utf-8")) == _mask_fetched(content):
+            return str(out.relative_to(self.ctx.instance.root))
+        if count:
+            outcome = self.outcomes.setdefault(entry.item, _ItemOutcome())
+            if existed:
+                outcome.changed += 1
+            else:
+                outcome.new += 1
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(content, encoding="utf-8")
         return str(out.relative_to(self.ctx.instance.root))
+
+    # -- extraction assets (§6/§7) ----------------------------------------
+
+    def _write_assets(self, entry: LedgerEntry, assets: list) -> None:
+        """Write embedded assets under the §7 media caps, ledgered via: extract-asset.
+
+        Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
+        overwrite, never duplicate; the §7 caps (4 files per item, 10MB per
+        file) are shared with the media stage's downloads.
+        """
+        for index, asset in enumerate(assets):
+            name = f"{entry.hash[:6]}-asset-{index}.{asset.suggested_ext}"
+            out = self.ctx.instance.enrichment_dir / entry.item / name
+            rel = f"enrichment/{entry.item}/{name}"
+            if len(asset.data) > MEDIA_MAX_BYTES:
+                self._asset_outcome(
+                    entry, rel, status=Status.SKIPPED, reason="asset exceeds 10MB ceiling"
+                )
+                continue
+            if not out.exists() and self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
+                self._asset_outcome(
+                    entry,
+                    rel,
+                    status=Status.SKIPPED,
+                    reason=f"media cap ({MEDIA_MAX_FILES} files) reached",
+                )
+                continue
+            changed = not out.exists() or out.read_bytes() != asset.data
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(asset.data)
+            if changed:
+                self.outcomes.setdefault(entry.item, _ItemOutcome()).media += 1
+            self._asset_outcome(entry, rel, status=Status.DONE, path=rel)
+
+    def _asset_outcome(
+        self,
+        parent: LedgerEntry,
+        rel: str,
+        *,
+        status: Status,
+        path: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        unit_hash = work_hash(rel)
+        existing = self.entries.get(unit_hash)
+        if existing is not None and existing.status is status and existing.path == path:
+            return  # a rerun's unchanged asset line adds nothing to the audit trail
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=rel,  # embedded assets have no URL — the repo path is the identity
+                item=parent.item,
+                kind=parent.kind,
+                status=status,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                via="extract-asset",
+                parent=parent.hash,
+                depth=(parent.depth or 0) + 1,
+                path=path,
+                reason=reason,
+            ),
+            count=True,
+        )
+
+    def _media_file_count(self, item_id: str) -> int:
+        """Media-family files for the item — downloads and extraction assets."""
+        item_dir = self.ctx.instance.enrichment_dir / item_id
+        if not item_dir.is_dir():
+            return 0
+        return sum(
+            1
+            for path in item_dir.iterdir()
+            if path.is_file()
+            and path.suffix != ".md"
+            and (path.name.startswith("media-") or "-asset-" in path.name)
+        )
 
     # -- media stage (§7) ------------------------------------------------
 
@@ -481,7 +760,13 @@ class _Drain:
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
     def _media_slot(self, item_id: str) -> int | None:
-        """The next free media index for the item, or None at the §7 cap."""
+        """The next free media index for the item, or None at the §7 cap.
+
+        The cap is shared with extraction assets — 4 media-family files per
+        item total, whichever route wrote them.
+        """
+        if self._media_file_count(item_id) >= MEDIA_MAX_FILES:
+            return None
         item_dir = self.ctx.instance.enrichment_dir / item_id
         taken = {
             int(path.stem.split("-")[1])
@@ -621,11 +906,35 @@ class _Drain:
             for item_id, outcome in sorted(self.outcomes.items())
             if outcome.reason()
         ]
-        return {
+        payload: dict[str, object] = {
             "counts": {status.value: n for status, n in self.counts.items()},
             "items": items,
             "parked": self.parked,
         }
+        cognitive = self._cognitive_jobs()
+        if cognitive:
+            payload["cognitive"] = cognitive
+        if self.notes:
+            payload["notes"] = list(self.notes)
+        return payload
+
+    def _cognitive_jobs(self) -> list[dict[str, str]]:
+        """Waiting jobs that resolve to the cognitive floor (§6).
+
+        Listed on the report for the session — never drained by the run.
+        A waiting transcribe job is NOT one of these: transcription has no
+        cognitive floor, it waits for a mechanical provider.
+        """
+        capabilities = self.ctx.capabilities
+        if capabilities is None:
+            return []
+        return [
+            {"item": entry.item, "url": entry.url, "need": entry.needs.value}
+            for entry in self.entries.values()
+            if entry.status is Status.WAITING
+            and entry.needs is not None
+            and capabilities.is_cognitive(entry.needs, entry.format)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +956,36 @@ def run(ctx: RunContext, *, limit: int | None = None) -> str:
     drain = _Drain(ctx=ctx)
     drain.seed_from_corpus()
     drain.drain(limit=limit)
+    return surfaces.render("enrich-report", drain.report_payload())
+
+
+def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
+    """Drain the waiting/transcribe cohort through the capability (§6).
+
+    Args:
+        ctx: The run context (``--model`` overrides arrive already built
+            into ``ctx.capabilities``).
+        limit: Per-run cap — default 10 (§12), so a resurrected backlog
+            never monopolizes a machine.
+
+    Returns:
+        The rendered enrich-report for the drained units.
+    """
+    drain = _Drain(ctx=ctx)
+    # The dedicated verb is bounded by --limit alone; the full-run budget
+    # exists so `enrich run` cannot be monopolized (§12).
+    drain.transcribe_budget = None
+    drain.seed_from_corpus()
+    availability = ctx.provider_available(Need.TRANSCRIBE, None)
+    if not availability.ok:
+        drain.notes.append(f"no transcription provider available — {availability.reason}")
+        return surfaces.render("enrich-report", drain.report_payload())
+    targets = {
+        unit_hash
+        for unit_hash, entry in drain.entries.items()
+        if entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE
+    }
+    drain.drain(limit=limit, only=targets)
     return surfaces.render("enrich-report", drain.report_payload())
 
 
@@ -801,7 +1140,7 @@ def _admit_fetch(
 
 
 def status_report(ctx: RunContext) -> str:
-    """The ledger summary plus the enrichment-newer-than-digest backstop (§1)."""
+    """Ledger summary, digest backstop (§1), and the capability report (§6)."""
     entries = ledger.load(ctx.instance.ledger_path)
     counts: dict[str, int] = {}
     waiting: dict[str, int] = {}
@@ -815,7 +1154,10 @@ def status_report(ctx: RunContext) -> str:
     orphans = _digest_orphans(ctx.instance)
     if orphans:
         payload["orphans"] = orphans
-    return surfaces.render("status", payload)
+    report = surfaces.render("status", payload)
+    if ctx.capabilities is not None:
+        report += "\n" + surfaces.render("capability-report", ctx.capabilities.report_payload())
+    return report
 
 
 def _digest_orphans(instance: Instance) -> list[str]:

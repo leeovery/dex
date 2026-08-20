@@ -23,6 +23,7 @@ from dex_engine.pipeline.run import (
     no_providers,
 )
 from dex_engine.pipeline.types import (
+    Asset,
     Config,
     Instance,
     Kind,
@@ -41,7 +42,12 @@ ITEM = "2026-08-19-example-55ad7b"
 URL = "https://example.test/post"
 
 
-def write_item(instance: Instance, item_id: str = ITEM, urls: list[str] | None = None) -> Path:
+def write_item(
+    instance: Instance,
+    item_id: str = ITEM,
+    urls: list[str] | None = None,
+    media: list[str] | None = None,
+) -> Path:
     item = corpus.CorpusItem(
         id=item_id,
         source="discord",
@@ -50,6 +56,7 @@ def write_item(instance: Instance, item_id: str = ITEM, urls: list[str] | None =
         date=datetime.date(2026, 8, 19),
         urls=urls if urls is not None else [URL],
         kinds=["web"],
+        media=media if media is not None else [],
         body="the owner's note\n",
     )
     path = instance.corpus_dir / "2026" / f"{item_id}.md"
@@ -57,19 +64,36 @@ def write_item(instance: Instance, item_id: str = ITEM, urls: list[str] | None =
     return path
 
 
-def make_ctx(instance: Instance, driver: FakeDriver, **overrides) -> RunContext:
-    defaults = {
-        "instance": instance,
-        "config": Config(),
-        "drivers": [driver],
-        "today": lambda: TODAY,
-        "engine_version": "0.2.0",
-        "transport": FakeTransport({}),
-        "provider_available": no_providers,
-        "sleep": lambda _seconds: None,
-    }
-    defaults.update(overrides)
-    return RunContext(**defaults)
+def refuse_download(url, _cache_dir, _stem):
+    raise AssertionError(f"unexpected audio download of {url!r}")
+
+
+def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
+    instance: Instance,
+    driver: FakeDriver,
+    *,
+    config: Config | None = None,
+    drivers=None,
+    today=None,
+    engine_version: str = "0.2.0",
+    transport=None,
+    provider_available=no_providers,
+    capabilities=None,
+    download_audio=refuse_download,
+    sleep=None,
+) -> RunContext:
+    return RunContext(
+        instance=instance,
+        config=config if config is not None else Config(),
+        drivers=drivers if drivers is not None else [driver],
+        today=today if today is not None else (lambda: TODAY),
+        engine_version=engine_version,
+        transport=transport if transport is not None else FakeTransport({}),
+        provider_available=provider_available,
+        capabilities=capabilities,
+        download_audio=download_audio,
+        sleep=sleep if sleep is not None else (lambda _seconds: None),
+    )
 
 
 def entry_for(ctx: RunContext, url: str = URL) -> LedgerEntry:
@@ -224,6 +248,8 @@ class TestChildren:
 
 class TestParking:
     def test_waiting_parks_with_reason_until_a_provider_appears(self, instance, flippable_provider):
+        # The FlippableProvider auto-drain (§15): a waiting cohort ignores
+        # runs until available() flips, then drains through its driver.
         write_item(instance)
         calls = {"n": 0}
 
@@ -233,19 +259,19 @@ class TestParking:
                 return Result(
                     status=Status.WAITING,
                     meta={},
-                    needs=Need.TRANSCRIBE,
-                    reason="no captions available",
+                    needs=Need.EXTRACT,
+                    reason="no extractor for this format",
                 )
             return Result(status=Status.DONE, meta={}, body="b" * 400)
 
-        driver = FakeDriver(kind=Kind.YOUTUBE, fetch_fn=fetch)
+        driver = FakeDriver(fetch_fn=fetch)
         ctx = make_ctx(instance, driver, provider_available=flippable_provider)
         report = run_mod.run(ctx)
         entry = entry_for(ctx)
         assert entry.status is Status.WAITING
-        assert entry.needs is Need.TRANSCRIBE
-        assert entry.reason == "no captions available"
-        assert "no captions available" in report  # parked rows are printed (§1)
+        assert entry.needs is Need.EXTRACT
+        assert entry.reason == "no extractor for this format"
+        assert "no extractor for this format" in report  # parked rows are printed (§1)
 
         run_mod.run(ctx)  # provider still unavailable — waiting ignores runs
         assert calls["n"] == 1
@@ -317,7 +343,9 @@ class TestParking:
         assert entry.error  # scrubbed message recorded
         assert "enrich run" in report
 
-    def test_driverless_kinds_park_manual_never_crash(self, instance):
+    def test_partial_registries_park_manual_never_crash(self, instance):
+        # Every work-unit kind has a driver in the shipped registry; a
+        # registry that lacks one (tests, exotic wiring) parks honestly.
         podcast = LedgerEntry(
             hash=work_hash("https://pod.example.test/ep1"),
             url="https://pod.example.test/ep1",
@@ -332,9 +360,9 @@ class TestParking:
         run_mod.run(ctx)
         entry = ledger.load(instance.ledger_path)[podcast.hash]
         assert entry.status is Status.MANUAL
-        assert entry.reason == "no driver for kind 'podcast' yet (ships phase 3)"
+        assert entry.reason == "no driver for kind 'podcast' in this registry"
 
-    def test_file_detection_parks_waiting_extract(self, instance):
+    def test_file_detection_reroutes_and_never_reaches_the_web_driver(self, instance):
         pdf_url = "https://example.test/whitepaper"
         write_item(instance, urls=[pdf_url])
         transport = FakeTransport(
@@ -346,8 +374,7 @@ class TestParking:
         entry = ledger.load(instance.ledger_path)[work_hash(pdf_url)]
         assert entry.kind is Kind.FILE
         assert str(entry.format) == "pdf"
-        assert entry.status is Status.WAITING
-        assert entry.needs is Need.EXTRACT
+        assert entry.status is Status.MANUAL  # this registry has no file driver
         assert driver.fetched == []  # never handed to the web driver
 
 
@@ -577,6 +604,85 @@ class TestMediaStage:
         run_mod.run(ctx)
         drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
         assert drain.fetched_count(ITEM) == 2  # seed + child; media excluded
+
+
+class TestExtractAssets:
+    def asset_fetch(self, assets):
+        def fetch(_unit):
+            return Result(status=Status.DONE, meta={}, body="b" * 400, assets=list(assets))
+
+        return fetch
+
+    def test_assets_write_under_media_caps_ledgered_extract_asset(self, instance):
+        write_item(instance)
+        assets = [
+            Asset(data=b"png-bytes", suggested_ext="png"),
+            Asset(data=b"jpg-bytes", suggested_ext="jpg"),
+        ]
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        parent_hash = work_hash(URL)
+        rows = sorted(
+            (e for e in entries.values() if e.via == "extract-asset"), key=lambda e: e.url
+        )
+        assert len(rows) == 2
+        first = rows[0]
+        assert first.status is Status.DONE
+        assert first.parent == parent_hash
+        assert first.kind is Kind.WEB  # the parent's kind
+        assert first.url == f"enrichment/{ITEM}/{parent_hash[:6]}-asset-0.png"
+        assert first.path == first.url
+        assert (instance.root / first.path).read_bytes() == b"png-bytes"
+
+    def test_oversize_asset_is_skipped_with_reason(self, instance):
+        write_item(instance)
+        huge = Asset(data=b"x" * (run_mod.MEDIA_MAX_BYTES + 1), suggested_ext="png")
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch([huge])))
+        run_mod.run(ctx)
+        row = next(
+            e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"
+        )
+        assert row.status is Status.SKIPPED
+        assert "10MB" in (row.reason or "")
+        assert not (instance.root / row.url).exists()
+
+    def test_the_four_file_cap_is_shared_with_the_media_stage(self, instance):
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        for n in range(3):
+            (item_dir / f"media-{n}.png").write_bytes(b"m")  # three §7 downloads already
+        assets = [Asset(data=b"a", suggested_ext="png"), Asset(data=b"b", suggested_ext="png")]
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
+        run_mod.run(ctx)
+        rows = sorted(
+            (e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"),
+            key=lambda e: e.url,
+        )
+        assert [row.status for row in rows] == [Status.DONE, Status.SKIPPED]
+        assert "media cap" in (rows[1].reason or "")
+
+    def test_asset_reruns_overwrite_never_duplicate_or_respam_the_ledger(self, instance):
+        write_item(instance)
+        assets = [Asset(data=b"png-bytes", suggested_ext="png")]
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        requeued = dataclasses.replace(
+            entry, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-2"
+        )
+        ledger.append(instance.ledger_path, requeued)
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets))))
+        item_dir = instance.enrichment_dir / ITEM
+        asset_files = sorted(p.name for p in item_dir.glob("*-asset-*"))
+        assert asset_files == [f"{work_hash(URL)[:6]}-asset-0.png"]  # overwrite, no duplicate
+        audit = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line).get("via") == "extract-asset"
+        ]
+        assert len(audit) == 1  # the unchanged rerun added no audit line
 
 
 class TestIsDrainable:
