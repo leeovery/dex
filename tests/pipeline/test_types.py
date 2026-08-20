@@ -167,6 +167,33 @@ class TestResult:
         assert result.needs is Need.TRANSCRIBE
 
 
+class TestResultReason:
+    """Result.reason mirrors the ledger's stated-reason contract (§2/§5)."""
+
+    @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
+    def test_reason_is_required_on_deliberate_parking(self, status):
+        with pytest.raises(ValueError, match="reason"):
+            Result(status=status, meta={})
+        with pytest.raises(ValueError, match="reason"):
+            Result(status=status, meta={}, reason="")
+        assert Result(status=status, meta={}, reason="thin-extraction").reason == "thin-extraction"
+
+    def test_reason_is_optional_on_waiting_blocked_dead(self):
+        waiting = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
+        assert waiting.reason is None
+        primed = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions")
+        assert primed.reason == "no captions"
+        assert Result(status=Status.BLOCKED, meta={}, reason="HTTP 403").reason == "HTTP 403"
+        assert Result(status=Status.DEAD, meta={}).reason is None
+        assert Result(status=Status.DEAD, meta={}, reason="HTTP 404").reason == "HTTP 404"
+
+    def test_reason_is_forbidden_on_done_and_error(self):
+        with pytest.raises(ValueError, match="forbidden"):
+            Result(status=Status.DONE, meta={}, body="text", reason="unneeded")
+        with pytest.raises(ValueError, match="forbidden"):
+            Result(status=Status.ERROR, meta={}, reason="unneeded")
+
+
 class TestLedgerEntryInvariants:
     def test_minimal_queued_entry(self):
         assert entry().status is Status.QUEUED

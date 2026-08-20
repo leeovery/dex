@@ -132,6 +132,14 @@ def _validate_via(via: str) -> None:
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
 
+# The stated-reason contract (§1/§5), shared by Result and LedgerEntry:
+# manual and skipped exist only by deliberate decision, so the decision must
+# be recorded; waiting/blocked/dead may carry one; done/queued need none, and
+# error carries the scrubbed `error` field instead (ledger) or no reason at
+# all (results) — reason and error never coexist.
+_REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
+_REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
+
 # sha1(work key)[:10] — the ledger key format.
 _HASH_RE = re.compile(r"^[0-9a-f]{10}$")
 # Corpus-frontmatter vocabulary only; never work units (§3).
@@ -227,7 +235,14 @@ class Child:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Result:
-    """What a driver's ``fetch`` returns."""
+    """What a driver's ``fetch`` returns.
+
+    ``reason`` mirrors the ledger's stated-reason contract (§2/§5): required
+    when a driver returns ``manual``/``skipped`` (the driver knows why),
+    optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
+    run layer may append classifier context to it but never invents what the
+    driver knew.
+    """
 
     status: Status
     meta: dict[str, str | int | None]
@@ -235,6 +250,7 @@ class Result:
     media: list[str] = field(default_factory=list)
     children: list[Child] = field(default_factory=list)
     needs: Need | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.status not in DRIVER_STATUSES:
@@ -248,6 +264,12 @@ class Result:
             raise ValueError(
                 f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
             )
+        if self.status in _REASON_REQUIRED and not self.reason:
+            raise ValueError(
+                f"a driver returning status {self.status!r} must state its reason (§2/§5)"
+            )
+        if self.status in _REASON_FORBIDDEN and self.reason is not None:
+            raise ValueError(f"reason is forbidden on a {self.status!r} result (§2/§5)")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -274,14 +296,6 @@ class Extraction:
 # invariants, enforced here so a malformed entry cannot exist in memory.
 # Serialization happens in exactly one place: pipeline/ledger.py.
 # ---------------------------------------------------------------------------
-
-
-# The stated-reason contract (§1/§5): manual and skipped entries exist only
-# by deliberate decision, so the decision must be recorded; waiting/blocked/
-# dead may carry one; done/queued need none, and error entries carry the
-# scrubbed `error` field instead — reason and error never coexist.
-_REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
-_REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
