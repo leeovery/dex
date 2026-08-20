@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Designing Resilient Ingestion Pipelines &amp; Ledgers</title>
+  <meta property="og:image" content="https://cdn.example.test/img/pipeline-hero.png">
+  <meta property="og:title" content="Designing Resilient Ingestion Pipelines">
+</head>
+<body>
+  <header><nav><a href="https://example.test/">Home</a></nav></header>
+  <main>
+    <article>
+      <h1>Designing Resilient Ingestion Pipelines</h1>
+      <p>Every ingestion system eventually meets the same three failures: the
+      source is gone, the source is angry, and the source is lying. Treating
+      those as one failure is how pipelines rot. A ledger that records the
+      difference between a 403 challenge and a dead domain is the difference
+      between a system that heals itself and one that silently loses content
+      forever.</p>
+      <p>The trick is to keep classification in exactly one place. When seven
+      fetchers each decide what a timeout means, you have seven opinions and
+      six bugs. Centralize the mapping, test it once, and route every driver
+      through it. The full argument is laid out in
+      <a href="https://example.test/ledger-driven-design">the ledger-driven
+      design note</a> and the companion piece on
+      <a href="https://example.test/wayback-fallbacks">wayback fallbacks</a>.</p>
+      <p>Politeness matters too: per-source delays serialize the pipeline, and
+      that is fine. Synchronous code you can read beats asynchronous code you
+      can debug. The queue is a file, the state is a log, and every decision
+      leaves a line you can grep six months later when someone asks why a
+      page was never fetched.</p>
+    </article>
+  </main>
+  <footer><a href="https://example.test/about">About</a></footer>
+</body>
+</html>
