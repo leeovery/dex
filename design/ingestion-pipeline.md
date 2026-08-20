@@ -102,12 +102,21 @@ digested whole, after their children land. The only entries that survive a
 session are `waiting` / `blocked` / `error` / `manual`, each parked for a
 stated reason, each printed in the report.
 
-Mid-fetch kind discovery (a server lied to HEAD; "this is actually a PDF")
-is DEFERRED (final conformance audit): the corrected-kind child-re-entry
-mechanism is designed but unimplemented — the pre-fetch HEAD sniff catches
-the common case, and a server that lies to HEAD lands honestly in
-`manual`/thin-extraction, never silently mislabeled. The `via: "sniff"`
-vocabulary is reserved for it. Tracked in the deferred list.
+**Mid-fetch kind discovery** (a server lied to HEAD; "this is actually a
+PDF") — implemented on owner order after an initial unauthorized deferral,
+and NOT as a child (early drafts said "child-re-entry"; a child is a
+different URL — this is the same URL, same hash, changing its mind): the
+driver sniffs the fetched body (magic bytes first, via the central
+detection module — bytes decide, never content-type alone) and returns
+`Result(status: queued, redetect: Redetection(kind, format))`, identity
+only, the one sanctioned queued-from-a-driver shape. The run layer appends
+a **superseding line for the same hash** — corrected kind, `via: "sniff"`
+— last-per-hash relabels the unit in place, requeues it in-run, and any
+prior kind's output file is unlinked (the correction supersedes disk; the
+ledger keeps the history). Works in both directions (web→file,
+file→web). Loop guard is per-run state: one correction per hash per run,
+then `manual` "re-detection loop"; across runs a unit may redetect again —
+the world changes.
 
 The run report also derives a listing for **no-source items** (text-only
 and image-only captures — no URLs, no work units): they surface as
@@ -1081,8 +1090,7 @@ main as a whole, or at minimum from phase 4 downward, never bottom-first.
 
 ## 16. Deferred / out of scope (tracked on the roadmap)
 
-Mid-fetch corrected-kind child re-entry (`via: "sniff"` reserved; the
-honest-parking floor covers the gap) · Instagram driver (shape not
+Instagram driver (shape not
 agreed) · X thread walk-down · hosted
 transcription provider investigation (Groq et al) · resurfacing / reading
 queue · source removal · per-instance context instructions · S3/R2 media
