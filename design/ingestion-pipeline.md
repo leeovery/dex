@@ -732,6 +732,18 @@ the question moot).
 **Implementation standards** (from the Python craft skills in
 `.claude/skills/`; binding):
 
+- **Day-zero rule (owner ruling, 2026-08-20): no module is grandfathered.**
+  This is a spiked-and-proven system being rebuilt as a properly engineered
+  one — there is no legacy, no Chesterton's fence, no user but the owner.
+  Proven *behavior* is preserved (the inbox release-asset sequence, API
+  shapes, the exclusions contract — knowledge that was paid for on real
+  devices); its *expression* has no tenure. Every module the rewrite
+  touches or keeps — inbox, normalize, lint, sync, exclude, new included —
+  ends at the same standard as the new packages: typed, constructor-
+  injected, argparse'd, tested. When in doubt between adapting old code
+  and rewriting, rewrite — code is cheap; the standard is the asset. The
+  engine ships uniform, never 80% modern / 20% legacy.
+
 - **No import-time globals.** The old code's `ROOT = Path.cwd()` and
   config-read-at-import (behind a silent `except`) are the named
   anti-pattern. Two frozen dataclasses instead: `Instance(root)` exposing
@@ -927,10 +939,13 @@ the tree green:
 4. **Releases + migrations** — `.dex-engine-pin`, sync flow (re-exec,
    migration runner, sync report), Migration protocol + report review;
    migrations 1 and 2 (in that order — renames before requeues).
-5. **Periphery** — issue filer; skill rewrites (dex-capture, dex-run
-   restructure with ingest-item reference, lint additions);
-   dex-contract.md, README, docs/ updates per the anti-drift obligations;
-   instance rollout (sync each instance, verify migration reports).
+5. **Periphery + uniformity** — issue filer; skill rewrites (dex-capture,
+   dex-run restructure with ingest-item reference, lint additions);
+   **every remaining module brought to the day-zero standard with tests**
+   (inbox, normalize, lint, sync, exclude, new — behavior preserved,
+   expression rewritten; nothing ships legacy); dex-contract.md, README,
+   docs/ updates per the anti-drift obligations; instance rollout (sync
+   each instance, verify migration reports).
 
 Phases 1–3 are pure engine work with no instance impact; nothing ships to
 instances until phase 4 exists, because the first synced release must carry
