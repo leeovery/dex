@@ -285,6 +285,11 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     original = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
     quarantined: list[str] = []
+    # Note dedupe: superseded lines of one hash repeat the same translation
+    # verbatim (a stray title survives every audit line), so identical notes
+    # collapse to one, the multiplicity kept as a count — collapsed, never
+    # dropped.
+    note_counts: dict[str, int] = {}
     translated = 0
     for lineno, line in enumerate(original.split("\n"), start=1):
         if not line.strip():
@@ -307,10 +312,14 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
                 )
             )
             continue
-        actions.extend(line_notes)
+        for note in line_notes:
+            note_counts[note] = note_counts.get(note, 0) + 1
         if new_line != line:
             translated += 1
         out_lines.append(new_line)
+    actions.extend(
+        note if count == 1 else f"{note} (x{count})" for note, count in note_counts.items()
+    )
     # Quarantine BEFORE the main rewrite: an interruption between the two
     # writes must never lose a line. Worst case a line exists in both files;
     # the re-run's verbatim dedupe keeps the quarantine stable while the

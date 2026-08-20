@@ -365,6 +365,28 @@ class TestLedgerTranslation:
         assert ledger.load(path)["2222222222"].title is None
         assert any("stray title" in action for action in report.actions)
 
+    def test_identical_notes_collapse_to_one_with_a_count(self, tmp_path, migration):
+        # Superseded lines of one hash repeat the same translation verbatim
+        # (last-per-hash keeps the audit trail) — the report says it once,
+        # multiplicity kept, nothing dropped.
+        record = {
+            "hash": "2222222222",
+            "url": "https://a.test/t",
+            "kind": "paper",
+            "status": "error",
+            "date": "2026-05-01",
+            "title": "a paper",
+            "error": "boom",
+            "item": "2026-05-01-item-a1b2c3",
+        }
+        other = dict(record, hash="3333333333", url="https://a.test/u", title="another")
+        write_ledger(tmp_path, [record] * 8 + [other])
+        report = migration.apply(tmp_path)
+        stray = [action for action in report.actions if "stray title" in action]
+        assert len(stray) == 2  # one per distinct note, not one per line
+        assert any("(x8)" in action and "'a paper'" in action for action in stray)
+        assert any("(x" not in action and "'another'" in action for action in stray)
+
     def test_unattributable_line_quarantined_verbatim(self, tmp_path, migration):
         # No item, no path, no corpus URL hashing to it: not provably safe.
         # F3 ruling: quarantine, not in-place refusal — the main ledger must

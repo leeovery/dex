@@ -530,15 +530,21 @@ def _materialize_all(
 
 
 def _release_checks(reconciler: _Reconcile, repo: str | None, token: str | None) -> int:
-    """Self-heal the standing release and report orphaned assets, when authed."""
+    """Self-heal the standing release and report orphaned assets, when possible."""
     if token and repo:
         if _ensure_release(reconciler, repo, token, quiet_if_present=True) is None:
             return 1
         _report_orphans(reconciler, repo, token)
         return 0
+    # Two distinct causes, named apart — a misdiagnosis here sends the owner
+    # to `gh auth login` when the fix is `git remote add origin`.
+    if not token:
+        why = "no GitHub auth here"
+    else:
+        why = "no origin remote on github.com — the release checks need one"
     reconciler.seams.echo(
-        "note: no GitHub auth here — the inbox-release and orphaned-asset "
-        "checks were skipped, not passed."
+        f"note: {why} — the inbox-release and orphaned-asset checks were "
+        "skipped, not passed."
     )
     return 0
 

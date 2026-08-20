@@ -251,6 +251,27 @@ class TestReconcileModes:
         write_capture(instance, asset=None)
         gh = FakeGithub()
         assert reconcile(instance, gh.seams(token=None)) == 0
+        assert "no GitHub auth here" in gh.out
+        assert "skipped, not passed" in gh.out
+
+    def test_missing_origin_remote_is_named_not_blamed_on_auth(self, instance):
+        # Auth is fine; the repo has no origin remote — the note must send
+        # the owner to `git remote add origin`, not `gh auth login`.
+        write_capture(instance, asset=None)
+        gh = FakeGithub()
+
+        def no_remote(args):
+            if args[0] == "remote":
+                return 1, ""
+            return gh.git(args)
+
+        seams = GithubSeams(
+            api=gh.api, download=gh.download, git=no_remote,
+            token=lambda: "tok", echo=gh.lines.append,
+        )
+        assert reconcile(instance, seams) == 0
+        assert "no origin remote" in gh.out
+        assert "no GitHub auth" not in gh.out
         assert "skipped, not passed" in gh.out
 
     def test_missing_release_self_heals(self, instance):
