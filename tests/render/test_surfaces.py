@@ -231,6 +231,26 @@ class TestSyncReport:
         assert "sync — engine pinned at v0.3.0" in out
         assert "migrations applied — none (state already current)" in out
 
+    def test_unpinned_pre_first_release(self):
+        # §12: before any release tag exists, sync runs without pinning.
+        out = render(
+            "sync-report",
+            {
+                "migrations": [],
+                "skills_synced": 3,
+                "notes": ["no release tags on the remote yet — running unpinned"],
+            },
+        )
+        assert "sync — engine unpinned" in out
+        assert "no release tags on the remote yet" in out
+
+    def test_previous_without_pin_is_loud(self):
+        with pytest.raises(PayloadError, match="previous requires pin"):
+            render(
+                "sync-report",
+                {"previous": "v0.1.0", "migrations": [], "skills_synced": 0},
+            )
+
     def test_missing_skills_synced_is_loud(self):
         with pytest.raises(PayloadError, match="skills_synced"):
             render("sync-report", {"pin": "v0.3.0", "migrations": []})

@@ -440,8 +440,10 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     Payload::
 
         {
-          "pin": str,                 # the tag now pinned
-          "previous": str,            # optional: prior pin (absent = no bump)
+          "pin": str,                 # optional: the tag now pinned (absent =
+                                      #   unpinned, §12 pre-first-release mode)
+          "previous": str,            # optional: prior pin (absent = no bump;
+                                      #   requires pin)
           "migrations": [             # applied this sync, may be empty
             {"number": int, "intent": str,
              "actions": [str],                     # optional
@@ -459,57 +461,27 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     _check_keys(
         surface,
         payload,
-        required=frozenset({"pin", "migrations", "skills_synced"}),
-        optional=frozenset({"previous", "notes"}),
+        required=frozenset({"migrations", "skills_synced"}),
+        optional=frozenset({"pin", "previous", "notes"}),
     )
-    pin = _str_at(surface, payload, "pin")
+    pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
+    if previous is not None and pin is None:
+        _fail(surface, "previous requires pin — a bump lands on a pinned tag")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
     skills_synced = _int_at(surface, payload, "skills_synced")
     notes = _str_list_at(surface, payload, "notes")
 
-    if previous is not None and previous != pin:
+    if pin is None:
+        lines = ["sync — engine unpinned (no release pinned; see notes)"]
+    elif previous is not None and previous != pin:
         lines = [f"sync — pin bumped {previous} → {pin}"]
     else:
         lines = [f"sync — engine pinned at {pin}"]
     if migrations:
         lines.append(f"migrations applied — {len(migrations)}:")
         for i, migration in enumerate(migrations):
-            where = f"migrations[{i}]."
-            _check_keys(
-                surface,
-                migration,
-                required=frozenset({"number", "intent"}),
-                optional=frozenset({"actions", "skipped", "anomalies"}),
-                where=where,
-            )
-            number = _int_at(surface, migration, "number", where)
-            intent = _str_at(surface, migration, "intent", where)
-            actions = _str_list_at(surface, migration, "actions", where)
-            anomalies = _str_list_at(surface, migration, "anomalies", where)
-            skipped_entries = _obj_list_at(surface, migration, "skipped", required=False)
-            skipped: list[str] = []
-            for j, entry in enumerate(skipped_entries):
-                swhere = f"{where}skipped[{j}]."
-                _check_keys(surface, entry, required=frozenset({"what", "why"}), where=swhere)
-                skipped.append(
-                    f"{_str_at(surface, entry, 'what', swhere)} — "
-                    f"{_str_at(surface, entry, 'why', swhere)}"
-                )
-            lines.extend(
-                kernel.wrap_with_prefix(f"migration {number} — {intent}", prefix="  ", hang=2)
-            )
-            if actions:
-                lines.append(f"    actions — {len(actions)}:")
-                lines.extend(_bullets(actions, indent=6))
-            else:
-                lines.append("    actions — none")
-            if skipped:
-                lines.append(f"    skipped — {len(skipped)} (repair with judgment):")
-                lines.extend(_bullets(skipped, indent=6))
-            if anomalies:
-                lines.append(f"    anomalies — {len(anomalies)} (REVIEW REQUIRED):")
-                lines.extend(_bullets(anomalies, indent=6))
+            lines.extend(_sync_migration_lines(surface, migration, where=f"migrations[{i}]."))
     else:
         lines.append("migrations applied — none (state already current)")
     lines.append(f"skills synced: {skills_synced}")
@@ -517,6 +489,43 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         lines.append("notes:")
         lines.extend(_bullets(notes))
     return "\n".join(lines) + "\n"
+
+
+def _sync_migration_lines(
+    surface: str, migration: Mapping[str, object], *, where: str
+) -> list[str]:
+    _check_keys(
+        surface,
+        migration,
+        required=frozenset({"number", "intent"}),
+        optional=frozenset({"actions", "skipped", "anomalies"}),
+        where=where,
+    )
+    number = _int_at(surface, migration, "number", where)
+    intent = _str_at(surface, migration, "intent", where)
+    actions = _str_list_at(surface, migration, "actions", where)
+    anomalies = _str_list_at(surface, migration, "anomalies", where)
+    skipped: list[str] = []
+    for j, entry in enumerate(_obj_list_at(surface, migration, "skipped", required=False)):
+        swhere = f"{where}skipped[{j}]."
+        _check_keys(surface, entry, required=frozenset({"what", "why"}), where=swhere)
+        skipped.append(
+            f"{_str_at(surface, entry, 'what', swhere)} — "
+            f"{_str_at(surface, entry, 'why', swhere)}"
+        )
+    lines = kernel.wrap_with_prefix(f"migration {number} — {intent}", prefix="  ", hang=2)
+    if actions:
+        lines.append(f"    actions — {len(actions)}:")
+        lines.extend(_bullets(actions, indent=6))
+    else:
+        lines.append("    actions — none")
+    if skipped:
+        lines.append(f"    skipped — {len(skipped)} (repair with judgment):")
+        lines.extend(_bullets(skipped, indent=6))
+    if anomalies:
+        lines.append(f"    anomalies — {len(anomalies)} (REVIEW REQUIRED):")
+        lines.extend(_bullets(anomalies, indent=6))
+    return lines
 
 
 # ---------------------------------------------------------------------------

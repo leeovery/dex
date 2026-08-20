@@ -55,7 +55,6 @@ extend-exclude = [
     "src/dex_engine/lint.py",
     "src/dex_engine/new.py",
     "src/dex_engine/normalize.py",
-    "src/dex_engine/sync.py",
 ]
 
 [tool.ruff.lint]
@@ -108,7 +107,6 @@ exclude = [
     "src/dex_engine/lint.py",
     "src/dex_engine/new.py",
     "src/dex_engine/normalize.py",
-    "src/dex_engine/sync.py",
     "example/",
     "dist/",
 ]
