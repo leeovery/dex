@@ -512,11 +512,15 @@ class _Drain:
             case Status.DONE:
                 self._apply_done(entry, result)
             case Status.WAITING:
-                if result.body is not None:
+                if result.body is not None or result.meta.get("enclosure") is not None:
                     # §9: a parking driver may still have real content (a
                     # podcast's show notes, the enclosure pointer in meta) —
                     # written now, completed by the drain; the item is not
                     # yet cognitive work, so the write is not an outcome.
+                    # A waiting-transcribe park carrying an enclosure ALWAYS
+                    # writes its park file (§6): the drain re-fetches the
+                    # audio from that frontmatter pointer, show notes or
+                    # not — a no-notes episode without it would loop manual.
                     self._write_output(entry, result, count=False)
                 self.record_outcome(
                     entry, status=Status.WAITING, needs=result.needs, reason=result.reason

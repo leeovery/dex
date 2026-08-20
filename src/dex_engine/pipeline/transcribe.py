@@ -87,7 +87,7 @@ def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
     import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when acquiring (§14)
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    existing = next(iter(sorted(cache_dir.glob(f"{stem}.*"))), None)
+    existing = _cached_audio(cache_dir, stem)
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -102,7 +102,7 @@ def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
     except yt_dlp.utils.DownloadError as e:
         raise ProbeError(str(e)) from e
     if not path.exists():
-        fallback = next(iter(sorted(cache_dir.glob(f"{stem}.*"))), None)
+        fallback = _cached_audio(cache_dir, stem)
         if fallback is None:
             raise ProbeError("yt-dlp reported success but produced no audio file")
         path = fallback
@@ -190,7 +190,7 @@ def acquire_podcast_audio(
                 "podcast driver re-resolves it"
             ),
         )
-    notes = body.split(f"\n{_TRANSCRIPT_HEADING}\n")[0].rstrip()
+    notes = _pre_transcript(body)
     meta: dict[str, str | int | None] = {
         key: value for key, value in fields.items() if key not in ("url", "fetched")
     }
@@ -204,8 +204,43 @@ def acquire_podcast_audio(
     return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=notes)
 
 
+def _pre_transcript(body: str) -> str:
+    """The show-notes half of a park/output body — everything before the transcript.
+
+    A drained no-notes episode's body STARTS with the transcript heading;
+    the newline-anchored split below would miss it and hand the previous
+    transcript back as "notes", duplicating it on a re-drain.
+    """
+    if body == _TRANSCRIPT_HEADING or body.startswith(f"{_TRANSCRIPT_HEADING}\n"):
+        return ""
+    return body.split(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
+
+
+# yt-dlp's in-flight artifacts: `.part` bodies (also `.part-Frag…`), `.ytdl`
+# state files, and the odd `.download`/`.temp` from other tooling.
+_PARTIAL_MARKERS = (".part", ".ytdl", ".download", ".temp")
+
+
+def _is_partial(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(_PARTIAL_MARKERS) or ".part-" in lowered
+
+
 def _cached_audio(cache_dir: Path, stem: str) -> Path | None:
-    return next(iter(sorted(cache_dir.glob(f"{stem}.*"))), None)
+    """The completed cached download for ``stem`` — partials never count.
+
+    A crash mid-download leaves ``.part``/``.ytdl`` files behind; reusing
+    one would transcribe truncated audio and ledger it ``done``. Partials
+    are deleted here so the retry re-downloads from scratch (§9's
+    don't-re-download rule covers completed audio only).
+    """
+    complete: Path | None = None
+    for path in sorted(cache_dir.glob(f"{stem}.*")):
+        if _is_partial(path.name):
+            path.unlink(missing_ok=True)
+        elif complete is None:
+            complete = path
+    return complete
 
 
 def _download_enclosure(

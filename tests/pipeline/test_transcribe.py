@@ -1,5 +1,7 @@
 """Transcribe-drain tests (§6/§9): acquisition, priming, lifecycle, caps."""
 
+import re
+
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
@@ -11,6 +13,7 @@ from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.transcribe import (
     TRANSCRIBE_RUN_CAP,
     YoutubeAudio,
+    _cached_audio,
     read_enrichment,
 )
 from dex_engine.pipeline.types import Config, Format, Instance, Kind, LedgerEntry, Need, Status
@@ -208,13 +211,15 @@ class TestPodcastDrain:
     FEED_URL = "https://feeds.pods.test/engineering-distilled.rss"
     ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
 
-    def park_via_driver(self, instance) -> run_mod.RunContext:
+    def park_via_driver(self, instance, *, feed: str | None = None) -> run_mod.RunContext:
         """Run the real podcast driver so the park writes the §9 record."""
         write_item(instance, urls=[self.APPLE_URL])
         transport = FakeTransport(
             {
                 self.LOOKUP_URL: html_response(fixture_text("podcast", "itunes-lookup.json")),
-                self.FEED_URL: html_response(fixture_text("podcast", "feed.xml")),
+                self.FEED_URL: html_response(
+                    feed if feed is not None else fixture_text("podcast", "feed.xml")
+                ),
             }
         )
         ctx = make_ctx(
@@ -230,6 +235,19 @@ class TestPodcastDrain:
         driver = PodcastDriver()
         canonical = driver.canonical(self.APPLE_URL)
         return ledger.load(instance.ledger_path)[work_hash(canonical)]
+
+    def noteless_feed(self) -> str:
+        """The fixture feed with the matched episode's show notes removed."""
+        feed = fixture_text("podcast", "feed.xml")
+        return re.sub(r"\s*<description>.*?</description>", "", feed, count=1, flags=re.DOTALL)
+
+    def drain(self, instance, *, text: str = "Episode words.") -> run_mod.RunContext:
+        """One transcribe drain against a canned enclosure download."""
+        transcriber = FakeTranscriber("whisper-local", text=text, model="medium")
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        run_mod.run_transcribe(ctx)
+        return ctx
 
     def test_park_writes_show_notes_with_the_enclosure_pointer(self, instance):
         self.park_via_driver(instance)
@@ -247,6 +265,70 @@ class TestPodcastDrain:
         ctx = self.park_via_driver(instance)
         report = run_mod.run(ctx)  # a second run: nothing new
         assert "cognitive work — none" in report
+
+    def test_no_show_notes_park_still_writes_the_enclosure_pointer(self, instance):
+        # §6 (blocker regression): an episode without <description> parks
+        # with body=None — the park file must exist anyway, because the
+        # drain re-fetches audio from ITS frontmatter; without it the unit
+        # would loop manual ("re-resolve") forever.
+        self.park_via_driver(instance, feed=self.noteless_feed())
+        entry = self.entry(instance)
+        assert entry.status is Status.WAITING
+        record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        fields, body = read_enrichment(record)
+        assert fields["enclosure"] == self.ENCLOSURE
+        assert fields["title"] == "Ledgers as Work Queues"
+        assert body == ""
+
+    def test_no_show_notes_drain_succeeds_and_redrain_never_duplicates(self, instance):
+        self.park_via_driver(instance, feed=self.noteless_feed())
+        entry = self.entry(instance)
+        self.drain(instance)
+        drained = ledger.load(instance.ledger_path)[entry.hash]
+        assert drained.status is Status.DONE
+        _, body = read_enrichment(instance.root / str(drained.path))
+        assert body == "## Transcript\n\nEpisode words."
+        # Re-drain (requeue/heal): the stored transcript opens the body, so
+        # a naive notes split would hand it back as "show notes" and
+        # duplicate it in front of the fresh transcript.
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=drained.hash,
+                url=drained.url,
+                item=drained.item,
+                kind=Kind.PODCAST,
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                reason="requeued for a re-drain",
+                engine="0.2.0",
+                date=TODAY,
+            ),
+        )
+        self.drain(instance)
+        final = ledger.load(instance.ledger_path)[entry.hash]
+        assert final.status is Status.DONE
+        _, body = read_enrichment(instance.root / str(final.path))
+        assert body.count("## Transcript") == 1
+        assert body.count("Episode words.") == 1
+
+    def test_partial_download_is_deleted_and_refetched_never_reused(self, instance):
+        # A crash mid-download leaves yt-dlp-style partials in the cache;
+        # transcribing one would ledger truncated audio as done.
+        self.park_via_driver(instance)
+        entry = self.entry(instance)
+        audio_dir = instance.cache_dir / "audio"
+        audio_dir.mkdir(parents=True)
+        (audio_dir / f"{entry.hash}.mp3.part").write_bytes(b"TRUNCATED")
+        transcriber = FakeTranscriber("whisper-local", text="Episode words.", model="medium")
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        run_mod.run_transcribe(ctx)
+        assert ledger.load(instance.ledger_path)[entry.hash].status is Status.DONE
+        # The enclosure was re-fetched — the partial never reached whisper.
+        assert ("GET", self.ENCLOSURE) in transport.calls
+        assert transcriber.calls[0][0].name == f"{entry.hash}.mp3"
+        assert audio_files(instance) == []  # partial deleted, audio deleted on success
 
     def test_drain_gets_enclosure_appends_transcript_deletes_audio(self, instance):
         self.park_via_driver(instance)
@@ -416,6 +498,29 @@ class TestStatusIncludesCapabilities:
         ctx = make_ctx(instance, FakeDriver())
         report = run_mod.status_report(ctx)
         assert "capabilities" not in report
+
+
+class TestCachedAudio:
+    def test_partials_are_deleted_and_never_reused(self, tmp_path):
+        (tmp_path / "abc.m4a.part").write_bytes(b"half")
+        (tmp_path / "abc.ytdl").write_bytes(b"state")
+        assert _cached_audio(tmp_path, "abc") is None
+        assert list(tmp_path.iterdir()) == []  # crash leftovers cleared for the re-download
+
+    def test_complete_file_wins_and_partial_leftovers_are_cleared(self, tmp_path):
+        (tmp_path / "abc.m4a").write_bytes(b"full")
+        (tmp_path / "abc.m4a.part").write_bytes(b"half")
+        path = _cached_audio(tmp_path, "abc")
+        assert path is not None
+        assert path.name == "abc.m4a"
+        assert [p.name for p in tmp_path.iterdir()] == ["abc.m4a"]
+
+    def test_fragment_partials_count_as_partials(self, tmp_path):
+        (tmp_path / "abc.mp4.part-Frag001").write_bytes(b"frag")
+        assert _cached_audio(tmp_path, "abc") is None
+
+    def test_missing_cache_dir_is_simply_empty(self, tmp_path):
+        assert _cached_audio(tmp_path / "audio", "abc") is None
 
 
 class TestReadEnrichment:
