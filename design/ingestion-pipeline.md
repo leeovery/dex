@@ -844,7 +844,13 @@ Skill changes shipping with this:
   "possible restated fact — merge?" warnings at health checks, and a
   **page item-count consistency check** (frontmatter `items:` vs actual
   citations — 16 pages were silently drifting when the 2026-08-20 analysis
-  looked, caught by accident rather than mechanism).
+  looked, caught by accident rather than mechanism), and a **shortid-shaped
+  citation flag**: backticked 6-hex shortids are probable malformed
+  citations everywhere — index included — not just where full-id resolution
+  happens to fail (a 2026-08-20 dex-design run found latent shortid
+  citations in an index that had never tripped the check because no page
+  existed to fail against; the ingest reference states it plainly:
+  citations are full item ids, always).
 - **Unattended sessions never edit `state/config.json`** (or other
   owner-editable config): they surface the proposed change in the run
   report with its rationale; the owner ratifies in an attended session.
