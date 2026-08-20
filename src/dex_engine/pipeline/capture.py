@@ -177,7 +177,12 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient (§14)
     )
     corpus.write_item(target, item)
     rel = target.relative_to(instance.root)
-    return f"created {rel} — `dex enrich run` fetches its sources"
+    if urls or Kind.FILE.value in kinds:
+        return f"created {rel} — `dex enrich run` fetches its sources"
+    return (
+        f"created {rel} — no fetchable sources; describe/digest it in this session "
+        "(the run report lists it as a no-source item until digested)"
+    )
 
 
 def _url_kind(drivers: Sequence[SourceDriver]) -> Callable[[str], str]:

@@ -228,6 +228,8 @@ class _Drain:
     ctx: RunContext
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     item_paths: dict[str, Path] = field(default_factory=dict)
+    item_status: dict[str, str] = field(default_factory=dict)
+    no_source_items: list[str] = field(default_factory=list)
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
@@ -260,6 +262,7 @@ class _Drain:
         for path in sorted(self.ctx.instance.corpus_dir.glob("*/*.md")):
             item = corpus.read_item(path)
             self.item_paths[item.id] = path
+            self.item_status[item.id] = item.status
             for url in item.urls:
                 try:
                     self._seed_url(item.id, url)
@@ -942,11 +945,33 @@ class _Drain:
 
     # -- report ----------------------------------------------------------
 
+    def derive_no_source_items(self) -> None:
+        """List fresh text/image-only items the unit-driven report cannot see.
+
+        A capture with no URLs and no document media seeds nothing, so it
+        never appears among the drained units — yet its description and
+        digest are exactly the session's work. Derived on demand, never
+        seeded (a fact that shows, not work to queue): a raw item with zero
+        ledger units and no digest is cognitive work until digested.
+        """
+        sourced = {entry.item for entry in self.entries.values()}
+        self.no_source_items = [
+            item_id
+            for item_id, status in sorted(self.item_status.items())
+            if status == "raw"
+            and item_id not in sourced
+            and not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+        ]
+
     def report_payload(self) -> dict[str, object]:
         items = [
             {"id": item_id, "reason": outcome.reason()}
             for item_id, outcome in sorted(self.outcomes.items())
             if outcome.reason()
+        ]
+        items += [
+            {"id": item_id, "reason": "no-source item — awaiting description + digest"}
+            for item_id in self.no_source_items
         ]
         payload: dict[str, object] = {
             "counts": {status.value: n for status, n in self.counts.items()},
@@ -1022,6 +1047,7 @@ def run(ctx: RunContext, *, limit: int | None = None) -> str:
     drain = _Drain(ctx=ctx)
     drain.seed_from_corpus()
     drain.drain(limit=limit)
+    drain.derive_no_source_items()
     return _finish(drain)
 
 

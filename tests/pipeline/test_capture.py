@@ -100,7 +100,10 @@ class TestNoteOnly:
         path = write_capture(
             instance, "20260818-101530.md", "a standalone observation worth keeping\n"
         )
-        new(instance, path)
+        out = new(instance, path)
+        # Nothing to fetch — the confirmation must not promise a fetch.
+        assert "fetches its sources" not in out
+        assert "describe/digest" in out
         item = only_item(instance)
         assert item.kinds == ["text"]
         assert item.urls == []
@@ -139,7 +142,8 @@ class TestMediaPath:
         path = write_capture(
             instance, "20260818-101530.md", f"---\nmedia: {media_rel}\n---\n\nnote\n"
         )
-        new(instance, path)
+        out = new(instance, path)
+        assert "fetches its sources" in out  # document media DOES seed a file unit
         assert only_item(instance).kinds == ["file"]
 
     def test_unmaterialized_pointer_is_loud(self, instance):

@@ -989,3 +989,44 @@ class TestIssueFiling:
         report = run_mod.run(self._crashing_ctx(instance, FakeGh()))
         assert "issue filing failed" in report
         assert "enrich run" in report  # the report itself survived
+
+
+class TestNoSourceItems:
+    """Text/image-only captures seed nothing — the report derives them."""
+
+    def _text_item(self, instance, item_id="2026-08-19-a-thought-aaaaaa"):
+        item = corpus.CorpusItem(
+            id=item_id,
+            source="inbox",
+            channel="inbox",
+            shared_by="Lee",
+            date=datetime.date(2026, 8, 19),
+            urls=[],
+            kinds=["text"],
+            body="a standalone observation\n",
+        )
+        corpus.write_item(instance.corpus_dir / "2026" / f"{item_id}.md", item)
+        return item_id
+
+    def test_raw_text_item_surfaces_as_cognitive_work(self, instance):
+        item_id = self._text_item(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert item_id in report
+        assert "no-source item — awaiting description + digest" in report
+
+    def test_digested_item_stops_listing(self, instance):
+        item_id = self._text_item(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{item_id}.md").write_text("digested\n")
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+    def test_items_with_units_are_not_no_source(self, instance):
+        write_item(instance)  # has a URL — its units drive the report instead
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+    def test_only_the_full_run_derives_the_listing(self, instance):
+        self._text_item(instance)
+        report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report

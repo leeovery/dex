@@ -95,7 +95,10 @@ Then do a run now, whatever the host.
    work list**. Complete the per-item cognitive work
    (`references/ingest-item.md`) for *everything* it names: fresh
    captures, drained reruns, changed items, newly drained waiting
-   cohorts, and its listed cognitive jobs. Parked entries
+   cohorts, its listed cognitive jobs, and its no-source items (text or
+   image captures — nothing to fetch, everything to describe and digest).
+   Items you created this session always get the full per-item procedure
+   whether or not the report names them. Parked entries
    (waiting/blocked/manual) each show a stated reason — manual ones are
    yours to judge, per the reference's heal procedure.
 
