@@ -27,7 +27,7 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.transport import Transport, urllib_transport
 from dex_engine.render import surfaces
 
-from . import ledger
+from . import issues, ledger
 from .classify import (
     Classification,
     ProviderInputError,
@@ -75,6 +75,7 @@ __all__ = [
     "MEDIA_MAX_BYTES",
     "MEDIA_MAX_FILES",
     "RunContext",
+    "digest_orphans",
     "fetch_urls",
     "head_sniffer",
     "is_drainable",
@@ -149,6 +150,10 @@ class RunContext:
     capabilities: Capabilities | None = None
     download_audio: DownloadAudio = yt_dlp_audio
     sleep: Callable[[float], None] = time.sleep
+    # The issue filer's seams (§13): the gh runner and the CLI command the
+    # issue body names. Injected so filing tests are hermetic.
+    gh: issues.GhRunner = issues.gh_runner
+    command: str = "enrich"
 
 
 def head_sniffer(transport: Transport) -> Sniff:
@@ -232,6 +237,10 @@ class _Drain:
     # appears in the corpus `enrichment:` listing deterministically.
     written_items: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
+    # Error outcomes captured at the catch site for the issue filer (§13) —
+    # the ledger keeps only the scrubbed message; the fingerprint needs the
+    # traceback while the exception object is still in hand.
+    error_events: list[issues.ErrorEvent] = field(default_factory=list)
     sniff: Sniff | None = None
     # §12: transcription is capped per run so a resurrected backlog never
     # monopolizes a machine (the dedicated verb sets this from --limit).
@@ -373,6 +382,11 @@ class _Drain:
             self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
         except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline (§5)
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
+            self.error_events.append(
+                issues.error_event(
+                    unit_hash=entry.hash, kind=entry.kind, unit_format=entry.format, exc=e
+                )
+            )
 
     def _drive_unit(self, entry: LedgerEntry) -> None:
         driver = driver_for(entry.kind, self.ctx.drivers)
@@ -970,6 +984,30 @@ class _Drain:
 # ---------------------------------------------------------------------------
 
 
+def _finish(drain: _Drain) -> str:
+    """File this run's errors upstream (§13), then render the enrich-report.
+
+    The filer runs after the drain — it fires only on ``status: error``
+    outcomes already ledgered — and its notes/failures land on the same
+    report, so the human always knows what was reported.
+    """
+    ctx = drain.ctx
+    outcome = issues.report_errors(
+        drain.error_events,
+        enabled=ctx.config.report_issues,
+        state_dir=ctx.instance.state_dir,
+        engine_version=ctx.engine_version,
+        command=ctx.command,
+        today=ctx.today,
+        gh=ctx.gh,
+    )
+    drain.notes.extend(outcome.notes)
+    payload = drain.report_payload()
+    if outcome.filed:
+        payload["issues_filed"] = outcome.filed
+    return surfaces.render("enrich-report", payload)
+
+
 def run(ctx: RunContext, *, limit: int | None = None) -> str:
     """One full run: seed from the corpus, drain, report (§1).
 
@@ -984,7 +1022,7 @@ def run(ctx: RunContext, *, limit: int | None = None) -> str:
     drain = _Drain(ctx=ctx)
     drain.seed_from_corpus()
     drain.drain(limit=limit)
-    return surfaces.render("enrich-report", drain.report_payload())
+    return _finish(drain)
 
 
 def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
@@ -1009,12 +1047,12 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     availability = ctx.provider_available(Need.TRANSCRIBE, None)
     if not availability.ok:
         drain.notes.append(f"no transcription provider available — {availability.reason}")
-        return surfaces.render("enrich-report", drain.report_payload())
+        return _finish(drain)
     targets = {
         unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)
     }
     drain.drain(only=targets)
-    return surfaces.render("enrich-report", drain.report_payload())
+    return _finish(drain)
 
 
 def fetch_urls(
@@ -1056,7 +1094,7 @@ def fetch_urls(
         if unit_hash is not None:
             targets.add(unit_hash)
     drain.drain(only=targets)
-    return surfaces.render("enrich-report", drain.report_payload())
+    return _finish(drain)
 
 
 def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEntry:
@@ -1179,7 +1217,7 @@ def status_report(ctx: RunContext) -> str:
     payload: dict[str, object] = {"counts": counts}
     if waiting:
         payload["waiting"] = waiting
-    orphans = _digest_orphans(ctx.instance)
+    orphans = digest_orphans(ctx.instance)
     if orphans:
         payload["orphans"] = orphans
     report = surfaces.render("status", payload)
@@ -1188,8 +1226,19 @@ def status_report(ctx: RunContext) -> str:
     return report
 
 
-def _digest_orphans(instance: Instance) -> list[str]:
-    """Items whose enrichment is newer than their digest — the backstop (§1)."""
+def digest_orphans(instance: Instance) -> list[str]:
+    """Items whose enrichment is newer than their digest — the backstop (§1).
+
+    Shared by ``enrich status`` and lint's health check: both list the same
+    interrupted-session orphans, computed in one place.
+
+    Args:
+        instance: The instance.
+
+    Returns:
+        Item ids whose enrichment outputs are newer than their digest (or
+        that have outputs and no digest at all).
+    """
     orphans = []
     if not instance.enrichment_dir.is_dir():
         return orphans

@@ -36,6 +36,7 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeTransport
+from tests.pipeline.test_issues import FakeGh
 
 TODAY = datetime.date(2026, 8, 20)
 ITEM = "2026-08-19-example-55ad7b"
@@ -68,6 +69,12 @@ def refuse_download(url, _cache_dir, _stem):
     raise AssertionError(f"unexpected audio download of {url!r}")
 
 
+def refuse_gh(args):
+    # Hermetic default: the filer's soft edge (§13) turns this into an
+    # "issue filing failed" note — never a network call, never a crash.
+    raise OSError(f"no gh in tests (called with {args[:2]})")
+
+
 def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     instance: Instance,
     driver: FakeDriver,
@@ -81,6 +88,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     capabilities=None,
     download_audio=refuse_download,
     sleep=None,
+    gh=None,
 ) -> RunContext:
     return RunContext(
         instance=instance,
@@ -93,6 +101,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
         capabilities=capabilities,
         download_audio=download_audio,
         sleep=sleep if sleep is not None else (lambda _seconds: None),
+        gh=gh if gh is not None else refuse_gh,
     )
 
 
@@ -933,3 +942,44 @@ class TestStatusReport:
         ctx = make_ctx(instance, FakeDriver())
         report = run_mod.status_report(ctx)
         assert ITEM not in report
+
+
+class TestIssueFiling:
+    """The §13 wiring: error outcomes reach the filer; the report says so."""
+
+    def _crashing_ctx(self, instance, gh):
+        write_item(instance)
+
+        def fetch(_unit):
+            raise RuntimeError("engine bug")
+
+        return make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh)
+
+    def test_error_outcomes_file_and_appear_on_the_report(self, instance):
+        gh = FakeGh()
+        report = run_mod.run(self._crashing_ctx(instance, gh))
+        assert len(gh.of("create")) == 1
+        assert "reported upstream: 1 issue" in report
+        assert "filed engine issue" in report
+        assert (instance.state_dir / "issue-reports.jsonl").exists()
+
+    def test_world_failures_never_file(self, instance):
+        write_item(instance)
+        gh = FakeGh()
+        fetch = lambda _unit: Result(status=Status.BLOCKED, meta={})  # noqa: E731
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
+        assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs (§13)
+
+    def test_report_issues_false_files_nothing(self, instance):
+        gh = FakeGh()
+        ctx = dataclasses.replace(
+            self._crashing_ctx(instance, gh), config=Config(report_issues=False)
+        )
+        report = run_mod.run(ctx)
+        assert gh.calls == []
+        assert "reported upstream" not in report
+
+    def test_filer_failure_is_a_note_and_the_run_completes(self, instance):
+        report = run_mod.run(self._crashing_ctx(instance, refuse_gh))
+        assert "issue filing failed" in report
+        assert "error" in report  # the unit outcome is still ledgered and reported

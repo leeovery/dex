@@ -151,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
             engine_version=engine_version(),
             provider_available=capabilities.available,
             capabilities=capabilities,
+            command=f"enrich {args.command}",
         )
         output = _dispatch(args, ctx)
     except (ValueError, RuntimeError) as e:
