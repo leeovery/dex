@@ -5,12 +5,39 @@ where it's used: `CLAUDE.md` (structure + design in force), `docs/` (capture
 protocol, shortcut recipe, backfills), and the skill references (schema,
 state formats). This file holds what's *next*, not what is.
 
+## Bugs
+
+- **Enricher marks blocked sites dead, and heals don't reach the ledger** —
+  observed 2026-08-19 during the dex-curated install: Cloudflare challenged
+  the enricher's fetch of curatedretail.uk (transient — the same fetch
+  succeeds later from another machine), wayback had no snapshot, and the URL
+  was ledgered `dead`, a terminal status that is never retried. Root cause:
+  `fetch_blog` uses `trafilatura.fetch_url`, which returns None for every
+  failure — 403 challenge, 404, DNS — so blocked and gone are
+  indistinguishable. Claude healed in-session (hand-fetched 11 pages into
+  enrichment/) but the ledger still says `dead` with no path while the corpus
+  item says enriched — healed state and ledger disagree and nothing
+  reconciles them. Fix directions: fetch via urllib with the module's browser
+  UA so status codes are visible (trafilatura for extraction only); a
+  retryable `blocked` status for 403/429/503, `dead` reserved for DNS/404;
+  the heal procedure in dex-ingest appends a corrected ledger entry
+  (append-only, last-per-hash wins — already works mechanically, the skill
+  just never does it). Fix designed into the pipeline rewrite (blocked
+  status, urllib+UA fetch, heal-appends-ledger-entry) — see
+  `design/ingestion-pipeline.md`; open until that ships.
+
 ## Queued discussions (not yet designed)
 
 - **Self-tuning cadence** — a scheduled run can reschedule its own task
   (`update_scheduled_task` is available to desktop scheduled sessions):
-  hourly while captures flow, daily when quiet. Design once real run
-  history exists.
+  hourly while captures flow, daily when quiet. Precondition met
+  2026-08-20: first real run history exists (dex-engineering, 17 hourly
+  runs — work clustered 20:05/23:05/09:05, nine consecutive overnight
+  no-ops; owner interest confirmed). Shape: simple backoff with hard
+  bounds — tighten after working runs, stretch after consecutive no-ops,
+  snap tight when captures arrive; report each reschedule with its reason.
+  Mostly a dex-run skill rule; queue behind the pipeline rewrite and the
+  watchers design.
 
 - **App-only owner surfaces** — for an owner who lives in the Claude app,
   two query-surface candidates to test: a Cowork session on the instance
@@ -23,22 +50,13 @@ state formats). This file holds what's *next*, not what is.
   they need a clone-first run mode and a stored per-instance PAT; not
   built, not needed yet.
 
-- **Driver-based ingestion architecture** — the enricher should be an explicit
-  driver registry per source kind. Existing drivers: youtube (captions +
-  whisper), blog (trafilatura + wayback + og:image), github
-  (repos/profiles/gists/issues), arxiv, tweet (fxtwitter + t.co follow +
-  photos). PDF is the most-wanted next: the phone shortcut currently keeps
-  PDFs toggled off on iOS because ingestion wouldn't handle them properly —
-  capture side is ready the day the driver exists. To design: instagram, PDF, generic files, podcasts (audio fetch +
-  whisper + show-notes links — today a Spotify/Apple link captures only
-  the episode page), and a clean way to add more. Tweet driver: traverse threads — walking up the reply chain from a
-  shared post is cheap (each post names its parent); walking down from a
-  thread's first post needs design. Engagement counts stay unrecorded
-  (snapshot noise) except where a driver's requirements say otherwise. Also enrichment depth: the blog driver fetches only the shared URL,
-  so product sites that spread substance across landing/pricing/docs come in
-  thin — consider a site driver that pulls a small judged set of pages
-  (capped, never a crawler). This is the core value of the system — solve it
-  properly.
+- **Driver-based ingestion architecture** — DESIGNED 2026-08-19, see
+  `design/ingestion-pipeline.md`; implementation pending. Covers the driver
+  registry, PDF + office formats (anydoc), podcasts, X thread walk-up,
+  harvest subject rule (absorbs the site-driver idea), capability providers
+  (transcription/extraction/OCR), tag-pinned releases, migrations, and the
+  issue filer. Still open on this roadmap: instagram, X walk-down, engine
+  OCR providers, hosted transcription pick.
 - **Per-instance context instructions (beyond scope)** — some instances need
   more than a scope list: standing context that steers scanning, enrichment,
   and digestion (e.g. which link shapes are noise here, what the community's
@@ -77,13 +95,30 @@ state formats). This file holds what's *next*, not what is.
   store (the corpus); queue, digest, and index sections are regenerable
   views. A TUI/newsletter delivery layer waits until the digest proves what
   the owner actually wants to see.
-- **Update channel: main vs pinned releases** — instances track the engine's
-  `main` on every `bin/dex` run (uvx from git), and synced machinery follows
-  via the weekly self-triggered health check. No staged rollout: a bad push
-  reaches every instance at its next command run. Option: the shim pins a
-  release tag and `dex-sync` bumps the pin, making mint releases the actual
-  distribution channel. Trade-off: deliberate rollout vs the freshness the
-  current single-maintainer loop relies on.
+- **Update channel: main vs pinned releases** — RESOLVED 2026-08-19: tag-
+  pinned with automatic upgrades (shim pins a tag; sync bumps patch/minor,
+  runs migrations, re-syncs skills from the same tag; Mint cuts releases,
+  human-invoked). See `design/ingestion-pipeline.md` §12.
+- **Watchers — feeding sources as a first-class layer** — preliminary
+  discussion logged in `design/watchers-discussion.md` (2026-08-20): every
+  feeder (shortcut, Discord, RSS, bookmark folders, Dropbox) becomes a
+  watcher writing standard inbox captures through one shared inserter;
+  cursor position controls history-vs-forward scope; raw/ likely dies into
+  namespaced watcher scratch; staleness/availability become per-watcher
+  facts the report states. Supersedes the "backfill-source freshness"
+  idea (the 2026-08-20 overnight analysis found Discord blind for two
+  days, discoverable only by deep analysis). Design it AFTER the
+  ingestion-pipeline rewrite lands — it sits entirely upstream of that
+  design and requires no changes to it.
+
+- **Hosted transcription providers (Groq et al)** — the transcribe capability
+  ships whisper-local (default) plus an OpenAI-compatible whisper-api provider
+  (base_url-configurable; ffmpeg chunking removes upload limits, so any
+  compatible host works today). To investigate for a documented recommended
+  config: Groq whisper-large-v3-turbo, Fireworks, Deepgram (URL ingestion, no
+  upload), Cloudflare Workers AI whisper — compare price per audio hour,
+  accuracy vs local medium, rate limits.
+
 - **Paid media/object storage** — S3 or Cloudflare R2 as a media store
   replacing/augmenting LFS (LFS free tier = 1GB), and/or as capture staging.
   Storage is one substitutable ingest step — capture clients and pointers are
