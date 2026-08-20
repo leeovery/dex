@@ -47,6 +47,19 @@ class TestParser:
         with pytest.raises(SystemExit):
             build_parser().parse_args([])
 
+    def test_item_new_takes_capture_slug_shared_by(self):
+        args = build_parser().parse_args(
+            ["item", "new", "inbox/20260818-101530.md", "--slug", "great-post",
+             "--shared-by", "Lee"]
+        )
+        assert (args.command, args.item_command) == ("item", "new")
+        assert str(args.capture) == "inbox/20260818-101530.md"
+        assert (args.slug, args.shared_by) == ("great-post", "Lee")
+
+    def test_item_requires_a_subcommand(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["item"])
+
 
 class TestMain:
     def test_run_on_an_empty_instance_prints_the_report(self, instance, monkeypatch, capsys):
@@ -77,6 +90,16 @@ class TestMain:
         record = json.loads(instance.passes_path.read_text().split("\n")[0])
         assert record["stage"] == "harvest"
         assert record["rules"] == 1
+
+    def test_item_new_creates_the_item(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        capture = instance.root / "inbox" / "20260818-101530.md"
+        capture.parent.mkdir()
+        capture.write_text("https://example.test/post\n\nwhy I saved it\n")
+        main(["item", "new", str(capture), "--shared-by", "Lee"])
+        out = capsys.readouterr().out
+        assert out.startswith("created corpus/2026/")
+        assert len(list(instance.corpus_dir.glob("*/*.md"))) == 1
 
     def test_compact_prints_the_result(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

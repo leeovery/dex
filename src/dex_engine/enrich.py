@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .capabilities import Capabilities
+from .pipeline.capture import item_new
 from .pipeline.registry import build_drivers
 from .pipeline.run import (
     RunContext,
@@ -29,7 +30,7 @@ __all__ = ["build_parser", "engine_version", "main"]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass."""
+    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass · item."""
     parser = argparse.ArgumentParser(
         prog="dex-enrich",
         description="Fetch the full content behind every captured URL, ledger-driven.",
@@ -102,6 +103,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--stage", required=True, help="the completed stage (harvest / digest / wiki)"
     )
 
+    item_parser = commands.add_parser(
+        "item", help="corpus-item operations — code writes frontmatter, never freehand (§14)"
+    )
+    item_commands = item_parser.add_subparsers(dest="item_command", required=True)
+    new_parser = item_commands.add_parser(
+        "new", help="create the corpus item for a capture file (id rules + provenance)"
+    )
+    new_parser.add_argument("capture", type=Path, help="the capture file in inbox/")
+    new_parser.add_argument(
+        "--slug",
+        default=None,
+        help="judgment's slug for the id (default: derived from the note, then the URL)",
+    )
+    new_parser.add_argument(
+        "--shared-by",
+        dest="shared_by",
+        default="owner",
+        help="provenance display name (default: owner)",
+    )
+
     return parser
 
 
@@ -128,6 +149,15 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             )
         case "pass":
             return record_pass(ctx, args.item, args.stage)
+        case "item":
+            return item_new(
+                args.capture,
+                instance=ctx.instance,
+                drivers=ctx.drivers,
+                today=ctx.today,
+                slug=args.slug,
+                shared_by=args.shared_by,
+            )
         case _:
             raise RuntimeError(
                 f"unreachable: argparse enforces the command set, got {args.command}"
@@ -154,7 +184,7 @@ def main(argv: list[str] | None = None) -> None:
             command=f"enrich {args.command}",
         )
         output = _dispatch(args, ctx)
-    except (ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-enrich: {e}")
     sys.stdout.write(output if output.endswith("\n") else output + "\n")
 

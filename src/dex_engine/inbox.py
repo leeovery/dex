@@ -51,6 +51,7 @@ from typing import IO, TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from email.message import Message as HTTPMessage
 
+from .pipeline.capture import parse_capture
 from .pipeline.detect import sniff_format
 from .pipeline.types import Instance
 
@@ -210,34 +211,6 @@ def default_seams() -> GithubSeams:
 # ---------------------------------------------------------------------------
 # Capture files
 # ---------------------------------------------------------------------------
-
-
-def parse_capture(text: str) -> tuple[dict[str, str], str]:
-    """Split a capture file into (frontmatter, body), tolerantly.
-
-    Phone clients produce BOMs and CRLF line endings; both are normalized.
-    A capture without frontmatter is all body.
-
-    Args:
-        text: The capture file content.
-
-    Returns:
-        The frontmatter mapping and the body.
-    """
-    text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    if not text.startswith("---"):
-        return {}, text
-    lines = text.split("\n")
-    try:
-        end = lines[1:].index("---") + 1
-    except ValueError:
-        return {}, text
-    frontmatter: dict[str, str] = {}
-    for line in lines[1:end]:
-        if ":" in line:
-            key, _, value = line.partition(":")
-            frontmatter[key.strip()] = value.strip()
-    return frontmatter, "\n".join(lines[end + 1 :]).lstrip("\n")
 
 
 def _rewrite_pointer(path: Path, frontmatter: dict[str, str], rel: str, body: str) -> None:
