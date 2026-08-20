@@ -1030,3 +1030,69 @@ class TestNoSourceItems:
         self._text_item(instance)
         report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
         assert "no-source item" not in report
+
+
+class TestRerunPacing:
+    """Reruns pace themselves: fresh work first, then at most 50 per run."""
+
+    def _seed_reruns(self, ctx, count, start=0):
+        for i in range(start, start + count):
+            url = f"https://example.test/rerun-{i}"
+            ledger.append(
+                ctx.instance.ledger_path,
+                LedgerEntry(
+                    hash=work_hash(url),
+                    url=url,
+                    item=ITEM,
+                    kind=Kind.WEB,
+                    status=Status.QUEUED,
+                    engine="0.0.1",
+                    date=TODAY,
+                    via="migration-2",
+                    rerun=True,
+                ),
+            )
+
+    def test_fresh_work_drains_before_reruns(self, instance):
+        driver = FakeDriver()
+        ctx = make_ctx(instance, driver)
+        write_item(instance)  # one fresh URL
+        self._seed_reruns(ctx, 1)
+        run_mod.run(ctx, limit=1)  # room for exactly one unit
+        assert [unit.url for unit in driver.fetched] == [URL]  # the fresh one
+        rerun_entry = entry_for(ctx, "https://example.test/rerun-0")
+        assert rerun_entry.status is Status.QUEUED  # untouched, queues on
+
+    def test_rerun_cap_holds_and_remainder_queues_across_runs(self, instance):
+        driver = FakeDriver()
+        ctx = make_ctx(instance, driver)
+        self._seed_reruns(ctx, run_mod.RERUN_DRAIN_CAP + 5)
+        report = run_mod.run(ctx)
+        done = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                if e.status is Status.DONE]
+        queued = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                  if e.status is Status.QUEUED]
+        assert len(done) == run_mod.RERUN_DRAIN_CAP
+        assert len(queued) == 5
+        assert (
+            f"rerun cohort: {run_mod.RERUN_DRAIN_CAP} of "
+            f"{run_mod.RERUN_DRAIN_CAP + 5} drained; 5 queue for the next run"
+        ) in report
+        # The next run drains the remainder and says so.
+        second = run_mod.run(make_ctx(instance, FakeDriver()))
+        remaining = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                     if e.status is Status.QUEUED]
+        assert remaining == []
+        assert "rerun cohort: 5 of 5 drained" in second
+        assert "queue for the next run" not in second
+
+    def test_limit_binds_the_total_cap_binds_the_slice(self, instance):
+        ctx = make_ctx(instance, FakeDriver())
+        self._seed_reruns(ctx, 10)
+        report = run_mod.run(ctx, limit=3)
+        assert "rerun cohort: 3 of 10 drained; 7 queue for the next run" in report
+
+    def test_no_reruns_no_cohort_note(self, instance):
+        write_item(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "rerun cohort" not in report

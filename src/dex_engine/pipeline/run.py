@@ -74,6 +74,7 @@ __all__ = [
     "MAX_URLS_PER_ITEM",
     "MEDIA_MAX_BYTES",
     "MEDIA_MAX_FILES",
+    "RERUN_DRAIN_CAP",
     "RunContext",
     "digest_orphans",
     "fetch_urls",
@@ -94,6 +95,12 @@ MAX_URLS_PER_ITEM = 12
 
 # Blocked retries every run; the 5th failed attempt escalates to manual.
 MAX_BLOCKED_ATTEMPTS = 5
+
+# Rerun entries (migration reseeds and other rerun:true requeues) drain at
+# most this many per full run, AFTER all fresh work — automated pacing so a
+# thousand-item reseed never starves new captures or monopolizes a machine.
+# The remainder stays queued and drains across subsequent runs.
+RERUN_DRAIN_CAP = 50
 
 # Media stage.
 MEDIA_MAX_FILES = 4
@@ -230,6 +237,9 @@ class _Drain:
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
+    # Rerun-cohort pacing bookkeeping (full drains only).
+    rerun_total: int = 0
+    rerun_drained: int = 0
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
@@ -348,20 +358,47 @@ class _Drain:
     # -- the loop --------------------------------------------------------
 
     def drain(self, *, limit: int | None = None, only: set[str] | None = None) -> None:
-        """Process every drainable entry (or the ``only`` subset), FIFO."""
-        self.queue = deque(
-            unit_hash
+        """Process every drainable entry (or the ``only`` subset), FIFO.
+
+        The full drain (no ``only`` subset) runs in priority order: all
+        fresh (non-rerun) work first, uncapped, then rerun entries up to
+        :data:`RERUN_DRAIN_CAP` — the remainder stays queued for the next
+        run and the report names the cohort position. An explicit ``limit``
+        binds the whole run; the rerun cap binds the rerun slice within it.
+        Targeted drains (``only``) are owner-directed — no rerun pacing.
+        """
+        drainable = [
+            (unit_hash, entry)
             for unit_hash, entry in self.entries.items()
             if (only is None or unit_hash in only) and is_drainable(entry, self.ctx)
-        )
+        ]
+        if only is None:
+            fresh = [unit_hash for unit_hash, entry in drainable if not entry.rerun]
+            reruns = [unit_hash for unit_hash, entry in drainable if entry.rerun]
+            self.rerun_total = len(reruns)
+            self.queue = deque(fresh + reruns[:RERUN_DRAIN_CAP])
+        else:
+            self.queue = deque(unit_hash for unit_hash, _ in drainable)
         processed = 0
         while self.queue and (limit is None or processed < limit):
             entry = self.entries[self.queue.popleft()]
             if not is_drainable(entry, self.ctx):
                 continue  # superseded while queued
             processed += 1
+            if only is None and entry.rerun:
+                self.rerun_drained += 1
             self._process(entry)
+        self._note_rerun_cohort()
         self._refresh_items()
+
+    def _note_rerun_cohort(self) -> None:
+        if not self.rerun_total:
+            return
+        note = f"rerun cohort: {self.rerun_drained} of {self.rerun_total} drained"
+        remainder = self.rerun_total - self.rerun_drained
+        if remainder:
+            note += f"; {remainder} queue for the next run"
+        self.notes.append(note)
 
     def _process(self, entry: LedgerEntry) -> None:
         if entry.via == "media":
@@ -1036,10 +1073,14 @@ def _finish(drain: _Drain) -> str:
 def run(ctx: RunContext, *, limit: int | None = None) -> str:
     """One full run: seed from the corpus, drain, report.
 
+    Big rerun cohorts pace themselves: fresh work drains first, then at
+    most :data:`RERUN_DRAIN_CAP` rerun entries — no ``--limit`` babysitting
+    needed, and the report states the cohort position.
+
     Args:
         ctx: The run context.
-        limit: Optional cap on units processed this run (big cohorts drain
-            across runs).
+        limit: Optional cap on TOTAL units processed this run (the rerun
+            cap still binds the rerun slice within it).
 
     Returns:
         The rendered enrich-report.

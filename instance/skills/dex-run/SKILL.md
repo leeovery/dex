@@ -147,8 +147,11 @@ shape, or feed items through capture instead.
 
 `bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex
 exclude <file.json>`) → `bin/dex enrich run` → the per-item work at scale.
-Per-driver politeness sleeps make large cohorts slow by design; drain
-across runs with `bin/dex enrich run --limit N`. For 500+ items: work in
+Per-driver politeness sleeps make large cohorts slow by design, and the
+pacing is automatic: fresh work drains first, then rerun cohorts
+(migration reseeds and other requeues) at most 50 per run — the report
+states the cohort position, and the remainder drains itself across
+subsequent runs. No `--limit` babysitting needed. For 500+ items: work in
 waves; write work manifests BEFORE dispatching any parallel agents; every
 agent contract includes "if an input is missing, STOP — do not improvise";
 verify coverage mechanically between waves.
