@@ -150,6 +150,24 @@ class TestRedetection:
         assert result.redetect is not None
         assert result.redetect.kind is Kind.WEB
 
+    def test_signature_less_bytes_under_a_lying_html_content_type_extract(self):
+        # Bytes decide, never the content type alone: real CSV bytes served
+        # as text/html carry no HTML lead — the unit proceeds to extraction
+        # under its claimed format instead of bouncing to web.
+        transport = FakeTransport(
+            {
+                PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("stars.csv")
+                )
+            }
+        )
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=transport)
+        result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.CSV))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+        assert extractor.calls[0][1] is Format.CSV
+
     def test_real_document_magic_beats_an_html_content_type(self):
         # Magic bytes are authoritative in BOTH directions: a real PDF served
         # as text/html extracts here, never bounces back to web.
