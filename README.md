@@ -119,8 +119,7 @@ queue, append-only, last-line-per-unit): drivers per source shape, one
 central failure classifier (blocked ≠ dead, ever), capabilities with a free
 local floor (faster-whisper transcription; document extraction), and an
 issue filer that reports engine bugs upstream — sanitized by construction —
-so every instance heals through releases and sync. Design:
-`design/ingestion-pipeline.md`.
+so every instance heals through releases and sync.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the
 GitHub contents API (the phone shortcut) or committed directly by the

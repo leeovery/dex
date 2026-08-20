@@ -61,12 +61,9 @@ Then do a run now, whatever the host.
      repaired with judgment now, before other work builds on them — the
      code declined what it could not do safely and said so; do not ignore
      it. If quarantined ledger lines exist
-     (`state/enrichment-ledger.unmigrated.jsonl`), cross-check each
-     orphaned line against `state/exclusions.tsv` first — a line
-     referencing an excluded item is a confirmed loss: close it out,
-     never re-add it. Then review what remains, re-add what should live
-     via `bin/dex enrich mark <url> <status> --reason ...` (or accept the
-     loss), and empty the file.
+     (`state/enrichment-ledger.unmigrated.jsonl`), run the quarantine
+     review procedure in `references/state-formats.md` (exclusions
+     cross-check first, `enrich mark` for keepers, then empty the file).
    - **Commit the refreshed files and the pin** — this skill owns that
      commit step; sync itself never commits. Message: `sync: engine <tag>`
      (or `sync: machinery refresh` when unpinned).
@@ -137,8 +134,8 @@ Never hand-draw a table, receipt, or report — there is a surface for it.
 Write the payload JSON to `cache/`, run
 `bin/dex render --file cache/<name>.json` (the file is
 `{"surface": "<name>", "payload": {...}}`), and emit the output verbatim.
-Engine commands (`enrich run`, `sync`, `lint`) already render their own
-reports — reproduce those verbatim too.
+Engine commands (`enrich run`, `enrich status`, `sync`, `lint`) already
+render their own reports — reproduce those verbatim too.
 
 ## Backfills (exports in raw/)
 

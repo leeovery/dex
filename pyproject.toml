@@ -1,9 +1,9 @@
 [project]
 name = "dex-engine"
 # 0.0.1 is the pre-rewrite engine — its tag exists on the remote, and migration 1
-# stamps un-versioned old ledger lines with it (the retry-on-new-engine baseline,
-# §5/§12). The rewrite must therefore identify as newer than 0.0.1 even before its
-# first release, or bootstrap would pin v0.0.1 and hand instances back to the old
+# stamps un-versioned old ledger lines with it (the retry-on-new-engine baseline).
+# The rewrite must therefore identify as newer than 0.0.1 even before its first
+# release, or bootstrap would pin v0.0.1 and hand instances back to the old
 # engine. Mint bumps this at release time as usual.
 version = "0.1.0"
 description = "Shared pipeline engine for dex knowledge-base instances"
