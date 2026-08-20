@@ -1,14 +1,14 @@
-"""The anydoc extractor: firecrawl-anydoc, the default for all ten formats (§6).
+"""The anydoc extractor: firecrawl-anydoc, the default for all ten formats.
 
 Embedded assets come back as bytes — structurally, not as an anydoc quirk:
 embedded images live inside the container and have no URL. PDF is the one
 format whose conversion produces markdown directly with no document-model
 form, so PDF extraction degrades to text-only (the contract's sanctioned
 graceful degradation). Scanned/image-only documents raise
-:class:`~dex_engine.pipeline.classify.ScannedDocumentError` — the §6 OCR
+:class:`~dex_engine.pipeline.classify.ScannedDocumentError` — the OCR
 path — never an empty extraction.
 
-anydoc is lazy-imported inside methods (§14): heavy native dep, loaded only
+anydoc is lazy-imported inside methods: heavy native dep, loaded only
 when a document actually extracts.
 """
 
@@ -37,17 +37,17 @@ class AnydocExtractor:
 
     name: str = "anydoc"
 
-    def supports(self, fmt: Format) -> bool:  # noqa: ARG002 — total by design (§6)
+    def supports(self, fmt: Format) -> bool:  # noqa: ARG002 — total by design
         """True for every Format — anydoc is the all-formats default."""
         return True
 
     def available(self) -> Availability:
         """Honest availability: the anydoc wheel imports on this machine."""
         try:
-            import anydoc  # noqa: F401, PLC0415 — lazy availability probe (§14)
+            import anydoc  # noqa: F401, PLC0415 — lazy availability probe
         except (ImportError, OSError) as e:
             # A missing or broken native wheel parks jobs with the reason
-            # (§6) — it must never crash the availability check itself.
+            # — it must never crash the availability check itself.
             return Availability(
                 ok=False, reason=f"firecrawl-anydoc not importable: {scrub(str(e))}"
             )
@@ -65,11 +65,11 @@ class AnydocExtractor:
             The extraction — markdown plus embedded assets.
 
         Raises:
-            ScannedDocumentError: No extractable text — the §6 OCR path.
+            ScannedDocumentError: No extractable text — the OCR path.
             ProviderInputError: anydoc could not parse the document
                 (encrypted, malformed, truncated) — the manual path.
         """
-        import anydoc  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting (§14)
+        import anydoc  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting
 
         try:
             markdown = anydoc.to_markdown_bytes(data, format=fmt.value)
@@ -90,17 +90,17 @@ class AnydocExtractor:
         """Embedded assets via the document model; text-only degradation on any miss.
 
         PDF has no document-model form (anydoc converts it straight to
-        markdown), so PDF extractions carry no assets — sanctioned by §6:
+        markdown), so PDF extractions carry no assets — sanctioned by the contract:
         an extractor either populates assets or returns none.
         """
-        import anydoc  # noqa: PLC0415 — lazy (§14)
+        import anydoc  # noqa: PLC0415 — lazy
 
         if fmt is Format.PDF:
             return []
         try:
             document = anydoc.to_document(data, format=fmt.value)
         except anydoc.ConvertError:
-            return []  # the markdown already extracted; assets degrade gracefully (§6)
+            return []  # the markdown already extracted; assets degrade gracefully
         return [
             Asset(data=asset.data, suggested_ext=_ASSET_EXTENSIONS.get(asset.media_type, "bin"))
             for asset in document.assets

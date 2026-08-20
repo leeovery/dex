@@ -1,7 +1,7 @@
-"""The youtube driver: yt-dlp metadata + cleaned VTT captions (§3/§6).
+"""The youtube driver: yt-dlp metadata + cleaned VTT captions.
 
 The driver NEVER downloads audio — audio acquisition belongs to the
-transcribe drain (§6). No usable captions means
+transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
 capability, not given up on.
 
@@ -39,7 +39,7 @@ _LOGIN_MARKERS = ("private", "sign in", "members-only", "members only", "log in"
 _GEO_MARKERS = ("in your country", "in your region", "geo restricted", "geo-restricted")
 # `dead` needs an explicit confirmed-gone marker — anything else (transient
 # network trouble, yt-dlp extractor breakage) is the world misbehaving and
-# defaults to `blocked`: the motivating-incident class, again (§5).
+# defaults to `blocked`: the motivating-incident class, again.
 _GONE_MARKERS = ("video unavailable", "removed", "terminated")
 
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
@@ -63,7 +63,7 @@ def yt_dlp_probe(url: str) -> dict:
         ProbeError: yt-dlp reported a download error; the driver maps the
             message through the central classifier.
     """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when probing (§14)
+    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when probing
 
     options = {"quiet": True, "no_warnings": True, "skip_download": True}
     try:
@@ -158,13 +158,13 @@ class YouTubeDriver:
 def classify_probe_failure(message: str) -> Classification:
     """Map a yt-dlp failure message: code > login > geo > confirmed gone > blocked.
 
-    Public because the transcribe drain's audio acquisition (§6) fails in
+    Public because the transcribe drain's audio acquisition fails in
     exactly the same vocabulary — one classifier, not two.
 
     ``dead`` requires an explicit confirmed-gone marker. The default is
     ``blocked`` — a transient network error or an extractor-breakage message
     mislabeled ``dead`` would be terminal and never retried, which is
-    exactly the incident class this design exists to kill (§5).
+    exactly the incident class this design exists to kill.
     """
     code_match = _HTTP_CODE_RE.search(message)
     if code_match:

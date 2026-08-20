@@ -1,6 +1,6 @@
-"""The github driver: repos / profiles / gists / issues / blobs via the gh CLI (§3).
+"""The github driver: repos / profiles / gists / issues / blobs via the gh CLI.
 
-``gh`` is a declared instance dependency (§13) — an environment without it
+``gh`` is a declared instance dependency — an environment without it
 is not a dex environment, so a missing binary propagates as an engine
 error rather than being classified. API failures ARE classified: gh's
 stderr names the HTTP status (``gh: Not Found (HTTP 404)``), which routes
@@ -52,7 +52,7 @@ class GhResult:
 
 
 def run_gh(args: Sequence[str]) -> GhResult:
-    """Run ``gh`` with ``args``; a missing binary raises (engine error, §13).
+    """Run ``gh`` with ``args``; a missing binary raises (engine error).
 
     A hung invocation is the world misbehaving, not an engine bug: the
     timeout comes back as a failed GhResult so classification makes it

@@ -1,4 +1,4 @@
-"""The csv-builtin extractor: stdlib csv → markdown table, zero deps (§6).
+"""The csv-builtin extractor: stdlib csv → markdown table, zero deps.
 
 Exists so CSV extraction never depends on the anydoc wheel: the Format is
 the contract, and CSV falls back here independently if anydoc dies.

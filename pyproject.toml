@@ -1,9 +1,9 @@
 [project]
 name = "dex-engine"
 # 0.0.1 is the pre-rewrite engine — its tag exists on the remote, and migration 1
-# stamps un-versioned old ledger lines with it (the retry-on-new-engine baseline,
-# §5/§12). The rewrite must therefore identify as newer than 0.0.1 even before its
-# first release, or bootstrap would pin v0.0.1 and hand instances back to the old
+# stamps un-versioned old ledger lines with it (the retry-on-new-engine baseline).
+# The rewrite must therefore identify as newer than 0.0.1 even before its first
+# release, or bootstrap would pin v0.0.1 and hand instances back to the old
 # engine. Mint bumps this at release time as usual.
 version = "0.1.0"
 description = "Shared pipeline engine for dex knowledge-base instances"
@@ -25,6 +25,7 @@ dex-exclude = "dex_engine.exclude:main"
 dex-sync = "dex_engine.sync:main"
 dex-new = "dex_engine.new:main"
 dex-inbox = "dex_engine.inbox:main"
+dex-render = "dex_engine.render.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -51,17 +52,6 @@ test = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# Legacy modules predate the ingestion-pipeline rewrite and are replaced across
-# phases 2-5 (design/ingestion-pipeline.md §15a); they are excluded rather than
-# retrofitted. Remove each exclusion in the phase that rewrites the module.
-extend-exclude = [
-    "src/dex_engine/exclude.py",
-    "src/dex_engine/inbox.py",
-    "src/dex_engine/lint.py",
-    "src/dex_engine/new.py",
-    "src/dex_engine/normalize.py",
-]
-
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
@@ -104,14 +94,3 @@ error-on-warning = true
 possibly-unresolved-reference = "error"
 unused-ignore-comment = "warn"
 
-[tool.ty.src]
-# Same legacy-module story as the ruff excludes above.
-exclude = [
-    "src/dex_engine/exclude.py",
-    "src/dex_engine/inbox.py",
-    "src/dex_engine/lint.py",
-    "src/dex_engine/new.py",
-    "src/dex_engine/normalize.py",
-    "example/",
-    "dist/",
-]

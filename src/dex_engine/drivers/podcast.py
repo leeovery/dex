@@ -1,4 +1,4 @@
-"""The podcast driver (§9): episode links resolve to the feed's enclosure.
+"""The podcast driver: episode links resolve to the feed's enclosure.
 
 Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 
@@ -13,7 +13,7 @@ Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 The driver only ever RESOLVES: the enclosure URL and the show notes (from
 the feed — richer than the page) ride the waiting Result's meta/body, the
 run layer writes them into the enrichment file, and the transcribe drain
-acquires the audio from that recorded pointer (§6 — audio acquisition
+acquires the audio from that recorded pointer (audio acquisition
 belongs to the drain, not the drivers).
 """
 
@@ -90,8 +90,8 @@ class PodcastDriver:
 
         Deliberately narrow: bare ``/feed`` / ``/rss`` path suffixes and
         ``feeds.*`` / ``feed.*`` hosts are blog vocabulary too — the web
-        driver keeps those (phase-3 review). The long-term answer for a
-        feed-shaped URL whose resolution finds no audio is §1 corrected-kind
+        driver keeps those. The long-term answer for a
+        feed-shaped URL whose resolution finds no audio is corrected-kind
         re-entry — out of scope this phase.
         """
         host = host_of(url)
@@ -111,7 +111,7 @@ class PodcastDriver:
         return base_canonical(url)
 
     def fetch(self, unit: WorkUnit) -> Result:
-        """Resolve the episode; success parks ``waiting`` for the drain (§9)."""
+        """Resolve the episode; success parks ``waiting`` for the drain."""
         host = host_of(unit.url)
         if host == "podcasts.apple.com":
             resolved = self._resolve_apple(unit.url)
@@ -135,7 +135,7 @@ class PodcastDriver:
             reason=_RESOLVED_REASON,
         )
 
-    # -- Apple (§9): iTunes lookup → RSS → match --------------------------
+    # -- Apple: iTunes lookup → RSS → match --------------------------
 
     def _resolve_apple(self, url: str) -> "_Episode | Result":
         episode_ids = parse_qs(urlsplit(url).query).get(_APPLE_EPISODE_PARAM, [])
@@ -152,7 +152,7 @@ class PodcastDriver:
             return _manual("iTunes lookup does not know this episode — rescue by hand")
         return self._episode_from_feed(episode)
 
-    # -- Spotify (§9): og-title → iTunes search → RSS → match -------------
+    # -- Spotify: og-title → iTunes search → RSS → match -------------
 
     def _resolve_spotify(self, url: str) -> "_Episode | Result":
         page = self._transport_result(url)
@@ -166,7 +166,7 @@ class PodcastDriver:
             return search
         episode = _itunes_episode(search, title=title)
         if episode is None:
-            # The honest Spotify-exclusive outcome (§9).
+            # The honest Spotify-exclusive outcome.
             return _manual(
                 f"episode {title!r} is not in the podcast index — possibly a Spotify "
                 "exclusive; rescue via the show's own site"
@@ -187,7 +187,7 @@ class PodcastDriver:
             )
         return _episode(item, show=feed.show or episode.show)
 
-    # -- Direct RSS / indie episode pages (§9) ----------------------------
+    # -- Direct RSS / indie episode pages ----------------------------
 
     def _resolve_rss_ish(self, url: str) -> "_Episode | Result":
         body = self._transport_result(url)
@@ -444,7 +444,7 @@ def _feed_link(page: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Show notes: HTML fragment → markdown-ish text, links KEPT (§9 — their
+# Show notes: HTML fragment → markdown-ish text, links KEPT (their
 # links are harvestable like any content).
 # ---------------------------------------------------------------------------
 

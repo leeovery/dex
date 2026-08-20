@@ -1,4 +1,4 @@
-"""Detection (§1): ordered pattern match, HEAD content-type sniff when inconclusive.
+"""Detection: ordered pattern match, HEAD content-type sniff when inconclusive.
 
 Detection is authoritative for kind. URL patterns decide first, in registry
 order — a match on any specialized driver is conclusive. A URL that only the
@@ -66,7 +66,7 @@ def detect_kind(url: str, drivers: Sequence[SourceDriver]) -> Kind:
     """Pattern-only detection: first matching driver in registry order wins.
 
     This is what ``normalize`` stamps — offline and fast, no network. The
-    result is provisional forever; the ledger is authoritative (§1).
+    result is provisional forever; the ledger is authoritative.
 
     Args:
         url: The URL to detect.
@@ -83,7 +83,7 @@ def detect_kind(url: str, drivers: Sequence[SourceDriver]) -> Kind:
 
 
 def canonical_url(url: str, drivers: Sequence[SourceDriver]) -> str:
-    """Delegate canonicalization to the pattern-matched driver (§2).
+    """Delegate canonicalization to the pattern-matched driver.
 
     The result keys the ledger hash. Deliberately pattern-based: sniffing
     may reroute a URL's *kind* to ``file``, but never its key — the
@@ -112,7 +112,7 @@ def detect(url: str, drivers: Sequence[SourceDriver], *, sniff: Sniff | None = N
         # Local-file work keys are file work by construction; the FORMAT is
         # sniffed from bytes where the file is readable (the seeding layer
         # and the file driver both call sniff_format — the driver's sniff
-        # is the authoritative one, §1).
+        # is the authoritative one).
         return Detection(kind=Kind.FILE)
     matched = _match(url, drivers)
     inconclusive = matched is drivers[-1]  # only the catch-all claimed it
@@ -129,11 +129,11 @@ def _match(url: str, drivers: Sequence[SourceDriver]) -> SourceDriver:
     for driver in drivers:
         if driver.matches(url):
             return driver
-    raise LookupError(f"no driver matched {url!r} — the registry must end with the catch-all (§2)")
+    raise LookupError(f"no driver matched {url!r} — the registry must end with the catch-all")
 
 
 # ---------------------------------------------------------------------------
-# Byte-signature format detection (§1): anydoc when present, magic-number
+# Byte-signature format detection: anydoc when present, magic-number
 # fallback for the obvious ones, extension fallback for signature-less
 # formats. Only formats in the Format enum are recognized — images, audio,
 # and legacy binaries (.doc/.ppt) return None and never become file work.
@@ -177,7 +177,7 @@ def sniff_format(data: bytes, *, name: str | None = None) -> Format | None:
 
 def _anydoc_sniff(data: bytes) -> Format | None:
     try:
-        import anydoc  # noqa: PLC0415 — lazy: heavy dep, and detection must work without it (§14)
+        import anydoc  # noqa: PLC0415 — lazy: heavy dep, and detection must work without it
     except (ImportError, OSError):
         return None  # the magic fallback below carries detection
     detected = anydoc.format_from_bytes(data)

@@ -1,4 +1,4 @@
-"""Shared fixtures for the engine test suite (§15).
+"""Shared fixtures for the engine test suite.
 
 ``instance`` builds the corpus/state/enrichment/cache skeleton in a tmp
 dir; ``FakeDriver`` is the scriptable driver the pipeline tests drive;
@@ -84,11 +84,11 @@ class FlippableProvider:
 
 @pytest.fixture
 def fake_driver() -> type[FakeDriver]:
-    """The FakeDriver factory (§15)."""
+    """The FakeDriver factory."""
     return FakeDriver
 
 
 @pytest.fixture
 def flippable_provider() -> FlippableProvider:
-    """A fresh FlippableProvider, starting unavailable (§15)."""
+    """A fresh FlippableProvider, starting unavailable."""
     return FlippableProvider()

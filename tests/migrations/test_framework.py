@@ -1,4 +1,4 @@
-"""Tests for the migrations framework (§12): discovery, log, runner."""
+"""Tests for the migrations framework: discovery, log, runner."""
 
 import datetime
 import json
@@ -42,10 +42,10 @@ class FakeMigration:
 class TestDiscover:
     def test_shipped_migrations_in_numeric_order(self):
         migrations = discover(today=fixed_today, engine_version=ENGINE)
-        assert [m.number for m in migrations] == [1, 2]
+        assert [m.number for m in migrations] == [1, 2, 3]
 
     def test_intents_are_single_line_and_stated(self):
-        # The sync-report surface requires single-line intents (§12).
+        # The sync-report surface requires single-line intents.
         for migration in discover(today=fixed_today, engine_version=ENGINE):
             assert migration.intent
             assert "\n" not in migration.intent
@@ -76,7 +76,7 @@ class TestAppliedLog:
         assert record == {"number": 1, "engine": "0.5.0", "date": "2026-08-20"}
 
     def test_union_merged_duplicates_collapse(self, tmp_path):
-        # git merge=union can duplicate whole lines and interleave orders (§4).
+        # git merge=union can duplicate whole lines and interleave orders.
         path = log_path(tmp_path)
         line1 = json.dumps({"number": 1, "engine": "0.4.0", "date": "2026-08-01"})
         line2 = json.dumps({"number": 2, "engine": "0.5.0", "date": "2026-08-20"})
@@ -159,5 +159,5 @@ class TestRunPending:
 
     def test_default_discovery_runs_shipped_migrations_on_a_fresh_instance(self, tmp_path):
         applied = run_pending(tmp_path, today=fixed_today, engine_version=ENGINE)
-        assert [a.number for a in applied] == [1, 2]
-        assert read_applied(log_path(tmp_path)) == {1, 2}
+        assert [a.number for a in applied] == [1, 2, 3]
+        assert read_applied(log_path(tmp_path)) == {1, 2, 3}

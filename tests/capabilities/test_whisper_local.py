@@ -1,4 +1,4 @@
-"""Tests for whisper-local: fake model seams; the real model is live-only (§15)."""
+"""Tests for whisper-local: fake model seams; the real model is live-only."""
 
 import math
 import struct
@@ -39,7 +39,7 @@ class TestAvailability:
         assert local(FakeModel([])).available().reason == ""
 
     def test_uncached_model_is_available_with_the_first_run_note(self):
-        # §6: the first run downloads the model — availability holds, and
+        # The first run downloads the model — availability holds, and
         # the note lets the report explain a slow first transcription.
         availability = local(FakeModel([]), cached=False).available()
         assert availability.ok is True
@@ -76,7 +76,7 @@ class TestTranscribe:
 
     def test_decode_failure_is_bad_input(self):
         # PyAV surfaces corrupt audio as OSError/ValueError during the lazy
-        # segment iteration — bad input, the manual path (§5).
+        # segment iteration — bad input, the manual path.
         model = FakeModel([], raise_=ValueError("Invalid data found when processing input"))
         with pytest.raises(ProviderInputError, match="could not decode"):
             local(model).transcribe(Path("/audio/corrupt.mp3"), "")
@@ -95,7 +95,7 @@ class TestTranscribe:
 
     def test_hf_rate_limit_keeps_the_job_waiting(self):
         # An HF 429/5xx during the model download is an availability
-        # failure (§6) — it must park waiting, never reach the run loop's
+        # failure — it must park waiting, never reach the run loop's
         # broad except as an "engine bug". Named explicitly: the OSError
         # ancestry of hf-hub's errors is a transport detail.
         import httpx  # noqa: PLC0415 — heavy transitive dep, loaded only for this pin

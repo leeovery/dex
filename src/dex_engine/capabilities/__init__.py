@@ -1,4 +1,4 @@
-"""Capability registries (§6): per-need provider resolution, cognitive last.
+"""Capability registries: per-need provider resolution, cognitive last.
 
 Resolution is **per format / per need, first available *mechanical*
 provider wins**, order set by instance config (``providers`` in
@@ -11,7 +11,7 @@ missing key or an unsupported format.
 
 The typed provider tuples on :class:`Capabilities` are the Protocol-
 conformance point for providers, exactly as the driver registry literal is
-for drivers (§2).
+for drivers.
 """
 
 from collections.abc import Sequence
@@ -31,7 +31,7 @@ COGNITIVE = "cognitive"
 
 # Mechanical provider order per capability, before instance-config
 # reordering. anydoc first: the all-formats default; csv-builtin is CSV's
-# independent fallback (§6). OCR has no mechanical providers yet.
+# independent fallback. OCR has no mechanical providers yet.
 DEFAULT_PROVIDER_ORDER: dict[Need, tuple[str, ...]] = {
     Need.TRANSCRIBE: ("whisper-local", "whisper-api"),
     Need.EXTRACT: ("anydoc", "csv-builtin"),
@@ -55,7 +55,7 @@ class Capabilities:
 
     @classmethod
     def build(cls, config: Config, *, model: str | None = None) -> "Capabilities":
-        """Build the registries from instance config (§6).
+        """Build the registries from instance config.
 
         Args:
             config: The instance config — provider order, transcribe model,
@@ -69,7 +69,7 @@ class Capabilities:
         Raises:
             ValueError: Config names an unknown provider, or tries to place
                 ``cognitive`` (its position is not configurable — always
-                last, §6).
+                last).
         """
         # Deferred so building a Capabilities object stays cheap on cold
         # paths that never transcribe.
@@ -77,7 +77,7 @@ class Capabilities:
         from .transcribe.whisper_local import WhisperLocal  # noqa: PLC0415
 
         transcribe_model = model or config.transcribe_model
-        # The API-side model name has its own config key (§6) — local size
+        # The API-side model name has its own config key — local size
         # names never leak into it; per-call --model overrides both.
         api_model = model or config.transcribe_api_model
         transcribers: dict[str, Transcriber] = {
@@ -98,7 +98,7 @@ class Capabilities:
             ocr_providers=_ordered(Need.OCR, {}, config),
         )
 
-    # -- resolution (§6): first available mechanical provider wins --------
+    # -- resolution: first available mechanical provider wins --------
 
     def transcriber(self) -> Transcriber | None:
         """The winning transcriber, or None (transcription has no floor)."""
@@ -156,7 +156,7 @@ class Capabilities:
                 assert_never(need)
 
     def is_cognitive(self, need: Need, fmt: Format | None = None) -> bool:
-        """Whether this job resolves to the cognitive floor (§6).
+        """Whether this job resolves to the cognitive floor.
 
         Such jobs surface on the run report for the session; a waiting
         ``transcribe`` job never does — transcription has no cognitive
@@ -170,7 +170,7 @@ class Capabilities:
             case _:
                 assert_never(need)
 
-    # -- the capability report surface (§6) --------------------------------
+    # -- the capability report surface --------------------------------
 
     def report_payload(self) -> dict[str, object]:
         """The ``capability-report`` payload: active provider, dormant upgrades."""
@@ -200,7 +200,7 @@ def _ordered(need: Need, providers: dict[str, _P], config: Config) -> tuple[_P, 
     if COGNITIVE in configured:
         raise ValueError(
             f"providers.{need.value}: 'cognitive' is not configurable — the cognitive "
-            "floor is always last in resolution order (§6)"
+            "floor is always last in resolution order"
         )
     unknown = sorted(set(configured) - set(providers))
     if unknown:

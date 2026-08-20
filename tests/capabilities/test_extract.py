@@ -12,7 +12,7 @@ from tests.capabilities.conftest import fixture_bytes
 
 
 class TestAnydoc:
-    """Real anydoc over tiny committed fixtures — local, no network (§15)."""
+    """Real anydoc over tiny committed fixtures — local, no network."""
 
     def test_supports_every_format(self):
         extractor = AnydocExtractor()
@@ -20,7 +20,7 @@ class TestAnydoc:
 
     def test_available_on_this_machine(self):
         # The wheel is a core dependency; a red bar here means the platform
-        # verification (§16) regressed.
+        # verification regressed.
         assert AnydocExtractor().available().ok is True
 
     def test_docx_extracts_markdown_and_embedded_asset_bytes(self):
@@ -29,11 +29,11 @@ class TestAnydoc:
         assert len(extraction.assets) == 1
         asset = extraction.assets[0]
         assert asset.suggested_ext == "png"
-        assert asset.data.startswith(b"\x89PNG")  # bytes — the only possible form (§6)
+        assert asset.data.startswith(b"\x89PNG")  # bytes — the only possible form
 
     def test_pdf_extracts_text_with_no_assets(self):
         # PDF has no document-model form in anydoc: text-only degradation
-        # is the §6 contract, not a bug.
+        # is the contract, not a bug.
         extraction = AnydocExtractor().extract(fixture_bytes("paper.pdf"), Format.PDF)
         assert "Hello PDF fixture" in extraction.markdown
         assert extraction.assets == []
@@ -95,7 +95,7 @@ class TestCognitiveFloors:
 
     @pytest.mark.parametrize("floor", [CognitiveExtractor(), CognitiveOcr()])
     def test_mechanical_drain_is_an_engine_bug(self, floor):
-        # §6: enrich run never "drains" the cognitive provider — the session
+        # enrich run never "drains" the cognitive provider — the session
         # does these jobs with eyes. A mechanical call is a loud bug.
         with pytest.raises(RuntimeError, match="never drained mechanically"):
             floor.extract(b"data", Format.PDF)

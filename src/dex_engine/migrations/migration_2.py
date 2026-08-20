@@ -1,10 +1,10 @@
-"""Migration 2 — rerun seed (§12): requeue two known-deficient cohorts.
+"""Migration 2 — rerun seed: requeue two known-deficient cohorts.
 
 Two fixes shipped with the rewrite that make old stored enrichments
 deficient:
 
 - **web**: the old extractor stripped hyperlinks; the rewrite keeps them
-  (links are harvest input, §10);
+  (links are harvest input);
 - **x**: thread walk-up did not exist; a stored single post may have been a
   thread, and the rerun walks up and re-harvests.
 
@@ -15,13 +15,13 @@ migration 1 stamps un-versioned old lines ``engine: 0.0.1``, the only
 version the pre-rewrite engine ever shipped as; entries written by the
 rewritten engine always carry a newer version. Only ``done`` entries are
 seeded — old ``error`` entries already retry under the new-engine rule, and
-``manual`` entries stay parked for judgment (§12).
+``manual`` entries stay parked for judgment.
 
 The seed is queue seeding with provenance, one of the two permitted acts:
 the existing URL-keyed work unit re-enters as ``{status: queued, rerun:
 true, via: migration-2}`` — a real URL through the front door; the pipeline
 does the actual work with current code. Idempotent: seeds append to the
-ledger, last-per-hash wins (§4), so a hash whose latest line is already the
+ledger, last-per-hash wins, so a hash whose latest line is already the
 seed is no longer ``done`` and is never seeded twice.
 """
 
@@ -70,20 +70,20 @@ def build(
     if parse_version(engine_version) == _PRE_REWRITE:
         raise MigrationError(
             f"migration 2 refuses to run as engine {engine_version!r}: that version is "
-            "the pre-rewrite marker (migration 1's stamp, §12) — seeds stamped with it "
+            "the pre-rewrite marker (migration 1's stamp) — seeds stamped with it "
             "would corrupt their own membership test; a rewrite engine is >= 0.1.0"
         )
     return RerunSeed(today=today, engine_version=engine_version)
 
 
 class RerunSeed:
-    """Migration 2 (§12): see the module docstring."""
+    """Migration 2: see the module docstring."""
 
     number = NUMBER
     intent = INTENT
 
     def __init__(self, *, today: Callable[[], datetime.date], engine_version: str) -> None:
-        """Seeds are stamped with the injected clock and running engine (§14)."""
+        """Seeds are stamped with the injected clock and running engine."""
         self._today = today
         self._engine_version = engine_version
 

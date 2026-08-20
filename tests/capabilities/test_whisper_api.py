@@ -1,4 +1,4 @@
-"""Tests for whisper-api: hermetic via fake transport + fake ffmpeg runner (§15)."""
+"""Tests for whisper-api: hermetic via fake transport + fake ffmpeg runner."""
 
 import json
 import subprocess
@@ -118,7 +118,7 @@ class TestTranscribe:
         assert call["bytes"] == b"chunk-0-audio"
 
     def test_chunks_concatenate_with_prompt_continuity(self, tmp_path):
-        # §6: ~20-min segments, each transcribed with the running
+        # ~20-min segments, each transcribed with the running
         # transcript's tail priming the next, transcripts concatenated.
         audio = tmp_path / "long.mp3"
         audio.write_bytes(b"x")
@@ -148,7 +148,7 @@ class TestTranscribe:
     @pytest.mark.parametrize("status", [401, 403, 429, 500, 503])
     def test_other_http_failures_keep_the_job_waiting(self, tmp_path, status):
         # Auth, rate limits, outages: the capability is not truly available
-        # (§6) — the job stays waiting with the reason, retried next run.
+        # — the job stays waiting with the reason, retried next run.
         audio = tmp_path / "a.mp3"
         audio.write_bytes(b"x")
         post = FakePost([(status, b"")])
@@ -200,7 +200,7 @@ class TestTranscribe:
 
     def test_missing_ffmpeg_binary_keeps_the_job_waiting(self, tmp_path):
         # An OSError from the runner means the BINARY is broken — an
-        # availability failure discovered at call time (§6), never a
+        # availability failure discovered at call time, never a
         # judgment on the audio.
         audio = tmp_path / "fine.mp3"
         audio.write_bytes(b"x")

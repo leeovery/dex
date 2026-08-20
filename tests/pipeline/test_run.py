@@ -1,4 +1,4 @@
-"""Tests for pipeline/run.py: the orchestrator, with fake drivers (§15)."""
+"""Tests for pipeline/run.py: the orchestrator, with fake drivers."""
 
 import dataclasses
 import datetime
@@ -7,9 +7,14 @@ import os
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dex_engine import corpus
+from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import HttpResponse
+from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
@@ -24,6 +29,7 @@ from dex_engine.pipeline.run import (
 )
 from dex_engine.pipeline.types import (
     Asset,
+    Child,
     Config,
     Instance,
     Kind,
@@ -34,8 +40,10 @@ from dex_engine.pipeline.types import (
     Status,
 )
 from dex_engine.pipeline.urls import work_hash
+from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.conftest import FakeDriver
-from tests.drivers.conftest import FakeTransport
+from tests.drivers.conftest import FakeTransport, fixture_text
+from tests.pipeline.test_issues import FakeGh
 
 TODAY = datetime.date(2026, 8, 20)
 ITEM = "2026-08-19-example-55ad7b"
@@ -68,6 +76,12 @@ def refuse_download(url, _cache_dir, _stem):
     raise AssertionError(f"unexpected audio download of {url!r}")
 
 
+def refuse_gh(args):
+    # Hermetic default: the filer's soft edge turns this into an
+    # "issue filing failed" note — never a network call, never a crash.
+    raise OSError(f"no gh in tests (called with {args[:2]})")
+
+
 def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     instance: Instance,
     driver: FakeDriver,
@@ -81,6 +95,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     capabilities=None,
     download_audio=refuse_download,
     sleep=None,
+    gh=None,
 ) -> RunContext:
     return RunContext(
         instance=instance,
@@ -93,6 +108,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
         capabilities=capabilities,
         download_audio=download_audio,
         sleep=sleep if sleep is not None else (lambda _seconds: None),
+        gh=gh if gh is not None else refuse_gh,
     )
 
 
@@ -147,7 +163,7 @@ class TestSeedAndDone:
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx, limit=2)
         statuses = sorted(e.status.value for e in ledger.load(instance.ledger_path).values())
-        assert statuses == ["done", "done", "queued"]  # the cohort drains across runs (§12)
+        assert statuses == ["done", "done", "queued"]  # the cohort drains across runs
         run_mod.run(ctx)
         statuses = {e.status for e in ledger.load(instance.ledger_path).values()}
         assert statuses == {Status.DONE}
@@ -223,7 +239,7 @@ class TestChildren:
         assert capped.depth == MAX_DEPTH + 1
         fetched = [e for e in entries.values() if e.status is Status.DONE]
         assert len(fetched) == MAX_DEPTH + 1  # depths 0..4 fetched, 5 refused
-        assert "depth cap" not in report  # judgment-drift signal, not user-facing (§1)
+        assert "depth cap" not in report  # judgment-drift signal, not user-facing
 
     def test_url_cap_fires_per_item_and_is_recorded(self, instance):
         write_item(instance, urls=["https://hub.test/root"])
@@ -248,7 +264,7 @@ class TestChildren:
 
 class TestParking:
     def test_waiting_parks_with_reason_until_a_provider_appears(self, instance, flippable_provider):
-        # The FlippableProvider auto-drain (§15): a waiting cohort ignores
+        # The FlippableProvider auto-drain: a waiting cohort ignores
         # runs until available() flips, then drains through its driver.
         write_item(instance)
         calls = {"n": 0}
@@ -271,7 +287,7 @@ class TestParking:
         assert entry.status is Status.WAITING
         assert entry.needs is Need.EXTRACT
         assert entry.reason == "no extractor for this format"
-        assert "no extractor for this format" in report  # parked rows are printed (§1)
+        assert "no extractor for this format" in report  # parked rows are printed
 
         run_mod.run(ctx)  # provider still unavailable — waiting ignores runs
         assert calls["n"] == 1
@@ -331,7 +347,7 @@ class TestParking:
         assert len(driver.fetched) == 2
 
     def test_engine_bug_after_the_fetch_ledgers_error_never_aborts(self, instance):
-        # The per-unit try covers ALL per-unit processing (§5): here the
+        # The per-unit try covers ALL per-unit processing: here the
         # OUTPUT WRITE fails (the item's enrichment path is a file), and the
         # run must ledger `error` and carry on.
         write_item(instance)
@@ -414,6 +430,65 @@ class TestRerun:
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
         assert "cognitive work — none" in report
 
+    @given(
+        pages=st.dictionaries(
+            keys=st.integers(min_value=0, max_value=30),
+            values=st.text(alphabet="abcdefgh .\n", min_size=1, max_size=120),
+            min_size=1,
+            max_size=4,
+        )
+    )
+    @settings(max_examples=20, deadline=None)
+    def test_identical_rerun_is_byte_idempotent(self, tmp_path_factory, pages):
+        # The property behind the fixed examples above: over generated
+        # ledgers and fetch results, an identical rerun leaves every output
+        # byte-identical (no rewrite at all) and mints no new units — only
+        # audit-trail lines for hashes that already exist.
+        root = tmp_path_factory.mktemp("rerun-property")
+        instance = Instance(root=root)
+        for directory in (
+            instance.corpus_dir,
+            instance.state_dir,
+            instance.enrichment_dir,
+            instance.cache_dir,
+        ):
+            directory.mkdir()
+        urls = {f"https://example.test/p{n}": body for n, body in pages.items()}
+        write_item(instance, urls=list(urls))
+
+        def fetch(unit):
+            return Result(status=Status.DONE, meta={"title": "t"}, body=urls[unit.url])
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        item_dir = instance.enrichment_dir / ITEM
+        snapshot = {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in item_dir.iterdir()
+        }
+        before = ledger.load(instance.ledger_path)
+        for entry in before.values():
+            ledger.append(
+                instance.ledger_path,
+                dataclasses.replace(
+                    entry,
+                    status=Status.QUEUED,
+                    path=None,
+                    title=None,
+                    rerun=True,
+                    via="migration-2",
+                ),
+            )
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        after = ledger.load(instance.ledger_path)
+        assert {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in item_dir.iterdir()
+        } == snapshot
+        assert set(after) == set(before)  # no new units minted, audit lines only
+        assert all(entry.status is Status.DONE for entry in after.values())
+
     def test_changed_rerun_overwrites_in_place_never_duplicates(self, instance):
         write_item(instance)
         body = {"text": "first body " * 40}
@@ -455,7 +530,7 @@ class TestMediaStage:
         entries = ledger.load(instance.ledger_path)
         media = entries[work_hash(self.IMG1)]
         assert media.via == "media"
-        assert media.kind is Kind.X  # the parent's kind (§7)
+        assert media.kind is Kind.X  # the parent's kind
         assert media.parent == work_hash(URL)
         assert media.status is Status.DONE
         assert media.path == f"enrichment/{ITEM}/media-0.png"
@@ -529,7 +604,7 @@ class TestMediaStage:
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
 
     def test_media_entries_are_born_queued_before_the_download(self, instance):
-        # §1: entries from birth — a crash mid-download must leave a queued
+        # Entries exist from birth — a crash mid-download must leave a queued
         # via:media line the next run's redrain path picks up.
         write_item(instance)
         transport = FakeTransport(
@@ -613,6 +688,19 @@ class TestExtractAssets:
 
         return fetch
 
+    def test_assets_do_not_count_toward_the_url_cap(self, instance):
+        # The 12-URL cap bounds fetched PAGES; asset entries are byte-writes
+        # of embedded images — a document rich in assets must not spend the
+        # item's URL budget.
+        write_item(instance)
+        assets = [Asset(data=b"png", suggested_ext="png"), Asset(data=b"jpg", suggested_ext="jpg")]
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
+        run_mod.run(ctx)
+        drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
+        assert drain.fetched_count(ITEM) == 1  # the page alone; both assets excluded
+        ledgered = ledger.load(ctx.instance.ledger_path)
+        assert sum(1 for e in ledgered.values() if e.via == "extract-asset") == 2
+
     def test_assets_write_under_media_caps_ledgered_extract_asset(self, instance):
         write_item(instance)
         assets = [
@@ -652,7 +740,7 @@ class TestExtractAssets:
         item_dir = instance.enrichment_dir / ITEM
         item_dir.mkdir(parents=True)
         for n in range(3):
-            (item_dir / f"media-{n}.png").write_bytes(b"m")  # three §7 downloads already
+            (item_dir / f"media-{n}.png").write_bytes(b"m")  # three media downloads already
         assets = [Asset(data=b"a", suggested_ext="png"), Asset(data=b"b", suggested_ext="png")]
         ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
         run_mod.run(ctx)
@@ -826,7 +914,7 @@ class TestVerbs:
     def test_mark_done_carries_the_prior_outputs_forward(self, instance):
         # A heal never erases what it does not correct: re-marking a done
         # entry (or overriding just its path) keeps the recorded outputs.
-        # (A non-done line cannot HOLD path/title under §5, so a heal from
+        # (A non-done line cannot HOLD path/title under the schema, so a heal from
         # such a line has nothing to carry — the audit trail keeps history.)
         write_item(instance)
         ctx = make_ctx(instance, FakeDriver())  # default fetch records path + title "t"
@@ -920,6 +1008,37 @@ class TestStatusReport:
         assert "2026-08-19-orphan-abcdef" in report
         assert "interrupted-session backstop" in report
 
+    def test_item_view_lists_every_unit_with_provenance(self, instance):
+        write_item(instance)
+
+        def fetch(unit):
+            if unit.depth == 0:
+                return Result(
+                    status=Status.DONE,
+                    meta={"title": "t"},
+                    body="substantial body " * 30,
+                    children=[Child(url="https://example.test/child", via="harvest")],
+                )
+            return Result(
+                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
+            )
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        report = run_mod.status_report(ctx, item_id=ITEM)
+        assert report.startswith(f"item {ITEM} — 2 units")
+        assert "done" in report
+        assert f"→ enrichment/{ITEM}/web-" in report
+        assert "waiting" in report
+        assert "needs transcribe" in report
+        assert "(via harvest, depth" in report
+        assert "capabilities" not in report  # a ledger query, not the summary
+
+    def test_item_view_without_units_is_honest(self, instance):
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.status_report(ctx, item_id="2026-08-19-note-aaaaaa")
+        assert "no ledger work units" in report
+
     def test_digested_items_are_not_orphans(self, instance):
         item_dir = instance.enrichment_dir / ITEM
         item_dir.mkdir()
@@ -933,3 +1052,402 @@ class TestStatusReport:
         ctx = make_ctx(instance, FakeDriver())
         report = run_mod.status_report(ctx)
         assert ITEM not in report
+
+
+class TestIssueFiling:
+    """The filer wiring: error outcomes reach it; the report says so."""
+
+    def _crashing_ctx(self, instance, gh):
+        write_item(instance)
+
+        def fetch(_unit):
+            raise RuntimeError("engine bug")
+
+        return make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh)
+
+    def test_error_outcomes_file_and_appear_on_the_report(self, instance):
+        gh = FakeGh()
+        report = run_mod.run(self._crashing_ctx(instance, gh))
+        assert len(gh.of("create")) == 1
+        assert "reported upstream: 1 issue" in report
+        assert "filed engine issue" in report
+        assert (instance.state_dir / "issue-reports.jsonl").exists()
+
+    def test_world_failures_never_file(self, instance):
+        write_item(instance)
+        gh = FakeGh()
+        fetch = lambda _unit: Result(status=Status.BLOCKED, meta={})  # noqa: E731
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
+        assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs
+
+    def test_report_issues_false_files_nothing(self, instance):
+        gh = FakeGh()
+        ctx = dataclasses.replace(
+            self._crashing_ctx(instance, gh), config=Config(report_issues=False)
+        )
+        report = run_mod.run(ctx)
+        assert gh.calls == []
+        assert "reported upstream" not in report
+
+    def test_filer_failure_is_a_note_and_the_run_completes(self, instance):
+        report = run_mod.run(self._crashing_ctx(instance, refuse_gh))
+        assert "issue filing failed" in report
+        assert "error" in report  # the unit outcome is still ledgered and reported
+
+    def test_torn_memory_never_loses_the_run_report(self, instance):
+        (instance.state_dir / "issue-reports.jsonl").write_text('{"note": "torn"}\n')
+        report = run_mod.run(self._crashing_ctx(instance, FakeGh()))
+        assert "issue filing failed" in report
+        assert "enrich run" in report  # the report itself survived
+
+
+class TestNoSourceItems:
+    """Text/image-only captures seed nothing — the report derives them."""
+
+    def _text_item(self, instance, item_id="2026-08-19-a-thought-aaaaaa"):
+        item = corpus.CorpusItem(
+            id=item_id,
+            source="inbox",
+            channel="inbox",
+            shared_by="Lee",
+            date=datetime.date(2026, 8, 19),
+            urls=[],
+            kinds=["text"],
+            body="a standalone observation\n",
+        )
+        corpus.write_item(instance.corpus_dir / "2026" / f"{item_id}.md", item)
+        return item_id
+
+    def test_raw_text_item_surfaces_as_cognitive_work(self, instance):
+        item_id = self._text_item(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert item_id in report
+        assert "no-source item — awaiting description + digest" in report
+
+    def test_digested_item_stops_listing(self, instance):
+        item_id = self._text_item(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{item_id}.md").write_text("digested\n")
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+    def test_items_with_units_are_not_no_source(self, instance):
+        write_item(instance)  # has a URL — its units drive the report instead
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+    def test_only_the_full_run_derives_the_listing(self, instance):
+        self._text_item(instance)
+        report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+
+class TestRerunPacing:
+    """Reruns pace themselves: fresh work first, then at most 50 per run."""
+
+    def _seed_reruns(self, ctx, count, start=0):
+        for i in range(start, start + count):
+            url = f"https://example.test/rerun-{i}"
+            ledger.append(
+                ctx.instance.ledger_path,
+                LedgerEntry(
+                    hash=work_hash(url),
+                    url=url,
+                    item=ITEM,
+                    kind=Kind.WEB,
+                    status=Status.QUEUED,
+                    engine="0.0.1",
+                    date=TODAY,
+                    via="migration-2",
+                    rerun=True,
+                ),
+            )
+
+    def test_fresh_work_drains_before_reruns(self, instance):
+        driver = FakeDriver()
+        ctx = make_ctx(instance, driver)
+        write_item(instance)  # one fresh URL
+        self._seed_reruns(ctx, 1)
+        run_mod.run(ctx, limit=1)  # room for exactly one unit
+        assert [unit.url for unit in driver.fetched] == [URL]  # the fresh one
+        rerun_entry = entry_for(ctx, "https://example.test/rerun-0")
+        assert rerun_entry.status is Status.QUEUED  # untouched, queues on
+
+    def test_rerun_cap_holds_and_remainder_queues_across_runs(self, instance):
+        driver = FakeDriver()
+        ctx = make_ctx(instance, driver)
+        self._seed_reruns(ctx, run_mod.RERUN_DRAIN_CAP + 5)
+        report = run_mod.run(ctx)
+        done = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                if e.status is Status.DONE]
+        queued = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                  if e.status is Status.QUEUED]
+        assert len(done) == run_mod.RERUN_DRAIN_CAP
+        assert len(queued) == 5
+        assert (
+            f"rerun cohort: {run_mod.RERUN_DRAIN_CAP} of "
+            f"{run_mod.RERUN_DRAIN_CAP + 5} drained; 5 queue for the next run"
+        ) in report
+        # The next run drains the remainder and says so.
+        second = run_mod.run(make_ctx(instance, FakeDriver()))
+        remaining = [e for e in ledger.load(ctx.instance.ledger_path).values()
+                     if e.status is Status.QUEUED]
+        assert remaining == []
+        assert "rerun cohort: 5 of 5 drained" in second
+        assert "queue for the next run" not in second
+
+    def test_limit_binds_the_total_cap_binds_the_slice(self, instance):
+        ctx = make_ctx(instance, FakeDriver())
+        self._seed_reruns(ctx, 10)
+        report = run_mod.run(ctx, limit=3)
+        assert "rerun cohort: 3 of 10 drained; 7 queue for the next run" in report
+
+    def test_no_reruns_no_cohort_note(self, instance):
+        write_item(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "rerun cohort" not in report
+
+
+class TestRedetection:
+    """Mid-fetch kind discovery: same URL, same hash, corrected identity."""
+
+    PDF_URL = "https://example.test/whitepaper"
+    HTML = b"<!DOCTYPE html>\n<html><body>a page pretending to be a paper</body></html>"
+
+    def _drivers(self, instance, transport):
+        capabilities = Capabilities(
+            transcribers=(), extractors=(FakeExtractor(markdown="extracted pdf text " * 30),)
+        )
+        return [
+            FileDriver(capabilities=capabilities, root=instance.root, transport=transport),
+            WebDriver(transport=transport),  # the catch-all stays last
+        ]
+
+    def _lineage(self, ctx, url):
+        lines = [
+            json.loads(line)
+            for line in ctx.instance.ledger_path.read_text().split("\n")
+            if line.strip()
+        ]
+        return [
+            (line["kind"], line["status"], line.get("via"))
+            for line in lines
+            if line["hash"] == work_hash(url)
+        ]
+
+    def test_lying_head_reroutes_web_to_file_in_run(self, instance):
+        # The server reports text/html on HEAD and GET alike; the body is a
+        # real PDF. Detection trusts the HEAD (web); the web driver's magic
+        # sniff catches the lie mid-fetch.
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.DONE
+        assert entry.kind is Kind.FILE
+        assert entry.path is not None
+        assert (instance.root / entry.path).exists()  # extraction output landed
+        assert entry.path.endswith(f"file-{entry.hash[:6]}.md")
+        assert self._lineage(ctx, self.PDF_URL) == [
+            ("web", "queued", None),  # seeded as detection said
+            ("file", "queued", "sniff"),  # corrected mid-fetch
+            ("file", "done", "sniff"),  # drained through the file driver, same run
+        ]
+        assert f"re-detected: {self.PDF_URL} — web → file/pdf" in report
+
+    def test_blocked_head_still_corrects_on_the_get(self, instance):
+        pdf = HttpResponse(
+            status=200, content_type="application/octet-stream", body=fixture_bytes("paper.pdf")
+        )
+        blocked = HttpResponse(status=403, content_type="text/html", body=b"")
+
+        class MethodAware:
+            def __call__(self, url, *, method="GET"):  # noqa: ARG002 — routes on method alone
+                return blocked if method == "HEAD" else pdf
+
+        write_item(instance, urls=[self.PDF_URL])
+        transport = MethodAware()
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.DONE
+        assert entry.kind is Kind.FILE
+
+    def test_mutual_redetection_parks_manual_never_loops(self, instance):
+        # content-type says PDF, the body is HTML: web re-routes to file on
+        # the content type, file re-routes back on the bytes — the second
+        # correction hits the once-only guard.
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="application/pdf", body=self.HTML
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.MANUAL
+        assert "re-detection loop" in (entry.reason or "")
+        assert self._lineage(ctx, self.PDF_URL) == [
+            ("web", "queued", None),
+            ("file", "queued", "sniff"),
+            ("file", "manual", "sniff"),
+        ]
+        assert "re-detected" in report  # the first correction is still noted
+
+    def test_thin_html_never_false_redetects_end_to_end(self, instance):
+        transport = FakeTransport(
+            {URL: HttpResponse(status=200, content_type="text/html", body=self.HTML)}
+        )
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.MANUAL
+        assert entry.reason == "thin-extraction"
+        assert entry.kind is Kind.WEB
+        assert "re-detected" not in report
+
+    def _requeue(self, ctx, url, **overrides):
+        entry = entry_for(ctx, url)
+        requeued = dataclasses.replace(
+            entry, status=Status.QUEUED, path=None, title=None, rerun=True, **overrides
+        )
+        ledger.append(ctx.instance.ledger_path, requeued)
+
+    def test_cross_run_redetect_unlinks_the_stale_old_kind_output(self, instance):
+        # Run 1: an ordinary web page, extracted and listed. The world then
+        # changes — the URL serves a PDF — and a reseeded rerun corrects the
+        # kind. The superseded web output must leave the disk AND the item's
+        # enrichment: listing; the ledger audit trail is the history.
+        article = fixture_text("web", "article.html")
+        responses = {
+            self.PDF_URL: HttpResponse(
+                status=200, content_type="text/html", body=article.encode()
+            )
+        }
+        transport = FakeTransport(responses)
+        item_path = write_item(instance, urls=[self.PDF_URL])
+        quiet = Config(media_fetch=MediaFetch.NONE)  # the fixture's og:image is not under test
+        ctx = make_ctx(
+            instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+        )
+        run_mod.run(ctx)
+        first = entry_for(ctx, self.PDF_URL)
+        assert first.kind is Kind.WEB
+        assert first.status is Status.DONE
+        web_out = instance.root / str(first.path)
+        assert web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [web_out.name]
+
+        responses[self.PDF_URL] = HttpResponse(
+            status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+        )
+        self._requeue(ctx, self.PDF_URL, via="migration-2")
+        run_mod.run(
+            make_ctx(
+                instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+            )
+        )
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.kind is Kind.FILE
+        assert entry.status is Status.DONE
+        assert not web_out.exists()  # the correction superseded it
+        assert corpus.read_item(item_path).enrichment == [f"file-{entry.hash[:6]}.md"]
+
+    def test_cross_run_re_correction_succeeds_after_a_requeue(self, instance):
+        # The guard is per-run state, not ledger history: a unit corrected
+        # to file months ago (via sniff on its lines) that now serves HTML
+        # corrects BACK to web on a later requeue — never a false
+        # "re-detection loop".
+        responses = {
+            self.PDF_URL: HttpResponse(
+                status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+            )
+        }
+        transport = FakeTransport(responses)
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        run_mod.run(ctx)
+        corrected = entry_for(ctx, self.PDF_URL)
+        assert (corrected.kind, corrected.via) == (Kind.FILE, "sniff")
+
+        article = fixture_text("web", "article.html")
+        responses[self.PDF_URL] = HttpResponse(
+            status=200, content_type="text/html", body=article.encode()
+        )
+        self._requeue(ctx, self.PDF_URL)  # keeps via: sniff — provenance, not a lock
+        report = run_mod.run(
+            make_ctx(
+                instance,
+                FakeDriver(),
+                drivers=self._drivers(instance, transport),
+                config=Config(media_fetch=MediaFetch.NONE),
+            )
+        )
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.kind is Kind.WEB
+        assert entry.status is Status.DONE
+        assert "re-detection loop" not in report
+        assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
+
+    def test_redetected_rerun_spends_one_cohort_slot(self, instance):
+        url = self.PDF_URL
+        transport = FakeTransport(
+            {
+                url: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(url),
+                url=url,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.0.1",
+                date=TODAY,
+                via="migration-2",
+                rerun=True,
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        assert entry_for(ctx, url).status is Status.DONE  # popped twice, completed
+        assert "rerun cohort: 1 of 1 drained" in report
+        assert "2 of" not in report
+
+    def test_limit_defers_the_corrected_unit_to_the_next_run(self, instance):
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx, limit=1)  # the web fetch spends the whole budget
+        deferred = entry_for(ctx, self.PDF_URL)
+        assert (deferred.kind, deferred.status, deferred.via) == (
+            Kind.FILE,
+            Status.QUEUED,
+            "sniff",
+        )
+        assert "re-detected" in report
+        assert not (instance.enrichment_dir / ITEM / f"file-{deferred.hash[:6]}.md").exists()
+        # The next run drains the corrected unit.
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport)))
+        assert entry_for(ctx, self.PDF_URL).status is Status.DONE

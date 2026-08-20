@@ -1,6 +1,6 @@
 """dex-enrich: the ingestion pipeline CLI.
 
-Thin by design (§14): parse arguments, build ``Instance``/``Config``/
+Thin by design: parse arguments, build ``Instance``/``Config``/
 ``Capabilities``, call the pipeline. Zero business logic lives here.
 """
 
@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .capabilities import Capabilities
+from .pipeline.capture import item_new
 from .pipeline.registry import build_drivers
 from .pipeline.run import (
     RunContext,
@@ -29,7 +30,7 @@ __all__ = ["build_parser", "engine_version", "main"]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass."""
+    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass · item."""
     parser = argparse.ArgumentParser(
         prog="dex-enrich",
         description="Fetch the full content behind every captured URL, ledger-driven.",
@@ -41,12 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="max units this run (big cohorts drain across runs)"
     )
 
-    commands.add_parser(
+    status_parser = commands.add_parser(
         "status", help="ledger summary + interrupted-session backstop + capability report"
+    )
+    status_parser.add_argument(
+        "--item",
+        default=None,
+        help="show one item's ledger view instead: every unit it owns, with "
+        "provenance and outputs (what was fetched is a ledger fact)",
     )
 
     transcribe_parser = commands.add_parser(
-        "transcribe", help="drain the waiting transcription cohort (§6)"
+        "transcribe", help="drain the waiting transcription cohort"
     )
     transcribe_parser.add_argument(
         "--model",
@@ -59,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=TRANSCRIBE_RUN_CAP,
-        help=f"max transcriptions this run (default {TRANSCRIBE_RUN_CAP}, §12)",
+        help=f"max transcriptions this run (default {TRANSCRIBE_RUN_CAP})",
     )
 
     fetch_parser = commands.add_parser(
@@ -102,6 +109,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--stage", required=True, help="the completed stage (harvest / digest / wiki)"
     )
 
+    item_parser = commands.add_parser(
+        "item", help="corpus-item operations — code writes frontmatter, never freehand"
+    )
+    item_commands = item_parser.add_subparsers(dest="item_command", required=True)
+    new_parser = item_commands.add_parser(
+        "new", help="create the corpus item for a capture file (id rules + provenance)"
+    )
+    new_parser.add_argument("capture", type=Path, help="the capture file in inbox/")
+    new_parser.add_argument(
+        "--slug",
+        default=None,
+        help="judgment's slug for the id (default: derived from the note, then the URL)",
+    )
+    new_parser.add_argument(
+        "--shared-by",
+        dest="shared_by",
+        default="owner",
+        help="provenance display name (default: owner)",
+    )
+
     return parser
 
 
@@ -110,7 +137,7 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
         case "run":
             return run(ctx, limit=args.limit)
         case "status":
-            return status_report(ctx)
+            return status_report(ctx, item_id=args.item)
         case "transcribe":
             return run_transcribe(ctx, limit=args.limit)
         case "fetch":
@@ -128,6 +155,15 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             )
         case "pass":
             return record_pass(ctx, args.item, args.stage)
+        case "item":
+            return item_new(
+                args.capture,
+                instance=ctx.instance,
+                drivers=ctx.drivers,
+                today=ctx.today,
+                slug=args.slug,
+                shared_by=args.shared_by,
+            )
         case _:
             raise RuntimeError(
                 f"unreachable: argparse enforces the command set, got {args.command}"
@@ -141,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         config = Config.load(instance.config_path)
         # One Capabilities object feeds the drain seam, the transcribe path,
-        # the file driver, and the status surface — they cannot disagree (§6).
+        # the file driver, and the status surface — they cannot disagree.
         capabilities = Capabilities.build(config, model=getattr(args, "model", None))
         ctx = RunContext(
             instance=instance,
@@ -151,9 +187,10 @@ def main(argv: list[str] | None = None) -> None:
             engine_version=engine_version(),
             provider_available=capabilities.available,
             capabilities=capabilities,
+            command=f"enrich {args.command}",
         )
         output = _dispatch(args, ctx)
-    except (ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-enrich: {e}")
     sys.stdout.write(output if output.endswith("\n") else output + "\n")
 

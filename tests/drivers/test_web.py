@@ -3,9 +3,11 @@
 import socket
 import urllib.parse
 
+from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver, trafilatura_extract
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Format, Kind, Status
+from tests.capabilities.conftest import fixture_bytes
 from tests.drivers.conftest import (
     FakeTransport,
     body_of,
@@ -52,9 +54,48 @@ class TestIdentity:
         )
 
 
+class TestRedetection:
+    def test_pdf_body_signals_file_redetection(self):
+        # The lying server: content type claims html, the bytes are a PDF —
+        # magic wins, and this must never park as thin-extraction manual.
+        response = HttpResponse(
+            status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+        )
+        driver = driver_for({URL: response})
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.status is Status.QUEUED
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.FILE
+        assert result.redetect.format is Format.PDF
+        assert result.body is None  # identity only; the file driver owns outputs
+
+    def test_docx_body_signals_its_format(self):
+        response = HttpResponse(
+            status=200, content_type="text/html", body=fixture_bytes("report.docx")
+        )
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is not None
+        assert result.redetect.format is Format.DOCX
+
+    def test_declared_content_type_catches_signature_less_formats(self):
+        response = HttpResponse(
+            status=200, content_type="text/csv", body=fixture_bytes("stars.csv")
+        )
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is not None
+        assert result.redetect.format is Format.CSV
+
+    def test_ordinary_thin_html_stays_manual_never_redetects(self):
+        driver = driver_for({URL: html_response(THIN)}, extract=lambda _html: None)
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.MANUAL
+        assert reason_of(result) == "thin-extraction"
+
+
 class TestSuccessfulFetch:
     def test_real_extraction_keeps_hyperlinks(self):
-        # §10 prerequisite fix: include_links=True — harvest reads these.
+        # The harvest prerequisite fix: include_links=True — harvest reads these.
         driver = driver_for({URL: html_response(ARTICLE)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
         assert result.status is Status.DONE
@@ -68,7 +109,7 @@ class TestSuccessfulFetch:
 
     def test_200_but_thin_is_manual_never_dead(self):
         # Learned from the 2026-08-20 overnight runs: JS shells were ledgered
-        # dead and their items stranded at raw (§5).
+        # dead and their items stranded at raw.
         driver = driver_for({URL: html_response(THIN)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
         assert result.status is Status.MANUAL

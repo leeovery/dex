@@ -1,14 +1,28 @@
 # Capture protocol
 
-How content gets into a dex instance from outside a session. The Send To Dex
-shortcut (`docs/shortcut.md`) is one client of this protocol; any HTTP client —
-a bookmarklet, a CLI alias, a share extension — can implement it.
+How content gets into a dex instance. The Send To Dex shortcut
+(`docs/shortcut.md`) is one client of this protocol; any HTTP client — a
+bookmarklet, a CLI alias, a share extension — can implement it. Inside a
+Claude session, the **dex-capture skill** is the same protocol without the
+HTTP: it writes the identical capture file straight into the clone, commits,
+and pushes (a capture is not finished until it is on the remote). Capture
+and processing are separate — every capture, whatever the client, waits in
+`inbox/` for the next run.
 
 ## The contract
 
 One capture = one markdown file in `inbox/` at the instance repo root, created
 through the GitHub contents API. The commit is the delivery; there is no
-server-side machinery. Ingest processes each file and deletes it.
+server-side machinery. The next run processes each file and deletes it.
+
+The capture file IS the provenance record — the processor
+(`dex enrich item new`) stamps the corpus item from it:
+
+- `{name}` — the filename's timestamp becomes the item's capture date;
+- the body — the URL and/or note — becomes the item body **verbatim**
+  (which is why the note goes in the file, never the commit message);
+- a binary's staged asset becomes `media/<item-id>/<file>`, and that
+  directory name fixes the item's id.
 
 ```
 PUT https://api.github.com/repos/{owner}/{repo}/contents/inbox/{name}.md
@@ -65,7 +79,7 @@ creates it), and the capture file points at it:
    the note
    ```
 
-At the next ingest, `bin/dex inbox` downloads the asset into `media/<id>/`
+At the next run, `bin/dex inbox` downloads the asset into `media/<id>/`
 (where LFS applies), rewrites the capture's frontmatter to `media:`, and
 deletes the asset. End state: media in LFS, git history text-only, release
 empty.

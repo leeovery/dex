@@ -1,1 +1,1 @@
-"""OCR providers (§6): the cognitive floor only, for now."""
+"""OCR providers: the cognitive floor only, for now."""

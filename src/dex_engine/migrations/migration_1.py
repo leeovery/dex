@@ -1,8 +1,8 @@
-"""Migration 1 — renames + status vocabulary (§12).
+"""Migration 1 — renames + status vocabulary.
 
 The rewrite renamed two kinds (``tweet → x``, ``blog → web``), retired two
 statuses (``nocaptions``/``toolong`` → ``waiting`` + ``needs: transcribe`` —
-both immediately drainable now), and formalized the ledger schema (§5).
+both immediately drainable now), and formalized the ledger schema.
 This migration moves pre-rewrite instance state onto that vocabulary:
 
 - corpus ``kinds:`` and ``enrichment:`` listings, through corpus.py's typed
@@ -18,11 +18,13 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   hashing corpus URLs with the old engine's own canonicalization, and the
   engine is stamped ``0.0.1`` — the only version the pre-rewrite engine
   ever shipped as, which is exactly what gives old ``error`` entries their
-  retry-on-new-engine semantics (§5);
-- ``state/normalize-config.json`` → ``state/config.json``.
+  retry-on-new-engine semantics;
+- ``state/normalize-config.json`` → ``state/config.json``, dropping the
+  ``name_map`` key on the way — never applied by any engine version, and
+  source-specific to the Discord/Space backfill.
 
-Everything not provably safe is skipped-with-why for the session to repair
-(§12). An untranslatable ledger line is **quarantined**: moved verbatim to
+Everything not provably safe is skipped-with-why for the session to repair.
+An untranslatable ledger line is **quarantined**: moved verbatim to
 ``state/enrichment-ledger.unmigrated.jsonl`` (nothing destroyed) and named
 in the report with the repair procedure — review each line, re-add it with
 ``enrich mark <url> <status> --reason …`` (the sanctioned correction verb),
@@ -67,7 +69,7 @@ INTENT = (
 
 # The only version the pre-rewrite engine ever shipped as; stamped onto old
 # lines (they recorded no engine), giving old `error` entries retry-on-new-
-# engine semantics (§5) and giving migration 2 its pre-rewrite marker.
+# engine semantics and giving migration 2 its pre-rewrite marker.
 PRE_REWRITE_ENGINE = "0.0.1"
 
 _KIND_RENAMES = {"tweet": "x", "blog": "web"}
@@ -115,7 +117,7 @@ class _UntranslatableError(Exception):
 
 
 class RenamesAndVocabulary:
-    """Migration 1 (§12): see the module docstring."""
+    """Migration 1: see the module docstring."""
 
     number = NUMBER
     intent = INTENT
@@ -283,6 +285,11 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     original = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
     quarantined: list[str] = []
+    # Note dedupe: superseded lines of one hash repeat the same translation
+    # verbatim (a stray title survives every audit line), so identical notes
+    # collapse to one, the multiplicity kept as a count — collapsed, never
+    # dropped.
+    note_counts: dict[str, int] = {}
     translated = 0
     for lineno, line in enumerate(original.split("\n"), start=1):
         if not line.strip():
@@ -305,10 +312,14 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
                 )
             )
             continue
-        actions.extend(line_notes)
+        for note in line_notes:
+            note_counts[note] = note_counts.get(note, 0) + 1
         if new_line != line:
             translated += 1
         out_lines.append(new_line)
+    actions.extend(
+        note if count == 1 else f"{note} (x{count})" for note, count in note_counts.items()
+    )
     # Quarantine BEFORE the main rewrite: an interruption between the two
     # writes must never lose a line. Worst case a line exists in both files;
     # the re-run's verbatim dedupe keeps the quarantine stable while the
@@ -318,7 +329,7 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     if new_text != original:
         _atomic_write(path, new_text)
     if translated:
-        actions.append(f"ledger: {translated} line(s) translated to the current schema (§5)")
+        actions.append(f"ledger: {translated} line(s) translated to the current schema")
     if quarantined:
         actions.append(
             f"ledger: {len(quarantined)} line(s) quarantined to state/{QUARANTINE_NAME} — "
@@ -389,7 +400,9 @@ def _translate_record(
             reason=reason,
         )
     except ValueError as e:
-        raise _UntranslatableError(f"still violates the §5 schema after translation ({e})") from e
+        raise _UntranslatableError(
+            f"still violates the current schema after translation ({e})"
+        ) from e
 
 
 def _translate_kind(raw: dict[str, object]) -> Kind:
@@ -405,7 +418,7 @@ def _translate_status(raw: dict[str, object]) -> tuple[Status, Need | None]:
     text = _expect_str(raw, "status")
     if text in _RETIRED_STATUSES:
         # Both retired statuses meant "cannot transcribe" — whisper-local and
-        # chunking removed those limits, so the cohort is drainable again (§12).
+        # chunking removed those limits, so the cohort is drainable again.
         return Status.WAITING, Need.TRANSCRIBE
     try:
         status = Status(text)
@@ -431,7 +444,7 @@ def _translate_path(
     if status is not Status.DONE:
         notes.append(
             f"ledger {unit_hash}: stray path {raw_path!r} dropped from a "
-            f"{status.value} line — outputs are success-only (§5)"
+            f"{status.value} line — outputs are success-only"
         )
         return None
     parts = raw_path.split("/")
@@ -443,7 +456,7 @@ def _translate_item(
     raw: dict[str, object], *, raw_path: str | None, unit_hash: str, owners: dict[str, str]
 ) -> str:
     # The raw path attributes the item even when the path field itself is
-    # dropped (outputs are done-only, §5) — where the file landed is still
+    # dropped (outputs are done-only) — where the file landed is still
     # true provenance.
     if "item" in raw:
         return _expect_str(raw, "item")
@@ -463,11 +476,11 @@ def _translate_item(
 def _translate_error_and_reason(
     raw: dict[str, object], *, status: Status, unit_hash: str, notes: list[str]
 ) -> tuple[str | None, str | None]:
-    """Port the old informal ``error``-as-reason and ``note`` values (§12).
+    """Port the old informal ``error``-as-reason and ``note`` values.
 
     Never destroyed: on statuses where the new schema allows or requires a
     reason they land in ``reason``; on ``error`` they stay in ``error``; on
-    ``done``/``queued`` — where §5 forbids a reason — the text is preserved
+    ``done``/``queued`` — where the schema forbids a reason — the text is preserved
     in the migration report instead of the line, stated explicitly.
     """
     error_text = None if "error" not in raw else _expect_str(raw, "error")
@@ -484,11 +497,11 @@ def _translate_error_and_reason(
         if reason is not None:
             notes.append(
                 f"ledger {unit_hash}: pre-migration text {reason!r} preserved here and "
-                f"dropped from the line — reason is forbidden on {status.value} (§5)"
+                f"dropped from the line — reason is forbidden on {status.value}"
             )
         return None, None
     if status in (Status.MANUAL, Status.SKIPPED) and reason is None:
-        # The old engine recorded no reason for these; §5 requires one. The
+        # The old engine recorded no reason for these; the schema requires one. The
         # honest translation records that no reason was stated.
         reason = "unstated (pre-migration)"
     return None, reason
@@ -508,13 +521,13 @@ def _translate_title(
     if status is not Status.DONE or path_text is None:
         notes.append(
             f"ledger {unit_hash}: stray title {text!r} dropped — "
-            "outputs (path/title) are done-only and travel together (§5)"
+            "outputs (path/title) are done-only and travel together"
         )
         return None
     return text
 
 
-# The current provenance vocabulary (§5) — frozen here like the legacy
+# The current provenance vocabulary — frozen here like the legacy
 # canonicalization above: this migration's contract is "translate to the
 # schema shipping WITH it", so the copy cannot drift out from under it.
 _CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
@@ -586,6 +599,12 @@ def _as_need(text: str) -> Need:
 # ---------------------------------------------------------------------------
 
 
+_NAME_MAP_NOTE = (
+    "config: name_map removed — never applied by any engine version; "
+    "source-specific to the Discord/Space backfill"
+)
+
+
 def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
     from dex_engine.pipeline.types import Config  # noqa: PLC0415 — narrow import, used only here
 
@@ -594,7 +613,21 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
     if not old.exists():
         return
     try:
-        Config.load(old)
+        raw = json.loads(old.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        skipped.append(
+            Skipped(
+                what="state/normalize-config.json",
+                why=f"not valid JSON ({e}) — repair it, then rename to config.json",
+            )
+        )
+        return
+    # name_map is dropped, not carried: no engine version ever applied it,
+    # and the current config schema rejects unknown keys loudly — carrying
+    # it forward would brick every command on the migrated instance.
+    dropped_name_map = isinstance(raw, dict) and raw.pop("name_map", None) is not None
+    try:
+        Config.from_raw(raw, source="state/normalize-config.json")
     except ValueError as e:
         skipped.append(
             Skipped(
@@ -605,7 +638,11 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
         )
         return
     if new.exists():
-        if new.read_bytes() == old.read_bytes():
+        try:
+            existing = json.loads(new.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = None
+        if existing == raw:
             old.unlink()
             actions.append(
                 "config: removed normalize-config.json — config.json already holds "
@@ -620,8 +657,11 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
                 )
             )
         return
-    old.rename(new)
+    _atomic_write(new, json.dumps(raw, indent=2) + "\n")
+    old.unlink()
     actions.append("config: normalize-config.json → config.json")
+    if dropped_name_map:
+        actions.append(_NAME_MAP_NOTE)
 
 
 # ---------------------------------------------------------------------------

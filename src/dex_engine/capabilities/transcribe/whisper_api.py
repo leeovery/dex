@@ -1,9 +1,9 @@
-"""whisper-api: one OpenAI-compatible transcription provider class (§6).
+"""whisper-api: one OpenAI-compatible transcription provider class.
 
 ``base_url`` + key come from config (``transcribe_base_url`` /
 ``transcribe_api_key``), falling back to the ``OPENAI_BASE_URL`` /
 ``OPENAI_API_KEY`` environment variables — read at availability time, never
-at import (§14). Pointed at Groq et al for GPU-fast pennies-per-hour runs;
+at import. Pointed at Groq et al for GPU-fast pennies-per-hour runs;
 an explicitly configured base_url with no key is a keyless local server.
 
 **ffmpeg chunking** removes upload limits for any provider, including
@@ -43,7 +43,7 @@ __all__ = [
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_API_MODEL = "whisper-1"
 
-# ~20-minute segments (§6): comfortably under every known provider's upload
+# ~20-minute segments: comfortably under every known provider's upload
 # cap at any sane audio bitrate.
 CHUNK_SECONDS = 1200
 
@@ -143,7 +143,7 @@ class WhisperApi:
 
     name: str = "whisper-api"
 
-    def __init__(  # noqa: PLR0913 — constructor injection of every seam (§14)
+    def __init__(  # noqa: PLR0913 — constructor injection of every seam
         self,
         *,
         base_url: str | None = None,
@@ -163,8 +163,8 @@ class WhisperApi:
                 ``OPENAI_API_KEY``.
             model: The API-side model name (``--model`` overrides per call
                 by rebuilding the provider).
-            post: The multipart HTTP seam (tests fake it — §15).
-            segment: The ffmpeg runner seam (tests fake it — §15).
+            post: The multipart HTTP seam (tests fake it).
+            segment: The ffmpeg runner seam (tests fake it).
             which: PATH lookup for the ffmpeg availability check.
             env: Environment mapping; ``None`` reads ``os.environ`` lazily.
         """
@@ -215,7 +215,7 @@ class WhisperApi:
                 API rejected it (HTTP 400), or it held no speech — manual.
             ProviderUnavailableError: The ffmpeg binary is not runnable, or
                 the endpoint refused or failed (auth, rate limit, outage,
-                connection) — the job stays waiting with the reason (§6).
+                connection) — the job stays waiting with the reason.
         """
         with tempfile.TemporaryDirectory(prefix="dex-whisper-") as workdir:
             chunks = self._chunk(audio, Path(workdir))
@@ -229,7 +229,7 @@ class WhisperApi:
         return text
 
     def _chunk(self, audio: Path, workdir: Path) -> list[Path]:
-        """Split the audio into ~20-minute mp3 segments, transcoded (§6).
+        """Split the audio into ~20-minute mp3 segments, transcoded.
 
         Transcoded, never ``-c copy``: the cached filename's extension is a
         guess (extensionless enclosures default to .mp3), and stream-copying
@@ -257,7 +257,7 @@ class WhisperApi:
             )
         except OSError as e:
             # The binary is missing or not runnable: an availability failure
-            # discovered at call time — the job stays waiting (§6), never
+            # discovered at call time — the job stays waiting, never
             # manual; the audio said nothing about itself yet.
             raise ProviderUnavailableError(f"ffmpeg is not runnable: {scrub(str(e))}") from e
         except subprocess.CalledProcessError as e:
@@ -292,7 +292,7 @@ class WhisperApi:
         if not _HTTP_OK_FLOOR <= status < _HTTP_OK_CEILING:
             # Auth, rate limits, outages: the capability is, in truth, not
             # available right now — the job stays waiting and retries when
-            # the drain next runs (§6).
+            # the drain next runs.
             raise ProviderUnavailableError(f"whisper-api returned HTTP {status}")
         try:
             payload = json.loads(body.decode("utf-8", errors="replace"))
@@ -305,7 +305,7 @@ class WhisperApi:
 
 
 def _chunk_prompt(initial_prompt: str, previous: list[str]) -> str:
-    """Vocabulary priming plus the running transcript's tail (§6 continuity)."""
+    """Vocabulary priming plus the running transcript's tail (chunk continuity)."""
     if not previous:
         return initial_prompt
     tail = " ".join(previous)[-_CONTINUITY_TAIL_CHARS:].strip()

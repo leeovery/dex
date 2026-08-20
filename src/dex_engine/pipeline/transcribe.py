@@ -1,13 +1,13 @@
-"""Transcribe-drain mechanics (§6): audio acquisition, priming, bodies.
+"""Transcribe-drain mechanics: audio acquisition, priming, bodies.
 
 **Audio acquisition belongs to the drain, not the drivers**: drivers only
 ever emit ``needs: transcribe`` with the pointer — a YouTube URL, or an
-enclosure URL recorded in the enrichment file's frontmatter (§9). The drain
+enclosure URL recorded in the enrichment file's frontmatter. The drain
 obtains the audio itself, into ``cache/audio/<hash>.<ext>``; the run layer
 (``pipeline/run.py``) owns the control flow and every ledger write, and
 calls the pure-ish helpers here.
 
-Audio lifecycle (§9): stays in cache while pending/failed (retries don't
+Audio lifecycle: stays in cache while pending/failed (retries don't
 re-download 150MB), deleted on successful transcription — the audio is a
 digestion mechanism, not what was shared; the transcript supersedes it; the
 recorded enclosure URL is the re-fetch pointer.
@@ -39,7 +39,7 @@ __all__ = [
     "yt_dlp_audio",
 ]
 
-# Per-run transcription cap (§12): a first sync's resurrected backlog must
+# Per-run transcription cap: a first sync's resurrected backlog must
 # never monopolize a machine. `enrich transcribe --limit` overrides.
 TRANSCRIBE_RUN_CAP = 10
 
@@ -64,14 +64,14 @@ class YoutubeAudio:
 
 
 # url, cache_dir, stem -> downloaded audio; raises ProbeError on yt-dlp
-# failure (classified by classify_probe_failure — one classifier, §5).
+# failure (classified by classify_probe_failure — one classifier).
 DownloadAudio = Callable[[str, Path, str], YoutubeAudio]
 
 
 def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
     """The one real :data:`DownloadAudio`: bestaudio into the cache, no ffmpeg.
 
-    An audio file already cached under ``stem`` is reused (§9: retries don't
+    An audio file already cached under ``stem`` is reused (retries don't
     re-download); the probe still runs for the priming vocabulary.
 
     Args:
@@ -85,7 +85,7 @@ def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
     Raises:
         ProbeError: yt-dlp failed; the caller classifies the message.
     """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when acquiring (§14)
+    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when acquiring
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     existing = _cached_audio(cache_dir, stem)
@@ -124,14 +124,14 @@ class Acquired:
 
     audio: Path
     meta: dict[str, str | int | None]
-    prompt: str  # initial_prompt priming — the item's known vocabulary (§6)
+    prompt: str  # initial_prompt priming — the item's known vocabulary
     prefix: str  # body text the transcript follows (description / show notes)
 
 
 def acquire_youtube_audio(
     entry: LedgerEntry, cache_dir: Path, download: DownloadAudio
 ) -> Acquired | Classification:
-    """Acquire a YouTube unit's audio via the yt-dlp seam (§6).
+    """Acquire a YouTube unit's audio via the yt-dlp seam.
 
     Args:
         entry: The waiting ledger entry.
@@ -161,7 +161,7 @@ def acquire_youtube_audio(
 def acquire_podcast_audio(
     entry: LedgerEntry, enrichment_path: Path, cache_dir: Path, transport: Transport
 ) -> Acquired | Classification:
-    """Acquire a podcast unit's audio from its recorded enclosure (§9).
+    """Acquire a podcast unit's audio from its recorded enclosure.
 
     The enclosure URL and the show notes come from the enrichment file the
     podcast driver's park wrote; a cached download under the entry hash is
@@ -237,7 +237,7 @@ def _cached_audio(cache_dir: Path, stem: str) -> Path | None:
 
     A crash mid-download leaves ``.part``/``.ytdl`` files behind; reusing
     one would transcribe truncated audio and ledger it ``done``. Partials
-    are deleted here so the retry re-downloads from scratch (§9's
+    are deleted here so the retry re-downloads from scratch (the
     don't-re-download rule covers completed audio only).
     """
     complete: Path | None = None
@@ -273,13 +273,13 @@ def _audio_ext(url: str) -> str:
 
 
 def _prompt(*parts: str | None) -> str:
-    """Known-vocabulary priming, single-line, bounded (§6)."""
+    """Known-vocabulary priming, single-line, bounded."""
     text = " — ".join(" ".join(part.split()) for part in parts if part)
     return text[:_PROMPT_MAX_CHARS]
 
 
 # ---------------------------------------------------------------------------
-# Transcript bodies. Raw transcripts, stamped via/model by the caller (§6);
+# Transcript bodies. Raw transcripts, stamped via/model by the caller;
 # corrections live downstream in digest/wiki where judgment operates.
 # ---------------------------------------------------------------------------
 
@@ -292,7 +292,7 @@ def youtube_body(description: str, transcript: str) -> str:
 
 
 def podcast_body(show_notes: str, transcript: str) -> str:
-    """Show notes (from the feed, §9) followed by the transcript section."""
+    """Show notes (from the feed) followed by the transcript section."""
     if show_notes:
         return f"{show_notes}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
     return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"

@@ -1,12 +1,12 @@
-"""Ledger persistence: the single serialization boundary for LedgerEntry (§5).
+"""Ledger persistence: the single serialization boundary for LedgerEntry.
 
 ``state/enrichment-ledger.jsonl`` is append-only, full-record lines,
-last-per-hash wins (§4). Superseded lines are the audit trail until
+last-per-hash wins. Superseded lines are the audit trail until
 ``compact`` rewrites the file keeping only the latest line per hash (which
 also settles git union merges).
 
 This layer never reads the ambient clock: today's date and the engine
-version are injected (§14) so date-stamping and retry-on-new-engine are
+version are injected so date-stamping and retry-on-new-engine are
 testable.
 """
 
@@ -33,15 +33,15 @@ __all__ = [
 
 
 class LedgerSchemaError(ValueError):
-    """A ledger line does not conform to the current schema (§5).
+    """A ledger line does not conform to the current schema.
 
     Raised at the serialization boundary — with the likely missing migration
     named — instead of surfacing as a ``KeyError`` three stages later.
     """
 
 
-# Pre-rename vocabulary, translated by migration 1 (§12). Recognized here only
-# to name that migration in the error; never silently accepted (no aliases, §3).
+# Pre-rename vocabulary, translated by migration 1. Recognized here only
+# to name that migration in the error; never silently accepted (no aliases).
 _RENAMED_KINDS = {"tweet": "x", "blog": "web"}
 _RETIRED_STATUSES = {"nocaptions", "toolong"}
 
@@ -79,7 +79,7 @@ def from_line(line: str) -> LedgerEntry:
 
     Raises:
         LedgerSchemaError: The line is not JSON, not an object, carries
-            unknown or pre-migration vocabulary, or violates a §5 invariant.
+            unknown or pre-migration vocabulary, or violates a schema invariant.
     """
     try:
         raw = json.loads(line)
@@ -163,7 +163,7 @@ def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
     ``None`` fields are dropped; ``rerun`` appears only when true — the
-    written line carries exactly the §5 schema, in schema order.
+    written line carries exactly the ledger schema, in schema order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -190,7 +190,7 @@ def to_line(entry: LedgerEntry) -> str:
 
 
 def load(path: Path) -> dict[str, LedgerEntry]:
-    """Load the ledger; the last line per hash wins (§4).
+    """Load the ledger; the last line per hash wins.
 
     Args:
         path: The ledger file; a missing file is an empty ledger.
@@ -230,7 +230,7 @@ def append(path: Path, entry: LedgerEntry) -> None:
 def compact(path: Path) -> int:
     """Rewrite the ledger keeping only the latest line per hash.
 
-    Also settles git union merges (§4). Superseded lines — the audit trail —
+    Also settles git union merges. Superseded lines — the audit trail —
     are dropped.
 
     Args:
@@ -277,7 +277,7 @@ def stamp(
 
     Args:
         entry: The entry to stamp.
-        today: Injected clock (§14) — never ``datetime.date.today`` inline.
+        today: Injected clock — never ``datetime.date.today`` inline.
         engine_version: The running engine's version string.
 
     Returns:

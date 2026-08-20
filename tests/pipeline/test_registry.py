@@ -38,7 +38,7 @@ class TestDriverFor:
 
     def test_every_work_unit_kind_has_a_driver(self):
         # IMAGE and TEXT are corpus vocabulary only and never become work
-        # units (§3); everything else must resolve.
+        # units; everything else must resolve.
         for kind in Kind:
             if kind in (Kind.IMAGE, Kind.TEXT):
                 assert driver_for(kind, DRIVERS) is None

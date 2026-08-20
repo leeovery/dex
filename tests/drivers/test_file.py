@@ -25,7 +25,7 @@ class TestLocalFiles:
         assert d.canonical("file:media/abc123/report.docx") == "file:media/abc123/report.docx"
 
     def test_real_docx_extracts_through_real_anydoc(self, tmp_path):
-        # Real anydoc over a committed fixture — local, no network (§15).
+        # Real anydoc over a committed fixture — local, no network.
         media = tmp_path / "media" / "abc123"
         media.mkdir(parents=True)
         (media / "report.docx").write_bytes(fixture_bytes("report.docx"))
@@ -40,7 +40,7 @@ class TestLocalFiles:
 
     def test_byte_sniff_is_authoritative_over_the_recorded_format(self, tmp_path):
         # A unit whose ledger format is stale still routes by what the bytes
-        # ARE (§1: byte-signature sniff, authoritative).
+        # ARE (byte-signature sniff, authoritative).
         (tmp_path / "doc.bin").write_bytes(fixture_bytes("paper.pdf"))
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), root=tmp_path)
@@ -123,6 +123,79 @@ class TestUrlServedBinaries:
         assert extractor.calls[0][1] is Format.DOCX
 
 
+class TestRedetection:
+    HTML = b"<!DOCTYPE html>\n<html><body>a page pretending to be a paper</body></html>"
+
+    def test_claimed_pdf_serving_html_redetects_to_web(self):
+        transport = FakeTransport(
+            {PDF_URL: HttpResponse(status=200, content_type="text/html", body=self.HTML)}
+        )
+        d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
+        result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.QUEUED
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.WEB
+        assert result.redetect.format is None
+
+    def test_html_lead_bytes_redetect_even_with_a_lying_content_type(self):
+        transport = FakeTransport(
+            {
+                PDF_URL: HttpResponse(
+                    status=200, content_type="application/pdf", body=self.HTML
+                )
+            }
+        )
+        d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
+        result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.WEB
+
+    def test_signature_less_bytes_under_a_lying_html_content_type_extract(self):
+        # Bytes decide, never the content type alone: real CSV bytes served
+        # as text/html carry no HTML lead — the unit proceeds to extraction
+        # under its claimed format instead of bouncing to web.
+        transport = FakeTransport(
+            {
+                PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("stars.csv")
+                )
+            }
+        )
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=transport)
+        result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.CSV))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+        assert extractor.calls[0][1] is Format.CSV
+
+    def test_real_document_magic_beats_an_html_content_type(self):
+        # Magic bytes are authoritative in BOTH directions: a real PDF served
+        # as text/html extracts here, never bounces back to web.
+        transport = FakeTransport(
+            {
+                PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=transport)
+        result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+
+    def test_local_files_never_redetect(self, tmp_path):
+        # A captured HTML file is not a page to fetch — local work parks
+        # honestly instead.
+        media = tmp_path / "media" / "abc123"
+        media.mkdir(parents=True)
+        (media / "saved.bin").write_bytes(self.HTML)
+        d = FileDriver(capabilities=caps(FakeExtractor()), root=tmp_path)
+        result = d.fetch(make_unit("file:media/abc123/saved.bin", Kind.FILE))
+        assert result.redetect is None
+        assert result.status is Status.MANUAL
+
+
 class TestExtractRouting:
     def test_no_provider_for_the_format_parks_waiting_with_the_reason(self, tmp_path):
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
@@ -152,7 +225,7 @@ class TestExtractRouting:
 
     def test_provider_input_errors_propagate_for_the_run_loop(self, tmp_path):
         # The driver never swallows bad-input raises: the run loop owns the
-        # ProviderInputError → manual mapping (§5).
+        # ProviderInputError → manual mapping.
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
         angry = FakeExtractor(raise_=ProviderInputError("encrypted document"))
         d = FileDriver(capabilities=caps(angry), root=tmp_path)

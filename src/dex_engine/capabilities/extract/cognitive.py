@@ -1,4 +1,4 @@
-"""The cognitive extraction floor (§6): parks work for the ingest session.
+"""The cognitive extraction floor: parks work for the ingest session.
 
 The cognitive provider is always last in resolution order and always
 available — but ``enrich run`` never drains it: a job that resolves here is
@@ -13,7 +13,7 @@ __all__ = ["COGNITIVE_MECHANICAL_MESSAGE", "CognitiveExtractor"]
 
 COGNITIVE_MECHANICAL_MESSAGE = (
     "cognitive capability work is session work — the run report lists it and the "
-    "session does it with eyes; it is never drained mechanically (§6)"
+    "session does it with eyes; it is never drained mechanically"
 )
 
 
@@ -23,11 +23,11 @@ class CognitiveExtractor:
     name: str = "cognitive"
 
     def supports(self, fmt: Format) -> bool:  # noqa: ARG002 — the floor is total by design
-        """True for every format — the floor holds unconditionally (§6)."""
+        """True for every format — the floor holds unconditionally."""
         return True
 
     def available(self) -> Availability:
-        """Always available — a session is always present in this system (§12)."""
+        """Always available — a session is always present in this system."""
         return Availability(ok=True, reason="the ingest session does this with eyes")
 
     def extract(self, data: bytes, fmt: Format) -> Extraction:  # noqa: ARG002 — the floor never reads its inputs
