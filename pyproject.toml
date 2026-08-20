@@ -25,6 +25,7 @@ dex-exclude = "dex_engine.exclude:main"
 dex-sync = "dex_engine.sync:main"
 dex-new = "dex_engine.new:main"
 dex-inbox = "dex_engine.inbox:main"
+dex-render = "dex_engine.render.cli:main"
 
 [build-system]
 requires = ["hatchling"]
