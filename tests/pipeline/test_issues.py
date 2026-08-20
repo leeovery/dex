@@ -24,7 +24,7 @@ def _event(**overrides) -> ErrorEvent:
         "format": None,
         "error_class": "ValueError",
         "function": "_write_output",
-        "message": "ValueError: boom",
+        "errno": None,
         "frames": "dex_engine/pipeline/run.py:600 in _write_output",
     }
     base.update(overrides)
@@ -82,9 +82,8 @@ class TestErrorEvent:
         # This test file is not an engine frame — no dex_engine frames exist.
         assert event.function == "unknown"
         assert event.frames == "no engine frames"
-        assert "https://" not in event.message  # scrubbed
-        assert "<url>" in event.message
         assert event.error_class == "ValueError"
+        assert event.errno is None  # errno is OSError-family only
 
     def test_engine_frames_are_package_relative(self):
         # Drive a real engine function into raising so the traceback holds
@@ -99,9 +98,9 @@ class TestErrorEvent:
 
 
 class TestFingerprint:
-    def test_stable_across_message_and_hash(self):
-        a = fingerprint(_event(message="ValueError: a", unit_hash="73bd784849"))
-        b = fingerprint(_event(message="ValueError: b", unit_hash="a1b2c3d4e5"))
+    def test_stable_across_errno_and_hash(self):
+        a = fingerprint(_event(errno=2, unit_hash="73bd784849"))
+        b = fingerprint(_event(errno=28, unit_hash="a1b2c3d4e5"))
         assert a == b
 
     def test_varies_by_class_function_kind_format(self):
@@ -242,7 +241,11 @@ def _raised(exc: BaseException) -> BaseException:
 
 
 class TestSanitization:
-    """The reviewer's probe scenarios: what would actually reach the public repo."""
+    """The probe scenarios: what would actually reach the public repo.
+
+    Free text is dropped wholesale (ruled): every scenario asserts the
+    exception MESSAGE is absent from the body, not merely scrubbed clean.
+    """
 
     def _body(self, exc, tmp_path, *, kind=Kind.WEB, unit_format=None) -> str:
         gh = FakeGh()
@@ -263,7 +266,10 @@ class TestSanitization:
             "2026-08-18-lee-mri-results-and-diagnosis-abc123/web-9f2c11.md",
         )
         body = self._body(exc, tmp_path)
-        assert "message: OSError: errno 28" in body
+        assert "- errno: 28" in body
+        assert "- error: OSError" in body
+        assert "message:" not in body
+        assert "No space left" not in body  # the message is gone, not scrubbed
         for leak in ("leeovery", "dex-health", "mri", "diagnosis", "web-9f2c11"):
             assert leak not in body
 
@@ -275,7 +281,8 @@ class TestSanitization:
         body = self._body(exc, tmp_path, kind=Kind.X)
         assert "private-family-dispute" not in body
         assert "9a1b2c" not in body
-        assert "<path>" in body
+        assert "name too long" not in body  # no residue of the message at all
+        assert "<path>" not in body  # nothing to redact — the field is gone
 
     def test_urls_and_emails_never_leak(self, tmp_path):
         exc = RuntimeError(
@@ -285,22 +292,25 @@ class TestSanitization:
         body = self._body(exc, tmp_path)
         assert "secret-internal" not in body
         assert "leeovery" not in body
+        assert "failed for" not in body  # the message never made it in
 
     def test_windows_home_paths_never_leak(self, tmp_path):
         exc = ValueError(r"bad path C:\Users\leeovery\dex-health\inbox\therapy.md")
         body = self._body(exc, tmp_path, kind=Kind.FILE, unit_format=Format.PDF)
-        for leak in ("leeovery", "dex-health", "therapy"):
+        for leak in ("leeovery", "dex-health", "therapy", "bad path"):
             assert leak not in body
 
     def test_instance_repo_names_never_leak(self, tmp_path):
         body = self._body(ValueError("repo dex-health unreachable"), tmp_path)
         assert "dex-health" not in body
+        assert "unreachable" not in body
 
     def test_bare_item_ids_never_leak(self, tmp_path):
         body = self._body(
             ValueError("unknown corpus item 2026-08-19-embarrassing-note-ab12cd"), tmp_path
         )
         assert "embarrassing-note" not in body
+        assert "unknown corpus item" not in body
 
     def test_engine_frames_survive_sanitization(self, tmp_path):
         # The traceback is the diagnostic payload — sanitization must not
@@ -312,6 +322,7 @@ class TestSanitization:
         body = args[args.index("--body") + 1]
         assert "dex_engine/pipeline/ledger.py" in body
         assert "in from_line" in body
+        assert "not json" not in body  # ...but the message still never appears
 
 
 class TestSoftEdge:

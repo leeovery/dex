@@ -6,8 +6,11 @@ fires only on ``status: error`` outcomes — the world misbehaving
 (blocked/dead/manual/waiting) is never an engine bug.
 
 Everything that leaves the instance is allowlisted: engine version, command,
-kind/format enums, error class, engine-frames-only traceback, the URL
-*hash*; free text passes through the shared :func:`~.classify.scrub`. The
+kind/format enums, error class, errno where present, engine-frames-only
+traceback, the URL *hash* — and NO free text at all. The exception message
+is deliberately absent from issue bodies (the trade, ruled: zero residual
+leak risk beats remote diagnostics; the scrubbed message stays in the local
+ledger's ``error`` field, so diagnosis happens where the data lives). The
 sanitizer is code, so it cannot leak by judgment lapse.
 
 Fire-and-forget: the filer never polls issues or acts on tracker content —
@@ -87,9 +90,10 @@ def gh_runner(args: Sequence[str]) -> str:
 class ErrorEvent:
     """One ``status: error`` outcome, captured at the catch site.
 
-    Built while the exception object is still in hand — the ledger stores
-    only the scrubbed message, and the fingerprint needs the traceback's
-    innermost engine frame.
+    Built while the exception object is still in hand — the fingerprint
+    needs the traceback's innermost engine frame. Carries NO free text:
+    the exception message never leaves the instance (it lives in the local
+    ledger's ``error`` field); ``errno`` is the one mechanical detail kept.
     """
 
     unit_hash: str
@@ -97,7 +101,7 @@ class ErrorEvent:
     format: Format | None
     error_class: str
     function: str  # innermost engine frame's function name
-    message: str  # scrubbed
+    errno: int | None  # OSError family only — mechanical, never prose
     frames: str  # engine-frames-only traceback, package-relative paths
 
 
@@ -133,21 +137,13 @@ def error_event(
         f"{_package_path(frame.filename)}:{frame.lineno} in {frame.name}"
         for frame in engine_frames
     )
-    if isinstance(exc, OSError):
-        # OSError messages embed the offending FILENAME (str(exc) renders
-        # `[Errno n] reason: 'path'`) — class + errno carry the diagnosis;
-        # the filename never leaves the instance.
-        errno = f": errno {exc.errno}" if exc.errno is not None else ""
-        message = f"{type(exc).__name__}{errno}"
-    else:
-        message = scrub(f"{type(exc).__name__}: {exc}")
     return ErrorEvent(
         unit_hash=unit_hash,
         kind=kind,
         format=unit_format,
         error_class=type(exc).__name__,
         function=engine_frames[-1].name if engine_frames else "unknown",
-        message=message,
+        errno=exc.errno if isinstance(exc, OSError) else None,
         frames=frames or "no engine frames",
     )
 
@@ -281,11 +277,16 @@ def _body(  # noqa: PLR0913 — the allowlist IS the parameter list; nothing els
     date: datetime.date,
     regression_of: int | None = None,
 ) -> str:
-    """The allowlisted issue body — every field enumerated, nothing ambient."""
+    """The allowlisted issue body — every field enumerated, nothing ambient.
+
+    No free text, by construction: the exception message is not a field
+    here at all. Diagnosis works from the error class, errno, and engine
+    frames; the message lives in the reporting instance's ledger.
+    """
     lines = [
-        "Automated report from a dex instance. Sanitized by",
-        "construction: allowlisted fields only; messages scrubbed of URLs,",
-        "emails, and home paths.",
+        "Automated report from a dex instance. Sanitized by construction:",
+        "allowlisted fields only — no free text leaves the instance (the",
+        "exception message stays in its local ledger).",
         "",
     ]
     if regression_of is not None:
@@ -300,10 +301,12 @@ def _body(  # noqa: PLR0913 — the allowlist IS the parameter list; nothing els
         f"- kind: {event.kind.value}",
         f"- format: {event.format.value if event.format is not None else '—'}",
         f"- error: {event.error_class}",
+    ]
+    if event.errno is not None:
+        lines.append(f"- errno: {event.errno}")
+    lines += [
         f"- url hash: {event.unit_hash}",
         f"- fingerprint: fp-{fp}",
-        "",
-        f"message: {event.message}",
         "",
         "engine frames:",
         "```",
