@@ -8,8 +8,8 @@ instance, maintained by Claude.
 - **Save something** — share a link with your "Send to Dex" shortcut (or paste it
   into a Claude session and say "add this to dex"). It gets fetched, filed with
   who/when/why, and woven into the wiki.
-- **Ask questions** — open a Claude session on this folder (Cowork or Claude
-  Code) and ask. Answers come from the wiki with citations, newest first.
+- **Ask questions** — open a Claude Code session on this folder and ask.
+  Answers come from the wiki with citations, newest first.
 - **Health check** — it checks itself over on a schedule (broken links, stale
   pages, contradictions get found and fixed); you can also ask anytime.
 

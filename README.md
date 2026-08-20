@@ -28,19 +28,29 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-Let Claude set it up for you. The Claude desktop app is the right home for
-it — a scheduled task there sweeps your captures on its own, and any
-session on the folder answers questions. The Claude Code CLI works just as
-well. Start a session on your home folder (a session has to start somewhere;
-setup picks the dex's real home with you) and paste:
+Claude installs it. You answer a few questions; it does the rest.
+
+Do this in **Claude Code inside the [Claude desktop app](https://claude.com/download)**
+— only the app can create the *local* routine that runs dex on your own machine,
+with your own GitHub auth and network. The CLI can install a dex; it can't arm
+that routine.
+
+1. Open the app → **Code** → new chat.
+2. Set the model to **Opus-class** — the work is judgment, and lighter models
+   degrade it invisibly.
+3. Point the chat at your home or code folder. Setup asks where the dex should
+   actually live and puts it there.
+4. Paste this and press enter:
 
 ```
 Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.
 ```
 
-Claude asks whether you're creating a new dex or joining an existing one,
-interviews you, and sets everything up. Prefer to drive it yourself? Open
-[docs/start.md](docs/start.md) and follow it.
+Claude takes it from there — new dex or joining one that exists, an interview
+about scope, install, the routine armed, phone capture set up. Then it's live:
+save things, and open a Claude Code session on the folder to ask questions.
+
+Prefer to drive it yourself? [docs/start.md](docs/start.md) is the whole procedure.
 
 ## Living with it
 
@@ -50,11 +60,11 @@ interviews you, and sets everything up. Prefer to drive it yourself? Open
 - **Ask anything** — "what's the current thinking on X?" Claude answers from your
   wiki with citations, prefers the newest material, and files genuinely new answers
   back in so they compound.
-- **Trust but verify** — the knowledge base checks itself over: when an
-  ingest finds no health check in the past week, it runs one — broken links,
-  missing citations, stale pages, contradictions, and overgrown topics get
-  found and fixed. You can also ask for one anytime. Corrections you make by
-  hand are pinned and survive every rebuild.
+- **Trust but verify** — the knowledge base checks itself over: when a run
+  finds no health check in the past week, it runs one — broken links, missing
+  citations, stale pages, contradictions, and overgrown topics get found and
+  fixed. You can also ask for one anytime. Corrections you make by hand are
+  pinned and survive every rebuild.
 
 One **dex**, many brains: each knowledge base is its own private *instance* repo
 (dex-cooking, dex-woodworking, one for your partner's business...) and this public
@@ -99,7 +109,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | command | does |
 |---|---|
 | `dex-enrich run` | drain the ledger work queue: fetch behind every corpus URL and file — captions, articles (Wayback fallback), GitHub, papers, X thread walk-up, podcast audio → transcript, document extraction — and report the session's cognitive work list |
-| `dex-enrich status` | ledger summary, waiting cohorts, interrupted-session backstop, capability report |
+| `dex-enrich status` | ledger summary, waiting cohorts, interrupted-session backstop, capability report (`--item <id>` for one item's ledger view) |
 | `dex-enrich transcribe` | drain the waiting transcription cohort (whisper local floor / OpenAI-compatible API; `--limit`, `--model`) |
 | `dex-enrich fetch` | fetch extra URLs into an existing item, ledgered as children (the harvest verb) |
 | `dex-enrich compact` | rewrite the ledger to the latest line per unit (settles union merges) |
