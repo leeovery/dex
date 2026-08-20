@@ -77,14 +77,15 @@ class Capabilities:
         from .transcribe.whisper_local import WhisperLocal  # noqa: PLC0415
 
         transcribe_model = model or config.transcribe_model
+        # The API-side model name has its own config key (§6) — local size
+        # names never leak into it; per-call --model overrides both.
+        api_model = model or config.transcribe_api_model
         transcribers: dict[str, Transcriber] = {
             "whisper-local": WhisperLocal(model=transcribe_model),
             "whisper-api": WhisperApi(
                 base_url=config.transcribe_base_url,
                 api_key=config.transcribe_api_key,
-                # The API-side model name differs from local size names;
-                # only an explicit --model override reaches the API.
-                **({"model": model} if model else {}),
+                **({"model": api_model} if api_model else {}),
             ),
         }
         extractors: dict[str, Extractor] = {

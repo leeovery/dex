@@ -3,6 +3,7 @@
 import pytest
 
 from dex_engine.capabilities import DEFAULT_PROVIDER_ORDER, Capabilities
+from dex_engine.capabilities.transcribe.whisper_api import DEFAULT_API_MODEL
 from dex_engine.pipeline.types import Config, Format, Need
 from dex_engine.render import surfaces
 from tests.capabilities.conftest import FakeExtractor, FakeTranscriber
@@ -49,6 +50,21 @@ class TestBuild:
         assert built.transcribers[0].model == "small"
         overridden = Capabilities.build(Config(transcribe_model="small"), model="large-v3")
         assert overridden.transcribers[0].model == "large-v3"
+
+    def test_api_model_config_reaches_the_api_provider(self):
+        # transcribe_api_model is its own key (§6): local size names never
+        # leak into the API-side name, and --model still overrides per call.
+        built = Capabilities.build(Config(transcribe_api_model="distil-whisper-large-v3-en"))
+        assert built.transcribers[1].model == "distil-whisper-large-v3-en"
+        assert built.transcribers[0].model == "medium"  # local stays local
+        overridden = Capabilities.build(
+            Config(transcribe_api_model="distil-whisper-large-v3-en"), model="whisper-1"
+        )
+        assert overridden.transcribers[1].model == "whisper-1"
+
+    def test_api_model_defaults_without_config(self):
+        built = Capabilities.build(Config(transcribe_model="small"))
+        assert built.transcribers[1].model == DEFAULT_API_MODEL  # size name never leaks
 
     def test_default_order_covers_every_need(self):
         assert set(DEFAULT_PROVIDER_ORDER) == set(Need)

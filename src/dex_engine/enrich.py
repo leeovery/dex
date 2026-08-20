@@ -63,8 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe_parser.add_argument(
         "--model",
         default=None,
-        help="whisper model override for this run (config transcribe_model otherwise; "
-        "drop to `small` for long backlogged queues, stay up for dense technical audio)",
+        help="whisper model override for this run (config transcribe_model / "
+        "transcribe_api_model otherwise; drop to `small` for long backlogged queues, "
+        "stay up for dense technical audio)",
     )
     transcribe_parser.add_argument(
         "--limit",

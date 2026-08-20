@@ -570,6 +570,11 @@ class Config:
     # provider at availability time, never at import).
     transcribe_base_url: str | None = None
     transcribe_api_key: str | None = None
+    # The API-side model name (§6) — its own key because local size names
+    # (medium, small) never map onto provider model ids (whisper-1,
+    # whisper-large-v3). None → the provider's default; per-call --model
+    # still overrides.
+    transcribe_api_model: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
     name_map: dict[str, str] = field(default_factory=dict)
@@ -603,6 +608,7 @@ class Config:
             "transcribe_model",
             "transcribe_base_url",
             "transcribe_api_key",
+            "transcribe_api_model",
             "report_issues",
             "providers",
             "name_map",
@@ -620,6 +626,7 @@ class Config:
             transcribe_model=_config_str(path, raw, "transcribe_model", default="medium"),
             transcribe_base_url=_config_opt_str(path, raw, "transcribe_base_url"),
             transcribe_api_key=_config_opt_str(path, raw, "transcribe_api_key"),
+            transcribe_api_model=_config_opt_str(path, raw, "transcribe_api_model"),
             report_issues=_config_bool(path, raw, "report_issues", default=True),
             providers=_config_providers(path, raw),
             name_map=_config_str_map(path, raw, "name_map"),
