@@ -1,4 +1,4 @@
-"""Tests for the issue filer (§13): sanitized, dedup'd, rate-limited, non-fatal."""
+"""Tests for the issue filer: sanitized, dedup'd, rate-limited, non-fatal."""
 
 import datetime
 import json
@@ -190,7 +190,7 @@ class TestDedup:
         _report([_event()], gh, tmp_path)
         gh2 = FakeGh(search_results=[{"number": 12, "state": "OPEN"}])
         outcome = _report([_event()], gh2, tmp_path)
-        # The local memory answers before gh is ever consulted (§13).
+        # The local memory answers before gh is ever consulted.
         assert gh2.calls == []
         assert outcome.filed == 0
 
@@ -218,7 +218,7 @@ class TestDedup:
         assert "Recurrence of #7" in body[body.index("--body") + 1]
 
     def test_closed_issue_on_same_engine_stays_silent(self, tmp_path):
-        # The instance's engine predates the fix — sync cures it (§13).
+        # The instance's engine predates the fix — sync cures it.
         gh = FakeGh(search_results=[])
         _report([_event()], gh, tmp_path, engine="0.1.0")
         gh2 = FakeGh(search_results=[{"number": 7, "state": "CLOSED"}])

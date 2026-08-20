@@ -1,6 +1,6 @@
 """dex-enrich: the ingestion pipeline CLI.
 
-Thin by design (§14): parse arguments, build ``Instance``/``Config``/
+Thin by design: parse arguments, build ``Instance``/``Config``/
 ``Capabilities``, call the pipeline. Zero business logic lives here.
 """
 
@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     transcribe_parser = commands.add_parser(
-        "transcribe", help="drain the waiting transcription cohort (§6)"
+        "transcribe", help="drain the waiting transcription cohort"
     )
     transcribe_parser.add_argument(
         "--model",
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=TRANSCRIBE_RUN_CAP,
-        help=f"max transcriptions this run (default {TRANSCRIBE_RUN_CAP}, §12)",
+        help=f"max transcriptions this run (default {TRANSCRIBE_RUN_CAP})",
     )
 
     fetch_parser = commands.add_parser(
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     item_parser = commands.add_parser(
-        "item", help="corpus-item operations — code writes frontmatter, never freehand (§14)"
+        "item", help="corpus-item operations — code writes frontmatter, never freehand"
     )
     item_commands = item_parser.add_subparsers(dest="item_command", required=True)
     new_parser = item_commands.add_parser(
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         config = Config.load(instance.config_path)
         # One Capabilities object feeds the drain seam, the transcribe path,
-        # the file driver, and the status surface — they cannot disagree (§6).
+        # the file driver, and the status surface — they cannot disagree.
         capabilities = Capabilities.build(config, model=getattr(args, "model", None))
         ctx = RunContext(
             instance=instance,

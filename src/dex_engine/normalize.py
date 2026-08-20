@@ -5,11 +5,11 @@
 
 One corpus item per message cluster. Deterministic and idempotent:
 re-running regenerates the same files; fix bugs here and re-run, never
-hand-edit corpus. Kind detection is the shared pipeline module's job (§2):
+hand-edit corpus. Kind detection is the shared pipeline module's job:
 kinds are stamped pattern-only here and are provisional forever — the ledger
 is authoritative. Regeneration preserves the two enricher-owned frontmatter
 fields (``status``, ``enrichment``) and emits through ``corpus.py``, the one
-frontmatter write point (§14).
+frontmatter write point.
 
 Out-of-scope clusters are excluded via ``state/exclusions.tsv`` (id + reason
 per line, tab-separated), curated by the scope-filter pass and matched on
@@ -71,7 +71,7 @@ def load_exclusions(path: Path) -> set[str]:
 
 
 def kind_of(url: str) -> str:
-    """The provisional kind for a captured URL, via the shared detect module (§2).
+    """The provisional kind for a captured URL, via the shared detect module.
 
     The private ``kind_of`` copy — and its divergence from the enricher's —
     is deleted. Pattern-only here; the ledger is authoritative.
@@ -205,8 +205,8 @@ def _write_preserving(
 ) -> None:
     """Write the item, preserving enricher-owned fields across regeneration.
 
-    ``status`` and ``enrichment`` are the two fields the enricher owns
-    (§14); regeneration must never reset them.
+    ``status`` and ``enrichment`` are the two fields the enricher owns;
+    regeneration must never reset them.
     """
     path = instance.corpus_dir / f"{item.date:%Y}" / f"{item.id}.md"
     if path.exists():
@@ -316,7 +316,7 @@ def run_normalize(instance: Instance, config: Config) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# CLI — parse, build, call; zero business logic (§14)
+# CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
 

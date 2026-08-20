@@ -1,8 +1,8 @@
-"""Migration 1 — renames + status vocabulary (§12).
+"""Migration 1 — renames + status vocabulary.
 
 The rewrite renamed two kinds (``tweet → x``, ``blog → web``), retired two
 statuses (``nocaptions``/``toolong`` → ``waiting`` + ``needs: transcribe`` —
-both immediately drainable now), and formalized the ledger schema (§5).
+both immediately drainable now), and formalized the ledger schema.
 This migration moves pre-rewrite instance state onto that vocabulary:
 
 - corpus ``kinds:`` and ``enrichment:`` listings, through corpus.py's typed
@@ -18,11 +18,11 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   hashing corpus URLs with the old engine's own canonicalization, and the
   engine is stamped ``0.0.1`` — the only version the pre-rewrite engine
   ever shipped as, which is exactly what gives old ``error`` entries their
-  retry-on-new-engine semantics (§5);
+  retry-on-new-engine semantics;
 - ``state/normalize-config.json`` → ``state/config.json``.
 
-Everything not provably safe is skipped-with-why for the session to repair
-(§12). An untranslatable ledger line is **quarantined**: moved verbatim to
+Everything not provably safe is skipped-with-why for the session to repair.
+An untranslatable ledger line is **quarantined**: moved verbatim to
 ``state/enrichment-ledger.unmigrated.jsonl`` (nothing destroyed) and named
 in the report with the repair procedure — review each line, re-add it with
 ``enrich mark <url> <status> --reason …`` (the sanctioned correction verb),
@@ -67,7 +67,7 @@ INTENT = (
 
 # The only version the pre-rewrite engine ever shipped as; stamped onto old
 # lines (they recorded no engine), giving old `error` entries retry-on-new-
-# engine semantics (§5) and giving migration 2 its pre-rewrite marker.
+# engine semantics and giving migration 2 its pre-rewrite marker.
 PRE_REWRITE_ENGINE = "0.0.1"
 
 _KIND_RENAMES = {"tweet": "x", "blog": "web"}
@@ -115,7 +115,7 @@ class _UntranslatableError(Exception):
 
 
 class RenamesAndVocabulary:
-    """Migration 1 (§12): see the module docstring."""
+    """Migration 1: see the module docstring."""
 
     number = NUMBER
     intent = INTENT
@@ -318,7 +318,7 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     if new_text != original:
         _atomic_write(path, new_text)
     if translated:
-        actions.append(f"ledger: {translated} line(s) translated to the current schema (§5)")
+        actions.append(f"ledger: {translated} line(s) translated to the current schema")
     if quarantined:
         actions.append(
             f"ledger: {len(quarantined)} line(s) quarantined to state/{QUARANTINE_NAME} — "
@@ -389,7 +389,9 @@ def _translate_record(
             reason=reason,
         )
     except ValueError as e:
-        raise _UntranslatableError(f"still violates the §5 schema after translation ({e})") from e
+        raise _UntranslatableError(
+            f"still violates the current schema after translation ({e})"
+        ) from e
 
 
 def _translate_kind(raw: dict[str, object]) -> Kind:
@@ -405,7 +407,7 @@ def _translate_status(raw: dict[str, object]) -> tuple[Status, Need | None]:
     text = _expect_str(raw, "status")
     if text in _RETIRED_STATUSES:
         # Both retired statuses meant "cannot transcribe" — whisper-local and
-        # chunking removed those limits, so the cohort is drainable again (§12).
+        # chunking removed those limits, so the cohort is drainable again.
         return Status.WAITING, Need.TRANSCRIBE
     try:
         status = Status(text)
@@ -431,7 +433,7 @@ def _translate_path(
     if status is not Status.DONE:
         notes.append(
             f"ledger {unit_hash}: stray path {raw_path!r} dropped from a "
-            f"{status.value} line — outputs are success-only (§5)"
+            f"{status.value} line — outputs are success-only"
         )
         return None
     parts = raw_path.split("/")
@@ -443,7 +445,7 @@ def _translate_item(
     raw: dict[str, object], *, raw_path: str | None, unit_hash: str, owners: dict[str, str]
 ) -> str:
     # The raw path attributes the item even when the path field itself is
-    # dropped (outputs are done-only, §5) — where the file landed is still
+    # dropped (outputs are done-only) — where the file landed is still
     # true provenance.
     if "item" in raw:
         return _expect_str(raw, "item")
@@ -463,11 +465,11 @@ def _translate_item(
 def _translate_error_and_reason(
     raw: dict[str, object], *, status: Status, unit_hash: str, notes: list[str]
 ) -> tuple[str | None, str | None]:
-    """Port the old informal ``error``-as-reason and ``note`` values (§12).
+    """Port the old informal ``error``-as-reason and ``note`` values.
 
     Never destroyed: on statuses where the new schema allows or requires a
     reason they land in ``reason``; on ``error`` they stay in ``error``; on
-    ``done``/``queued`` — where §5 forbids a reason — the text is preserved
+    ``done``/``queued`` — where the schema forbids a reason — the text is preserved
     in the migration report instead of the line, stated explicitly.
     """
     error_text = None if "error" not in raw else _expect_str(raw, "error")
@@ -484,11 +486,11 @@ def _translate_error_and_reason(
         if reason is not None:
             notes.append(
                 f"ledger {unit_hash}: pre-migration text {reason!r} preserved here and "
-                f"dropped from the line — reason is forbidden on {status.value} (§5)"
+                f"dropped from the line — reason is forbidden on {status.value}"
             )
         return None, None
     if status in (Status.MANUAL, Status.SKIPPED) and reason is None:
-        # The old engine recorded no reason for these; §5 requires one. The
+        # The old engine recorded no reason for these; the schema requires one. The
         # honest translation records that no reason was stated.
         reason = "unstated (pre-migration)"
     return None, reason
@@ -508,13 +510,13 @@ def _translate_title(
     if status is not Status.DONE or path_text is None:
         notes.append(
             f"ledger {unit_hash}: stray title {text!r} dropped — "
-            "outputs (path/title) are done-only and travel together (§5)"
+            "outputs (path/title) are done-only and travel together"
         )
         return None
     return text
 
 
-# The current provenance vocabulary (§5) — frozen here like the legacy
+# The current provenance vocabulary — frozen here like the legacy
 # canonicalization above: this migration's contract is "translate to the
 # schema shipping WITH it", so the copy cannot drift out from under it.
 _CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})

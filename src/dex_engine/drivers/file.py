@@ -1,17 +1,17 @@
-"""The file driver: local repo files and URL-served binaries, routed by Format (§3).
+"""The file driver: local repo files and URL-served binaries, routed by Format.
 
 Two work shapes, one driver: ``file:<repo-path>`` keys (materialized media
 captures) read from the instance tree; http(s) URLs (a PDF served from an
 arbitrary address, rerouted here by detection's HEAD sniff) fetch through
 the transport with classified failures. Bytes are then byte-signature
-sniffed — authoritative over whatever a server claimed (§1) — and handed to
-the first available mechanical extractor for the format (§6).
+sniffed — authoritative over whatever a server claimed — and handed to
+the first available mechanical extractor for the format.
 
 No provider for the format → ``waiting`` + ``needs: extract`` with the
 registry's stated reason. A scanned/image-only document → ``waiting`` +
 ``needs: ocr``. Embedded assets ride the Result for the run layer to write
-under the §7 media caps, ledgered ``via: extract-asset`` — this driver, like
-every driver, never touches the ledger or the disk outputs (§2).
+under the media caps, ledgered ``via: extract-asset`` — this driver, like
+every driver, never touches the ledger or the disk outputs.
 """
 
 from pathlib import Path
@@ -50,7 +50,7 @@ class FileDriver:
         """Wire the extract registry, the instance root, and the HTTP seam.
 
         Args:
-            capabilities: The resolved capability registries (§6).
+            capabilities: The resolved capability registries.
             root: The instance root for ``file:`` work; ``None`` is legal
                 only for registries that never fetch local files (pattern
                 matching, normalize).
@@ -65,7 +65,7 @@ class FileDriver:
         return url.startswith("file:")
 
     def canonical(self, url: str) -> str:
-        """File keys are already canonical — the repo path IS the identity (§5)."""
+        """File keys are already canonical — the repo path IS the identity."""
         if url.startswith("file:"):
             return url
         return base_canonical(url)
@@ -131,7 +131,7 @@ class FileDriver:
     def _extract(self, data: bytes, fmt: Format, name: str | None) -> Result:
         extractor = self._capabilities.extractor(fmt)
         if extractor is None:
-            # No mechanical provider for THIS format (§6): waiting, with the
+            # No mechanical provider for THIS format: waiting, with the
             # registry's stated reason — the cognitive floor surfaces it on
             # the report for the session.
             availability = self._capabilities.available(Need.EXTRACT, fmt)
@@ -139,7 +139,7 @@ class FileDriver:
                 status=Status.WAITING, meta={}, needs=Need.EXTRACT, reason=availability.reason
             )
         try:
-            # ProviderInputError propagates: the run loop maps it → manual (§5).
+            # ProviderInputError propagates: the run loop maps it → manual.
             extraction = extractor.extract(data, fmt)
         except ScannedDocumentError as e:
             return Result(status=Status.WAITING, meta={}, needs=Need.OCR, reason=str(e))

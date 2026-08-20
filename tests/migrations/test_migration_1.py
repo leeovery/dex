@@ -1,4 +1,4 @@
-"""Migration 1 against synthetic fixtures reproducing the wild shapes (§12).
+"""Migration 1 against synthetic fixtures reproducing the wild shapes.
 
 Fixtures are constructed here from the pre-rewrite engine's writer code —
 never copied from a real instance (this repo is public; instances are
@@ -248,7 +248,7 @@ class TestLedgerTranslation:
         assert ledger.load(path)["eeeeeeeeee"].reason == "unstated (pre-migration)"
 
     def test_done_error_text_preserved_in_report_not_line(self, tmp_path, migration):
-        # §5 forbids reason on done: the choice is stated in the report and
+        # The schema forbids reason on done: the choice is stated in the report and
         # the text lives there, never silently dropped.
         path = write_ledger(
             tmp_path,
@@ -293,7 +293,7 @@ class TestLedgerTranslation:
         entry = ledger.load(path)["abcdefabcd"]
         assert entry.status is Status.ERROR
         assert entry.error == "unrecorded (pre-migration error)"
-        # engine 0.0.1 is what makes retry-on-new-engine fire (§5/§12).
+        # engine 0.0.1 is what makes retry-on-new-engine fire.
         assert entry.engine == "0.0.1"
 
     def test_via_whisper_dropped_with_note(self, tmp_path, migration):
@@ -498,7 +498,7 @@ class TestLedgerTranslation:
         assert path.read_text() == original
 
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
-        # Un-pulled repos are a supported input (§12).
+        # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
         assert report.skipped == []
 

@@ -1,6 +1,6 @@
 """Pure layout kernel: wrap/width math, fills, tables, key-value blocks, trees.
 
-Zero dex vocabulary (§11). Layout that is fully determined by data is
+Zero dex vocabulary. Layout that is fully determined by data is
 computed here, in code, once, and emitted verbatim by the caller — never
 re-derived character-by-character by the model. THE wrap-budget bug lives
 here and only here: a wrap budget is always the width minus every prefix

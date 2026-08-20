@@ -29,7 +29,7 @@ class TestParser:
         assert (args.status, args.reason, args.path) == ("manual", "thin-extraction", None)
 
     def test_typoed_flags_are_loud_not_ignored(self):
-        # The old hand-rolled parser silently ignored typo'd flags (§14).
+        # The old hand-rolled parser silently ignored typo'd flags.
         with pytest.raises(SystemExit):
             build_parser().parse_args(["run", "--limt", "5"])
 
@@ -74,7 +74,7 @@ class TestMain:
         main(["status"])
         out = capsys.readouterr().out
         assert out.startswith("ledger — 0 entries")
-        assert "capabilities" in out  # §6: how a free-floor instance learns what a key buys
+        assert "capabilities" in out  # how a free-floor instance learns what a key buys
         assert "transcribe" in out
 
     def test_transcribe_on_an_empty_instance_reports_cleanly(self, instance, monkeypatch, capsys):

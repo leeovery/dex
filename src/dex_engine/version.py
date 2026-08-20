@@ -1,12 +1,12 @@
-"""The running engine's version, read from package metadata (§12/§14).
+"""The running engine's version, read from package metadata.
 
 This is the value stamped into ledger lines and migration records, and the
 baseline the sync flow compares release tags against. It is injected where
-consumed (§14) — call :func:`engine_version` in a CLI entry point and pass
+consumed — call :func:`engine_version` in a CLI entry point and pass
 the string down; never read metadata mid-pipeline.
 
-Mint cuts releases, tags, and changelogs — human-invoked, never the engine
-(§12). Nothing in this package creates a release; this module only reads
+Mint cuts releases, tags, and changelogs — human-invoked, never the engine.
+Nothing in this package creates a release; this module only reads
 the version the running install was built with.
 """
 

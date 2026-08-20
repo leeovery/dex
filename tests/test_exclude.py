@@ -1,4 +1,4 @@
-"""Tests for exclude.py: purge + record, surviving re-normalization (§14)."""
+"""Tests for exclude.py: purge + record, surviving re-normalization."""
 
 import json
 

@@ -1,4 +1,4 @@
-"""Corpus-item creation from capture files: ``enrich item new`` (§14).
+"""Corpus-item creation from capture files: ``enrich item new``.
 
 Corpus items are created by this verb, never freehand — code writes
 frontmatter, Claude writes prose. Creation was always mechanical work (the
@@ -93,14 +93,14 @@ def _slugify(text: str, max_len: int = 40) -> str:
 
 
 def _media_kind(instance: Instance, media_path: str) -> str:
-    """``file`` for document formats (extract queue), ``image`` otherwise (§3)."""
+    """``file`` for document formats (extract queue), ``image`` otherwise."""
     file_path = instance.root / media_path
     data = file_path.read_bytes() if file_path.is_file() else b""
     fmt = sniff_format(data, name=media_path.rsplit("/", 1)[-1])
     return Kind.FILE.value if fmt is not None else Kind.IMAGE.value
 
 
-def item_new(  # noqa: PLR0913 — every input is injected, none ambient (§14)
+def item_new(  # noqa: PLR0913 — every input is injected, none ambient
     capture_path: Path,
     *,
     instance: Instance,
@@ -117,8 +117,8 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient (§14)
         instance: The instance.
         drivers: The driver registry — URL canonicalization and pattern-only
             kind detection (provisional forever; the ledger is
-            authoritative, §1).
-        today: Injected clock (§14) — the date when the filename carries no
+            authoritative).
+        today: Injected clock — the date when the filename carries no
             capture timestamp.
         slug: Judgment's slug for the id; ``None`` derives one mechanically
             from the note (then the URL path tail).

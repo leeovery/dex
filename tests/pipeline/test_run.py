@@ -1,4 +1,4 @@
-"""Tests for pipeline/run.py: the orchestrator, with fake drivers (§15)."""
+"""Tests for pipeline/run.py: the orchestrator, with fake drivers."""
 
 import dataclasses
 import datetime
@@ -70,7 +70,7 @@ def refuse_download(url, _cache_dir, _stem):
 
 
 def refuse_gh(args):
-    # Hermetic default: the filer's soft edge (§13) turns this into an
+    # Hermetic default: the filer's soft edge turns this into an
     # "issue filing failed" note — never a network call, never a crash.
     raise OSError(f"no gh in tests (called with {args[:2]})")
 
@@ -156,7 +156,7 @@ class TestSeedAndDone:
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx, limit=2)
         statuses = sorted(e.status.value for e in ledger.load(instance.ledger_path).values())
-        assert statuses == ["done", "done", "queued"]  # the cohort drains across runs (§12)
+        assert statuses == ["done", "done", "queued"]  # the cohort drains across runs
         run_mod.run(ctx)
         statuses = {e.status for e in ledger.load(instance.ledger_path).values()}
         assert statuses == {Status.DONE}
@@ -232,7 +232,7 @@ class TestChildren:
         assert capped.depth == MAX_DEPTH + 1
         fetched = [e for e in entries.values() if e.status is Status.DONE]
         assert len(fetched) == MAX_DEPTH + 1  # depths 0..4 fetched, 5 refused
-        assert "depth cap" not in report  # judgment-drift signal, not user-facing (§1)
+        assert "depth cap" not in report  # judgment-drift signal, not user-facing
 
     def test_url_cap_fires_per_item_and_is_recorded(self, instance):
         write_item(instance, urls=["https://hub.test/root"])
@@ -257,7 +257,7 @@ class TestChildren:
 
 class TestParking:
     def test_waiting_parks_with_reason_until_a_provider_appears(self, instance, flippable_provider):
-        # The FlippableProvider auto-drain (§15): a waiting cohort ignores
+        # The FlippableProvider auto-drain: a waiting cohort ignores
         # runs until available() flips, then drains through its driver.
         write_item(instance)
         calls = {"n": 0}
@@ -280,7 +280,7 @@ class TestParking:
         assert entry.status is Status.WAITING
         assert entry.needs is Need.EXTRACT
         assert entry.reason == "no extractor for this format"
-        assert "no extractor for this format" in report  # parked rows are printed (§1)
+        assert "no extractor for this format" in report  # parked rows are printed
 
         run_mod.run(ctx)  # provider still unavailable — waiting ignores runs
         assert calls["n"] == 1
@@ -340,7 +340,7 @@ class TestParking:
         assert len(driver.fetched) == 2
 
     def test_engine_bug_after_the_fetch_ledgers_error_never_aborts(self, instance):
-        # The per-unit try covers ALL per-unit processing (§5): here the
+        # The per-unit try covers ALL per-unit processing: here the
         # OUTPUT WRITE fails (the item's enrichment path is a file), and the
         # run must ledger `error` and carry on.
         write_item(instance)
@@ -464,7 +464,7 @@ class TestMediaStage:
         entries = ledger.load(instance.ledger_path)
         media = entries[work_hash(self.IMG1)]
         assert media.via == "media"
-        assert media.kind is Kind.X  # the parent's kind (§7)
+        assert media.kind is Kind.X  # the parent's kind
         assert media.parent == work_hash(URL)
         assert media.status is Status.DONE
         assert media.path == f"enrichment/{ITEM}/media-0.png"
@@ -538,7 +538,7 @@ class TestMediaStage:
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
 
     def test_media_entries_are_born_queued_before_the_download(self, instance):
-        # §1: entries from birth — a crash mid-download must leave a queued
+        # Entries exist from birth — a crash mid-download must leave a queued
         # via:media line the next run's redrain path picks up.
         write_item(instance)
         transport = FakeTransport(
@@ -661,7 +661,7 @@ class TestExtractAssets:
         item_dir = instance.enrichment_dir / ITEM
         item_dir.mkdir(parents=True)
         for n in range(3):
-            (item_dir / f"media-{n}.png").write_bytes(b"m")  # three §7 downloads already
+            (item_dir / f"media-{n}.png").write_bytes(b"m")  # three media downloads already
         assets = [Asset(data=b"a", suggested_ext="png"), Asset(data=b"b", suggested_ext="png")]
         ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
         run_mod.run(ctx)
@@ -835,7 +835,7 @@ class TestVerbs:
     def test_mark_done_carries_the_prior_outputs_forward(self, instance):
         # A heal never erases what it does not correct: re-marking a done
         # entry (or overriding just its path) keeps the recorded outputs.
-        # (A non-done line cannot HOLD path/title under §5, so a heal from
+        # (A non-done line cannot HOLD path/title under the schema, so a heal from
         # such a line has nothing to carry — the audit trail keeps history.)
         write_item(instance)
         ctx = make_ctx(instance, FakeDriver())  # default fetch records path + title "t"
@@ -945,7 +945,7 @@ class TestStatusReport:
 
 
 class TestIssueFiling:
-    """The §13 wiring: error outcomes reach the filer; the report says so."""
+    """The filer wiring: error outcomes reach it; the report says so."""
 
     def _crashing_ctx(self, instance, gh):
         write_item(instance)
@@ -968,7 +968,7 @@ class TestIssueFiling:
         gh = FakeGh()
         fetch = lambda _unit: Result(status=Status.BLOCKED, meta={})  # noqa: E731
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
-        assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs (§13)
+        assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs
 
     def test_report_issues_false_files_nothing(self, instance):
         gh = FakeGh()

@@ -1,4 +1,4 @@
-"""dex-sync: pin-aware engine sync — step 0 of every dex-run session (§12).
+"""dex-sync: pin-aware engine sync — step 0 of every dex-run session.
 
 Flow::
 
@@ -71,7 +71,7 @@ class ReleaseCheckError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReleaseChannel:
-    """The seams between sync and the world outside the instance (§14/§15).
+    """The seams between sync and the world outside the instance.
 
     ``ls_remote`` lists the remote's tags (raw ``git ls-remote --tags``
     output); ``execute`` replaces this process with the given argv. Both are
@@ -100,7 +100,7 @@ def _git_ls_remote(repo_url: str) -> str:
 
 def _exec_argv(argv: list[str]) -> None:
     """Replace this process with ``argv`` — the production re-exec seam."""
-    os.execvp(argv[0], argv)  # noqa: S606 — re-exec at the new tag IS the mechanism (§12)
+    os.execvp(argv[0], argv)  # noqa: S606 — re-exec at the new tag IS the mechanism
 
 
 def default_channel() -> ReleaseChannel:
@@ -145,7 +145,7 @@ def _validate_pin(pin: str) -> None:
     except ValueError as e:
         raise ValueError(
             f"{PIN_FILE} holds {pin!r}, which is not a release tag — repair the pin "
-            "line (rollback is editing it, §12)"
+            "line (rollback is editing it)"
         ) from e
 
 
@@ -209,7 +209,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
 ) -> bool:
     """Settle the pin against the remote's releases; True means re-exec'd.
 
-    The pin is bumped *before* the re-exec (§12 order): if the exec fails,
+    The pin is bumped *before* the re-exec, deliberately: if the exec fails,
     the pin already names the new tag and the next shim run lands there.
     """
     if not tags:
@@ -249,7 +249,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
     own = next((tag for tag, version in tags if version == running), None)
     if own is not None:
         write_pin(root, own)
-        notes.append(f"first tag-aware sync — pinned this engine's own release {own} (§12)")
+        notes.append(f"first tag-aware sync — pinned this engine's own release {own}")
     else:
         notes.append(
             f"running engine {running_version} is newer than the latest release "
@@ -265,7 +265,7 @@ def _announce(
         banner = "=" * 68
         echo(banner)
         echo(f"MAJOR ENGINE UPGRADE: {current} → {latest_tag}")
-        echo("Auto-applying — the always-migratable commitment (§12). Migrations")
+        echo("Auto-applying — the always-migratable commitment. Migrations")
         echo("run before anything touches state; review the sync report closely.")
         echo(banner)
     echo(
@@ -324,7 +324,7 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         root: The instance root.
         template: The template tree; ``None`` uses the running engine's
             bundled copy (which is what "sync copies from the bundled
-            template of the running — pinned — version" means, §12).
+            template of the running — pinned — version" means).
 
     Returns:
         Change descriptions: paths (relative to ``root``) that were written
@@ -393,12 +393,12 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     previous_pin: str | None = None,
     migrate: Callable[[Path], list[AppliedMigration]] | None = None,
 ) -> str | None:
-    """Run the §12 sync flow against the instance at ``instance.root``.
+    """Run the sync flow (pin check → migrations → template → report) at ``instance.root``.
 
     Args:
         instance: The instance.
-        running_version: The running engine's version (injected, §14).
-        today: Injected clock (§14).
+        running_version: The running engine's version (injected).
+        today: Injected clock.
         channel: Release-check and re-exec seams.
         echo: Where progress and the loud major announcement go (print in
             production) — distinct from the returned report.
@@ -485,7 +485,7 @@ def _report_payload(
 
 
 # ---------------------------------------------------------------------------
-# CLI — parse, build, call; zero business logic (§14)
+# CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
 
@@ -494,7 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dex-sync",
         description="Sync engine-managed machinery into the instance at cwd: "
-        "pin check, migrations, template refresh, sync report (§12).",
+        "pin check, migrations, template refresh, sync report.",
     )
     parser.add_argument(
         "--previous-pin",

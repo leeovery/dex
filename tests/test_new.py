@@ -1,4 +1,4 @@
-"""Tests for new.py: instance scaffolding from the bundled template (§14)."""
+"""Tests for new.py: instance scaffolding from the bundled template."""
 
 import json
 from pathlib import Path

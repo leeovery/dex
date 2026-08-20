@@ -1,4 +1,4 @@
-"""Tests for pipeline/classify.py: the one classification point (§5)."""
+"""Tests for pipeline/classify.py: the one classification point."""
 
 import socket
 import ssl
@@ -19,7 +19,7 @@ from dex_engine.pipeline.types import Status
 
 class TestClassifyHttp:
     def test_403_is_blocked_never_dead(self):
-        # THE regression pin (§15): the motivating incident was a 403
+        # THE regression pin: the motivating incident was a 403
         # challenge ledgered `dead` — terminal, never retried.
         classification = classify_http(403)
         assert classification.status is Status.BLOCKED
@@ -38,7 +38,7 @@ class TestClassifyHttp:
 
     @pytest.mark.parametrize("code", [401, 402])
     def test_login_walls_and_paywalls_are_manual(self, code):
-        # 402: x.com answers it; retrying never resolves payment-required (§5).
+        # 402: x.com answers it; retrying never resolves payment-required.
         classification = classify_http(code)
         assert classification.status is Status.MANUAL
         assert PAYWALL_REASON in classification.reason

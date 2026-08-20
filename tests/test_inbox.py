@@ -1,4 +1,4 @@
-"""Tests for inbox.py: the device-tested materialization sequence, hermetic (§14)."""
+"""Tests for inbox.py: the device-tested materialization sequence, hermetic."""
 
 import hashlib
 

@@ -1,4 +1,4 @@
-"""The x driver (renamed from tweet): fxtwitter fetch + thread walk-up (§8).
+"""The x driver (renamed from tweet): fxtwitter fetch + thread walk-up.
 
 The chain above a captured post is context, not new first-class sources:
 one enrichment file, one ledger entry. The walk follows fxtwitter parent
@@ -9,7 +9,7 @@ pooled, the captured post's first.
 
 Incomplete chains are recorded, never silently presented as complete: a
 parent fetch failing mid-walk sets ``chain_incomplete`` in meta with how
-far the walk got. Walk-down is explicitly unsolved (§8) — backlog.
+far the walk got. Walk-down is explicitly unsolved — backlog.
 """
 
 import json
@@ -30,7 +30,7 @@ __all__ = ["XDriver"]
 _API = "https://api.fxtwitter.com/"
 _HOSTS = frozenset({"x.com", "twitter.com"})
 
-# Thread walk-up cap (§8): 20 parent hops above the captured post.
+# Thread walk-up cap: 20 parent hops above the captured post.
 MAX_HOPS = 20
 
 
@@ -96,14 +96,14 @@ class XDriver:
         while (parent_id := current.get("replying_to_status")) is not None:
             if len(posts) - 1 >= MAX_HOPS:
                 # Cap hit: recorded in meta (and thereby the enrichment
-                # frontmatter), never on user-facing surfaces (§1/§8).
+                # frontmatter), never on user-facing surfaces.
                 walk_meta["thread_cap_hit"] = "true"
                 break
             screen = current.get("replying_to") or "i"
             parent = self._fetch_post(f"{screen}/status/{parent_id}")
             if isinstance(parent, Classification):
                 # Mid-walk fetch failure is mechanical: record the gap, keep
-                # what we have (§8) — never silently present it as complete.
+                # what we have — never silently present it as complete.
                 walk_meta["chain_incomplete"] = "true"
                 walk_meta["chain_note"] = (
                     f"parent fetch failed after {len(posts)} post(s): {parent.reason}"
@@ -133,7 +133,7 @@ def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | 
         return Result(status=Status.MANUAL, meta=meta, reason="fxtwitter returned no text or media")
     # Photo-only posts are DONE, not manual: the body stays a minimal
     # attributed record and the media stage fetches the photos themselves.
-    media = [url for post in posts for url in _photo_urls(post)]  # captured post's first (§8)
+    media = [url for post in posts for url in _photo_urls(post)]  # captured post's first
     return Result(status=Status.DONE, meta=meta, body=body, media=media)
 
 

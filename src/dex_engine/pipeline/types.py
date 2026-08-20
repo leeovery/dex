@@ -1,9 +1,5 @@
 """Pipeline vocabulary: enums, work-unit dataclasses, instance paths, config.
 
-Design reference: design/ingestion-pipeline.md — §2 (interfaces and typing
-discipline), §3 (enums), §5 (ledger schema and status lifecycle), §14
-(implementation standards).
-
 This module is the bottom of the dependency graph: it imports nothing from
 the rest of the package.
 """
@@ -43,7 +39,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Enums (§3). StrEnum so ledgers and frontmatter serialize as plain strings.
+# Enums. StrEnum so ledgers and frontmatter serialize as plain strings.
 # No aliases: renames are a clean break executed by migration 1.
 # ---------------------------------------------------------------------------
 
@@ -82,7 +78,7 @@ class Format(StrEnum):
 
 
 class Status(StrEnum):
-    """Ledger status lifecycle (§5)."""
+    """Ledger status lifecycle."""
 
     QUEUED = "queued"
     DONE = "done"
@@ -103,7 +99,7 @@ class Need(StrEnum):
 
 
 class MediaFetch(StrEnum):
-    """Instance policy for the media stage's URL downloads (§7)."""
+    """Instance policy for the media stage's URL downloads."""
 
     NONE = "none"
     LEAD = "lead"
@@ -112,14 +108,14 @@ class MediaFetch(StrEnum):
 # `queued` is a birth state, not a driver outcome, and `error` is RAISED,
 # never returned — a Result has no error channel, so a returned `error`
 # could only carry a fabricated message; the run loop's single broad except
-# is the one place errors are made (§2/§5).
+# is the one place errors are made.
 DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
 
 
 # ---------------------------------------------------------------------------
-# Provenance vocabulary. `via` stays a documented string, not an enum (§3):
+# Provenance vocabulary. `via` stays a documented string, not an enum:
 # `migration-<n>` is parameterized and provenance is descriptive, never
-# dispatched on. It is still validated against the known shapes (§5).
+# dispatched on. It is still validated against the known shapes.
 # ---------------------------------------------------------------------------
 
 _VIA_EXACT = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
@@ -134,11 +130,11 @@ def _validate_via(via: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared work-unit identity invariants (§2/§3/§5), enforced on WorkUnit and
+# Shared work-unit identity invariants, enforced on WorkUnit and
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
 
-# The stated-reason contract (§1/§5), shared by Result and LedgerEntry:
+# The stated-reason contract, shared by Result and LedgerEntry:
 # manual and skipped exist only by deliberate decision, so the decision must
 # be recorded; waiting/blocked/dead may carry one; done/queued need none, and
 # error carries the scrubbed `error` field instead (ledger) or no reason at
@@ -148,7 +144,7 @@ _REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
 # sha1(work key)[:10] — the ledger key format.
 _HASH_RE = re.compile(r"^[0-9a-f]{10}$")
-# Corpus-frontmatter vocabulary only; never work units (§3).
+# Corpus-frontmatter vocabulary only; never work units.
 _NON_WORK_KINDS = frozenset({Kind.IMAGE, Kind.TEXT})
 
 
@@ -157,7 +153,7 @@ def _validate_unit_identity(
 ) -> None:
     if not _HASH_RE.match(unit_hash):
         raise ValueError(
-            f"hash must be 10 lowercase hex characters (sha1(work key)[:10], §5), got {unit_hash!r}"
+            f"hash must be 10 lowercase hex characters (sha1(work key)[:10]), got {unit_hash!r}"
         )
     if not url:
         raise ValueError("url must not be empty")
@@ -166,10 +162,10 @@ def _validate_unit_identity(
     if kind in _NON_WORK_KINDS:
         raise ValueError(
             f"kind {kind!r} is corpus-frontmatter vocabulary only and never becomes "
-            "a work unit (§3)"
+            "a work unit"
         )
     if unit_format is not None and kind is not Kind.FILE:
-        raise ValueError(f"format is file-work only (§5), got kind {kind!r}")
+        raise ValueError(f"format is file-work only, got kind {kind!r}")
 
 
 def _validate_depth(depth: int) -> None:
@@ -180,7 +176,7 @@ def _validate_depth(depth: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Work-unit dataclasses (§2). All frozen, slots, kw_only.
+# Work-unit dataclasses. All frozen, slots, kw_only.
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +193,7 @@ class WorkUnit:
     """What the pipeline hands a driver.
 
     Deliberately not :class:`LedgerEntry`: drivers never see ``attempts``,
-    ``engine``, or ``rerun`` bookkeeping (§2).
+    ``engine``, or ``rerun`` bookkeeping.
     """
 
     hash: str
@@ -220,7 +216,7 @@ class WorkUnit:
         if (self.parent is None) != (self.depth == 0):
             raise ValueError(
                 "parent and depth travel together: depth 0 is the shared URL (no "
-                "parent); spawned units carry both (§2)"
+                "parent); spawned units carry both"
             )
 
 
@@ -243,7 +239,7 @@ class Child:
 class Result:
     """What a driver's ``fetch`` returns.
 
-    ``reason`` mirrors the ledger's stated-reason contract (§2/§5): required
+    ``reason`` mirrors the ledger's stated-reason contract: required
     when a driver returns ``manual``/``skipped`` (the driver knows why),
     optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
     run layer may append classifier context to it but never invents what the
@@ -255,8 +251,8 @@ class Result:
     body: str | None = None
     media: list[str] = field(default_factory=list)
     children: list[Child] = field(default_factory=list)
-    # Extraction assets (§6): embedded images have no URL, so bytes are the
-    # only possible form — and drivers never touch the disk (§2), so the
+    # Extraction assets: embedded images have no URL, so bytes are the
+    # only possible form — and drivers never touch the disk, so the
     # Result is the one channel through which they can reach the run layer's
     # asset-writing step.
     assets: list["Asset"] = field(default_factory=list)
@@ -267,27 +263,27 @@ class Result:
         if self.status not in DRIVER_STATUSES:
             raise ValueError(
                 f"drivers may not return status {self.status!r} — 'queued' is a birth "
-                "state and 'error' is raised, never returned (§2/§5)"
+                "state and 'error' is raised, never returned"
             )
         if self.status is Status.WAITING and self.needs is None:
-            raise ValueError("status 'waiting' requires needs (§5)")
+            raise ValueError("status 'waiting' requires needs")
         if self.needs is not None and self.status is not Status.WAITING:
             raise ValueError(
                 f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
             )
         if self.status in _REASON_REQUIRED and not self.reason:
             raise ValueError(
-                f"a driver returning status {self.status!r} must state its reason (§2/§5)"
+                f"a driver returning status {self.status!r} must state its reason"
             )
         if self.status in _REASON_FORBIDDEN and self.reason is not None:
-            raise ValueError(f"reason is forbidden on a {self.status!r} result (§2/§5)")
+            raise ValueError(f"reason is forbidden on a {self.status!r} result")
         if self.assets and self.status is not Status.DONE:
-            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r} (§6)")
+            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r}")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Asset:
-    """An embedded asset extracted from inside a container document (§6).
+    """An embedded asset extracted from inside a container document.
 
     Embedded images have no URL — bytes are the only possible form.
     """
@@ -305,16 +301,16 @@ class Extraction:
 
 
 # ---------------------------------------------------------------------------
-# Capability providers (§2/§6): structural, resolved per capability by the
+# Capability providers: structural, resolved per capability by the
 # registries in dex_engine.capabilities. Conformance is verified at the typed
 # provider lists there, exactly like the driver registry literal.
 # ---------------------------------------------------------------------------
 
 
 class Transcriber(Protocol):
-    """A transcription capability provider (§6).
+    """A transcription capability provider.
 
-    ``model`` is the model identifier the provider runs — §6 requires raw
+    ``model`` is the model identifier the provider runs requires raw
     transcripts stamped ``via``/``model`` in enrichment frontmatter, so the
     drain must be able to read it off the provider.
     """
@@ -323,7 +319,7 @@ class Transcriber(Protocol):
     model: str
 
     def available(self) -> Availability:
-        """Honest availability: install intact, credentials present (§6)."""
+        """Honest availability: install intact, credentials present."""
         ...
 
     def transcribe(self, audio: Path, initial_prompt: str) -> str:
@@ -331,13 +327,13 @@ class Transcriber(Protocol):
 
         Raises ``ProviderInputError`` for audio it cannot decode (→ manual)
         and ``ProviderUnavailableError`` for capability-level failures
-        discovered at call time (→ the job stays waiting, §6).
+        discovered at call time (→ the job stays waiting).
         """
         ...
 
 
 class Extractor(Protocol):
-    """A document-extraction capability provider (§6).
+    """A document-extraction capability provider.
 
     The Format is the contract, not the tool: providers register per format
     via ``supports``, so each format falls back (or parks) independently.
@@ -350,7 +346,7 @@ class Extractor(Protocol):
         ...
 
     def available(self) -> Availability:
-        """Honest availability: install intact (§6)."""
+        """Honest availability: install intact."""
         ...
 
     def extract(self, data: bytes, fmt: Format) -> Extraction:
@@ -358,13 +354,13 @@ class Extractor(Protocol):
 
         Raises ``ProviderInputError`` for documents it cannot parse
         (→ manual) and ``ScannedDocumentError`` for image-only documents
-        (→ the §6 OCR path: ``waiting`` + ``needs: ocr``).
+        (→ the OCR path: ``waiting`` + ``needs: ocr``).
         """
         ...
 
 
 # ---------------------------------------------------------------------------
-# Driver interface (§2): structural, one per source shape. Conformance is
+# Driver interface: structural, one per source shape. Conformance is
 # verified at the typed registry literal (pipeline/registry.py) — the one
 # assignment where the checker matches every driver against this Protocol.
 # ---------------------------------------------------------------------------
@@ -390,7 +386,7 @@ class SourceDriver(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Ledger entry (§5): frozen, validated — the schema comments are runtime
+# Ledger entry: frozen, validated — the schema comments are runtime
 # invariants, enforced here so a malformed entry cannot exist in memory.
 # Serialization happens in exactly one place: pipeline/ledger.py.
 # ---------------------------------------------------------------------------
@@ -398,7 +394,7 @@ class SourceDriver(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LedgerEntry:
-    """One work unit in the enrichment ledger (§5)."""
+    """One work unit in the enrichment ledger."""
 
     hash: str
     url: str
@@ -419,7 +415,7 @@ class LedgerEntry:
     path: str | None = None
     title: str | None = None
     error: str | None = None
-    # the stated parking reason (§1) — see _REASON_REQUIRED/_REASON_FORBIDDEN
+    # the stated parking reason — see _REASON_REQUIRED/_REASON_FORBIDDEN
     reason: str | None = None
 
     def __post_init__(self) -> None:
@@ -431,7 +427,7 @@ class LedgerEntry:
             unit_format=self.format,
         )
         if not self.engine:
-            raise ValueError("every ledger entry records the engine version that wrote it (§5)")
+            raise ValueError("every ledger entry records the engine version that wrote it")
         _validate_entry_queue_fields(self)
         _validate_entry_outcome_fields(self)
         _validate_entry_provenance(self)
@@ -439,33 +435,33 @@ class LedgerEntry:
 
 def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
     if entry.status is Status.WAITING and entry.needs is None:
-        raise ValueError("status 'waiting' requires needs (§5)")
+        raise ValueError("status 'waiting' requires needs")
     if entry.needs is not None and entry.status is not Status.WAITING:
-        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r}")
     if isinstance(entry.attempts, bool):
         raise ValueError("attempts must be an integer, not a boolean")
     if entry.status is Status.BLOCKED and (entry.attempts is None or entry.attempts < 1):
-        raise ValueError("status 'blocked' requires attempts >= 1 (§5)")
+        raise ValueError("status 'blocked' requires attempts >= 1")
     if entry.attempts is not None and entry.status is not Status.BLOCKED:
-        raise ValueError(f"attempts is blocked-only bookkeeping, got status {entry.status!r} (§5)")
+        raise ValueError(f"attempts is blocked-only bookkeeping, got status {entry.status!r}")
 
 
 def _validate_entry_outcome_fields(entry: LedgerEntry) -> None:
     if entry.status is Status.ERROR and not entry.error:
-        raise ValueError("status 'error' requires a scrubbed error message (§5)")
+        raise ValueError("status 'error' requires a scrubbed error message")
     if entry.error is not None and entry.status is not Status.ERROR:
-        raise ValueError(f"error message is error-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"error message is error-only, got status {entry.status!r}")
     if entry.status in _REASON_REQUIRED and not entry.reason:
-        raise ValueError(f"status {entry.status!r} requires a stated reason (§1/§5)")
+        raise ValueError(f"status {entry.status!r} requires a stated reason")
     if entry.status in _REASON_FORBIDDEN and entry.reason is not None:
         raise ValueError(
-            f"reason is forbidden on status {entry.status!r} (§5) — error entries carry "
+            f"reason is forbidden on status {entry.status!r} — error entries carry "
             "the scrubbed 'error' field instead; done/queued park nothing"
         )
     if (entry.path is not None or entry.title is not None) and entry.status is not Status.DONE:
-        raise ValueError(f"outputs (path/title) are success-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"outputs (path/title) are success-only, got status {entry.status!r}")
     if entry.title is not None and entry.path is None:
-        raise ValueError("title without path: outputs travel together (§5)")
+        raise ValueError("title without path: outputs travel together")
 
 
 def _validate_entry_provenance(entry: LedgerEntry) -> None:
@@ -474,11 +470,11 @@ def _validate_entry_provenance(entry: LedgerEntry) -> None:
     if entry.depth is not None:
         _validate_depth(entry.depth)
     if (entry.parent is None) != (entry.depth is None):
-        raise ValueError("parent and depth are paired provenance — both or neither (§5)")
+        raise ValueError("parent and depth are paired provenance — both or neither")
 
 
 # ---------------------------------------------------------------------------
-# Migration report (§12) — surfaces render it, so it gets the same
+# Migration report — surfaces render it, so it gets the same
 # frozen-dataclass treatment as LedgerEntry.
 # ---------------------------------------------------------------------------
 
@@ -493,7 +489,7 @@ class Skipped:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MigrationReport:
-    """What a migration did — reviewed by Claude in-session (§12)."""
+    """What a migration did — reviewed by Claude in-session."""
 
     actions: list[str] = field(default_factory=list)
     skipped: list[Skipped] = field(default_factory=list)
@@ -501,7 +497,7 @@ class MigrationReport:
 
 
 # ---------------------------------------------------------------------------
-# Instance and config (§14): no import-time globals — both are built in the
+# Instance and config: no import-time globals — both are built in the
 # CLI entry point and constructor-injected everywhere.
 # ---------------------------------------------------------------------------
 
@@ -519,7 +515,7 @@ class Instance:
 
     @property
     def state_dir(self) -> Path:
-        """``state/`` — JSONL/JSON machinery state (§4)."""
+        """``state/`` — JSONL/JSON machinery state."""
         return self.root / "state"
 
     @property
@@ -534,12 +530,12 @@ class Instance:
 
     @property
     def ledger_path(self) -> Path:
-        """``state/enrichment-ledger.jsonl`` — the work queue (§5)."""
+        """``state/enrichment-ledger.jsonl`` — the work queue."""
         return self.state_dir / "enrichment-ledger.jsonl"
 
     @property
     def passes_path(self) -> Path:
-        """``state/passes.jsonl`` — per-item stage records (§4)."""
+        """``state/passes.jsonl`` — per-item stage records."""
         return self.state_dir / "passes.jsonl"
 
     @property
@@ -549,28 +545,28 @@ class Instance:
 
     @property
     def config_path(self) -> Path:
-        """``state/config.json`` — instance config (§4)."""
+        """``state/config.json`` — instance config."""
         return self.state_dir / "config.json"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
-    """Instance configuration from ``state/config.json`` (§4).
+    """Instance configuration from ``state/config.json``.
 
     Parsed loudly: defaults apply only when the file is genuinely missing;
     a present-but-malformed file raises instead of being silently ignored
     (the old config-read-at-import behind a bare ``except`` is the named
-    anti-pattern, §14).
+    anti-pattern).
     """
 
     media_fetch: MediaFetch = MediaFetch.LEAD
     transcribe_model: str = "medium"
-    # whisper-api credentials (§6): base_url + key from config/env — config
+    # whisper-api credentials: base_url + key from config/env — config
     # wins, the OPENAI_* environment variables are the fallback (read by the
     # provider at availability time, never at import).
     transcribe_base_url: str | None = None
     transcribe_api_key: str | None = None
-    # The API-side model name (§6) — its own key because local size names
+    # The API-side model name — its own key because local size names
     # (medium, small) never map onto provider model ids (whisper-1,
     # whisper-large-v3). None → the provider's default; per-call --model
     # still overrides.
@@ -708,7 +704,7 @@ def _config_providers(path: Path, raw: dict[str, object]) -> dict[str, list[str]
 
 
 # ---------------------------------------------------------------------------
-# Engine versions (§5): comparisons parse to tuples, never compare strings —
+# Engine versions: comparisons parse to tuples, never compare strings —
 # "0.10.0" > "0.9.1" is False as strings, and that bug would file issues
 # about itself.
 # ---------------------------------------------------------------------------

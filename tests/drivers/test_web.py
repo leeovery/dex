@@ -54,7 +54,7 @@ class TestIdentity:
 
 class TestSuccessfulFetch:
     def test_real_extraction_keeps_hyperlinks(self):
-        # §10 prerequisite fix: include_links=True — harvest reads these.
+        # The harvest prerequisite fix: include_links=True — harvest reads these.
         driver = driver_for({URL: html_response(ARTICLE)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
         assert result.status is Status.DONE
@@ -68,7 +68,7 @@ class TestSuccessfulFetch:
 
     def test_200_but_thin_is_manual_never_dead(self):
         # Learned from the 2026-08-20 overnight runs: JS shells were ledgered
-        # dead and their items stranded at raw (§5).
+        # dead and their items stranded at raw.
         driver = driver_for({URL: html_response(THIN)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
         assert result.status is Status.MANUAL

@@ -1,4 +1,4 @@
-"""Tests for lint.py: the mechanical health check (§14's grown set)."""
+"""Tests for lint.py: the mechanical health check."""
 
 import datetime
 import json

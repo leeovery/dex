@@ -1,4 +1,4 @@
-"""The issue filer (§13): decentralized self-healing, sanitized by construction.
+"""The issue filer: decentralized self-healing, sanitized by construction.
 
 Instances auto-file engine bugs at the public engine repo; the owner's
 session fixes; Mint releases; every instance heals at next sync. The filer
@@ -41,15 +41,15 @@ __all__ = [
     "report_errors",
 ]
 
-# The public engine repo issues are filed against (§13). Instances are
+# The public engine repo issues are filed against. Instances are
 # private; this is the one shared tracker.
 ENGINE_REPO = "leeovery/dex"
 
-# Rate limit (§13): a run that suddenly errors everywhere must not flood the
+# Rate limit: a run that suddenly errors everywhere must not flood the
 # tracker — three distinct new bugs is signal enough for one run.
 MAX_NEW_ISSUES_PER_RUN = 3
 
-# Local memory (§4/§13): what this instance filed or commented — re-spam
+# Local memory: what this instance filed or commented — re-spam
 # prevention and the owner's visible record. Append-only JSONL, merge=union.
 MEMORY_FILE = "issue-reports.jsonl"
 
@@ -70,7 +70,7 @@ def gh_runner(args: Sequence[str]) -> str:
         The command's stdout.
 
     Raises:
-        OSError: ``gh`` is not installed (not a dex environment, §13).
+        OSError: ``gh`` is not installed (not a dex environment).
         subprocess.SubprocessError: ``gh`` exited nonzero or timed out.
     """
     completed = subprocess.run(  # noqa: S603 — engine-built args, no shell
@@ -85,7 +85,7 @@ def gh_runner(args: Sequence[str]) -> str:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ErrorEvent:
-    """One ``status: error`` outcome, captured at the catch site (§13).
+    """One ``status: error`` outcome, captured at the catch site.
 
     Built while the exception object is still in hand — the ledger stores
     only the scrubbed message, and the fingerprint needs the traceback's
@@ -103,7 +103,7 @@ class ErrorEvent:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FilerOutcome:
-    """What the filer did this run — feeds the run report (§13)."""
+    """What the filer did this run — feeds the run report."""
 
     filed: int = 0
     notes: list[str] = field(default_factory=list)
@@ -116,7 +116,7 @@ def error_event(
 
     Args:
         unit_hash: The work unit's ledger hash — the URL is never sent, its
-            hash is (§13).
+            hash is.
         kind: The unit's kind.
         unit_format: The unit's format, for file work.
         exc: The caught exception, traceback attached.
@@ -161,7 +161,7 @@ def _package_path(filename: str) -> str:
 
 
 def fingerprint(event: ErrorEvent) -> str:
-    """The dedup fingerprint: error class + function + kind/format (§13).
+    """The dedup fingerprint: error class + function + kind/format.
 
     Version and line numbers are excluded — they churn per release and would
     mint duplicate issues; version data lives in the issue body instead.
@@ -172,7 +172,7 @@ def fingerprint(event: ErrorEvent) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Local memory: state/issue-reports.jsonl (§4 JSONL rules — append-only,
+# Local memory: state/issue-reports.jsonl (append-only,
 # full-record lines, merge=union between machines).
 # ---------------------------------------------------------------------------
 
@@ -240,7 +240,7 @@ def _append_memory(path: Path, record: _MemoryRecord) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The gh conversation: search before filing, dedup by state (§13).
+# The gh conversation: search before filing, dedup by state.
 # ---------------------------------------------------------------------------
 
 
@@ -281,9 +281,9 @@ def _body(  # noqa: PLR0913 — the allowlist IS the parameter list; nothing els
     date: datetime.date,
     regression_of: int | None = None,
 ) -> str:
-    """The allowlisted issue body (§13) — every field enumerated, nothing ambient."""
+    """The allowlisted issue body — every field enumerated, nothing ambient."""
     lines = [
-        "Automated report from a dex instance (design §13). Sanitized by",
+        "Automated report from a dex instance. Sanitized by",
         "construction: allowlisted fields only; messages scrubbed of URLs,",
         "emails, and home paths.",
         "",
@@ -338,7 +338,7 @@ class _Filer:
             record.fingerprint == fp and record.engine == self.engine_version
             for record in self.memory
         ):
-            return  # already reported at this engine version (§13 re-spam guard)
+            return  # already reported at this engine version (the re-spam guard)
         found = _search(self.gh, fp)
         open_issues = [e for e in found if str(e.get("state", "")).upper() == "OPEN"]
         closed_issues = [e for e in found if str(e.get("state", "")).upper() == "CLOSED"]
@@ -369,7 +369,7 @@ class _Filer:
         self.notes.append(f"engine issue #{number}: seen-again comment added")
 
     def _handle_closed(self, event: ErrorEvent, fp: str, issue: dict[str, object]) -> None:
-        """Closed-issue dedup (§13): silent unless this is a newer-engine recurrence.
+        """Closed-issue dedup: silent unless this is a newer-engine recurrence.
 
         The instance never reads tracker content, so "predates the fix" is
         judged from its own memory: a prior report of this fingerprint at a
@@ -389,7 +389,7 @@ class _Filer:
 
     def _file(self, event: ErrorEvent, fp: str, *, regression_of: int | None) -> None:
         if self.filed >= MAX_NEW_ISSUES_PER_RUN:
-            return  # the rate limit (§13); the fingerprint retries next run
+            return  # the rate limit; the fingerprint retries next run
         out = self.gh(
             [
                 "issue",
@@ -436,7 +436,7 @@ def _safe_version_newer(candidate: str, baseline: str) -> bool:
         return False  # an unparseable stored engine can't prove a regression
 
 
-def report_errors(  # noqa: PLR0913 — every §13 input is injected, none ambient (§14)
+def report_errors(  # noqa: PLR0913 — every input is injected, none ambient
     events: Sequence[ErrorEvent],
     *,
     enabled: bool,
@@ -446,15 +446,15 @@ def report_errors(  # noqa: PLR0913 — every §13 input is injected, none ambie
     today: Callable[[], datetime.date],
     gh: GhRunner,
 ) -> FilerOutcome:
-    """File this run's error outcomes upstream, dedup'd and rate-limited (§13).
+    """File this run's error outcomes upstream, dedup'd and rate-limited.
 
     Args:
         events: The run's error events (one per errored unit).
-        enabled: The ``report_issues`` config gate (default true, §13).
+        enabled: The ``report_issues`` config gate (default true).
         state_dir: The instance's ``state/`` — holds the local memory.
-        engine_version: The running engine's version (injected, §14).
+        engine_version: The running engine's version (injected).
         command: The CLI command that ran, for the issue body.
-        today: Injected clock (§14).
+        today: Injected clock.
         gh: The ``gh`` seam.
 
     Returns:
@@ -483,7 +483,7 @@ def report_errors(  # noqa: PLR0913 — every §13 input is injected, none ambie
         for event in unique:
             filer.handle(event)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
-        # The §13 soft edge: gh missing/failing, unparseable output, a torn
+        # The filer's one soft edge: gh missing/failing, unparseable output, a torn
         # memory line. Never fatal — noted, and the run continues.
         filer.notes.append(f"issue filing failed ({scrub(str(e))}) — run continues")
     return FilerOutcome(filed=filer.filed, notes=filer.notes)

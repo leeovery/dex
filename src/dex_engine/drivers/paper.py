@@ -1,4 +1,4 @@
-"""The paper driver: arxiv API + HTML full text; openreview/hf-papers as articles (§3).
+"""The paper driver: arxiv API + HTML full text; openreview/hf-papers as articles.
 
 arxiv papers get the abstract from the export API (Atom, parsed properly —
 no regex-over-XML) plus full text from arxiv's own HTML rendering, falling

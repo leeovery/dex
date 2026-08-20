@@ -1,14 +1,14 @@
-"""The orchestrator (§1): seed, drain, write, re-enter — and report verbatim.
+"""The orchestrator: seed, drain, write, re-enter — and report verbatim.
 
 The ledger is the work queue. A run seeds queued entries for new corpus
 URLs, drains everything :func:`is_drainable`, hands units to drivers, writes
 deterministically named outputs (reruns overwrite, never duplicate),
-downloads media (§7), re-enters children with provenance and caps, and
-renders its report through the ``enrich-report`` surface (§11).
+downloads media, re-enters children with provenance and caps, and
+renders its report through the ``enrich-report`` surface.
 
 Exactly ONE ``except Exception`` exists in the whole pipeline: the per-unit
-loop here (§5). Every ledger write goes through ``ledger.stamp`` with the
-injected clock and engine version (§14).
+loop here. Every ledger write goes through ``ledger.stamp`` with the
+injected clock and engine version.
 """
 
 import dataclasses
@@ -87,27 +87,27 @@ __all__ = [
     "status_report",
 ]
 
-# Re-entry caps (§1): mechanical backstops, not targets. Fires are recorded
+# Re-entry caps: mechanical backstops, not targets. Fires are recorded
 # in the ledger (a skipped entry with the reason) — never user-surfaced.
 MAX_DEPTH = 4
 MAX_URLS_PER_ITEM = 12
 
-# Blocked retries every run; the 5th failed attempt escalates to manual (§5).
+# Blocked retries every run; the 5th failed attempt escalates to manual.
 MAX_BLOCKED_ATTEMPTS = 5
 
-# Media stage (§7).
+# Media stage.
 MEDIA_MAX_FILES = 4
 MEDIA_MAX_BYTES = 10 * 1024 * 1024
 
-# Bumped when the harvest rules change (§10); recorded in passes.jsonl.
+# Bumped when the harvest rules change; recorded in passes.jsonl.
 HARVEST_RULES_VERSION = 1
 
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
-# A failed audio download takes the §5 blocked lifecycle (§6: acquisition
+# A failed audio download takes the normal blocked lifecycle (acquisition
 # failures are NOT provider failures — never no-clock waiting). The blocked
-# line cannot carry `needs` (waiting-only, §5), so this reason prefix is the
+# line cannot carry `needs` (waiting-only), so this reason prefix is the
 # marker that routes the retry back to the transcribe path — the one place
 # it is written and matched.
 _ACQUISITION_FAILED_PREFIX = "audio acquisition failed: "
@@ -125,14 +125,14 @@ def _is_transcribe_job(entry: LedgerEntry) -> bool:
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
     """The null provider seam: nothing mechanical is wired (tests, bare contexts).
 
-    The real seam is ``Capabilities.available`` — the CLI wires it (§6).
+    The real seam is ``Capabilities.available`` — the CLI wires it.
     """
     return Availability(ok=False, reason=f"no mechanical '{need}' provider wired")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RunContext:
-    """Everything a run needs, constructor-injected (§14) — no ambient state.
+    """Everything a run needs, constructor-injected — no ambient state.
 
     ``provider_available`` is the drain predicate's seam and
     ``capabilities`` the registry the transcribe path calls; the CLI wires
@@ -150,7 +150,7 @@ class RunContext:
     capabilities: Capabilities | None = None
     download_audio: DownloadAudio = yt_dlp_audio
     sleep: Callable[[float], None] = time.sleep
-    # The issue filer's seams (§13): the gh runner and the CLI command the
+    # The issue filer's seams: the gh runner and the CLI command the
     # issue body names. Injected so filing tests are hermetic.
     gh: issues.GhRunner = issues.gh_runner
     command: str = "enrich"
@@ -172,7 +172,7 @@ def head_sniffer(transport: Transport) -> Sniff:
 
 
 def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
-    """Whether a run picks ``entry`` up — the drain predicate, total (§2).
+    """Whether a run picks ``entry`` up — the drain predicate, total.
 
     queued always; blocked while attempts remain; waiting when a mechanical
     provider is available; error once per newer engine; every terminal
@@ -239,12 +239,12 @@ class _Drain:
     # appears in the corpus `enrichment:` listing deterministically.
     written_items: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
-    # Error outcomes captured at the catch site for the issue filer (§13) —
+    # Error outcomes captured at the catch site for the issue filer —
     # the ledger keeps only the scrubbed message; the fingerprint needs the
     # traceback while the exception object is still in hand.
     error_events: list[issues.ErrorEvent] = field(default_factory=list)
     sniff: Sniff | None = None
-    # §12: transcription is capped per run so a resurrected backlog never
+    # Transcription is capped per run so a resurrected backlog never
     # monopolizes a machine (the dedicated verb sets this from --limit).
     # Only attempts that REACH a provider spend it.
     transcribe_budget: int | None = TRANSCRIBE_RUN_CAP
@@ -258,7 +258,7 @@ class _Drain:
     # -- seeding ---------------------------------------------------------
 
     def seed_from_corpus(self) -> None:
-        """Every captured URL and media file becomes a ledger entry from birth (§1)."""
+        """Every captured URL and media file becomes a ledger entry from birth."""
         for path in sorted(self.ctx.instance.corpus_dir.glob("*/*.md")):
             item = corpus.read_item(path)
             self.item_paths[item.id] = path
@@ -275,10 +275,10 @@ class _Drain:
                 self._seed_media_file(item.id, repo_path)
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
-        """Materialized files feed the pipeline (§14): format detect → extract queue.
+        """Materialized files feed the pipeline: format detect → extract queue.
 
         Only document formats become work units — images and unknowns are
-        described cognitively at ingest (§3), never queued. An unreadable
+        described cognitively at ingest, never queued. An unreadable
         file (un-pulled LFS) still seeds by its extension so the file
         driver can park it with the pull hint rather than it vanishing.
         """
@@ -325,7 +325,7 @@ class _Drain:
     def _seed_url(self, item_id: str, url: str) -> None:
         canonical, unit_hash = self.identify(url)
         if unit_hash in self.entries:
-            return  # includes the two-items dedupe edge (§5): first item won
+            return  # includes the two-items dedupe edge: first item won
         detection = detect(url, self.ctx.drivers, sniff=self.sniff)
         self.record(
             LedgerEntry(
@@ -341,7 +341,7 @@ class _Drain:
         )
 
     def identify(self, url: str) -> tuple[str, str]:
-        """Canonical form and work hash — delegation lives in detect (§2)."""
+        """Canonical form and work hash — delegation lives in detect."""
         canonical = canonical_url(url, self.ctx.drivers)
         return canonical, work_hash(canonical)
 
@@ -365,7 +365,7 @@ class _Drain:
 
     def _process(self, entry: LedgerEntry) -> None:
         if entry.via == "media":
-            # The ONE via-routed dispatch: §7 gives blocked media downloads
+            # The ONE via-routed dispatch: the media stage gives blocked downloads
             # normal retry rules, and via is the only mark they carry.
             self._download_media(entry, prior=entry)
             return
@@ -373,7 +373,7 @@ class _Drain:
         if transcribe_job and not self._transcribe_slot():
             return  # stays waiting untouched; the deferral is noted once
         try:
-            # The try spans ALL per-unit processing (§5's "per-unit loop"):
+            # The try spans ALL per-unit processing:
             # fetch/transcribe, output write, media stage, children
             # admission. An engine bug anywhere in it ledgers `error` — the
             # outcome line supersedes any partial one — never aborts the run.
@@ -383,7 +383,7 @@ class _Drain:
                 self._drive_unit(entry)
         except ProviderInputError as e:
             self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
-        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline (§5)
+        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
             self.error_events.append(
                 issues.error_event(
@@ -414,13 +414,13 @@ class _Drain:
         try:
             self._apply(entry, driver.fetch(unit))
         finally:
-            # Politeness holds even when the fetch failed (§2).
+            # Politeness holds even when the fetch failed.
             self.ctx.sleep(driver.sleep)
 
-    # -- the transcribe drain (§6) ----------------------------------------
+    # -- the transcribe drain ----------------------------------------
 
     def _transcribe_slot(self) -> bool:
-        """Whether the per-run transcription cap (§12) has room for one more."""
+        """Whether the per-run transcription cap has room for one more."""
         if self.transcribe_budget is not None and self.transcribed >= self.transcribe_budget:
             if self.deferred_transcriptions == 0:
                 self.notes.append(
@@ -433,13 +433,13 @@ class _Drain:
         return True
 
     def _transcribe_unit(self, entry: LedgerEntry) -> None:
-        """Drain one transcribe job through the capability (§6).
+        """Drain one transcribe job through the capability.
 
         Call-time capability failures keep the entry ``waiting`` with the
         stated reason (retried next run — no clock); acquisition failures
-        take the §5 blocked lifecycle (attempts, manual at 5);
+        take the blocked lifecycle (attempts, manual at 5);
         confirmed-gone sources and judgment cases park honestly;
-        ``ProviderInputError`` propagates for the manual mapping (§5).
+        ``ProviderInputError`` propagates for the manual mapping.
         """
         transcriber = self.ctx.capabilities.transcriber() if self.ctx.capabilities else None
         if transcriber is None:
@@ -454,15 +454,15 @@ class _Drain:
             self._apply_acquisition_failure(entry, acquired)
             return
         # The budget is spent HERE — only an attempt that reaches a
-        # provider burns the per-run cap (§12): failed acquisitions and
+        # provider burns the per-run cap: failed acquisitions and
         # provider-missing passes must not starve the drainable cohort.
         self.transcribed += 1
         try:
             transcript = transcriber.transcribe(acquired.audio, acquired.prompt)
         except ProviderUnavailableError as e:
-            # §6: an available() failure discovered at call time — the
+            # An available() failure discovered at call time — the
             # mechanical provider is, in truth, not available. Audio stays
-            # cached (§9: retries don't re-download).
+            # cached (retries don't re-download).
             self.record_outcome(
                 entry, status=Status.WAITING, needs=Need.TRANSCRIBE, reason=scrub(str(e))
             )
@@ -476,7 +476,7 @@ class _Drain:
             )
             return
         meta = dict(acquired.meta)
-        meta["via"] = transcriber.name  # raw transcript, stamped via/model (§6)
+        meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
         body = (
             youtube_body(acquired.prefix, transcript)
@@ -489,12 +489,12 @@ class _Drain:
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
         )
-        # §9 lifecycle: the transcript supersedes the audio — delete on
+        # Audio lifecycle: the transcript supersedes the audio — delete on
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
 
     def _note_first_run(self, transcriber: Transcriber) -> None:
-        """Surface an ok-with-caveat availability (§6: the slow first run explained)."""
+        """Surface an ok-with-caveat availability (the slow first run, explained)."""
         availability = transcriber.available()
         if availability.ok and availability.reason:
             note = f"{transcriber.name}: {availability.reason}"
@@ -502,7 +502,7 @@ class _Drain:
                 self.notes.append(note)
 
     def _acquire_audio(self, entry: LedgerEntry) -> Acquired | Classification:
-        """Audio acquisition belongs to the drain, per kind (§6)."""
+        """Audio acquisition belongs to the drain, per kind."""
         audio_dir = self.ctx.instance.cache_dir / "audio"
         match entry.kind:
             case Kind.YOUTUBE:
@@ -523,15 +523,15 @@ class _Drain:
     def _apply_acquisition_failure(self, entry: LedgerEntry, failure: Classification) -> None:
         match failure.status:
             case Status.BLOCKED:
-                # §6: acquisition failures are not provider failures — the
-                # normal §5 blocked lifecycle applies, attempts and all,
+                # Acquisition failures are not provider failures — the
+                # normal blocked lifecycle applies, attempts and all,
                 # escalating manual at 5. The reason prefix routes the
                 # retry back here (see _is_transcribe_job).
                 self._apply_blocked(entry, f"{_ACQUISITION_FAILED_PREFIX}{failure.reason}")
             case Status.DEAD if entry.kind is Kind.PODCAST:
                 # A 404ing enclosure is often just an expired signed URL —
                 # the EPISODE is not confirmed gone. Manual, with the
-                # re-resolve route stated (§9).
+                # re-resolve route stated.
                 self.record_outcome(
                     entry,
                     status=Status.MANUAL,
@@ -551,12 +551,12 @@ class _Drain:
                 self._apply_done(entry, result)
             case Status.WAITING:
                 if result.body is not None or result.meta.get("enclosure") is not None:
-                    # §9: a parking driver may still have real content (a
+                    # A parking driver may still have real content (a
                     # podcast's show notes, the enclosure pointer in meta) —
                     # written now, completed by the drain; the item is not
                     # yet cognitive work, so the write is not an outcome.
                     # A waiting-transcribe park carrying an enclosure ALWAYS
-                    # writes its park file (§6): the drain re-fetches the
+                    # writes its park file: the drain re-fetches the
                     # audio from that frontmatter pointer, show notes or
                     # not — a no-notes episode without it would loop manual.
                     self._write_output(entry, result, count=False)
@@ -568,7 +568,7 @@ class _Drain:
             case Status.DEAD | Status.SKIPPED | Status.MANUAL:
                 self.record_outcome(entry, status=result.status, reason=result.reason)
             case Status.QUEUED | Status.ERROR:
-                # Result.__post_init__ forbids both driver outcomes (§2/§5):
+                # Result.__post_init__ forbids both driver outcomes:
                 # queued is a birth state; errors are raised, never returned.
                 raise RuntimeError(
                     f"unreachable: Result validation rejects {result.status.value!r}"
@@ -597,7 +597,7 @@ class _Drain:
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
             # Escalation appends attempt context to what the driver knew —
-            # it never invents a reason (§2).
+            # it never invents a reason.
             detail = reason or "no reason recorded"
             self.record_outcome(
                 entry,
@@ -610,7 +610,7 @@ class _Drain:
     # -- outputs ---------------------------------------------------------
 
     def _write_output(self, entry: LedgerEntry, result: Result, *, count: bool = True) -> str:
-        """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns (§12).
+        """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns.
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
         every run by definition, and an unchanged rerun must not rewrite the
@@ -636,13 +636,13 @@ class _Drain:
         out.write_text(content, encoding="utf-8")
         return str(out.relative_to(self.ctx.instance.root))
 
-    # -- extraction assets (§6/§7) ----------------------------------------
+    # -- extraction assets ----------------------------------------
 
     def _write_assets(self, entry: LedgerEntry, assets: list) -> None:
-        """Write embedded assets under the §7 media caps, ledgered via: extract-asset.
+        """Write embedded assets under the media caps, ledgered via: extract-asset.
 
         Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
-        overwrite, never duplicate; the §7 caps (4 files per item, 10MB per
+        overwrite, never duplicate; the caps (4 files per item, 10MB per
         file) are shared with the media stage's downloads.
         """
         for index, asset in enumerate(assets):
@@ -713,7 +713,7 @@ class _Drain:
             and (path.name.startswith("media-") or "-asset-" in path.name)
         )
 
-    # -- media stage (§7) ------------------------------------------------
+    # -- media stage ------------------------------------------------
 
     def _media_stage(self, parent: LedgerEntry, urls: list[str]) -> None:
         for url in urls:
@@ -734,7 +734,7 @@ class _Drain:
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
             )
-            # The birth line lands BEFORE the download (§1: entries from
+            # The birth line lands BEFORE the download (entries exist from
             # birth) — a crash mid-download leaves a queued via:media entry
             # the next run's redrain path picks up.
             self.record(child)
@@ -742,12 +742,12 @@ class _Drain:
 
     def _download_media(self, entry: LedgerEntry, *, prior: LedgerEntry | None) -> None:
         # Cap and oversize skips below land in the report's unit counts —
-        # §7 sanctions that: they are unit outcomes, unlike the §1 re-entry
-        # cap fires, which never surface.
+        # deliberately: they are unit outcomes, unlike the re-entry cap
+        # fires, which never surface.
         slot = self._media_slot(entry.item)
         if slot is None:
             # Capacity checked BEFORE any fetch — no bandwidth spent on a
-            # file the §7 cap would refuse. Downloads are synchronous, so
+            # file the cap would refuse. Downloads are synchronous, so
             # the slot stays free until the write below.
             self.record_outcome(
                 entry, status=Status.SKIPPED, reason=f"media cap ({MEDIA_MAX_FILES} files) reached"
@@ -805,7 +805,7 @@ class _Drain:
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
     def _media_slot(self, item_id: str) -> int | None:
-        """The next free media index for the item, or None at the §7 cap.
+        """The next free media index for the item, or None at the cap.
 
         The cap is shared with extraction assets — 4 media-family files per
         item total, whichever route wrote them.
@@ -823,13 +823,13 @@ class _Drain:
                 return slot
         return None
 
-    # -- children (§1/§10) -----------------------------------------------
+    # -- children -----------------------------------------------
 
     def _admit_children(self, parent: LedgerEntry, children: list[Child]) -> None:
         for child in children:
             canonical, unit_hash = self.identify(child.url)
             if unit_hash in self.entries:
-                continue  # dedupe by hash (§5 recorded edge)
+                continue  # dedupe by hash — a URL under two items enriches under the first
             depth = (parent.depth or 0) + 1
             cap_reason = self._cap_fired(parent.item, depth)
             detection = (
@@ -854,7 +854,7 @@ class _Drain:
                 self.queue.append(unit_hash)
 
     def _cap_fired(self, item_id: str, depth: int) -> str | None:
-        """The §1 cap check: recorded in the ledger, never user-surfaced."""
+        """The re-entry cap check: recorded in the ledger, never user-surfaced."""
         if depth > MAX_DEPTH:
             return f"depth cap ({MAX_DEPTH}) reached"
         if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
@@ -889,7 +889,7 @@ class _Drain:
                 }
             )
 
-    def record_outcome(  # noqa: PLR0913 — one keyword per §5 schema slot, all optional
+    def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
         self,
         entry: LedgerEntry,
         *,
@@ -986,7 +986,7 @@ class _Drain:
         return payload
 
     def _cognitive_jobs(self) -> list[dict[str, str]]:
-        """Waiting jobs that resolve to the cognitive floor (§6).
+        """Waiting jobs that resolve to the cognitive floor.
 
         Listed on the report for the session — never drained by the run.
         A waiting transcribe job is NOT one of these: transcription has no
@@ -1005,12 +1005,12 @@ class _Drain:
 
 
 # ---------------------------------------------------------------------------
-# Verbs (called by the CLI; zero business logic lives there, §14).
+# Verbs (called by the CLI; zero business logic lives there).
 # ---------------------------------------------------------------------------
 
 
 def _finish(drain: _Drain) -> str:
-    """File this run's errors upstream (§13), then render the enrich-report.
+    """File this run's errors upstream, then render the enrich-report.
 
     The filer runs after the drain — it fires only on ``status: error``
     outcomes already ledgered — and its notes/failures land on the same
@@ -1034,12 +1034,12 @@ def _finish(drain: _Drain) -> str:
 
 
 def run(ctx: RunContext, *, limit: int | None = None) -> str:
-    """One full run: seed from the corpus, drain, report (§1).
+    """One full run: seed from the corpus, drain, report.
 
     Args:
         ctx: The run context.
         limit: Optional cap on units processed this run (big cohorts drain
-            across runs, §12).
+            across runs).
 
     Returns:
         The rendered enrich-report.
@@ -1052,13 +1052,13 @@ def run(ctx: RunContext, *, limit: int | None = None) -> str:
 
 
 def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
-    """Drain the waiting/transcribe cohort through the capability (§6).
+    """Drain the waiting/transcribe cohort through the capability.
 
     Args:
         ctx: The run context (``--model`` overrides arrive already built
             into ``ctx.capabilities``).
-        limit: Per-run cap on attempts that REACH a provider — default 10
-            (§12), so a resurrected backlog never monopolizes a machine.
+        limit: Per-run cap on attempts that REACH a provider — default 10,
+            so a resurrected backlog never monopolizes a machine.
             Failed acquisitions and provider-missing passes don't burn it.
 
     Returns:
@@ -1067,7 +1067,7 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     drain = _Drain(ctx=ctx)
     # The dedicated verb is bounded by --limit alone — wired through the
     # same budget the full run uses, so both count provider-reaching
-    # attempts only (§12).
+    # attempts only.
     drain.transcribe_budget = limit
     drain.seed_from_corpus()
     availability = ctx.provider_available(Need.TRANSCRIBE, None)
@@ -1089,7 +1089,7 @@ def fetch_urls(
     parent: str | None = None,
     force: bool = False,
 ) -> str:
-    """Fetch specific extra URLs into an existing item, ledgered as children (§10).
+    """Fetch specific extra URLs into an existing item, ledgered as children.
 
     ``parent`` defaults to the item's primary work unit; depth is the
     parent's + 1; fetches count against the item's 12-URL cap. ``--force``
@@ -1175,7 +1175,7 @@ def _admit_fetch(
         if existing.item != item_id:
             raise ValueError(
                 f"{canonical} already enriches under item {existing.item!r} — one URL "
-                f"enriches under one item (§5); it cannot be fetched into {item_id!r}"
+                f"enriches under one item; it cannot be fetched into {item_id!r}"
             )
         if _is_cap_refusal(existing):
             # A cap-refusal marker is not an admitted unit: it falls through
@@ -1188,7 +1188,7 @@ def _admit_fetch(
     depth = (parent.depth or 0) + 1
     if capped:
         # The cap fire is recorded either way; --force supersedes it with a
-        # queued line (the skipped line stays in the audit trail, §10).
+        # queued line (the skipped line stays in the audit trail).
         reason = (
             f"url cap ({MAX_URLS_PER_ITEM} per item) exceeded by --force"
             if force
@@ -1232,7 +1232,7 @@ def _admit_fetch(
 
 
 def status_report(ctx: RunContext) -> str:
-    """Ledger summary, digest backstop (§1), and the capability report (§6)."""
+    """Ledger summary, digest backstop, and the capability report."""
     entries = ledger.load(ctx.instance.ledger_path)
     counts: dict[str, int] = {}
     waiting: dict[str, int] = {}
@@ -1253,7 +1253,7 @@ def status_report(ctx: RunContext) -> str:
 
 
 def digest_orphans(instance: Instance) -> list[str]:
-    """Items whose enrichment is newer than their digest — the backstop (§1).
+    """Items whose enrichment is newer than their digest — the backstop.
 
     Shared by ``enrich status`` and lint's health check: both list the same
     interrupted-session orphans, computed in one place.
@@ -1293,7 +1293,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     path: str | None = None,
     needs: Need | None = None,
 ) -> str:
-    """Heal one ledger entry through the sanctioned verb (§5/§14).
+    """Heal one ledger entry through the sanctioned verb.
 
     A heal never erases what it does not correct: done heals carry the
     prior entry's path/title forward unless a new ``path`` overrides them.
@@ -1302,7 +1302,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         ctx: The run context.
         url: The unit's URL (canonicalized here).
         status: The corrected status.
-        reason: The stated reason (required for manual/skipped, §5).
+        reason: The stated reason (required for manual/skipped).
         path: Output path, for done heals that wrote a file.
         needs: The needed capability, for waiting heals (defaults to the
             prior entry's).
@@ -1313,7 +1313,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     Raises:
         ValueError: No ledger entry exists for the URL, ``error`` was
             requested (errors are engine outcomes, not heals), or the
-            status/field combination violates the §5 schema.
+            status/field combination violates the ledger schema.
     """
     if status is Status.ERROR:
         raise ValueError("mark cannot write 'error' — errors are engine outcomes, not heals")
@@ -1331,7 +1331,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         format=prior.format,
         status=status,
         # A stray --needs on a non-waiting status passes through and fails
-        # §5 validation loudly rather than being silently dropped.
+        # schema validation loudly rather than being silently dropped.
         needs=(needs or prior.needs) if status is Status.WAITING else needs,
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
         engine="seed",  # stamped in record
@@ -1350,7 +1350,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
 
 
 def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
-    """Record a stage completion in ``state/passes.jsonl`` (§4).
+    """Record a stage completion in ``state/passes.jsonl``.
 
     "Ran and promoted nothing" must be distinguishable from "never ran" —
     hence a record even when a pass changed nothing.
@@ -1384,7 +1384,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
 
 
 def compact(ctx: RunContext) -> str:
-    """Compact the ledger to the latest line per hash (§4)."""
+    """Compact the ledger to the latest line per hash."""
     removed = ledger.compact(ctx.instance.ledger_path)
     noun = "line" if removed == 1 else "lines"
     return f"compacted: {removed} superseded {noun} removed"

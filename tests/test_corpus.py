@@ -236,7 +236,7 @@ class TestFiles:
 
 
 # ---------------------------------------------------------------------------
-# Hypothesis property (§15): parse∘serialize over generated items preserves
+# Hypothesis property: parse∘serialize over generated items preserves
 # the body byte-exact and the frontmatter semantically — the guarantee that
 # lets migration 1 and the refresh path touch thousands of Claude-authored
 # files safely.

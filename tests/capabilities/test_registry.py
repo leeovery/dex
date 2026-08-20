@@ -40,7 +40,7 @@ class TestBuild:
             Capabilities.build(Config(providers={"extract": ["textract"]}))
 
     def test_cognitive_is_not_configurable(self):
-        # The floor is ALWAYS last in resolution order (§6) — config cannot
+        # The floor is ALWAYS last in resolution order — config cannot
         # move it, so naming it is refused rather than silently reordered.
         with pytest.raises(ValueError, match="always last"):
             Capabilities.build(Config(providers={"extract": ["cognitive"]}))
@@ -52,7 +52,7 @@ class TestBuild:
         assert overridden.transcribers[0].model == "large-v3"
 
     def test_api_model_config_reaches_the_api_provider(self):
-        # transcribe_api_model is its own key (§6): local size names never
+        # transcribe_api_model is its own key: local size names never
         # leak into the API-side name, and --model still overrides per call.
         built = Capabilities.build(Config(transcribe_api_model="distil-whisper-large-v3-en"))
         assert built.transcribers[1].model == "distil-whisper-large-v3-en"
@@ -91,7 +91,7 @@ class TestResolution:
         assert availability.reason == "a: broken install; b: no key"
 
     def test_extractor_resolution_is_per_format(self):
-        # The Format is the contract, not the tool (§6): each format falls
+        # The Format is the contract, not the tool: each format falls
         # back independently when the all-formats provider is unavailable.
         anydoc_down = FakeExtractor("anydoc", ok=False, reason="wheel broken")
         csv_only = FakeExtractor("csv-builtin", formats=frozenset({Format.CSV}))
@@ -155,7 +155,7 @@ class TestReport:
         ]
 
     def test_payload_renders_on_the_surface(self):
-        # The §6 example line, verbatim shape: active first, dormant with
+        # The designed example line, verbatim shape: active first, dormant with
         # its unmet requirement after the dot.
         c = caps(
             transcribers=(

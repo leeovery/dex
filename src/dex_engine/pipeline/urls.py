@@ -1,4 +1,4 @@
-"""URL canonicalization primitives and the work-key hash (§1/§5).
+"""URL canonicalization primitives and the work-key hash.
 
 Canonicalization keys the ledger: ``work_hash(driver.canonical(url))`` is a
 unit's identity, so these rules deliberately preserve the pre-rewrite
@@ -7,7 +7,7 @@ prefixes stripped, tracking params dropped, trailing slashes and fragments
 removed) — changing them would orphan every existing ledger entry.
 
 Idempotency is load-bearing: ``canonical(canonical(u)) == canonical(u)`` is
-a §15 property, because a non-idempotent case IS a duplicate-entry bug.
+a hypothesis property, because a non-idempotent case IS a duplicate-entry bug.
 """
 
 import hashlib
@@ -90,7 +90,7 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
 
 
 def work_hash(work_key: str) -> str:
-    """The ledger key for a unit of work: ``sha1(work key)[:10]`` (§5).
+    """The ledger key for a unit of work: ``sha1(work key)[:10]``.
 
     The work key is a canonical URL, or ``file:<repo-path>`` for local files.
     """

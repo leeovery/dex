@@ -1,10 +1,10 @@
-"""The web driver: registry catch-all, urllib fetch + trafilatura extraction (§5).
+"""The web driver: registry catch-all, urllib fetch + trafilatura extraction.
 
 Fetching and extraction are split on purpose: ``trafilatura.fetch_url``'s
 failure mode — ``None`` for everything — is what caused the motivating
 incident. The transport fetches with visible status codes; trafilatura is
 demoted to extraction only, with ``include_links=True`` because the old
-``include_links=False`` stripped the very URLs harvest reasons over (§10).
+``include_links=False`` stripped the very URLs harvest reasons over.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -47,12 +47,12 @@ _MAX_TITLE_CHARS = 200
 
 
 def trafilatura_extract(html: str) -> str | None:
-    """Extract markdown from HTML via trafilatura — extraction ONLY (§5).
+    """Extract markdown from HTML via trafilatura — extraction ONLY.
 
     ``include_links=True`` is load-bearing: harvest reads the preserved
-    hyperlinks (§10).
+    hyperlinks.
     """
-    import trafilatura  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting (§14)
+    import trafilatura  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting
 
     return trafilatura.extract(
         html, output_format="markdown", include_links=True, include_comments=False
@@ -88,7 +88,7 @@ class WebDriver:
         self._extract = extract
 
     def matches(self, url: str) -> bool:  # noqa: ARG002 — the catch-all matches everything
-        """True always — the catch-all; ordering makes this safe (§2)."""
+        """True always — the catch-all; ordering makes this safe."""
         return True
 
     def canonical(self, url: str) -> str:

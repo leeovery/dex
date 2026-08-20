@@ -34,7 +34,7 @@ TREE = [
 
 SEEDS = {
     ".gitignore": ".DS_Store\n.env\ncache/\n",
-    # Instance config (§4): config.json from birth — migration 1 renames the
+    # Instance config: config.json from birth — migration 1 renames the
     # old normalize-config.json in pre-rewrite instances; new ones never
     # carry the old name.
     "state/config.json": '{\n  "name_map": {},\n  "internal_domains": []\n}\n',

@@ -1,4 +1,4 @@
-"""Named render surfaces (§11): loud payload validation, layout via the kernel.
+"""Named render surfaces: loud payload validation, layout via the kernel.
 
 Two call paths feed these: engine-internal (a command renders its own report
 in-process) and cognitive (Claude writes a JSON payload to ``cache/`` and
@@ -25,7 +25,7 @@ class PayloadError(ValueError):
     """A surface payload does not conform to that surface's shape."""
 
 
-# Statuses an entry may hold when it survives a session, parked (§1).
+# Statuses an entry may hold when it survives a session, parked.
 _PARKED_STATUSES = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PROVIDER_STATES = frozenset({"active", "available", "unavailable"})
 
@@ -190,7 +190,7 @@ def _bullets(texts: list[str], *, indent: int = 2) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# enrich-report — the run report (§1, §11)
+# enrich-report — the run report
 # ---------------------------------------------------------------------------
 
 
@@ -328,7 +328,7 @@ def _render_status(payload: Mapping[str, object]) -> str:
           "orphans": [str],                   # optional: item ids whose
                                               #   enrichment is newer than their
                                               #   digest (interrupted-session
-                                              #   backstop, §1)
+                                              #   backstop)
         }
     """
     surface = "status"
@@ -360,7 +360,7 @@ def _render_status(payload: Mapping[str, object]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# capability-report (§6)
+# capability-report
 # ---------------------------------------------------------------------------
 
 
@@ -420,7 +420,7 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# sync-report (§12)
+# sync-report
 # ---------------------------------------------------------------------------
 
 
@@ -431,7 +431,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
 
         {
           "pin": str,                 # optional: the tag now pinned (absent =
-                                      #   unpinned, §12 pre-first-release mode)
+                                      #   unpinned pre-first-release mode)
           "previous": str,            # optional: prior pin (absent = no bump;
                                       #   requires pin)
           "migrations": [             # applied this sync, may be empty
@@ -445,7 +445,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         }
 
     ``skipped`` and ``anomalies`` are repaired with judgment in-session
-    (§12) — they render prominently, never summarized away.
+    — they render prominently, never summarized away.
     """
     surface = "sync-report"
     _check_keys(
@@ -519,14 +519,14 @@ def _sync_migration_lines(
 
 
 # ---------------------------------------------------------------------------
-# ingest-receipt — the per-item receipt the session renders (§11/§14)
+# ingest-receipt — the per-item receipt the session renders
 # ---------------------------------------------------------------------------
 
 _SIGNALS = frozenset({"high", "medium", "low"})
 
 
 def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
-    """Render the per-item ingest receipt (the cognitive call path, §11).
+    """Render the per-item ingest receipt (the cognitive call path).
 
     Payload::
 
@@ -582,7 +582,7 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# health-report — the lint surface (§11/§14)
+# health-report — the lint surface
 # ---------------------------------------------------------------------------
 
 _HEALTH_OPTIONAL = frozenset(
@@ -614,8 +614,8 @@ _HEALTH_OPTIONAL = frozenset(
 _HEALTH_LIST_CAP = 20
 
 
-def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR0915 — one statement block per §14 lint section, sequential by design
-    """Render the lint health report (§14's grown check set).
+def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR0915 — one statement block per lint section, sequential by design
+    """Render the lint health report.
 
     Payload::
 
@@ -723,7 +723,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     if quarantine:
         lines.append(
             f"  QUARANTINE NOT EMPTY — {_plural(quarantine, 'line')} in "
-            "state/enrichment-ledger.unmigrated.jsonl (§12): review each, re-add via "
+            "state/enrichment-ledger.unmigrated.jsonl: review each, re-add via "
             "`dex enrich mark <url> <status> --reason ...` or accept the loss, then "
             "empty the file"
         )
@@ -805,7 +805,7 @@ def _needs_counts(
     return counts
 
 
-# The typed registry literal is the conformance point (§2): every renderer is
+# The typed registry literal is the conformance point: every renderer is
 # checked against the surface signature at this one assignment.
 SURFACES: dict[str, Callable[[Mapping[str, object]], str]] = {
     "enrich-report": _render_enrich_report,

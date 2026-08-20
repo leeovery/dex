@@ -69,7 +69,7 @@ class TestThreadWalkUp:
         result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.meta["thread_length"] == 3
         assert result.meta["author"] == "Carol Chen (@carol)"
-        assert result.children == []  # the chain is context, never children (§8)
+        assert result.children == []  # the chain is context, never children
 
     def test_chain_media_pooled_captured_posts_first(self):
         result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
@@ -80,7 +80,7 @@ class TestThreadWalkUp:
 
     def test_mid_walk_fetch_failure_records_the_gap(self):
         # Learned 2026-08-20 (dex-marketing): a chain that fetched short was
-        # silently presented as complete (§8).
+        # silently presented as complete.
         responses = full_chain()
         responses[API + "alice/status/100"] = json_response({}, status=404)
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
@@ -121,7 +121,7 @@ class TestQuotes:
         body = body_of(result)
         assert "> Quoting @erik: A 403 is not a 404." in body
         assert "> Record the difference." in body
-        assert result.children == []  # promoting a quote is harvest judgment (§8)
+        assert result.children == []  # promoting a quote is harvest judgment
 
 
 class TestClassifiedFailures:

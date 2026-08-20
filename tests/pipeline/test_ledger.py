@@ -234,7 +234,7 @@ class TestStamp:
 
 
 # ---------------------------------------------------------------------------
-# Hypothesis properties (§15): random entry sequences ⇒ compact preserves
+# Hypothesis properties: random entry sequences ⇒ compact preserves
 # last-per-hash and round-trips.
 # ---------------------------------------------------------------------------
 

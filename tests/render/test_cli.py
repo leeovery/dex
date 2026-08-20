@@ -1,4 +1,4 @@
-"""Tests for render/cli.py: the cognitive call path's verbatim emitter (§11)."""
+"""Tests for render/cli.py: the cognitive call path's verbatim emitter."""
 
 import json
 from pathlib import Path

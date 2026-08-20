@@ -232,7 +232,7 @@ class TestSyncReport:
         assert "migrations applied — none (state already current)" in out
 
     def test_unpinned_pre_first_release(self):
-        # §12: before any release tag exists, sync runs without pinning.
+        # Before any release tag exists, sync runs without pinning.
         out = render(
             "sync-report",
             {

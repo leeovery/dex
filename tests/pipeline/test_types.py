@@ -60,7 +60,7 @@ class TestEnums:
             Kind("blog")
 
     def test_driver_statuses_exclude_queued_and_error(self):
-        # queued is a birth state; error is raised, never returned (§2/§5).
+        # queued is a birth state; error is raised, never returned.
         assert Status.QUEUED not in DRIVER_STATUSES
         assert Status.ERROR not in DRIVER_STATUSES
         assert frozenset(Status) - {Status.QUEUED, Status.ERROR} == DRIVER_STATUSES
@@ -170,7 +170,7 @@ class TestResult:
 
 
 class TestResultReason:
-    """Result.reason mirrors the ledger's stated-reason contract (§2/§5)."""
+    """Result.reason mirrors the ledger's stated-reason contract."""
 
     @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
     def test_reason_is_required_on_deliberate_parking(self, status):
@@ -195,7 +195,7 @@ class TestResultReason:
 
     def test_error_is_not_a_driver_outcome_at_all(self):
         # Errors are raised, never returned — a Result has no error channel,
-        # so a returned 'error' could only fabricate its message (§2/§5).
+        # so a returned 'error' could only fabricate its message.
         with pytest.raises(ValueError, match="raised, never returned"):
             Result(status=Status.ERROR, meta={})
 
@@ -447,7 +447,7 @@ class TestConfig:
 
 class TestVersions:
     def test_tuple_compare_not_string_compare(self):
-        # The §5 pin: "0.10.0" > "0.9.1" is False as strings.
+        # The pin: "0.10.0" > "0.9.1" is False as strings.
         assert "0.10.0" < "0.9.1"  # noqa: PLR0133 — the string-compare trap, demonstrated
         assert version_newer("0.10.0", "0.9.1") is True
 

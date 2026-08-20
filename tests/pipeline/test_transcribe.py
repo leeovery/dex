@@ -1,4 +1,4 @@
-"""Transcribe-drain tests (§6/§9): acquisition, priming, lifecycle, caps."""
+"""Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
 import re
 
@@ -111,13 +111,13 @@ class TestYoutubeDrain:
 
         # Acquisition went through the drain's seam, keyed by the unit hash.
         assert download.calls == [(VIDEO_URL, work_hash(VIDEO_URL))]
-        # Priming carried the item's known vocabulary (§6).
+        # Priming carried the item's known vocabulary.
         audio, prompt = transcriber.calls[0]
         assert audio.name == f"{work_hash(VIDEO_URL)}.m4a"
         assert "Ledgers at Scale" in prompt
         assert "anydoc" in prompt
         # The transcript wrote the youtube description+transcript pattern,
-        # stamped via/model (§6), and the ledger closed with the path.
+        # stamped via/model, and the ledger closed with the path.
         entry = entry_for(ctx, VIDEO_URL)
         assert entry.status is Status.DONE
         assert entry.title == "Ledgers at Scale"
@@ -128,13 +128,13 @@ class TestYoutubeDrain:
         assert "upload_date: 20260810" in content  # captions-path parity
         assert "## Description" in content
         assert "## Transcript\n\nThe transcript text." in content
-        # §9 lifecycle: deleted on successful transcription.
+        # Audio lifecycle: deleted on successful transcription.
         assert audio_files(instance) == []
         assert ITEM in report  # the item lands on the cognitive work list
 
     def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
         # One frontmatter shape per kind, whichever route produced the
-        # transcript (phase-3 review): the drain's meta keys are exactly
+        # transcript: the drain's meta keys are exactly
         # the captions path's.
         entry = seed_waiting(instance)
         acquired = acquire_youtube_audio(entry, tmp_path, FakeDownload())
@@ -162,11 +162,11 @@ class TestYoutubeDrain:
         assert entry.status is Status.WAITING
         assert entry.needs is Need.TRANSCRIBE
         assert "HTTP 429" in (entry.reason or "")
-        assert audio_files(instance) == [f"{work_hash(VIDEO_URL)}.m4a"]  # retries reuse it (§9)
+        assert audio_files(instance) == [f"{work_hash(VIDEO_URL)}.m4a"]  # retries reuse it
 
     def test_transient_acquisition_failure_takes_the_blocked_lifecycle(self, instance):
-        # §6: acquisition failures are NOT provider failures — a failed
-        # audio download is §5 blocked with attempts, never no-clock waiting.
+        # Acquisition failures are NOT provider failures — a failed audio
+        # download is blocked with attempts, never no-clock waiting.
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)
         download = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
@@ -228,7 +228,7 @@ class TestYoutubeDrain:
         assert entry_for(ctx, VIDEO_URL).status is Status.WAITING
 
     def test_first_run_model_download_is_noted(self, instance):
-        # §6: the report surfaces the slow first run.
+        # The report surfaces the slow first run.
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)
         fresh = FakeTranscriber(
@@ -264,7 +264,7 @@ class TestYoutubeDrain:
         assert statuses == ["done", "waiting", "waiting"]
 
     def test_failed_acquisitions_do_not_burn_the_limit_budget(self, instance):
-        # §12: the cap bounds attempts that REACH a provider — a failed
+        # The cap bounds attempts that REACH a provider — a failed
         # download must not starve the drainable rest of the cohort.
         urls = [f"https://youtube.com/watch?v=v{n:02d}" for n in range(3)]
         write_item(instance, urls=urls)
@@ -290,7 +290,7 @@ class TestYoutubeDrain:
             seed_waiting(instance, url)
         # The drain seam reports available but no capability registry is
         # wired: every unit re-parks waiting without reaching a provider —
-        # none of those passes may count against the §12 cap.
+        # none of those passes may count against the per-run cap.
         ctx = make_ctx(
             instance,
             FakeDriver(),
@@ -309,7 +309,7 @@ class TestPodcastDrain:
     ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
 
     def park_via_driver(self, instance, *, feed: str | None = None) -> run_mod.RunContext:
-        """Run the real podcast driver so the park writes the §9 record."""
+        """Run the real podcast driver so the park writes its enclosure record."""
         write_item(instance, urls=[self.APPLE_URL])
         transport = FakeTransport(
             {
@@ -351,10 +351,10 @@ class TestPodcastDrain:
         entry = self.entry(instance)
         assert entry.status is Status.WAITING
         assert entry.needs is Need.TRANSCRIBE
-        assert entry.path is None  # §5: path is success-only
+        assert entry.path is None  # path is success-only
         record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
         fields, body = read_enrichment(record)
-        assert fields["enclosure"] == self.ENCLOSURE  # the drain's re-fetch pointer (§9)
+        assert fields["enclosure"] == self.ENCLOSURE  # the drain's re-fetch pointer
         assert fields["title"] == "Ledgers as Work Queues"
         assert "[Ada Guest](https://example.test/guest)" in body
 
@@ -366,7 +366,7 @@ class TestPodcastDrain:
     def test_park_file_appears_in_the_items_enrichment_listing(self, instance):
         # The frontmatter refresh keys on every write, not only counted
         # outcomes — a waiting park's file must show in `enrichment:`
-        # deterministically (phase-3 review).
+        # deterministically.
         self.park_via_driver(instance)
         entry = self.entry(instance)
         assert entry.status is Status.WAITING
@@ -374,7 +374,7 @@ class TestPodcastDrain:
         assert f"podcast-{entry.hash[:6]}.md" in item.enrichment
 
     def test_no_show_notes_park_still_writes_the_enclosure_pointer(self, instance):
-        # §6 (blocker regression): an episode without <description> parks
+        # Blocker regression: an episode without <description> parks
         # with body=None — the park file must exist anyway, because the
         # drain re-fetches audio from ITS frontmatter; without it the unit
         # would loop manual ("re-resolve") forever.
@@ -458,10 +458,10 @@ class TestPodcastDrain:
         assert fields["enclosure"] == self.ENCLOSURE  # the re-fetch pointer survives
         assert body.index("Ada Guest") < body.index("## Transcript")  # notes, then transcript
         assert body.rstrip().endswith("Episode words.")
-        # Priming used title + show notes vocabulary (§9).
+        # Priming used title + show notes vocabulary.
         prompt = transcriber.calls[0][1]
         assert "Ledgers as Work Queues" in prompt
-        assert audio_files(instance) == []  # deleted on success (§9)
+        assert audio_files(instance) == []  # deleted on success
 
     def test_enclosure_fetch_failure_takes_the_blocked_lifecycle(self, instance):
         self.park_via_driver(instance)
@@ -498,7 +498,7 @@ class TestPodcastDrain:
 
 class TestRunAutoDrain:
     def test_enrich_run_drains_waiting_transcribe_mechanically(self, instance):
-        # §6: waiting means no mechanical provider — the moment one exists,
+        # Waiting means no mechanical provider — the moment one exists,
         # the ordinary run drains the cohort through the capability.
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)
@@ -515,11 +515,11 @@ class TestRunAutoDrain:
         report = run_mod.run(ctx)
         entries = ledger.load(instance.ledger_path)
         done = [e for e in entries.values() if e.status is Status.DONE]
-        assert len(done) == TRANSCRIBE_RUN_CAP  # §12: never monopolize a machine
+        assert len(done) == TRANSCRIBE_RUN_CAP  # never monopolize a machine
         assert f"transcription capped at {TRANSCRIBE_RUN_CAP}" in report
 
     def test_cognitive_jobs_surface_on_the_report_never_drain(self, instance):
-        # §6: jobs resolving to the cognitive floor are listed for the
+        # Jobs resolving to the cognitive floor are listed for the
         # session; the run never drains them. Transcribe waits silently —
         # it has no floor.
         write_item(instance)
@@ -553,7 +553,7 @@ class TestRunAutoDrain:
 
 class TestMediaFileSeeding:
     def test_materialized_document_seeds_and_extracts(self, instance):
-        # §14: materialized files feed the pipeline — format detect →
+        # Materialized files feed the pipeline — format detect →
         # extract queue → real anydoc extraction, end to end.
         media_dir = instance.root / "media" / "abc123"
         media_dir.mkdir(parents=True)

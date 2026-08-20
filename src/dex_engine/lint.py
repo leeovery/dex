@@ -1,6 +1,6 @@
 """dex-lint: the mechanical health check. Judgment repairs are the session's job.
 
-Checks (§14's grown set):
+Checks:
 
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
@@ -12,7 +12,7 @@ Checks (§14's grown set):
 
   state — ledger schema validation (via ``ledger.load``), waiting cohorts and
   cognitive-job summary, harvest passes recorded under old rules, the
-  non-empty quarantine file flag (§12), and the enrichment-newer-than-digest
+  non-empty quarantine file flag, and the enrichment-newer-than-digest
   orphan listing (the interrupted-session backstop, shared with
   ``enrich status``).
 
@@ -23,7 +23,7 @@ baseline. Existing ``generated:`` dates are never rewritten — they are the
 staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
-Output renders through the ``health-report`` surface (§11). Exit 1 on hard
+Output renders through the ``health-report`` surface. Exit 1 on hard
 failures: broken wikilinks, bad citations, or a ledger schema error.
 """
 
@@ -48,7 +48,7 @@ __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
 ID_RE = re.compile(r"`(\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6})`")
 LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 # A backticked bare 6-hex token: shortid-shaped, a probable malformed
-# citation anywhere it appears (§14) — full ids never match this.
+# citation anywhere it appears — full ids never match this.
 SHORTID_RE = re.compile(r"`([0-9a-f]{6})`")
 # Frontmatter fields — matched inside the frontmatter block ONLY, never
 # against page bodies (a body line reading `items: 99` is prose).
@@ -57,12 +57,12 @@ TOPIC_RE = re.compile(r"^topic: (.+)$", re.MULTILINE)
 ENTITY_RE = re.compile(r"^entity: (.+)$", re.MULTILINE)
 ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 
-# Same-page sentence similarity (§14): difflib, no models. Sentences shorter
+# Same-page sentence similarity: difflib, no models. Sentences shorter
 # than the floor are boilerplate-prone; the ratio is SequenceMatcher's.
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
 
-# The §12 quarantine file — lint flags it non-empty at every health check.
+# The migration-quarantine file — lint flags it non-empty at every health check.
 QUARANTINE_FILE = "enrichment-ledger.unmigrated.jsonl"
 
 IsCognitive = Callable[[Need, Format | None], bool]
@@ -99,14 +99,14 @@ def run_lint(
     today: Callable[[], datetime.date],
     write: bool = False,
 ) -> LintOutcome:
-    """Run every mechanical check against the instance (§14).
+    """Run every mechanical check against the instance.
 
     Args:
         instance: The instance.
-        is_cognitive: The §6 seam — whether a waiting need resolves to the
+        is_cognitive: Whether a waiting need resolves to the
             cognitive floor (wired to ``Capabilities.is_cognitive`` by the
             CLI; faked in tests).
-        today: Injected clock (§14) — stamps ``--write``'s repaired
+        today: Injected clock — stamps ``--write``'s repaired
             ``generated:`` dates.
         write: Reconcile derived wiki frontmatter (``items:`` counts,
             missing ``generated:`` dates).
@@ -130,9 +130,9 @@ def run_lint(
     )
     orphans = sorted(corpus_ids - scan.cited - ledgered)
     unindexed, ghost_index = _index_consistency(instance, pages, taxonomy)
-    # Shortid-shaped citations flag everywhere — index included (§14: latent
-    # shortids in an index never tripped the citation check because no page
-    # existed to fail against).
+    # Shortid-shaped citations flag everywhere — index included: latent
+    # shortids in an index never tripped the old citation check because no
+    # page existed to fail against.
     index_path = instance.root / "wiki" / "index.md"
     if index_path.exists():
         scan.shortid_citations += [
@@ -332,7 +332,7 @@ def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity
     write: bool,
     today: Callable[[], datetime.date],
 ) -> str:
-    """The item-count consistency check, with the ``--write`` reconcile (§14).
+    """The item-count consistency check, with the ``--write`` reconcile.
 
     ``items:`` records the page's MEMBER count (taxonomy topic / entity
     members), never its citation count. Only the frontmatter block is read
@@ -380,7 +380,7 @@ def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity
     return text
 
 
-# -- restated facts (§14): difflib, no models --------------------------------
+# -- restated facts: difflib, no models --------------------------------
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _MAX_SENTENCES = 200  # n² guard; a page this big has bigger problems
@@ -409,7 +409,7 @@ def _sentences(text: str) -> list[tuple[str, str]]:
     """Prose sentences with their comparison form (citations/links stripped).
 
     Citations are stripped before comparing: the same fact cited from two
-    sources is exactly the restatement the check exists to catch — §14's
+    sources is exactly the restatement the check exists to catch — the standing
     rule is add-the-citation, not write-a-new-sentence.
     """
     _, _, body = text.partition("\n---\n")
@@ -496,7 +496,7 @@ def _state_checks(
 
 
 def _stale_passes(instance: Instance) -> list[dict[str, object]]:
-    """Items whose latest harvest pass predates the current rules (§3/§10)."""
+    """Items whose latest harvest pass predates the current rules."""
     path = instance.passes_path
     if not path.exists():
         return []
@@ -531,7 +531,7 @@ def _quarantine_lines(instance: Instance) -> int:
 
 
 # ---------------------------------------------------------------------------
-# CLI — parse, build, call; zero business logic (§14)
+# CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
 
@@ -540,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dex-lint",
         description="Mechanical health check for the instance at cwd; renders the "
-        "health-report surface (§14).",
+        "health-report surface.",
     )
     parser.add_argument(
         "--write",

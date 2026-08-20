@@ -1,14 +1,14 @@
-"""Centralized failure classification and the shared scrubber (§5).
+"""Centralized failure classification and the shared scrubber.
 
 Failure classification is never per-driver: the motivating incident was a
 classification bug in one fetcher, and seven drivers classifying
 independently would be seven chances to reintroduce it. Every driver's HTTP
 path routes its outcome through :func:`classify_http` /
-:func:`classify_connection`; the §15 regression pin tests this module once
+:func:`classify_connection`; the regression pin tests this module once
 and holds for all drivers.
 
 A classification carries the status *and* the stated reason together — a
-``manual`` outcome requires a reason (§5), and letting each driver invent
+``manual`` outcome requires a reason, and letting each driver invent
 one would put classification judgment back in seven places.
 """
 
@@ -36,12 +36,12 @@ __all__ = [
 
 # A successful fetch whose extraction comes back with fewer characters than
 # this is "thin" — our tooling can't read it (JS shells, consent walls). It
-# parks `manual` with THIN_EXTRACTION_REASON, never `dead` (§5).
+# parks `manual` with THIN_EXTRACTION_REASON, never `dead`.
 MIN_SUBSTANTIAL_CHARS = 300
 THIN_EXTRACTION_REASON = "thin-extraction"
 
 # Login-walls and paywalls: retrying never resolves payment-required, so
-# burning blocked attempts on it teaches nothing (§5).
+# burning blocked attempts on it teaches nothing.
 PAYWALL_REASON = "payment/login required"
 
 
@@ -53,7 +53,7 @@ _FAILURE_FLOOR = 400
 
 
 class ProviderInputError(Exception):
-    """A capability provider was handed input it cannot process (§5).
+    """A capability provider was handed input it cannot process.
 
     Providers raise this for bad *inputs* (corrupt audio, unparseable file);
     the run loop maps it to ``manual``. Anything uncaught is an engine bug
@@ -62,18 +62,18 @@ class ProviderInputError(Exception):
 
 
 class ProviderUnavailableError(Exception):
-    """A provider that reported available() failed at call time anyway (§6).
+    """A provider that reported available() failed at call time anyway.
 
     The capability-level failure modes ``available()`` cannot see up front:
     a rejected API key, a rate limit, a model download that failed mid-way.
     The transcribe drain maps this to *the job stays ``waiting``* with the
-    stated reason — §6 semantics discovered late: the mechanical provider
+    stated reason semantics discovered late: the mechanical provider
     is, in truth, not available, and waiting has no escalation clock.
     """
 
 
 class ScannedDocumentError(Exception):
-    """A document with no extractable text — image-only or scanned (§6).
+    """A document with no extractable text — image-only or scanned.
 
     Extract providers raise this instead of returning empty markdown; the
     file driver maps it to the OCR path (``waiting`` + ``needs: ocr``),
@@ -90,7 +90,7 @@ class Classification:
 
 
 def classify_http(status_code: int) -> Classification:
-    """Classify a non-success HTTP status code (§5) — total over non-2xx.
+    """Classify a non-success HTTP status code — total over non-2xx.
 
     403/429/5xx → ``blocked`` (the world misbehaved; retried every run),
     404/410 → ``dead`` (confirmed gone), 401/402 → ``manual`` with
@@ -159,7 +159,7 @@ def classify_connection(exc: OSError) -> Classification:
 
 
 # One scrubber feeds both the ledger `error` field and the issue filer's
-# bodies (§5/§13). Code, not judgment, so it can't leak by judgment lapse.
+# bodies. Code, not judgment, so it can't leak by judgment lapse.
 _URL_RE = re.compile(r"https?://\S+")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # A home-anchored path leaks the username AND everything under it (the

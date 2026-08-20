@@ -175,7 +175,7 @@ class TestBumpAndReexec:
         assert not (inst.root / "bin" / "dex").exists()
 
     def test_tag_ordering_is_numeric_never_lexicographic(self, inst, template):
-        # "0.10.0" > "0.9.1" is False as strings (§5) — the bump must compare tuples.
+        # "0.10.0" > "0.9.1" is False as strings — the bump must compare tuples.
         write_pin(inst.root, "v0.9.1")
         channel, calls = make_channel(listing_for("v0.9.1", "v0.10.0"))
         run(inst, channel, template)
@@ -230,7 +230,7 @@ class TestSteadyStateAndEdges:
         assert calls["exec"] == []
         assert "engine unpinned" in report
         assert "no release tags on the remote yet" in report
-        # Migrations + template sync still ran (§12 pre-first-tag mode).
+        # Migrations + template sync still ran (pre-first-tag mode).
         assert read_applied(log_path(inst.root)) == {1, 2}
         assert (inst.root / "bin" / "dex").exists()
 
@@ -342,7 +342,7 @@ class TestTemplateSync:
         write_pin(inst.root, "v0.1.0")
         sync(inst.root, template=template)
         assert (inst.root / "CLAUDE.md").read_text() == "mine\n"
-        assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned (§12)
+        assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned
 
     def test_refreshed_files_appear_in_the_report_notes(self, inst, template):
         channel, _ = make_channel("")

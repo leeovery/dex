@@ -1,4 +1,4 @@
-"""Tests for pipeline/capture.py: `enrich item new` — both id paths (§14)."""
+"""Tests for pipeline/capture.py: `enrich item new` — both id paths."""
 
 import datetime
 import hashlib

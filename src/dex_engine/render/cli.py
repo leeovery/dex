@@ -1,4 +1,4 @@
-"""dex-render: emit a named surface verbatim from a JSON payload (§11).
+"""dex-render: emit a named surface verbatim from a JSON payload.
 
 The cognitive call path: Claude writes a JSON payload — including free-prose
 fields like notes — to ``cache/``, runs ``bin/dex render --file <payload>``,
@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dex-render",
         description="Render a named surface from a JSON payload file "
-        '({"surface": name, "payload": {...}}) and print it verbatim (§11).',
+        '({"surface": name, "payload": {...}}) and print it verbatim.',
     )
     parser.add_argument(
         "--file",
@@ -73,7 +73,7 @@ def render_file(path: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse, render, print — zero business logic (§14)."""
+    """Parse, render, print — zero business logic."""
     args = build_parser().parse_args(argv)
     try:
         output = render_file(args.file)

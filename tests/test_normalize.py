@@ -1,4 +1,4 @@
-"""Tests for normalize.py: export parsing, clustering, shared detection (§14)."""
+"""Tests for normalize.py: export parsing, clustering, shared detection."""
 
 import dataclasses
 import hashlib

@@ -25,7 +25,7 @@ class TestLocalFiles:
         assert d.canonical("file:media/abc123/report.docx") == "file:media/abc123/report.docx"
 
     def test_real_docx_extracts_through_real_anydoc(self, tmp_path):
-        # Real anydoc over a committed fixture — local, no network (§15).
+        # Real anydoc over a committed fixture — local, no network.
         media = tmp_path / "media" / "abc123"
         media.mkdir(parents=True)
         (media / "report.docx").write_bytes(fixture_bytes("report.docx"))
@@ -40,7 +40,7 @@ class TestLocalFiles:
 
     def test_byte_sniff_is_authoritative_over_the_recorded_format(self, tmp_path):
         # A unit whose ledger format is stale still routes by what the bytes
-        # ARE (§1: byte-signature sniff, authoritative).
+        # ARE (byte-signature sniff, authoritative).
         (tmp_path / "doc.bin").write_bytes(fixture_bytes("paper.pdf"))
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), root=tmp_path)
@@ -152,7 +152,7 @@ class TestExtractRouting:
 
     def test_provider_input_errors_propagate_for_the_run_loop(self, tmp_path):
         # The driver never swallows bad-input raises: the run loop owns the
-        # ProviderInputError → manual mapping (§5).
+        # ProviderInputError → manual mapping.
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
         angry = FakeExtractor(raise_=ProviderInputError("encrypted document"))
         d = FileDriver(capabilities=caps(angry), root=tmp_path)

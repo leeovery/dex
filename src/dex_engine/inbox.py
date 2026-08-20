@@ -87,7 +87,7 @@ class ApiCall(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GithubSeams:
-    """The seams between inbox and the world (§14): all injected, all fakeable.
+    """The seams between inbox and the world: all injected, all fakeable.
 
     ``api`` speaks the GitHub REST API; ``download`` fetches one asset's
     bytes; ``git`` runs a git subcommand returning ``(returncode, stdout)``;
@@ -344,7 +344,7 @@ class _Reconcile:
 
 
 def _note_document_format(dest: Path, *, echo: Callable[[str], None]) -> None:
-    """Announce a document-format capture's routing at inbox time (§14).
+    """Announce a document-format capture's routing at inbox time.
 
     Materialized files feed the pipeline: a document capture becomes a
     ``file:`` work unit when its corpus item is created — ``enrich run``
@@ -498,7 +498,7 @@ def reconcile(instance: Instance, seams: GithubSeams) -> int:
     else:
         echo(f"inbox: {len(captures)} capture(s), none with staged assets.")
     if materialized:
-        # Order-critical, stated with its reason (§14): the release assets
+        # Order-critical, stated with its reason: the release assets
         # are already deleted, so until this lands on the remote the repo
         # copy is the ONLY copy of those binaries.
         echo(
@@ -544,7 +544,7 @@ def _release_checks(reconciler: _Reconcile, repo: str | None, token: str | None)
 
 
 # ---------------------------------------------------------------------------
-# CLI — parse, build, call; zero business logic (§14)
+# CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
 
