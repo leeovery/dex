@@ -2,6 +2,8 @@
 name = "dex-engine"
 version = "0.0.1"
 description = "Shared pipeline engine for dex knowledge-base instances"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["trafilatura>=1.12", "yt-dlp>=2025.1.1", "pypdf>=5"]
 
