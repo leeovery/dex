@@ -1,0 +1,354 @@
+"""Tests for lint.py: the mechanical health check (§14's grown set)."""
+
+import datetime
+import json
+
+import pytest
+
+from dex_engine.lint import LintOutcome, build_parser, main, run_lint
+from dex_engine.pipeline import ledger
+from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
+
+TODAY = datetime.date(2026, 8, 20)
+ITEM = "2026-08-19-example-55ad7b"
+
+
+def never_cognitive(_need, _fmt=None):
+    return False
+
+
+def always_cognitive(_need, _fmt=None):
+    return True
+
+
+def lint(instance: Instance, *, is_cognitive=never_cognitive, write=False) -> LintOutcome:
+    return run_lint(instance, is_cognitive=is_cognitive, today=lambda: TODAY, write=write)
+
+
+def write_taxonomy(instance: Instance, topics=None, entities=None) -> None:
+    tax = {"topics": topics or {}, "entities": entities or {}}
+    (instance.state_dir / "taxonomy.json").write_text(json.dumps(tax))
+
+
+def write_corpus_stub(instance: Instance, item_id: str = ITEM) -> None:
+    path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\nstub\n---\n")  # lint only reads stems
+
+
+def write_page(instance: Instance, name: str, text: str, group: str = "topics") -> None:
+    path = instance.root / "wiki" / group / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def write_index(instance: Instance, text: str) -> None:
+    path = instance.root / "wiki" / "index.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def page_text(*, items: int | None = 1, generated: str | None = "2026-08-01", body: str) -> str:
+    fm = ["---", "topic: brewing"]
+    if generated is not None:
+        fm.append(f"generated: {generated}")
+    if items is not None:
+        fm.append(f"items: {items}")
+    fm.append("---")
+    return "\n".join(fm) + "\n" + body
+
+
+class TestPreTaxonomy:
+    def test_fresh_instance_is_clean(self, instance):
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "fresh instance" in outcome.report
+
+    def test_stranded_corpus_without_taxonomy_is_broken_mid_ingest(self, instance):
+        write_corpus_stub(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "broken mid-ingest" in outcome.report
+        assert ITEM in outcome.report
+
+
+class TestWikiChecks:
+    def test_clean_instance_passes(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_corpus_stub(instance)
+        write_page(instance, "brewing", page_text(body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "1 corpus items · 1 pages · 1 cited" in outcome.report
+        assert "broken wikilinks — none" in outcome.report
+
+    def test_broken_vs_reserved_wikilinks(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}, "grinders": {"items": []}})
+        write_page(
+            instance,
+            "brewing",
+            page_text(items=None, body="See [[grinders]] and [[no-such-page]].\n"),
+        )
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1  # broken link
+        assert "brewing -> [[no-such-page]]" in outcome.report
+        assert "reserved/unbuilt links: 1" in outcome.report
+
+    def test_bad_citation_fails(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(
+            instance,
+            "brewing",
+            page_text(items=None, body="Gone `2026-01-01-vanished-abc123`.\n"),
+        )
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "brewing -> 2026-01-01-vanished-abc123" in outcome.report
+
+    def test_shortid_citations_flagged_everywhere_including_index(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(instance, "brewing", page_text(items=None, body="A fact `a1b2c3`.\n"))
+        write_index(instance, "[[brewing]] and a stray `d4e5f6`\n")
+        outcome = lint(instance)
+        assert "brewing -> `a1b2c3`" in outcome.report
+        assert "index -> `d4e5f6`" in outcome.report
+
+    def test_orphans_respect_the_uncategorized_ledger(self, instance):
+        ledgered = "2026-08-19-ledgered-aaaaaa"
+        orphaned = "2026-08-19-orphaned-bbbbbb"
+        write_corpus_stub(instance, ledgered)
+        write_corpus_stub(instance, orphaned)
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": [ledgered]}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert orphaned in outcome.report
+        assert "orphan items (uncited, unledgered) — 1" in outcome.report
+
+    def test_index_consistency(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(instance, "brewing", page_text(items=None, body="text\n"))
+        write_index(instance, "[[ghost-page]]\n")  # brewing missing, ghost present
+        outcome = lint(instance)
+        assert "pages missing from index — 1" in outcome.report
+        assert "ghost index entries — 1" in outcome.report
+        assert "ghost-page" in outcome.report
+
+    def test_stale_pages_count_newer_members(self, instance):
+        newer = "2026-08-19-newer-cccccc"
+        write_taxonomy(instance, topics={"brewing": {"items": [newer]}})
+        write_corpus_stub(instance, newer)
+        write_page(
+            instance,
+            "brewing",
+            page_text(items=None, generated="2026-08-01", body=f"cite `{newer}`\n"),
+        )
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "stale pages (members newer than the page) — 1" in outcome.report
+        assert "brewing: 1 newer item(s)" in outcome.report
+
+    def test_count_drift_detected(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(items=3, body=f"cite `{ITEM}`\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "brewing: items: 3, cites 1" in outcome.report
+        assert outcome.exit_code == 0  # drift is repairable, not a failure
+
+    def test_restated_facts_flagged_within_a_page(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        a = "The canonical starting recipe is sixty grams per litre with a swirl."
+        b = "The canonical starting recipe is sixty grams per liter with a swirl."
+        write_page(instance, "brewing", page_text(items=None, body=f"{a}\n\n{b}\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "possible restated facts (same page — merge?) — 1" in outcome.report
+
+    def test_distinct_sentences_are_not_restatements(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        body = (
+            "The canonical starting recipe is sixty grams per litre of water.\n\n"
+            "Grind size should move coarser whenever the brew turns bitter or harsh.\n"
+        )
+        write_page(instance, "brewing", page_text(items=None, body=body))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "possible restated facts (same page — merge?) — none" in outcome.report
+
+
+class TestWrite:
+    def test_write_reconciles_items_counts(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(items=3, body=f"cite `{ITEM}`\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance, write=True)
+        assert "brewing: items: 3 -> 1" in outcome.report
+        rewritten = (instance.root / "wiki" / "topics" / "brewing.md").read_text()
+        assert "items: 1" in rewritten
+        assert "items: 3" not in rewritten
+        # A second run is clean — the reconcile converged.
+        assert "item-count drift (frontmatter items: vs citations) — none" in lint(
+            instance
+        ).report
+
+    def test_write_adds_missing_generated_date(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(
+            instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n")
+        )
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance, write=True)
+        assert "generated: 2026-08-20 added" in outcome.report
+        rewritten = (instance.root / "wiki" / "topics" / "brewing.md").read_text()
+        assert "generated: 2026-08-20" in rewritten
+
+    def test_without_write_missing_generated_is_a_note(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(
+            instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n")
+        )
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "no generated: date" in outcome.report
+        assert "generated:" not in (
+            instance.root / "wiki" / "topics" / "brewing.md"
+        ).read_text().split("\n---\n")[0]
+
+    def test_write_never_touches_existing_generated_dates(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(items=1, body=f"cite `{ITEM}`\n"))
+        write_index(instance, "[[brewing]]\n")
+        lint(instance, write=True)
+        text = (instance.root / "wiki" / "topics" / "brewing.md").read_text()
+        assert "generated: 2026-08-01" in text  # the staleness reference stands
+
+
+def stamped(entry: LedgerEntry) -> LedgerEntry:
+    return ledger.stamp(entry, today=lambda: TODAY, engine_version="0.1.0")
+
+
+def waiting_entry(needs: Need, unit_hash: str = "73bd784849") -> LedgerEntry:
+    return LedgerEntry(
+        hash=unit_hash,
+        url="https://example.test/a",
+        item=ITEM,
+        kind=Kind.WEB,
+        status=Status.WAITING,
+        needs=needs,
+        engine="0.1.0",
+        date=TODAY,
+    )
+
+
+class TestStateChecks:
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_valid_ledger_summarized(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
+        outcome = lint(instance)
+        assert "ledger — 1 entry, schema valid" in outcome.report
+        assert "waiting cohorts: transcribe 1" in outcome.report
+        assert outcome.exit_code == 0
+
+    def test_schema_failure_is_loud_and_fails(self, instance):
+        self._bare_wiki(instance)
+        instance.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        instance.ledger_path.write_text('{"kind": "tweet", "status": "done"}\n')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "LEDGER SCHEMA FAILURE" in outcome.report
+        assert "migration 1" in outcome.report
+
+    def test_cognitive_jobs_listed_via_the_seam(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.OCR)))
+        outcome = lint(instance, is_cognitive=always_cognitive)
+        assert "cognitive jobs (the session completes these with eyes) — 1" in outcome.report
+        assert "ocr" in outcome.report
+        clean = lint(instance, is_cognitive=never_cognitive)
+        assert "cognitive jobs (the session completes these with eyes) — none" in clean.report
+
+    def test_stale_harvest_passes_flagged(self, instance):
+        self._bare_wiki(instance)
+        records = [
+            {"stage": "harvest", "item": ITEM, "rules": 0, "date": "2026-08-01"},
+            {"stage": "harvest", "item": "2026-08-19-current-dddddd", "rules": 1,
+             "date": "2026-08-19"},
+            {"stage": "digest", "item": ITEM, "date": "2026-08-01"},
+        ]
+        instance.passes_path.write_text("".join(json.dumps(r) + "\n" for r in records))
+        outcome = lint(instance)
+        assert "harvest passes under old rules (re-judge) — 1" in outcome.report
+        assert f"{ITEM} (rules v0)" in outcome.report
+
+    def test_latest_pass_supersedes_older_ones(self, instance):
+        self._bare_wiki(instance)
+        records = [
+            {"stage": "harvest", "item": ITEM, "rules": 0, "date": "2026-08-01"},
+            {"stage": "harvest", "item": ITEM, "rules": 1, "date": "2026-08-19"},
+        ]
+        instance.passes_path.write_text("".join(json.dumps(r) + "\n" for r in records))
+        outcome = lint(instance)
+        assert "harvest passes under old rules (re-judge) — none" in outcome.report
+
+    def test_torn_pass_record_is_loud(self, instance):
+        self._bare_wiki(instance)
+        instance.passes_path.write_text('{"stage": "har\n')
+        with pytest.raises(ValueError, match=r"passes\.jsonl:1"):
+            lint(instance)
+
+    def test_nonempty_quarantine_is_flagged(self, instance):
+        self._bare_wiki(instance)
+        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text(
+            '{"old": "line"}\n{"older": "line"}\n'
+        )
+        outcome = lint(instance)
+        assert "QUARANTINE NOT EMPTY — 2 lines" in outcome.report
+
+    def test_empty_quarantine_is_silent(self, instance):
+        self._bare_wiki(instance)
+        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text("\n")
+        assert "QUARANTINE" not in lint(instance).report
+
+    def test_digest_orphans_listed(self, instance):
+        self._bare_wiki(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "web-abc123.md").write_text("enriched, never digested")
+        outcome = lint(instance)
+        assert "enrichment newer than digest" in outcome.report
+        assert ITEM in outcome.report
+
+
+class TestCli:
+    def test_write_flag_parses(self):
+        assert build_parser().parse_args(["--write"]).write is True
+        assert build_parser().parse_args([]).write is False
+
+    def test_typoed_flags_are_loud(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["--wirte"])
+
+    def test_main_prints_the_fresh_instance_notice(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        main([])
+        assert "fresh instance" in capsys.readouterr().out
+
+    def test_main_exits_1_on_failures(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        write_corpus_stub(instance)  # stranded: no taxonomy
+        with pytest.raises(SystemExit) as excinfo:
+            main([])
+        assert excinfo.value.code == 1
+        assert "broken mid-ingest" in capsys.readouterr().out
