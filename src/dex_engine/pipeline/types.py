@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
 __all__ = [
     "DRIVER_STATUSES",
@@ -31,6 +32,7 @@ __all__ = [
     "Need",
     "Result",
     "Skipped",
+    "SourceDriver",
     "Status",
     "WorkUnit",
     "parse_version",
@@ -289,6 +291,32 @@ class Extraction:
 
     markdown: str
     assets: list[Asset] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Driver interface (§2): structural, one per source shape. Conformance is
+# verified at the typed registry literal (pipeline/registry.py) — the one
+# assignment where the checker matches every driver against this Protocol.
+# ---------------------------------------------------------------------------
+
+
+class SourceDriver(Protocol):
+    """One source driver: pattern match, canonicalization, fetch."""
+
+    kind: Kind
+    sleep: float  # per-driver politeness delay, seconds
+
+    def matches(self, url: str) -> bool:
+        """True when this driver owns ``url`` (checked in registry order)."""
+        ...
+
+    def canonical(self, url: str) -> str:
+        """The canonical form of ``url`` — it keys the ledger hash."""
+        ...
+
+    def fetch(self, unit: WorkUnit) -> Result:
+        """Fetch one unit of work; never touches the ledger or the disk."""
+        ...
 
 
 # ---------------------------------------------------------------------------
