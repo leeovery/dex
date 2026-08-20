@@ -8,15 +8,29 @@ Design transcript (the full discussion this document distills; consult it if
 a gap or ambiguity is found here):
 `/Users/leeovery/.claude/projects/-Users-leeovery-Code-dex/a3167a12-9c3a-49b8-bdea-d353ba515bb7.jsonl`
 
-Motivating incident: during the dex-curated install (2026-08-19), Cloudflare
-transiently challenged the enricher's fetch of the owner's own website. The
-enricher — unable to distinguish a 403 challenge from a dead domain — ledgered
-it `dead` (terminal, never retried). Claude healed in-session by hand-fetching
-11 pages, leaving the ledger ("dead") contradicting the corpus ("enriched").
-Every mechanism below that looks like ceremony exists to make that class of
-failure impossible: visible status codes, retryable statuses, ledger-corrected
-heals, and a pipeline that reports what it couldn't do instead of lying about
-what it did.
+Origin: this rewrite is the roadmap's long-standing **driver-based ingestion
+architecture** item — "this is the core value of the system — solve it
+properly" — queued well before any incident. One incident the day before
+the design discussion usefully illustrated a failure class the design
+addresses: during the dex-curated install (2026-08-19), Cloudflare
+transiently challenged the enricher's fetch of the owner's own website; the
+enricher — unable to distinguish a 403 challenge from a dead domain —
+ledgered it `dead` (terminal, never retried), and Claude's in-session heal
+(hand-fetching 11 pages) left the ledger contradicting the corpus.
+
+What the design does about that class — honestly stated, since no design
+can force a site to serve us: (1) the redesigned web driver often avoids
+the block outright (urllib + browser UA; trafilatura demoted to extraction
+only — its own fetch client was what got challenged); (2) when blocked,
+visible status codes classify it `blocked`, never `dead` — the truth is
+recorded; (3) `blocked` retries each run, so transient challenges (this one
+was — the same fetch succeeded a day later) heal with zero intervention;
+(4) persistent blocks escalate to `manual` on the report, where the
+in-session heal remains available — and now ends with `enrich mark`, so
+state stays consistent; (5) the floor: nothing is ever silently mislabeled
+into a terminal state. "Silently wrong, permanently" becomes "usually
+succeeds; otherwise correctly diagnosed, automatically retried, escalated
+with state kept honest."
 
 ---
 
