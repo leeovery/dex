@@ -12,6 +12,13 @@ registry's stated reason. A scanned/image-only document → ``waiting`` +
 ``needs: ocr``. Embedded assets ride the Result for the run layer to write
 under the media caps, ledgered ``via: extract-asset`` — this driver, like
 every driver, never touches the ledger or the disk outputs.
+
+The reverse of the web driver's mid-fetch discovery lives here too: a URL
+that detection routed to file work (a ``.pdf`` path, a lying HEAD) whose
+bytes turn out to be an HTML page signals a redetection back to ``web`` —
+the run layer re-routes once, and mutual re-detection parks for judgment.
+Local ``file:`` work never re-detects: a captured HTML file is not a page
+to fetch.
 """
 
 from pathlib import Path
@@ -24,7 +31,15 @@ from dex_engine.pipeline.classify import (
     classify_http,
 )
 from dex_engine.pipeline.detect import sniff_format
-from dex_engine.pipeline.types import Format, Kind, Need, Result, Status, WorkUnit
+from dex_engine.pipeline.types import (
+    Format,
+    Kind,
+    Need,
+    Redetection,
+    Result,
+    Status,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical
 
 from .transport import Transport, urllib_transport
@@ -32,6 +47,14 @@ from .transport import Transport, urllib_transport
 __all__ = ["FileDriver"]
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs"
+
+_HTML_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+_HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
+
+
+def _looks_like_html(data: bytes) -> bool:
+    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
+    return lead.startswith(_HTML_LEADS)
 
 
 class FileDriver:
@@ -75,14 +98,25 @@ class FileDriver:
         loaded = self._load(unit)
         if isinstance(loaded, Result):
             return loaded
-        data, name = loaded
-        fmt = sniff_format(data, name=name) or unit.format
+        data, name, content_type = loaded
         if data.startswith(_LFS_POINTER_PREFIX):
             return Result(
                 status=Status.MANUAL,
                 meta={},
                 reason=f"{name or 'file'} is an unsmudged LFS pointer — run `git lfs pull`",
             )
+        # Byte signatures are authoritative over whatever the URL's path or
+        # a HEAD claimed. A URL-served body with no document signature that
+        # reads as HTML is a web page mislabeled into file work — re-route
+        # it rather than feeding HTML to a document extractor. Only for
+        # http(s) work: a local captured file is not a page to fetch.
+        if (
+            not unit.url.startswith("file:")
+            and sniff_format(data) is None
+            and (content_type in _HTML_CONTENT_TYPES or _looks_like_html(data))
+        ):
+            return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.WEB))
+        fmt = sniff_format(data, name=name) or unit.format
         if fmt is None:
             return Result(
                 status=Status.MANUAL,
@@ -94,12 +128,12 @@ class FileDriver:
             )
         return self._extract(data, fmt, name)
 
-    def _load(self, unit: WorkUnit) -> tuple[bytes, str | None] | Result:
+    def _load(self, unit: WorkUnit) -> tuple[bytes, str | None, str] | Result:
         if unit.url.startswith("file:"):
             return self._read_local(unit.url.removeprefix("file:"))
         return self._download(unit.url)
 
-    def _read_local(self, repo_path: str) -> tuple[bytes, str | None] | Result:
+    def _read_local(self, repo_path: str) -> tuple[bytes, str | None, str] | Result:
         if self._root is None:
             # An engine wiring bug, not a content problem: the run layer's
             # broad except files it as `error` rather than mislabeling work.
@@ -114,9 +148,9 @@ class FileDriver:
                     "or heal the capture"
                 ),
             )
-        return path.read_bytes(), path.name
+        return path.read_bytes(), path.name, ""
 
-    def _download(self, url: str) -> tuple[bytes, str | None] | Result:
+    def _download(self, url: str) -> tuple[bytes, str | None, str] | Result:
         try:
             response = self._transport(url)
         except OSError as e:
@@ -126,7 +160,7 @@ class FileDriver:
             failure = classify_http(response.status)
             return Result(status=failure.status, meta={}, reason=failure.reason)
         tail = unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
-        return response.body, tail
+        return response.body, tail, response.content_type
 
     def _extract(self, data: bytes, fmt: Format, name: str | None) -> Result:
         extractor = self._capabilities.extractor(fmt)

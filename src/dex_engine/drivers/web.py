@@ -10,6 +10,12 @@ Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
 ``manual`` (reason ``thin-extraction``), never ``dead`` — our tooling can't
 read it; that doesn't mean it's gone.
+
+A 200 whose BODY is a document (magic bytes say PDF/OOXML/…, or the
+content type maps to an extractable format) is neither thin nor web work at
+all: detection's HEAD lied or was inconclusive. The driver signals a
+redetection to ``file`` work and the run layer re-routes the unit — never
+``manual`` for content the file driver can read.
 """
 
 import html as html_lib
@@ -26,7 +32,8 @@ from dex_engine.pipeline.classify import (
     classify_connection,
     classify_http,
 )
-from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
+from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
+from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
 from .transport import Transport, urllib_transport
@@ -61,9 +68,11 @@ def trafilatura_extract(html: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class _Page:
-    """A successfully fetched HTML page."""
+    """A successfully fetched page: decoded text plus what the wire said."""
 
     html: str
+    body: bytes = b""
+    content_type: str = ""
 
 
 class WebDriver:
@@ -99,6 +108,15 @@ class WebDriver:
         """Fetch and extract one page, wayback fallback on fetch failure."""
         page = self._fetch_page(unit.url)
         if isinstance(page, _Page):
+            fmt = _document_format(page)
+            if fmt is not None:
+                # Detection said web but the body is a document — a HEAD
+                # lied or was inconclusive. Re-route, never thin-manual.
+                return Result(
+                    status=Status.QUEUED,
+                    meta={},
+                    redetect=Redetection(kind=Kind.FILE, format=fmt),
+                )
             return self._extracted(page.html, allow_media=True) or Result(
                 status=Status.MANUAL,
                 meta=_title_meta(page.html),
@@ -112,7 +130,9 @@ class WebDriver:
         except OSError as e:
             return classify_connection(e)
         if response.ok:
-            return _Page(html=response.text())
+            return _Page(
+                html=response.text(), body=response.body, content_type=response.content_type
+            )
         return classify_http(response.status)
 
     def _extracted(self, html: str, *, allow_media: bool) -> Result | None:
@@ -162,6 +182,20 @@ class WebDriver:
         if not isinstance(closest, dict) or not closest.get("available") or not closest.get("url"):
             return None, "no wayback snapshot"
         return closest["url"], None
+
+
+def _document_format(page: _Page) -> Format | None:
+    """The extractable Format of a fetched body, or None for real web content.
+
+    Magic bytes decide first (authoritative — servers lie in both
+    directions); the declared content type is the fallback that catches
+    signature-less formats (CSV). No filename-extension guessing here: a
+    web URL's path tail is routing, not identity.
+    """
+    magic = sniff_format(page.body)
+    if magic is not None:
+        return magic
+    return CONTENT_TYPE_FORMATS.get(page.content_type)
 
 
 def _og_image(html: str) -> str | None:

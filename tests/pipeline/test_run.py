@@ -11,7 +11,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from dex_engine import corpus
+from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import HttpResponse
+from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
@@ -37,6 +40,7 @@ from dex_engine.pipeline.types import (
     Status,
 )
 from dex_engine.pipeline.urls import work_hash
+from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeTransport
 from tests.pipeline.test_issues import FakeGh
@@ -1202,3 +1206,113 @@ class TestRerunPacing:
         write_item(instance)
         report = run_mod.run(make_ctx(instance, FakeDriver()))
         assert "rerun cohort" not in report
+
+
+class TestRedetection:
+    """Mid-fetch kind discovery: same URL, same hash, corrected identity."""
+
+    PDF_URL = "https://example.test/whitepaper"
+    HTML = b"<!DOCTYPE html>\n<html><body>a page pretending to be a paper</body></html>"
+
+    def _drivers(self, instance, transport):
+        capabilities = Capabilities(
+            transcribers=(), extractors=(FakeExtractor(markdown="extracted pdf text " * 30),)
+        )
+        return [
+            FileDriver(capabilities=capabilities, root=instance.root, transport=transport),
+            WebDriver(transport=transport),  # the catch-all stays last
+        ]
+
+    def _lineage(self, ctx, url):
+        lines = [
+            json.loads(line)
+            for line in ctx.instance.ledger_path.read_text().split("\n")
+            if line.strip()
+        ]
+        return [
+            (line["kind"], line["status"], line.get("via"))
+            for line in lines
+            if line["hash"] == work_hash(url)
+        ]
+
+    def test_lying_head_reroutes_web_to_file_in_run(self, instance):
+        # The server reports text/html on HEAD and GET alike; the body is a
+        # real PDF. Detection trusts the HEAD (web); the web driver's magic
+        # sniff catches the lie mid-fetch.
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="text/html", body=fixture_bytes("paper.pdf")
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.DONE
+        assert entry.kind is Kind.FILE
+        assert entry.path is not None
+        assert (instance.root / entry.path).exists()  # extraction output landed
+        assert entry.path.endswith(f"file-{entry.hash[:6]}.md")
+        assert self._lineage(ctx, self.PDF_URL) == [
+            ("web", "queued", None),  # seeded as detection said
+            ("file", "queued", "sniff"),  # corrected mid-fetch
+            ("file", "done", "sniff"),  # drained through the file driver, same run
+        ]
+        assert f"re-detected: {self.PDF_URL} — web → file/pdf" in report
+
+    def test_blocked_head_still_corrects_on_the_get(self, instance):
+        pdf = HttpResponse(
+            status=200, content_type="application/octet-stream", body=fixture_bytes("paper.pdf")
+        )
+        blocked = HttpResponse(status=403, content_type="text/html", body=b"")
+
+        class MethodAware:
+            def __call__(self, url, *, method="GET"):  # noqa: ARG002 — routes on method alone
+                return blocked if method == "HEAD" else pdf
+
+        write_item(instance, urls=[self.PDF_URL])
+        transport = MethodAware()
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.DONE
+        assert entry.kind is Kind.FILE
+
+    def test_mutual_redetection_parks_manual_never_loops(self, instance):
+        # content-type says PDF, the body is HTML: web re-routes to file on
+        # the content type, file re-routes back on the bytes — the second
+        # correction hits the once-only guard.
+        transport = FakeTransport(
+            {
+                self.PDF_URL: HttpResponse(
+                    status=200, content_type="application/pdf", body=self.HTML
+                )
+            }
+        )
+        write_item(instance, urls=[self.PDF_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.PDF_URL)
+        assert entry.status is Status.MANUAL
+        assert "re-detection loop" in (entry.reason or "")
+        assert self._lineage(ctx, self.PDF_URL) == [
+            ("web", "queued", None),
+            ("file", "queued", "sniff"),
+            ("file", "manual", "sniff"),
+        ]
+        assert "re-detected" in report  # the first correction is still noted
+
+    def test_thin_html_never_false_redetects_end_to_end(self, instance):
+        transport = FakeTransport(
+            {URL: HttpResponse(status=200, content_type="text/html", body=self.HTML)}
+        )
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.MANUAL
+        assert entry.reason == "thin-extraction"
+        assert entry.kind is Kind.WEB
+        assert "re-detected" not in report
