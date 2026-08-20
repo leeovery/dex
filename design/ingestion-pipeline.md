@@ -671,6 +671,15 @@ Authoring rules:
   are repaired with judgment — code declines what it can't do safely
   (hand-healed files with nonconforming names, frontmatter that doesn't
   parse) and says so, rather than guessing.
+- **Untranslatable ledger lines are QUARANTINED, never left in place**
+  (amended at phase-4 review): a line a migration cannot provably
+  translate moves verbatim to `state/enrichment-ledger.unmigrated.jsonl`,
+  named in the report with the concrete repair procedure (review; re-add
+  via `enrich mark <url> <status> --reason …`, or accept the loss). The
+  main ledger must load clean after every migration — a skipped line that
+  poisons `ledger.load` also bricks `enrich mark`, the sanctioned repair
+  verb, leaving judgment with no working tool. Lint flags a non-empty
+  quarantine file at every health check.
 
 Shipping migrations for this rewrite:
 1. **Renames + status vocabulary** — `tweet→x`, `blog→web` in corpus
@@ -1008,6 +1017,12 @@ the tree green:
 Phases 1–3 are pure engine work with no instance impact; nothing ships to
 instances until phase 4 exists, because the first synced release must carry
 the migrations that make old state valid under the new code.
+
+**Version precondition** (phase-4 review, F1): the package version must be
+bumped past every released tag before the stack merges — a running version
+equal to an existing release makes the pin bootstrap adopt that (old) tag
+and brick the instance on pre-rewrite code. The pre-rewrite marker
+`0.0.1` must never be re-tagged or re-stamped.
 
 **MERGE GATE — binding on the stack**: instances track `main` HEAD today
 (the shim pins nothing until phase 4), so `impl/*` branches must NOT reach
