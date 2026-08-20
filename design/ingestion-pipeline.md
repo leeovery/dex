@@ -687,6 +687,12 @@ src/dex_engine/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
     ocr/         cognitive.py
+  corpus.py    the ONE corpus-item frontmatter read/write point: a frozen
+               `CorpusItem` dataclass, parse/serialize that passes the
+               Claude-authored body through byte-exact. Replaces the old
+               regex edits; used by `item new`, the status/enrichment
+               refresh, and migration 1 (which needs it regardless — a
+               reason this ships now, not later)
   render/      kernel.py  surfaces.py — ships its own entry point:
                `bin/dex render --file <payload>` (in-process for the
                engine's own reports, by command for the skills)
@@ -696,6 +702,12 @@ src/dex_engine/
                  ledger through a verb, never by hand-appending JSONL)
                · pass <item> --stage …  (records stage completions in
                  passes.jsonl — same rule)
+               · item new <capture-file>  (creates the corpus item: id
+                 computed per the id rules, provenance stamped from the
+                 capture, body = the note verbatim. Corpus-item creation
+                 was always mechanical work — the only judgment is the
+                 scope check before it. Handles both id paths: url-hash
+                 and materialized-media directory)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, waiting cohorts, pass records
@@ -781,6 +793,15 @@ Skill changes shipping with this:
   command + model guidance and the per-run cap; heal procedure ends by
   running `enrich mark <url> <status>` (the sanctioned ledger-correction
   verb); migration-report review (§12).
+- **Corpus items are created by `item new`, never freehand** — code writes
+  frontmatter, Claude writes prose. The governing line: mechanize where
+  the *values* are mechanical (item provenance comes from the capture
+  file); stay freehand where the values are judgment (digests — `signal`
+  and `topics` are the judgment, so a verb would add ceremony without
+  removing a decision; lint verifies their shape instead). Frontmatter
+  thereby converges on the same guarantee as the ledger: a malformed item
+  can't be written, because structure never passes through freehand
+  writing.
 - **Shipping obligations in the same change**: `dex-contract.md` updated
   (operations become capture/run/query/lint; dataflow adds `cache/`, the
   new state files, and ledger-only promoted URLs; the "never hand-edit
@@ -832,6 +853,10 @@ old monolith had no seams.
   drained, re-entry + provenance, caps fire and record, waiting ignores runs
   until a fake provider flips `available()`, blocked→manual escalation,
   error retry-on-new-engine, rerun overwrites (never duplicates) output.
+- **Corpus round-trip property** (hypothesis): parse∘serialize over
+  generated items preserves the body byte-exact and the frontmatter
+  semantically — the guarantee that lets migration 1 and the refresh path
+  touch thousands of Claude-authored files safely.
 - **Ledger invariants as hypothesis properties**, not single examples:
   random entry sequences ⇒ `compact()` preserves last-per-hash and
   round-trips; ledger + identical rerun ⇒ byte-identical outputs, no new
