@@ -674,11 +674,55 @@ def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEn
     raise ValueError(f"item {item_id!r} has no primary work unit — pass --parent <hash> explicitly")
 
 
+# Cap-refusal reasons open with these — the one place they are matched.
+_CAP_REASON_PREFIXES = ("url cap (", "depth cap (")
+
+
+def _is_cap_refusal(entry: LedgerEntry) -> bool:
+    """True for a cap-fire marker line — refused work, not an admitted unit."""
+    return entry.status is Status.SKIPPED and (entry.reason or "").startswith(_CAP_REASON_PREFIXES)
+
+
+def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
+    """Re-fetch a unit the item already owns: same depth/parent/via, rerun.
+
+    Never re-parents (re-fetching the item's primary URL must not nest it
+    under itself) and never re-spends the URL cap — the unit is already
+    counted.
+    """
+    requeued = dataclasses.replace(
+        existing,
+        status=Status.QUEUED,
+        needs=None,
+        attempts=None,
+        path=None,
+        title=None,
+        error=None,
+        reason=None,
+        rerun=True,
+    )
+    drain.record(requeued)
+    return existing.hash
+
+
 def _admit_fetch(
     drain: _Drain, item_id: str, url: str, parent: LedgerEntry, *, force: bool
 ) -> str | None:
     canonical, unit_hash = drain.identify(url)
     existing = drain.entries.get(unit_hash)
+    if existing is not None:
+        if existing.item != item_id:
+            raise ValueError(
+                f"{canonical} already enriches under item {existing.item!r} — one URL "
+                f"enriches under one item (§5); it cannot be fetched into {item_id!r}"
+            )
+        if _is_cap_refusal(existing):
+            # A cap-refusal marker is not an admitted unit: it falls through
+            # to the cap logic below, so a repeat fetch without --force is
+            # refused AGAIN rather than sneaking in as a "rerun".
+            pass
+        else:
+            return _requeue_in_place(drain, existing)
     capped = drain.fetched_count(item_id) >= MAX_URLS_PER_ITEM
     depth = (parent.depth or 0) + 1
     if capped:
@@ -708,7 +752,6 @@ def _admit_fetch(
         if not force:
             return None
     detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
-    rerun = existing is not None and existing.path is not None
     drain.record(
         LedgerEntry(
             hash=unit_hash,
@@ -722,7 +765,6 @@ def _admit_fetch(
             via="harvest",
             parent=parent.hash,
             depth=depth,
-            rerun=rerun,
         )
     )
     return unit_hash

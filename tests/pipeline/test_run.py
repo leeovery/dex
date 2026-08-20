@@ -633,6 +633,33 @@ class TestVerbs:
         assert entry.depth == 1
         assert "1 unit processed" in report
 
+    def test_fetch_urls_refuses_to_steal_another_items_unit(self, instance):
+        write_item(instance, "2026-08-19-first-aaaaaa", urls=[URL])
+        write_item(instance, "2026-08-19-second-bbbbbb", urls=["https://example.test/other"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        with pytest.raises(ValueError, match="2026-08-19-first-aaaaaa"):
+            run_mod.fetch_urls(ctx, "2026-08-19-second-bbbbbb", [URL])
+        # The unit stayed with its owner, provenance intact:
+        entry = ledger.load(instance.ledger_path)[work_hash(URL)]
+        assert entry.item == "2026-08-19-first-aaaaaa"
+        assert entry.status is Status.DONE
+
+    def test_fetch_urls_on_the_items_own_unit_is_a_rerun_in_place(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, [URL])  # re-fetch the primary URL itself
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert entry.parent is None  # never re-parented under itself
+        assert entry.depth is None
+        assert entry.rerun is True
+        # And the primary work unit is still resolvable for --parent-less fetches:
+        run_mod.fetch_urls(ctx, ITEM, ["https://example.test/docs"])
+        child = ledger.load(instance.ledger_path)[work_hash("https://example.test/docs")]
+        assert child.parent == work_hash(URL)
+
     def test_fetch_urls_unknown_item_is_loud(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="unknown corpus item"):
@@ -648,6 +675,11 @@ class TestVerbs:
         refused = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert refused.status is Status.SKIPPED
         assert "url cap" in (refused.reason or "")
+
+        # A repeat WITHOUT --force is refused again — the refusal marker is
+        # not an admitted unit and must never sneak in as a "rerun":
+        run_mod.fetch_urls(ctx, ITEM, [extra])
+        assert ledger.load(instance.ledger_path)[work_hash(extra)].status is Status.SKIPPED
 
         run_mod.fetch_urls(ctx, ITEM, [extra], force=True)
         forced = ledger.load(instance.ledger_path)[work_hash(extra)]
