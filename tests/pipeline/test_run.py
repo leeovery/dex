@@ -717,6 +717,40 @@ class TestVerbs:
         assert entry.status is Status.DONE
         assert entry.path == f"enrichment/{ITEM}/web-000000.md"
 
+    def test_mark_done_carries_the_prior_outputs_forward(self, instance):
+        # A heal never erases what it does not correct: re-marking a done
+        # entry (or overriding just its path) keeps the recorded outputs.
+        # (A non-done line cannot HOLD path/title under §5, so a heal from
+        # such a line has nothing to carry — the audit trail keeps history.)
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())  # default fetch records path + title "t"
+        run_mod.run(ctx)
+        first = entry_for(ctx)
+        run_mod.mark(ctx, URL, Status.DONE)  # re-stamp heal, no flags
+        healed = entry_for(ctx)
+        assert healed.path == first.path
+        assert healed.title == first.title
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-corrected.md")
+        corrected = entry_for(ctx)
+        assert corrected.path == f"enrichment/{ITEM}/web-corrected.md"
+        assert corrected.title == first.title  # title survives a path correction
+
+    def test_mark_waiting_can_set_the_need(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.mark(ctx, URL, Status.WAITING, needs=run_mod.Need.TRANSCRIBE)
+        entry = entry_for(ctx)
+        assert entry.status is Status.WAITING
+        assert entry.needs is Need.TRANSCRIBE
+
+    def test_mark_waiting_without_a_need_anywhere_is_loud(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        with pytest.raises(ValueError, match="needs"):
+            run_mod.mark(ctx, URL, Status.WAITING)
+
     def test_mark_unknown_url_is_loud(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="no ledger entry"):

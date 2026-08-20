@@ -95,6 +95,14 @@ class TestRepo:
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
         assert result.status is Status.BLOCKED
 
+    def test_gh_timeout_shape_classifies_blocked(self):
+        # run_gh converts TimeoutExpired to this GhResult shape — a hung gh
+        # is the world misbehaving, never an engine error.
+        driver = driver_for({("api", "repos/acme/pipeline-kit"): fail("gh timed out after 120s")})
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.BLOCKED
+        assert "timed out" in reason_of(result)
+
     def test_gh_failure_without_a_code_is_blocked_with_scrubbed_reason(self):
         driver = driver_for(
             {

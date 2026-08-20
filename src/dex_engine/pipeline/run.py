@@ -839,10 +839,19 @@ def _digest_orphans(instance: Instance) -> list[str]:
     return orphans
 
 
-def mark(
-    ctx: RunContext, url: str, status: Status, *, reason: str | None = None, path: str | None = None
+def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
+    ctx: RunContext,
+    url: str,
+    status: Status,
+    *,
+    reason: str | None = None,
+    path: str | None = None,
+    needs: Need | None = None,
 ) -> str:
     """Heal one ledger entry through the sanctioned verb (§5/§14).
+
+    A heal never erases what it does not correct: done heals carry the
+    prior entry's path/title forward unless a new ``path`` overrides them.
 
     Args:
         ctx: The run context.
@@ -850,6 +859,8 @@ def mark(
         status: The corrected status.
         reason: The stated reason (required for manual/skipped, §5).
         path: Output path, for done heals that wrote a file.
+        needs: The needed capability, for waiting heals (defaults to the
+            prior entry's).
 
     Returns:
         A one-line confirmation.
@@ -866,6 +877,7 @@ def mark(
     prior = drain.entries.get(unit_hash)
     if prior is None:
         raise ValueError(f"no ledger entry for {canonical!r} — mark heals existing state")
+    effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
     healed = LedgerEntry(
         hash=prior.hash,
         url=prior.url,
@@ -873,15 +885,18 @@ def mark(
         kind=prior.kind,
         format=prior.format,
         status=status,
-        needs=prior.needs if status is Status.WAITING else None,
+        # A stray --needs on a non-waiting status passes through and fails
+        # §5 validation loudly rather than being silently dropped.
+        needs=(needs or prior.needs) if status is Status.WAITING else needs,
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
-        engine="seed",  # stamped in _record
+        engine="seed",  # stamped in record
         date=datetime.date.min,
         via=prior.via,
         parent=prior.parent,
         depth=prior.depth,
         rerun=prior.rerun,
-        path=path,
+        path=effective_path,
+        title=prior.title if status is Status.DONE and effective_path is not None else None,
         error=None,
         reason=reason,
     )

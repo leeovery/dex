@@ -52,14 +52,22 @@ class GhResult:
 
 
 def run_gh(args: Sequence[str]) -> GhResult:
-    """Run ``gh`` with ``args``; a missing binary raises (engine error, §13)."""
-    completed = subprocess.run(  # noqa: S603 — gh is a declared dependency; args are code-built, no shell
-        ["gh", *args],  # noqa: S607 — resolved from PATH by design (instances install gh, not a path)
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=_GH_TIMEOUT,
-    )
+    """Run ``gh`` with ``args``; a missing binary raises (engine error, §13).
+
+    A hung invocation is the world misbehaving, not an engine bug: the
+    timeout comes back as a failed GhResult so classification makes it
+    ``blocked`` (no HTTP code in the stderr), never ``error``.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 — gh is a declared dependency; args are code-built, no shell
+            ["gh", *args],  # noqa: S607 — resolved from PATH by design (instances install gh, not a path)
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return GhResult(returncode=124, stdout="", stderr=f"gh timed out after {_GH_TIMEOUT:g}s")
     return GhResult(
         returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr
     )

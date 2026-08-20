@@ -21,7 +21,7 @@ from .pipeline.run import (
     run,
     status_report,
 )
-from .pipeline.types import Config, Instance, Status
+from .pipeline.types import Config, Instance, Need, Status
 
 __all__ = ["build_parser", "engine_version", "main"]
 
@@ -78,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--reason", default=None, help="stated reason (manual/skipped need one)"
     )
     mark_parser.add_argument("--path", default=None, help="output path, for done heals")
+    mark_parser.add_argument(
+        "--needs",
+        choices=[need.value for need in Need],
+        default=None,
+        help="needed capability, for waiting heals",
+    )
 
     pass_parser = commands.add_parser(
         "pass", help="record a stage completion in state/passes.jsonl"
@@ -101,7 +107,14 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:
         case "compact":
             return compact(ctx)
         case "mark":
-            return mark(ctx, args.url, Status(args.status), reason=args.reason, path=args.path)
+            return mark(
+                ctx,
+                args.url,
+                Status(args.status),
+                reason=args.reason,
+                path=args.path,
+                needs=Need(args.needs) if args.needs else None,
+            )
         case "pass":
             return record_pass(ctx, args.item, args.stage)
         case _:
