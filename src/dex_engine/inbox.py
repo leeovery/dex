@@ -192,7 +192,26 @@ def _materialize(path: Path, fm: dict, body: str, token: str) -> bool:
               f"inbox release by hand")
     _rewrite(path, fm, rel, body)
     print(f"  ok {path.name} -> {rel}")
+    _note_document_format(rel, dest)
     return True
+
+
+def _note_document_format(rel: str, dest: Path) -> None:
+    # Materialized files feed the pipeline (design §14): a document-format
+    # capture becomes a file: work unit when its corpus item is created —
+    # `enrich run` seeds it from the item's `media:` list (format detect →
+    # extract queue). The item id does not exist yet at materialization
+    # time, so the ledger write happens there; this hook is the detection
+    # half, so the operator sees the routing decision at inbox time.
+    # Never fatal: a detection hiccup must not fail a materialization.
+    try:
+        from dex_engine.pipeline.detect import sniff_format
+        fmt = sniff_format(dest.read_bytes(), name=dest.name)
+    except Exception:
+        return
+    if fmt is not None:
+        print(f"  note {dest.name}: {fmt.value} document — queues for extraction "
+              f"at the next enrich run (via the item's media list)")
 
 
 def _ensure_release(repo: str, token: str, quiet_if_present: bool = False):
