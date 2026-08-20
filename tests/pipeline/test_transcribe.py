@@ -2,6 +2,7 @@
 
 import re
 
+from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
@@ -361,6 +362,16 @@ class TestPodcastDrain:
         ctx = self.park_via_driver(instance)
         report = run_mod.run(ctx)  # a second run: nothing new
         assert "cognitive work — none" in report
+
+    def test_park_file_appears_in_the_items_enrichment_listing(self, instance):
+        # The frontmatter refresh keys on every write, not only counted
+        # outcomes — a waiting park's file must show in `enrichment:`
+        # deterministically (phase-3 review).
+        self.park_via_driver(instance)
+        entry = self.entry(instance)
+        assert entry.status is Status.WAITING
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert f"podcast-{entry.hash[:6]}.md" in item.enrichment
 
     def test_no_show_notes_park_still_writes_the_enclosure_pointer(self, instance):
         # §6 (blocker regression): an episode without <description> parks

@@ -227,6 +227,10 @@ class _Drain:
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
     outcomes: dict[str, _ItemOutcome] = field(default_factory=dict)
+    # Items whose enrichment dir was written at all (counted or not): the
+    # frontmatter refresh keys on EVERY write, so a waiting park's file
+    # appears in the corpus `enrichment:` listing deterministically.
+    written_items: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
     sniff: Sniff | None = None
     # §12: transcription is capped per run so a resurrected backlog never
@@ -599,6 +603,7 @@ class _Drain:
         """
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / entry.item / name
+        self.written_items.add(entry.item)
         body = result.body or ""
         content = _render_enrichment(entry.url, self.ctx.today(), result.meta, body)
         existed = out.exists()
@@ -907,7 +912,7 @@ class _Drain:
     # -- item frontmatter (derived from disk, written by corpus.py) ------
 
     def _refresh_items(self) -> None:
-        for item_id in self.outcomes:
+        for item_id in self.outcomes.keys() | self.written_items:
             path = self.item_paths.get(item_id)
             if path is None:
                 continue
