@@ -60,6 +60,7 @@ class YoutubeAudio:
     channel: str | None
     description: str
     duration_min: int | None = None
+    upload_date: str | None = None
 
 
 # url, cache_dir, stem -> downloaded audio; raises ProbeError on yt-dlp
@@ -113,6 +114,7 @@ def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
         channel=info.get("channel") or info.get("uploader"),
         description=(info.get("description") or "").strip(),
         duration_min=round(duration / 60) if duration else None,
+        upload_date=info.get("upload_date") or None,
     )
 
 
@@ -143,10 +145,14 @@ def acquire_youtube_audio(
         audio = download(entry.url, cache_dir, entry.hash)
     except ProbeError as e:
         return classify_probe_failure(str(e))
+    # The same shape as the captions path's meta (drivers/youtube.py
+    # _video_meta): one frontmatter contract per kind, whichever route
+    # produced the transcript.
     meta: dict[str, str | int | None] = {
         "title": audio.title,
         "channel": audio.channel,
         "duration_min": audio.duration_min,
+        "upload_date": audio.upload_date,
     }
     prompt = _prompt(audio.title, audio.channel, audio.description)
     return Acquired(audio=audio.path, meta=meta, prompt=prompt, prefix=audio.description)

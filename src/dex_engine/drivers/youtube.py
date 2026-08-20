@@ -188,7 +188,10 @@ def _video_meta(info: dict) -> dict[str, str | int | None]:
     return {
         "title": info.get("title") or None,
         "channel": info.get("channel") or info.get("uploader"),
-        "duration_min": round(duration / 60),
+        # None (omitted), never 0, for an unknown duration — the same
+        # semantics as the transcribe drain's route: one frontmatter shape
+        # per kind regardless of how the transcript was obtained.
+        "duration_min": round(duration / 60) if duration else None,
         "upload_date": info.get("upload_date"),
     }
 

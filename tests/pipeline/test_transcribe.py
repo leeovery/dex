@@ -5,15 +5,17 @@ import re
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.youtube import ProbeError
+from dex_engine.drivers.youtube import ProbeError, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.transcribe import (
     TRANSCRIBE_RUN_CAP,
+    Acquired,
     YoutubeAudio,
     _cached_audio,
+    acquire_youtube_audio,
     read_enrichment,
 )
 from dex_engine.pipeline.types import (
@@ -55,6 +57,7 @@ class FakeDownload:
             channel="Engineering Distilled",
             description="A talk about anydoc, JSONL and dex.",
             duration_min=42,
+            upload_date="20260810",
         )
 
 
@@ -120,11 +123,22 @@ class TestYoutubeDrain:
         content = (instance.root / str(entry.path)).read_text()
         assert "via: whisper-local" in content
         assert "model: medium" in content
+        assert "duration_min: 42" in content
+        assert "upload_date: 20260810" in content  # captions-path parity
         assert "## Description" in content
         assert "## Transcript\n\nThe transcript text." in content
         # §9 lifecycle: deleted on successful transcription.
         assert audio_files(instance) == []
         assert ITEM in report  # the item lands on the cognitive work list
+
+    def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
+        # One frontmatter shape per kind, whichever route produced the
+        # transcript (phase-3 review): the drain's meta keys are exactly
+        # the captions path's.
+        entry = seed_waiting(instance)
+        acquired = acquire_youtube_audio(entry, tmp_path, FakeDownload())
+        assert isinstance(acquired, Acquired)
+        assert set(acquired.meta) == set(_video_meta({}))
 
     def test_bad_audio_is_manual_and_the_audio_is_kept(self, instance):
         write_item(instance, urls=[VIDEO_URL])
