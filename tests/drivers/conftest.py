@@ -1,6 +1,7 @@
 """Shared driver-test plumbing: fixture loading, fake transports, work units."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -53,13 +54,17 @@ def json_response(payload: object, *, status: int = 200) -> HttpResponse:
 class FakeTransport:
     """URL -> canned response (or exception to raise). Unknown URLs are loud."""
 
-    def __init__(self, responses: dict[str, HttpResponse | Exception]) -> None:
+    def __init__(self, responses: Mapping[str, HttpResponse | Exception]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, url: str, *, method: str = "GET") -> HttpResponse:
         self.calls.append((method, url))
         if url not in self.responses:
+            if method == "HEAD":
+                # Detection's sniff HEADs unknown catch-all URLs; an
+                # unregistered one is simply inconclusive, not a test bug.
+                return HttpResponse(status=200, content_type="text/html", body=b"")
             raise AssertionError(f"unexpected fetch of {url!r} — calls so far: {self.calls}")
         outcome = self.responses[url]
         if isinstance(outcome, Exception):

@@ -468,6 +468,16 @@ class Instance:
         return self.state_dir / "enrichment-ledger.jsonl"
 
     @property
+    def passes_path(self) -> Path:
+        """``state/passes.jsonl`` — per-item stage records (§4)."""
+        return self.state_dir / "passes.jsonl"
+
+    @property
+    def digests_dir(self) -> Path:
+        """``state/digests/`` — per-item fact indexes (the digest step's output)."""
+        return self.state_dir / "digests"
+
+    @property
     def config_path(self) -> Path:
         """``state/config.json`` — instance config (§4)."""
         return self.state_dir / "config.json"
