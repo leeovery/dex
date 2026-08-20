@@ -36,8 +36,6 @@ _ITUNES_LOOKUP = "https://itunes.apple.com/lookup?id={id}&entity=podcastEpisode"
 _ITUNES_SEARCH = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&term={term}"
 
 _APPLE_EPISODE_PARAM = "i"
-_RSS_HOST_PREFIXES = ("feeds.", "feed.")
-_RSS_PATH_SUFFIXES = (".rss", "/feed", "/rss")
 
 _OG_TITLE_RES = (
     re.compile(r"<meta[^>]+(?:property|name)=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)"),
@@ -88,14 +86,21 @@ class PodcastDriver:
         self._transport = transport
 
     def matches(self, url: str) -> bool:
-        """True for Apple/Spotify episode links and RSS-ish URLs."""
+        """True for Apple/Spotify episode links and explicit ``.rss`` URLs.
+
+        Deliberately narrow: bare ``/feed`` / ``/rss`` path suffixes and
+        ``feeds.*`` / ``feed.*`` hosts are blog vocabulary too — the web
+        driver keeps those (phase-3 review). The long-term answer for a
+        feed-shaped URL whose resolution finds no audio is §1 corrected-kind
+        re-entry — out of scope this phase.
+        """
         host = host_of(url)
         if host == "podcasts.apple.com":
             return True
         path = urlsplit(url).path.rstrip("/")
         if host == "open.spotify.com":
             return path.startswith("/episode/")
-        return host.startswith(_RSS_HOST_PREFIXES) or path.lower().endswith(_RSS_PATH_SUFFIXES)
+        return path.lower().endswith(".rss")
 
     def canonical(self, url: str) -> str:
         """Apple keeps only the episode param; everything else is generic."""

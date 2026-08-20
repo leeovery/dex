@@ -28,14 +28,25 @@ def feed() -> HttpResponse:
 
 
 class TestDetection:
-    def test_matches_apple_spotify_and_rss_ish(self):
+    def test_matches_apple_spotify_and_explicit_rss(self):
         d = PodcastDriver()
         assert d.matches(APPLE_URL)
         assert d.matches(SPOTIFY_URL)
-        assert d.matches(FEED_URL)
-        assert d.matches("https://example.test/podcast/feed")
+        assert d.matches(FEED_URL)  # explicit .rss
         assert not d.matches("https://open.spotify.com/track/abc")  # music, not an episode
         assert not d.matches("https://example.test/blog/post")
+
+    def test_bare_feed_vocabulary_belongs_to_the_web_driver(self):
+        # Blogs own /feed, /rss and feeds.* — over-claiming them stole
+        # ordinary blog URLs from the web driver (phase-3 review). The
+        # long-term answer for a feed URL with no audio is §1 corrected-kind
+        # re-entry, out of scope this phase.
+        d = PodcastDriver()
+        assert not d.matches("https://example.test/podcast/feed")
+        assert not d.matches("https://example.test/rss")
+        assert not d.matches("https://example.test/blog/feed/")
+        assert not d.matches("https://feeds.example.test/updates")
+        assert not d.matches("https://feed.example.test/atom")
 
     def test_canonical_keeps_only_the_apple_episode_param(self):
         d = PodcastDriver()
@@ -205,8 +216,9 @@ class TestRssIshResolution:
         assert "capture an episode link" in reason_of(result)
 
     def test_indie_episode_page_resolves_via_its_feed_link(self):
-        # §9: indie episode page → <link rel> in head → feed → match.
-        page_url = PAGE_URL + "/feed"  # RSS-ish enough to reach this driver
+        # §9: an explicit .rss URL that actually serves the episode PAGE —
+        # the driver follows the page's <link rel> feed pointer and matches.
+        page_url = PAGE_URL + ".rss"
         d = driver(
             {
                 page_url: html_response(fixture_text("podcast", "episode-page.html")),
@@ -218,9 +230,10 @@ class TestRssIshResolution:
         assert result.meta["enclosure"] == ENCLOSURE
 
     def test_enclosureless_episode_is_manual(self):
+        page_url = "https://engineering-distilled.test/episodes/no-audio.rss"
         d = driver(
             {
-                "https://feeds.pods.test/engineering-distilled.rss/feed": html_response(
+                page_url: html_response(
                     '<html><head><meta property="og:title" content="Interview With No Audio"/>'
                     f'<link rel="alternate" type="application/rss+xml" href="{FEED_URL}"/>'
                     "</head></html>"
@@ -228,8 +241,7 @@ class TestRssIshResolution:
                 FEED_URL: feed(),
             }
         )
-        unit = make_unit("https://feeds.pods.test/engineering-distilled.rss/feed", Kind.PODCAST)
-        result = d.fetch(unit)
+        result = d.fetch(make_unit(page_url, Kind.PODCAST))
         assert result.status is Status.MANUAL
         assert "no audio enclosure" in reason_of(result)
 
