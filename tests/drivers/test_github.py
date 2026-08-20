@@ -1,0 +1,211 @@
+"""Tests for drivers/github.py: URL-shape routing and classified gh failures."""
+
+from collections.abc import Sequence
+
+from dex_engine.drivers.github import GhResult, GitHubDriver
+from dex_engine.drivers.transport import HttpResponse
+from dex_engine.pipeline.types import Kind, Status
+from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
+
+
+class FakeGh:
+    """args tuple -> GhResult; unexpected invocations are loud."""
+
+    def __init__(self, responses: dict[tuple[str, ...], GhResult]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, args: Sequence[str]) -> GhResult:
+        key = tuple(args)
+        self.calls.append(key)
+        if key not in self.responses:
+            raise AssertionError(f"unexpected gh invocation {key!r}")
+        return self.responses[key]
+
+
+def ok(stdout: str) -> GhResult:
+    return GhResult(returncode=0, stdout=stdout, stderr="")
+
+
+def fail(stderr: str) -> GhResult:
+    return GhResult(returncode=1, stdout="", stderr=stderr)
+
+
+def driver_for(gh_responses: dict | None = None, transport: dict | None = None) -> GitHubDriver:
+    return GitHubDriver(gh=FakeGh(gh_responses or {}), transport=FakeTransport(transport or {}))
+
+
+README_ARGS = (
+    "api",
+    "repos/acme/pipeline-kit/readme",
+    "-H",
+    "Accept: application/vnd.github.raw+json",
+)
+
+
+class TestIdentity:
+    def test_kind_and_sleep(self):
+        driver = driver_for()
+        assert driver.kind is Kind.GITHUB
+        assert driver.sleep == 0.3
+
+    def test_matches_github_and_gist_hosts(self):
+        driver = driver_for()
+        assert driver.matches("https://github.com/acme/pipeline-kit")
+        assert driver.matches("https://gist.github.com/octomaint/abc123def456")
+        assert not driver.matches("https://gitlab.com/acme/thing")
+
+
+class TestRepo:
+    def test_repo_meta_and_readme_body(self):
+        driver = driver_for(
+            {
+                ("api", "repos/acme/pipeline-kit"): ok(fixture_text("github", "repo.json")),
+                README_ARGS: ok(fixture_text("github", "readme.md")),
+            }
+        )
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["title"] == "acme/pipeline-kit"
+        assert result.meta["stars"] == 2481
+        assert result.meta["archived"] is None  # not archived -> omitted from frontmatter
+        assert str(result.meta["topics"]).count(",") == 7  # capped at 8 topics
+        assert "# pipeline-kit" in body_of(result)
+
+    def test_missing_readme_yields_placeholder_body(self):
+        driver = driver_for(
+            {
+                ("api", "repos/acme/pipeline-kit"): ok(fixture_text("github", "repo.json")),
+                README_ARGS: fail("gh: Not Found (HTTP 404)"),
+            }
+        )
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert body_of(result) == "(no README)"
+
+    def test_deleted_repo_is_dead(self):
+        driver = driver_for({("api", "repos/acme/gone"): fail("gh: Not Found (HTTP 404)")})
+        result = driver.fetch(make_unit("https://github.com/acme/gone", Kind.GITHUB))
+        assert result.status is Status.DEAD
+
+    def test_rate_limited_api_is_blocked(self):
+        driver = driver_for(
+            {("api", "repos/acme/pipeline-kit"): fail("gh: API rate limit exceeded (HTTP 403)")}
+        )
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.BLOCKED
+
+    def test_gh_failure_without_a_code_is_blocked_with_scrubbed_reason(self):
+        driver = driver_for(
+            {
+                ("api", "repos/acme/pipeline-kit"): fail(
+                    "error connecting to api.github.com from /Users/lee/base"
+                )
+            }
+        )
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.BLOCKED
+        assert "/Users/lee" not in reason_of(result)
+
+
+class TestProfile:
+    def test_profile_with_top_repos_by_stars(self):
+        driver = driver_for(
+            {
+                ("api", "users/octomaint"): ok(fixture_text("github", "user.json")),
+                ("api", "users/octomaint/repos?sort=pushed&per_page=100"): ok(
+                    fixture_text("github", "user-repos.json")
+                ),
+            }
+        )
+        result = driver.fetch(make_unit("https://github.com/octomaint", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["title"] == "Octo Maintainer"
+        assert result.meta["followers"] == 512
+        body = body_of(result)
+        assert body.index("pipeline-kit") < body.index("vtt-clean") < body.index("dotfiles")
+
+    def test_repo_listing_failure_does_not_fail_the_profile(self):
+        driver = driver_for(
+            {
+                ("api", "users/octomaint"): ok(fixture_text("github", "user.json")),
+                ("api", "users/octomaint/repos?sort=pushed&per_page=100"): fail(
+                    "gh: API rate limit exceeded (HTTP 403)"
+                ),
+            }
+        )
+        result = driver.fetch(make_unit("https://github.com/octomaint", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert "(repo listing unavailable)" in body_of(result)
+
+
+class TestGist:
+    def test_gist_files_render_fenced(self):
+        driver = driver_for(
+            {("api", "gists/abc123def456"): ok(fixture_text("github", "gist.json"))}
+        )
+        url = "https://gist.github.com/octomaint/abc123def456"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["title"] == "ledger compaction one-liner"
+        body = body_of(result)
+        assert "### compact.py" in body
+        assert "### notes.md" in body
+        assert "Last-per-hash wins" in body
+
+    def test_gist_index_is_skipped_with_reason(self):
+        result = driver_for().fetch(make_unit("https://gist.github.com/octomaint", Kind.GITHUB))
+        assert result.status is Status.SKIPPED
+        assert "gist index" in reason_of(result)
+
+
+class TestIssue:
+    def test_issue_title_and_body(self):
+        driver = driver_for(
+            {("api", "repos/acme/pipeline-kit/issues/42"): ok(fixture_text("github", "issue.json"))}
+        )
+        url = "https://github.com/acme/pipeline-kit/issues/42"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["title"] == "enricher ledgers 403 challenges as dead"
+        assert "Cloudflare 403" in body_of(result)
+
+    def test_pull_urls_route_through_the_issues_api(self):
+        gh = FakeGh(
+            {("api", "repos/acme/pipeline-kit/issues/7"): ok(fixture_text("github", "issue.json"))}
+        )
+        driver = GitHubDriver(gh=gh, transport=FakeTransport({}))
+        url = "https://github.com/acme/pipeline-kit/pull/7"
+        assert driver.fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+
+class TestBlob:
+    RAW = "https://raw.githubusercontent.com/acme/pipeline-kit/main/src/detect.py"
+
+    def test_blob_fetches_raw_and_fences(self):
+        content = HttpResponse(status=200, content_type="text/plain", body=b"def detect(): ...")
+        driver = driver_for(transport={self.RAW: content})
+        url = "https://github.com/acme/pipeline-kit/blob/main/src/detect.py"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["file"] == "src/detect.py"
+        assert body_of(result) == "```\ndef detect(): ...\n```"
+
+    def test_blob_404_is_dead(self):
+        gone = HttpResponse(status=404, content_type="text/plain", body=b"")
+        driver = driver_for(transport={self.RAW: gone})
+        url = "https://github.com/acme/pipeline-kit/blob/main/src/detect.py"
+        assert driver.fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+
+
+class TestEdges:
+    def test_github_root_is_skipped_with_reason(self):
+        result = driver_for().fetch(make_unit("https://github.com", Kind.GITHUB))
+        assert result.status is Status.SKIPPED
+        assert "root" in reason_of(result)
+
+    def test_unparseable_api_json_is_blocked(self):
+        driver = driver_for({("api", "repos/acme/pipeline-kit"): ok("<html>oops</html>")})
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert result.status is Status.BLOCKED
+        assert "unparseable JSON" in reason_of(result)
