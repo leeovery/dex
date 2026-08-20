@@ -40,6 +40,7 @@ class HttpResponse:
     status: int
     content_type: str  # lowercased media type, parameters stripped ("text/html")
     body: bytes
+    content_length: int | None = None  # declared Content-Length, when the server sent one
 
     @property
     def ok(self) -> bool:
@@ -61,6 +62,12 @@ class Transport(Protocol):
 
 def _media_type(content_type: str | None) -> str:
     return (content_type or "").split(";")[0].strip().lower()
+
+
+def _content_length(raw: str | None) -> int | None:
+    if raw is None or not raw.strip().isdigit():
+        return None
+    return int(raw.strip())
 
 
 def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
@@ -90,6 +97,7 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
                 status=response.status,
                 content_type=_media_type(response.headers.get("Content-Type")),
                 body=body,
+                content_length=_content_length(response.headers.get("Content-Length")),
             )
     except urllib.error.HTTPError as e:
         body = b""
@@ -99,4 +107,5 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
             status=e.code,
             content_type=_media_type(e.headers.get("Content-Type") if e.headers else None),
             body=body,
+            content_length=_content_length(e.headers.get("Content-Length") if e.headers else None),
         )

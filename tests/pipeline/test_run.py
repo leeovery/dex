@@ -117,6 +117,17 @@ class TestSeedAndDone:
         assert ITEM in report
         assert "1 new" in report
 
+    def test_limit_processes_that_many_and_leaves_the_remainder_queued(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(3)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx, limit=2)
+        statuses = sorted(e.status.value for e in ledger.load(instance.ledger_path).values())
+        assert statuses == ["done", "done", "queued"]  # the cohort drains across runs (§12)
+        run_mod.run(ctx)
+        statuses = {e.status for e in ledger.load(instance.ledger_path).values()}
+        assert statuses == {Status.DONE}
+
     def test_two_items_sharing_a_url_dedupe_by_hash(self, instance):
         write_item(instance, "2026-08-19-first-aaaaaa")
         write_item(instance, "2026-08-19-second-bbbbbb")
@@ -281,6 +292,36 @@ class TestParking:
         run_mod.run(newer)
         assert len(driver.fetched) == 2
 
+    def test_engine_bug_after_the_fetch_ledgers_error_never_aborts(self, instance):
+        # The per-unit try covers ALL per-unit processing (§5): here the
+        # OUTPUT WRITE fails (the item's enrichment path is a file), and the
+        # run must ledger `error` and carry on.
+        write_item(instance)
+        (instance.enrichment_dir / ITEM).write_text("a file where a directory belongs")
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)  # completes — no crash
+        entry = entry_for(ctx)
+        assert entry.status is Status.ERROR
+        assert entry.error  # scrubbed message recorded
+        assert "enrich run" in report
+
+    def test_driverless_kinds_park_manual_never_crash(self, instance):
+        podcast = LedgerEntry(
+            hash=work_hash("https://pod.example.test/ep1"),
+            url="https://pod.example.test/ep1",
+            item=ITEM,
+            kind=Kind.PODCAST,
+            status=Status.QUEUED,
+            engine="0.2.0",
+            date=TODAY,
+        )
+        ledger.append(instance.ledger_path, podcast)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[podcast.hash]
+        assert entry.status is Status.MANUAL
+        assert entry.reason == "no driver for kind 'podcast' yet (ships phase 3)"
+
     def test_file_detection_parks_waiting_extract(self, instance):
         pdf_url = "https://example.test/whitepaper"
         write_item(instance, urls=[pdf_url])
@@ -318,6 +359,21 @@ class TestRerun:
         assert (out.read_text(), out.stat().st_mtime_ns) == before  # byte-compare held
         assert "cognitive work — none" in report
         assert entry_for(ctx).status is Status.DONE
+
+    def test_unchanged_rerun_on_a_later_day_still_compares_equal(self, instance):
+        # The fetched: stamp changes every run by definition — the mask must
+        # hold across a date change or every rerun would report as changed.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        out = instance.root / entry_for(ctx).path
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+
+        self.seed_rerun(ctx)
+        later = make_ctx(instance, FakeDriver(), today=lambda: datetime.date(2026, 9, 1))
+        report = run_mod.run(later)
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
+        assert "cognitive work — none" in report
 
     def test_changed_rerun_overwrites_in_place_never_duplicates(self, instance):
         write_item(instance)
@@ -432,6 +488,60 @@ class TestMediaStage:
         skipped = [entries[work_hash(url)] for url in urls[MEDIA_MAX_FILES:]]
         assert all(e.status is Status.SKIPPED for e in skipped)
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
+
+    def test_media_entries_are_born_queued_before_the_download(self, instance):
+        # §1: entries from birth — a crash mid-download must leave a queued
+        # via:media line the next run's redrain path picks up.
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"p")}
+        )
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=self.media_fetch([self.IMG1])), transport=transport
+        )
+        run_mod.run(ctx)
+        audit = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line)["hash"] == work_hash(self.IMG1)
+        ]
+        assert [line["status"] for line in audit] == ["queued", "done"]
+        assert all(line["via"] == "media" for line in audit)
+
+    def test_media_3xx_is_blocked_never_a_run_crash(self, instance):
+        # The totality pin at the media stage: a redirect-loop 302 surfaced
+        # here used to raise out of classify_http and abort the whole run.
+        write_item(instance)
+        loop = HttpResponse(status=302, content_type="text/html", body=b"")
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport({self.IMG1: loop}),
+        )
+        report = run_mod.run(ctx)  # completes — no crash
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.BLOCKED
+        assert entry.reason == "unexpected HTTP 302"
+        assert "enrich run" in report
+
+    def test_declared_oversize_media_is_refused_without_a_get(self, instance):
+        write_item(instance)
+        huge_by_declaration = HttpResponse(
+            status=200,
+            content_type="image/png",
+            body=b"",
+            content_length=run_mod.MEDIA_MAX_BYTES + 1,
+        )
+        transport = FakeTransport({self.IMG1: huge_by_declaration})
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=self.media_fetch([self.IMG1])), transport=transport
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.SKIPPED
+        assert "Content-Length" in (entry.reason or "")
+        media_calls = [call for call in transport.calls if call[1] == self.IMG1]
+        assert media_calls == [("HEAD", self.IMG1)]  # the body was never fetched
 
     def test_media_does_not_count_toward_the_url_cap(self, instance):
         write_item(instance)

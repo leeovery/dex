@@ -252,24 +252,36 @@ class _Drain:
             parent=entry.parent,
         )
         try:
-            result = driver.fetch(unit)
+            # The try spans ALL per-unit processing (§5's "per-unit loop"):
+            # fetch, output write, media stage, children admission. An
+            # engine bug anywhere in it ledgers `error` — the outcome line
+            # supersedes any partial one — and never aborts the run.
+            self._apply(entry, driver.fetch(unit))
         except ProviderInputError as e:
             self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
         except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline (§5)
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
-        else:
-            self._apply(entry, result)
         self.ctx.sleep(driver.sleep)
 
     def _park_driverless(self, entry: LedgerEntry) -> None:
-        """No driver ships for this kind yet (file/podcast until phase 3)."""
-        if entry.kind is not Kind.FILE:
-            raise RuntimeError(f"no driver registered for kind {entry.kind!r}")
+        """No driver ships for this kind yet (file/podcast until phase 3).
+
+        Parked, never crashed: phase 3 requeues these entries when the
+        driver lands (file work drains as `waiting` the moment an extract
+        provider exists; other kinds are re-marked by the shipping phase).
+        """
+        if entry.kind is Kind.FILE:
+            self.record_outcome(
+                entry,
+                status=Status.WAITING,
+                needs=Need.EXTRACT,
+                reason=f"{entry.format or 'file'} extraction not yet available",
+            )
+            return
         self.record_outcome(
             entry,
-            status=Status.WAITING,
-            needs=Need.EXTRACT,
-            reason=f"{entry.format or 'file'} extraction not yet available",
+            status=Status.MANUAL,
+            reason=f"no driver for kind '{entry.kind}' yet (ships phase 3)",
         )
 
     def _apply(self, entry: LedgerEntry, result: Result) -> None:
@@ -368,14 +380,30 @@ class _Drain:
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
             )
-            self._download_media(child, prior=None)
+            # The birth line lands BEFORE the download (§1: entries from
+            # birth) — a crash mid-download leaves a queued via:media entry
+            # the next run's redrain path picks up.
+            self.record(child)
+            self._download_media(self.entries[unit_hash], prior=None)
 
     def _download_media(self, entry: LedgerEntry, *, prior: LedgerEntry | None) -> None:
-        if self._media_slot(entry.item) is None:
-            # Capacity checked BEFORE the fetch — no bandwidth spent on a
-            # file the §7 cap would refuse anyway.
+        # Cap and oversize skips below land in the report's unit counts —
+        # §7 sanctions that: they are unit outcomes, unlike the §1 re-entry
+        # cap fires, which never surface.
+        slot = self._media_slot(entry.item)
+        if slot is None:
+            # Capacity checked BEFORE any fetch — no bandwidth spent on a
+            # file the §7 cap would refuse. Downloads are synchronous, so
+            # the slot stays free until the write below.
             self.record_outcome(
                 entry, status=Status.SKIPPED, reason=f"media cap ({MEDIA_MAX_FILES} files) reached"
+            )
+            return
+        if self._media_oversize_by_head(entry.url):
+            self.record_outcome(
+                entry,
+                status=Status.SKIPPED,
+                reason="media exceeds 10MB ceiling (declared Content-Length)",
             )
             return
         try:
@@ -389,13 +417,8 @@ class _Drain:
             self._media_failure(entry, prior, failure.status, failure.reason)
             return
         if len(response.body) > MEDIA_MAX_BYTES:
+            # Backstop for servers that lie about (or omit) Content-Length.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
-            return
-        slot = self._media_slot(entry.item)
-        if slot is None:
-            self.record_outcome(
-                entry, status=Status.SKIPPED, reason=f"media cap ({MEDIA_MAX_FILES} files) reached"
-            )
             return
         out = self.ctx.instance.enrichment_dir / entry.item / f"media-{slot}.{_ext_of(entry.url)}"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -404,6 +427,14 @@ class _Drain:
         self.record_outcome(
             entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))
         )
+
+    def _media_oversize_by_head(self, url: str) -> bool:
+        """One HEAD before the GET: refuse a declared-oversize body unfetched."""
+        try:
+            probe = self.ctx.transport(url, method="HEAD")
+        except OSError:
+            return False  # inconclusive — the GET will surface the truth
+        return probe.ok and (probe.content_length or 0) > MEDIA_MAX_BYTES
 
     def _media_failure(
         self, entry: LedgerEntry, prior: LedgerEntry | None, status: Status, reason: str
