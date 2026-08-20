@@ -186,9 +186,10 @@ Typing discipline (binding for the implementation):
 - **WorkUnit is not LedgerEntry.** Drivers see url/kind/format/item/depth —
   never `attempts`, `engine`, `rerun` bookkeeping (no internal types across
   layers).
-- Drivers may return only `{done, dead, skipped, manual, blocked, error,
-  waiting}` — `queued` is a birth state, not a driver outcome; `Result`
-  validates this.
+- Drivers may return only `{done, dead, skipped, manual, blocked, waiting}`
+  — `queued` is a birth state and `error` is raised, never returned
+  (`Result` has no error channel by design; the pipeline's single broad
+  except is the only route to `error` status). `Result` validates this.
 - The typed registry literal (`DRIVERS: list[SourceDriver] = […]`) is the
   Protocol-conformance point — the type checker verifies every driver
   against the interface at that one assignment. Same for provider lists.
@@ -245,8 +246,12 @@ the item). Mechanical obligations are queued because they're work to be
 done; staleness is derived because it's a fact that shows.
 
 **`via`** (provenance) stays a documented string, not an enum —
-`harvest, thread, media, sniff, migration-<n>` — because `migration-<n>` is
-parameterized and provenance is descriptive, never dispatched on.
+`harvest, thread, media, sniff, extract-asset, migration-<n>` — because
+`migration-<n>` is parameterized and provenance is descriptive, never
+dispatched on. **One blessed exception**: the run loop routes
+`via == "media"` entries to the media redrain — §7 mandates media entries
+carry the parent's kind, leaving `via` as their only marker. That single
+commented dispatch site is the sanctioned total of via-routing, forever.
 
 ## 4. State
 
@@ -336,12 +341,21 @@ failures are classified like any fetch, never swallowed.
 **Failure classification is centralized, never per-driver** (the motivating
 incident was a classification bug in one fetcher; seven drivers classifying
 independently is seven chances to reintroduce it):
-- One `classify_http(status_code) -> Status` (+ DNS/connection-error
-  mapping) in `pipeline/` — 403/429/5xx → `blocked`, 404/NXDOMAIN →
-  `dead`, **402 → `manual`** (login-walls/paywalls — x.com answers 402;
-  retrying never resolves payment-required, so burning attempts on it
-  teaches nothing) — routed through by every driver's HTTP path. The §15
-  regression pin tests the classifier once and holds for all drivers.
+- One `classify_http(status_code) -> Classification` (+ DNS/connection-
+  error mapping) in `pipeline/` — returning **status AND reason together**
+  (402 → manual demands a stated reason; per-driver reason invention would
+  decentralize exactly what this centralizes). Mapping: 403/429/5xx →
+  `blocked`, 404/410/NXDOMAIN → `dead`, **401/402 → `manual`**
+  (login-walls/paywalls — x.com answers 402; retrying never resolves
+  payment-required), and **any other status the transport surfaces
+  (3xx redirect loops included) → `blocked` with "unexpected HTTP <n>"** —
+  the classifier is total; no HTTP outcome is unclassifiable. Routed
+  through by every driver's HTTP path. The §15 regression pin tests the
+  classifier once and holds for all drivers.
+- **Media URLs are hashed un-canonicalized** — signed query params ARE the
+  resource. Side effect, accepted: an expiring signed URL re-mints a fresh
+  entry per parent rerun, and the stale one retires through normal blocked
+  → manual escalation.
 - **200-but-thin is `manual`, never `dead`** (learned from the 2026-08-20
   overnight runs: JS-rendered SPA pages were ledgered `dead` and their
   items stranded at `raw`): a successful fetch whose extraction comes back
@@ -484,6 +498,13 @@ silent `except: pass` dies here.
   (`chain_incomplete: true` + how far it got). A chain that's
   *semantically* short (deleted/restricted posts detectable only by
   reading) is cognitive — a digest note, per current practice.
+- **The recording site for walk-up caps and gaps is enrichment
+  frontmatter** (`thread_cap_hit`, `chain_incomplete`), not the ledger —
+  amended at phase-2 review: the §5 schema forbids `reason` on `done`
+  entries and drivers never write the ledger, so §8's earlier
+  "ledger-noted" wording was unimplementable as written. The health
+  check's judgment-drift scan greps enrichment frontmatter for these
+  markers accordingly.
 - **Walk-down is explicitly unsolved** (no clean API; no scraper
   dependency). Backlog.
 - Engagement counts stay unrecorded (snapshot noise), per the standing rule.
@@ -965,6 +986,14 @@ the tree green:
 Phases 1–3 are pure engine work with no instance impact; nothing ships to
 instances until phase 4 exists, because the first synced release must carry
 the migrations that make old state valid under the new code.
+
+**MERGE GATE — binding on the stack**: instances track `main` HEAD today
+(the shim pins nothing until phase 4), so `impl/*` branches must NOT reach
+`main` before phase 4's migrations and the pin mechanism exist. Landing
+phase 2 early would make every instance's next `bin/dex` run fail loudly:
+`ledger.load` rejects pre-migration vocabulary by design, and the docs/
+skills still describe deleted verbs until phase 5. The stack merges to
+main as a whole, or at minimum from phase 4 downward, never bottom-first.
 
 ## 16. Deferred / out of scope (tracked on the roadmap)
 
