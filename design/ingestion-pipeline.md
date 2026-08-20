@@ -102,9 +102,17 @@ digested whole, after their children land. The only entries that survive a
 session are `waiting` / `blocked` / `error` / `manual`, each parked for a
 stated reason, each printed in the report.
 
-Mid-fetch kind discovery (a server lied to HEAD; "this is actually a PDF") is
-error recovery through the normal child-re-entry path with corrected kind —
-not a driver-to-driver handoff.
+Mid-fetch kind discovery (a server lied to HEAD; "this is actually a PDF")
+is DEFERRED (final conformance audit): the corrected-kind child-re-entry
+mechanism is designed but unimplemented — the pre-fetch HEAD sniff catches
+the common case, and a server that lies to HEAD lands honestly in
+`manual`/thin-extraction, never silently mislabeled. The `via: "sniff"`
+vocabulary is reserved for it. Tracked in the deferred list.
+
+The run report also derives a listing for **no-source items** (text-only
+and image-only captures — no URLs, no work units): they surface as
+cognitive work ("awaiting description + digest") so a capture with nothing
+to fetch is never invisible to the session.
 
 ## 2. Interfaces
 
@@ -260,7 +268,12 @@ done; staleness is derived because it's a fact that shows.
 dispatched on. **One blessed exception**: the run loop routes
 `via == "media"` entries to the media redrain — §7 mandates media entries
 carry the parent's kind, leaving `via` as their only marker. That single
-commented dispatch site is the sanctioned total of via-routing, forever.
+commented dispatch site — plus exactly one sibling blessed at final
+review: blocked audio-acquisition retries route back to the transcribe
+drain by a written-and-matched-in-one-place reason prefix (blocked lines
+cannot carry `needs`, so the reason string is the only §5-conformant
+marker). Those two commented sites are the sanctioned total of
+string-routed dispatch, forever.
 
 ## 4. State
 
@@ -285,7 +298,7 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `report_issues`, and provider order as `providers: {<capability>: [<name>, …]}` |
+| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, `noise_prefixes`, and provider order as `providers: {<capability>: [<name>, …]}`; unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. |
 
 Ledger mechanics: append-only, full-record lines, **last-per-hash wins**.
@@ -377,8 +390,9 @@ independently is seven chances to reintroduce it):
 - Exactly **one** `except Exception` in the whole pipeline: the per-unit
   loop in `run.py` (→ `error` + issue filing). Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
-  keep their cause. One scrubber function feeds both the ledger `error`
-  field and the issue body.
+  keep their cause. The scrubber feeds the ledger `error` field; issue
+  bodies carry no free text at all (the filer ruling in the issue-filer
+  section).
 
 Engine-version comparisons (error retry-on-new-engine, sync) parse to
 tuples — `"0.10.0" > "0.9.1"` is False as strings, and that bug would file
@@ -539,6 +553,10 @@ underneath; the audio lives in the feed's `<enclosure>`:
 - **Apple link** → iTunes lookup API (public, keyless) → show RSS → match
   episode → enclosure.
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
+  An enclosure that 404s at drain time is treated as an expired signed URL
+  → `manual` with a re-resolve route, never `dead` — expired links are not
+  gone episodes (blessed at phase-3 review, overriding the plain 404
+  mapping for this one case).
   Spotify exclusives fail honestly → `manual` (Claude may rescue via the
   show's own site).
 - **Direct RSS / indie episode page** → enclosure or `<link rel>` in head.
@@ -674,8 +692,11 @@ Authoring rules:
 - **Untranslatable ledger lines are QUARANTINED, never left in place**
   (amended at phase-4 review): a line a migration cannot provably
   translate moves verbatim to `state/enrichment-ledger.unmigrated.jsonl`,
-  named in the report with the concrete repair procedure (review; re-add
-  via `enrich mark <url> <status> --reason …`, or accept the loss). The
+  named in the report with the concrete repair procedure: cross-check each
+  line against `state/exclusions.tsv` FIRST — a line referencing an
+  excluded item is a confirmed loss, closed out and never re-added; only
+  then review the remainder (re-add via
+  `enrich mark <url> <status> --reason …`, or accept the loss). The
   main ledger must load clean after every migration — a skipped line that
   poisons `ledger.load` also bricks `enrich mark`, the sanctioned repair
   verb, leaving judgment with no working tool. Lint flags a non-empty
@@ -684,7 +705,10 @@ Authoring rules:
 Shipping migrations for this rewrite:
 1. **Renames + status vocabulary** — `tweet→x`, `blog→web` in corpus
    `kinds:`, enrichment filenames, ledger; `normalize-config.json →
-   config.json`. Old ledger statuses translate: `nocaptions → waiting,
+   config.json` — dropping `name_map` on the way (owner ruling: never
+   applied by any engine version, source-specific to the Discord/Space
+   backfill; and the new Config rejects unknown keys loudly, so carrying
+   it forward would brick every command). Old ledger statuses translate: `nocaptions → waiting,
    needs: transcribe` and `toolong → waiting, needs: transcribe` — both
    **immediately drainable** now (whisper-local exists; chunking removed the
    length limit), resurrecting work the old system permanently gave up on.
@@ -712,8 +736,24 @@ Shipping migrations for this rewrite:
    hand-walked thread parents keep them (frontmatter is immutable
    provenance, even where the old process polluted it); each such URL
    reruns and walks up independently — accepted chain-context duplication.
-   Per-driver politeness sleeps make large cohorts slow by design; drain
-   across runs with `--limit` where a cohort is big.
+   **Cohort pacing is automatic, in code** (owner ruling at final review —
+   "it's either automated or it's not"): each full run drains all
+   non-rerun work first, uncapped, then `rerun: true` entries up to a
+   50-per-run cap; the report states the cohort position ("rerun cohort:
+   N of M drained; R queue for the next run"). No `--limit` babysitting —
+   a migration cohort heals over the normal scheduled cadence with each
+   session's cognitive load bounded. Explicit `--limit` still binds the
+   total when passed.
+
+3. **`cache/` gitignore for pre-existing instances** — appends the line to
+   the instance `.gitignore` when absent (append-only, idempotent, reported
+   as an action on an instance-owned file). Without it, in-flight audio
+   shows as dirt to the dirty-tree guard.
+
+Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
+every user surface; an owner-requested `enrich fetch` refusal IS surfaced
+(the owner asked and deserves the answer); media-cap and oversize skips
+surface as ordinary unit outcomes per the media-stage rules.
 
 Resurrected transcription backlogs are bounded: the transcribe drain takes a
 per-run cap (default 10) so a first sync never monopolizes a machine.
@@ -727,10 +767,15 @@ involvement: the engine owner only.
 - **Fires only on `status: error`** (deterministic engine exceptions).
   `blocked/dead/manual/waiting` never file — the world misbehaving is not an
   engine bug.
-- **Sanitized by construction** — allowlisted template: engine version,
-  command, kind/format enums, error class, engine-frames-only traceback, URL
-  *hash*. Error messages regex-scrubbed of URLs, emails, home paths. The
-  scrubber is code, so it can't leak by judgment lapse.
+- **Sanitized by construction — public issue bodies carry NO free text**
+  (owner ruling at final review): the body is engine version, command,
+  kind/format enums, error class, `errno` where present (the one mechanical
+  detail an OSError safely yields), engine-frames-only traceback, URL
+  *hash*, fingerprint — and nothing else. The exception message is not a
+  field at all: no mechanical scrubber can distinguish quoted owner-content
+  from legitimate diagnostics, so the residual is eliminated structurally.
+  The scrubbed message lives only in the local ledger's `error` field —
+  diagnosis happens where the data lives.
 - **Fingerprint = error class + function name + kind/format.** Excludes
   version and line numbers (those churn per release and would mint duplicate
   issues). Version data lives in the issue body.
@@ -921,9 +966,11 @@ Skill changes shipping with this:
 - Lint: new state checks (ledger schema, waiting cohorts, pass records), a
   fuzzy same-page sentence-similarity flag (difflib, no models) surfacing
   "possible restated fact — merge?" warnings at health checks, and a
-  **page item-count consistency check** (frontmatter `items:` vs actual
-  citations — 16 pages were silently drifting when the 2026-08-20 analysis
-  looked, caught by accident rather than mechanism), and a **shortid-shaped
+  **page item-count consistency check** (frontmatter `items:` vs the
+  page's topic/entity MEMBER count — never its citation count; the wild
+  convention and the "16 drifting pages" figure are both member-semantics —
+  16 pages were silently drifting when the 2026-08-20 analysis looked,
+  caught by accident rather than mechanism), and a **shortid-shaped
   citation flag**: backticked 6-hex shortids are probable malformed
   citations everywhere — index included — not just where full-id resolution
   happens to fail (a 2026-08-20 dex-design run found latent shortid
@@ -1034,7 +1081,9 @@ main as a whole, or at minimum from phase 4 downward, never bottom-first.
 
 ## 16. Deferred / out of scope (tracked on the roadmap)
 
-Instagram driver (shape not agreed) · X thread walk-down · hosted
+Mid-fetch corrected-kind child re-entry (`via: "sniff"` reserved; the
+honest-parking floor covers the gap) · Instagram driver (shape not
+agreed) · X thread walk-down · hosted
 transcription provider investigation (Groq et al) · resurfacing / reading
 queue · source removal · per-instance context instructions · S3/R2 media
 storage · ideas/backlog system to replace the roadmap file · engine OCR
