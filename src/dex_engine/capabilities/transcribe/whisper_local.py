@@ -73,6 +73,24 @@ def _known_model(model: str) -> bool:
     return "/" in model or model in _MODELS
 
 
+def _load_failure_types() -> tuple[type[Exception], ...]:
+    """The load-time failure classes that mean "not available right now" (§6).
+
+    huggingface_hub's HTTP errors (a 429, a 5xx during the model download)
+    are availability failures and must park the job ``waiting`` — never
+    fall through to the run loop's broad except, which would ledger a rate
+    limit as an engine bug and file an issue about the weather. Their
+    OSError ancestry is an implementation detail of hf-hub's transport, so
+    they are named explicitly; the import is lazy like every heavy dep (§14).
+    """
+    base: tuple[type[Exception], ...] = (OSError, ValueError, RuntimeError)
+    try:
+        from huggingface_hub.errors import HfHubHTTPError  # noqa: PLC0415 — lazy (§14)
+    except ImportError:  # pragma: no cover — hf-hub ships with faster-whisper
+        return base
+    return (*base, HfHubHTTPError)
+
+
 class WhisperLocal:
     """Transcribe locally via faster-whisper; the always-available floor."""
 
@@ -146,7 +164,7 @@ class WhisperLocal:
         """
         try:
             model = self._load(self.model)
-        except (OSError, ValueError, RuntimeError) as e:
+        except _load_failure_types() as e:
             raise ProviderUnavailableError(
                 f"whisper-local could not load model {self.model!r}: {scrub(str(e))}"
             ) from e

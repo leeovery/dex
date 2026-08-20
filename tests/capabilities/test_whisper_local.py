@@ -93,6 +93,25 @@ class TestTranscribe:
         with pytest.raises(ProviderUnavailableError, match="could not load model"):
             provider.transcribe(Path("/audio/a.m4a"), "")
 
+    def test_hf_rate_limit_keeps_the_job_waiting(self):
+        # An HF 429/5xx during the model download is an availability
+        # failure (§6) — it must park waiting, never reach the run loop's
+        # broad except as an "engine bug". Named explicitly: the OSError
+        # ancestry of hf-hub's errors is a transport detail.
+        import httpx  # noqa: PLC0415 — heavy transitive dep, loaded only for this pin
+        from huggingface_hub.errors import HfHubHTTPError  # noqa: PLC0415 — same
+
+        response = httpx.Response(
+            429, request=httpx.Request("GET", "https://huggingface.co/model.bin")
+        )
+
+        def load(_name: str):
+            raise HfHubHTTPError("429 Client Error: Too Many Requests", response=response)
+
+        provider = WhisperLocal(model="medium", load=load, cached=lambda _m: False)
+        with pytest.raises(ProviderUnavailableError, match="could not load model"):
+            provider.transcribe(Path("/audio/a.m4a"), "")
+
 
 @pytest.mark.live
 class TestLive:
