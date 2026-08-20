@@ -37,10 +37,11 @@ class TestParser:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["mark", "https://a.test", "finished"])
 
-    def test_transcribe_is_absent_not_stubbed(self):
-        # It arrives with the capability providers (phase 3).
-        with pytest.raises(SystemExit):
-            build_parser().parse_args(["transcribe"])
+    def test_transcribe_takes_model_and_limit(self):
+        args = build_parser().parse_args(["transcribe"])
+        assert (args.command, args.model, args.limit) == ("transcribe", None, 10)
+        args = build_parser().parse_args(["transcribe", "--model", "small", "--limit", "3"])
+        assert (args.model, args.limit) == ("small", 3)
 
     def test_a_command_is_required(self):
         with pytest.raises(SystemExit):
@@ -55,10 +56,19 @@ class TestMain:
         assert out.startswith("enrich run — 0 units processed")
         assert "parked — none" in out
 
-    def test_status_prints_the_surface(self, instance, monkeypatch, capsys):
+    def test_status_prints_the_surface_and_capability_report(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
         main(["status"])
-        assert capsys.readouterr().out.startswith("ledger — 0 entries")
+        out = capsys.readouterr().out
+        assert out.startswith("ledger — 0 entries")
+        assert "capabilities" in out  # §6: how a free-floor instance learns what a key buys
+        assert "transcribe" in out
+
+    def test_transcribe_on_an_empty_instance_reports_cleanly(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        main(["transcribe"])
+        out = capsys.readouterr().out
+        assert out.startswith("enrich run — 0 units processed")
 
     def test_pass_records_a_stage(self, instance: Instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

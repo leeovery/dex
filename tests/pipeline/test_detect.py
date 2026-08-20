@@ -1,10 +1,17 @@
-"""Tests for pipeline/detect.py: ordered patterns, HEAD sniff, the file seam."""
+"""Tests for pipeline/detect.py: ordered patterns, HEAD sniff, byte-signature sniff."""
 
 import pytest
 
-from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, canonical_url, detect, detect_kind
+from dex_engine.pipeline.detect import (
+    CONTENT_TYPE_FORMATS,
+    canonical_url,
+    detect,
+    detect_kind,
+    sniff_format,
+)
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Format, Kind
+from tests.capabilities.conftest import fixture_bytes
 
 
 class RecordingSniff:
@@ -109,7 +116,48 @@ class TestCanonicalDelegation:
         )
 
 
-class TestFileSeam:
-    def test_local_file_keys_raise_until_phase_3(self):
-        with pytest.raises(NotImplementedError, match="phase 3"):
-            detect("file:media/2026-08-19-x-55ad7b/doc.pdf", DRIVERS)
+class TestFileKeys:
+    def test_local_file_keys_are_file_work_by_construction(self):
+        detection = detect("file:media/2026-08-19-x-55ad7b/doc.pdf", DRIVERS)
+        assert detection.kind is Kind.FILE
+        assert detection.format is None  # bytes decide the format, not the key
+
+
+class TestSniffFormat:
+    """Byte-signature detection (§1) — real fixture bytes, anydoc-backed."""
+
+    @pytest.mark.parametrize(
+        ("fixture", "fmt"),
+        [
+            ("report.docx", Format.DOCX),
+            ("paper.pdf", Format.PDF),
+            ("scanned.pdf", Format.PDF),
+        ],
+    )
+    def test_fixture_signatures(self, fixture, fmt):
+        assert sniff_format(fixture_bytes(fixture)) is fmt
+
+    def test_csv_needs_the_extension_no_signature_exists(self):
+        data = fixture_bytes("stars.csv")
+        assert sniff_format(data) is None
+        assert sniff_format(data, name="stars.csv") is Format.CSV
+
+    def test_magic_numbers_without_anydoc(self):
+        # The fallback signatures hold on their own (a platform whose anydoc
+        # wheel is broken still detects the obvious ones).
+        assert sniff_format(b"%PDF-1.7 ...") is Format.PDF
+        assert sniff_format(b"{\\rtf1\\ansi hello}") is Format.RTF
+
+    def test_images_and_unknowns_are_not_file_work(self):
+        assert sniff_format(b"\x89PNG\r\n\x1a\n....") is None
+        assert sniff_format(b"plain text note", name="note.txt") is None
+        assert sniff_format(b"") is None
+
+    def test_lfs_pointer_falls_back_to_the_extension(self):
+        # An unsmudged LFS pointer is text bytes with an honest filename —
+        # the extension keeps it seedable so the driver can park it loudly.
+        pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 12\n"
+        assert sniff_format(pointer, name="deck.pptx") is Format.PPTX
+
+    def test_truncated_zip_container_is_unrecognized(self):
+        assert sniff_format(b"PK\x03\x04 truncated") is None

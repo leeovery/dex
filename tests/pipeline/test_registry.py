@@ -17,12 +17,16 @@ class TestOrdering:
         matching = [driver.kind for driver in DRIVERS if driver.matches(probe)]
         assert matching == [Kind.WEB]
 
-    def test_phase_2_registry_ships_five_drivers(self):
+    def test_the_registry_ships_seven_drivers_in_design_order(self):
+        # Podcast before web (Apple/Spotify/RSS-ish would otherwise fall to
+        # the catch-all); file before web (file: keys likewise).
         assert [driver.kind for driver in DRIVERS] == [
             Kind.YOUTUBE,
             Kind.X,
             Kind.GITHUB,
             Kind.PAPER,
+            Kind.PODCAST,
+            Kind.FILE,
             Kind.WEB,
         ]
 
@@ -32,8 +36,14 @@ class TestDriverFor:
         for driver in DRIVERS:
             assert driver_for(driver.kind, DRIVERS) is driver
 
-    def test_unshipped_kinds_resolve_to_none(self):
-        # file and podcast drivers arrive in phase 3 — the run layer parks
-        # their work instead of crashing.
-        assert driver_for(Kind.FILE, DRIVERS) is None
-        assert driver_for(Kind.PODCAST, DRIVERS) is None
+    def test_every_work_unit_kind_has_a_driver(self):
+        # IMAGE and TEXT are corpus vocabulary only and never become work
+        # units (§3); everything else must resolve.
+        for kind in Kind:
+            if kind in (Kind.IMAGE, Kind.TEXT):
+                assert driver_for(kind, DRIVERS) is None
+            else:
+                assert driver_for(kind, DRIVERS) is not None
+
+    def test_a_partial_registry_resolves_to_none_never_crashes(self):
+        assert driver_for(Kind.PODCAST, DRIVERS[:2]) is None
