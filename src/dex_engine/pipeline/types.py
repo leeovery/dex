@@ -92,7 +92,7 @@ class Status(StrEnum):
 
 
 class Need(StrEnum):
-    """Capability a waiting work unit needs — mechanical and resource-keyed only."""
+    """Capability a parked work unit needs — mechanical and resource-keyed only."""
 
     TRANSCRIBE = "transcribe"
     EXTRACT = "extract"
@@ -144,6 +144,12 @@ def _validate_via(via: str) -> None:
 # all (results) — reason and error never coexist.
 _REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
 _REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
+
+# Where `needs` may ride (LedgerEntry only — a driver Result stays
+# waiting-only): a waiting park names the missing capability; a blocked
+# acquisition retry keeps `needs` so the run loop routes it back through
+# the capability drain, never the driver.
+_NEEDS_STATUSES = frozenset({Status.WAITING, Status.BLOCKED})
 
 # sha1(work key)[:10] — the ledger key format.
 _HASH_RE = re.compile(r"^[0-9a-f]{10}$")
@@ -458,6 +464,9 @@ class LedgerEntry:
     status: Status
     needs: Need | None = None
     attempts: int | None = None
+    # a cap-fire marker: this skipped line records refused work, not an
+    # admitted unit
+    capped: bool = False
     engine: str
     date: datetime.date
     # provenance — children and reruns only
@@ -490,8 +499,15 @@ class LedgerEntry:
 def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
     if entry.status is Status.WAITING and entry.needs is None:
         raise ValueError("status 'waiting' requires needs")
-    if entry.needs is not None and entry.status is not Status.WAITING:
-        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r}")
+    if entry.needs is not None and entry.status not in _NEEDS_STATUSES:
+        raise ValueError(
+            f"needs={entry.needs!r} rides waiting parks and blocked retries only, "
+            f"got status {entry.status!r}"
+        )
+    if entry.capped and entry.status is not Status.SKIPPED:
+        raise ValueError(
+            f"capped marks a cap-refused skip — skipped-only, got status {entry.status!r}"
+        )
     if isinstance(entry.attempts, bool):
         raise ValueError("attempts must be an integer, not a boolean")
     if entry.status is Status.BLOCKED and (entry.attempts is None or entry.attempts < 1):

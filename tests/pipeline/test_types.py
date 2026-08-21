@@ -256,9 +256,25 @@ class TestLedgerEntryInvariants:
             entry(status=Status.WAITING)
         assert entry(status=Status.WAITING, needs=Need.EXTRACT).needs is Need.EXTRACT
 
-    def test_needs_is_waiting_only(self):
-        with pytest.raises(ValueError, match="waiting-only"):
+    def test_needs_rides_waiting_and_blocked_only(self):
+        with pytest.raises(ValueError, match="waiting parks and blocked retries"):
             entry(status=Status.QUEUED, needs=Need.OCR)
+        with pytest.raises(ValueError, match="waiting parks and blocked retries"):
+            entry(status=Status.DONE, needs=Need.TRANSCRIBE)
+
+    def test_blocked_may_carry_needs(self):
+        # The typed routing signal for an acquisition retry — never a
+        # reason-prefix match.
+        retry = entry(status=Status.BLOCKED, attempts=1, needs=Need.TRANSCRIBE)
+        assert retry.needs is Need.TRANSCRIBE
+
+    def test_capped_is_skipped_only(self):
+        marker = entry(status=Status.SKIPPED, capped=True, reason="url cap reached")
+        assert marker.capped is True
+        with pytest.raises(ValueError, match="skipped-only"):
+            entry(status=Status.QUEUED, capped=True)
+        with pytest.raises(ValueError, match="skipped-only"):
+            entry(status=Status.DONE, capped=True)
 
     def test_blocked_requires_attempts_of_at_least_one(self):
         with pytest.raises(ValueError, match="attempts"):

@@ -55,6 +55,7 @@ _ALL_KEYS = frozenset(
         "format",
         "needs",
         "attempts",
+        "capped",
         "via",
         "parent",
         "depth",
@@ -122,6 +123,7 @@ def from_line(line: str) -> LedgerEntry:
             status=Status(_expect_str(raw, "status")),
             needs=None if "needs" not in raw else Need(_expect_str(raw, "needs")),
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
+            capped=_expect_bool(raw, "capped") if "capped" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             via=None if "via" not in raw else _expect_str(raw, "via"),
@@ -161,8 +163,9 @@ def _expect_bool(raw: dict[str, object], key: str) -> bool:
 def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
-    ``None`` fields are dropped; ``rerun`` appears only when true — the
-    written line carries exactly the ledger schema, in schema order.
+    ``None`` fields are dropped; ``rerun`` and ``capped`` appear only when
+    true — the written line carries exactly the ledger schema, in schema
+    order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -173,6 +176,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("status", entry.status.value),
         ("needs", entry.needs.value if entry.needs is not None else None),
         ("attempts", entry.attempts),
+        ("capped", entry.capped or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("via", entry.via),

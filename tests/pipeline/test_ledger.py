@@ -107,6 +107,21 @@ class TestFromLine:
         waiting = entry(status=Status.WAITING, needs=Need.TRANSCRIBE)
         assert ledger.from_line(ledger.to_line(waiting)) == waiting
 
+    def test_blocked_acquisition_retry_round_trips_its_needs(self):
+        retry = entry(
+            status=Status.BLOCKED,
+            needs=Need.TRANSCRIBE,
+            attempts=2,
+            reason="audio acquisition failed: HTTP 429",
+        )
+        assert ledger.from_line(ledger.to_line(retry)) == retry
+
+    def test_capped_false_is_dropped_true_round_trips(self):
+        marker = entry(status=Status.SKIPPED, capped=True, reason="url cap reached")
+        assert "capped" not in json.loads(ledger.to_line(entry()))
+        assert json.loads(ledger.to_line(marker))["capped"] is True
+        assert ledger.from_line(ledger.to_line(marker)) == marker
+
     def test_parked_reason_round_trips(self):
         assert ledger.from_line(ledger.to_line(PARKED_ENTRY)) == PARKED_ENTRY
         assert json.loads(ledger.to_line(PARKED_ENTRY))["reason"] == "thin-extraction"
@@ -262,6 +277,12 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         reason = draw(st.none() | single_line)
     else:
         reason = None
+    if status is Status.WAITING:
+        needs = draw(st.sampled_from(list(Need)))
+    elif status is Status.BLOCKED:
+        needs = draw(st.none() | st.sampled_from(list(Need)))
+    else:
+        needs = None
     return LedgerEntry(
         hash=draw(st.sampled_from(_HASHES)),
         url=draw(st.text(min_size=1)),
@@ -269,8 +290,9 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         kind=kind,
         format=draw(st.none() | st.sampled_from(list(Format))) if kind is Kind.FILE else None,
         status=status,
-        needs=draw(st.sampled_from(list(Need))) if status is Status.WAITING else None,
+        needs=needs,
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
+        capped=draw(st.booleans()) if status is Status.SKIPPED else False,
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         via=draw(st.sampled_from([None, "harvest", "thread", "media", "sniff", "migration-1"])),
