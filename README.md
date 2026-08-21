@@ -14,17 +14,57 @@ Save things with one tap. Ask questions later. Everything cited, dated, and kept
 
 ---
 
-You keep finding good things — videos, articles, papers, repos, threads. They pile up
-in bookmarks and group chats and disappear. **dex** turns that stream into a living
-wiki: every source fetched and transcribed, every fact traced to where it came from,
-every page kept current as new material arrives — with the old understanding preserved
-as history, not overwritten.
+You keep finding good things — videos, articles, papers, repos, threads. They pile
+up in bookmarks and group chats and disappear. Six months later you remember that
+someone said something important about a thing, and that's all you've got.
+
+**dex** turns that stream into a living wiki. Every source is fetched and read in
+full — captions pulled, audio transcribed, PDFs extracted, threads walked back to
+their root. Every fact traces to where it came from. Every page stays current as
+new material arrives, with the old understanding kept as marked history rather
+than overwritten.
 
 You don't run anything. Claude operates the whole system; your job is taste —
-save things, ask questions, correct it when it's wrong. The design follows Karpathy's
-[llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern:
-*"The human's job is to curate sources, direct the analysis, ask good questions.
-The LLM's job is everything else."*
+save things, ask questions, correct it when it's wrong. The design follows
+Karpathy's [llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+pattern: *"The human's job is to curate sources, direct the analysis, ask good
+questions. The LLM's job is everything else."*
+
+## What actually happens
+
+You're on your phone. You share an X thread to dex and forget about it. That's
+your entire involvement.
+
+At the next run:
+
+```
+the thread          walked up to its root — every post, in reading order,
+                    each one attributed, quoted posts inline
+
+the repo in it      fetched: README, description, metadata
+
+the paper it cites  fetched from arXiv
+
+the talk it links   captions pulled. No captions? The audio is downloaded and
+                    transcribed locally, primed with the video's own title and
+                    description so the names and jargon come out right
+
+all of it           filed as one corpus item, stamped with who shared it,
+                    where, and when — captured once, at the only moment it
+                    exists
+
+then                a digest is written (a permanent fact index for the item),
+                    topics and entities are placed, and the wiki pages that
+                    care are rewritten — dated claims, citations back to the
+                    item, [[wikilinks]] to related pages
+
+finally             every citation is resolved and every item is accounted
+                    for, mechanically, before the run is allowed to finish
+```
+
+Ask "what's the current thinking on X?" a month later and the answer comes from
+those pages, newest material first, with citations you can follow back to the
+thread you forgot you saved.
 
 ## Getting started
 
@@ -62,17 +102,25 @@ ask questions.
 
 ## Living with it
 
-- **Save from anywhere** — share a link from your phone or paste it into a session:
-  "add this to dex". It gets fetched, transcribed if it's a video, filed with
-  provenance, and woven into the relevant pages.
-- **Ask anything** — "what's the current thinking on X?" Claude answers from your
-  wiki with citations, prefers the newest material, and files genuinely new answers
-  back in so they compound.
-- **Trust but verify** — the knowledge base checks itself over: when a run
-  finds no health check in the past week, it runs one — broken links, missing
-  citations, stale pages, contradictions, and overgrown topics get found and
-  fixed. You can also ask for one anytime. Corrections you make by hand are
-  pinned and survive every rebuild.
+**Save from anywhere.** Capture is a protocol, not an app — one markdown file
+landing in the instance's `inbox/`, and anything that can make an HTTPS request
+can implement it ([`docs/capture.md`](docs/capture.md)). Today that means:
+
+- the **phone shortcut** — share from any app, one tap ([`docs/shortcut.md`](docs/shortcut.md))
+- **any Claude session** — "add this to dex", and it's committed and pushed
+- **chat exports** dropped in for backfill
+
+Capture and processing are deliberately separate. Saving is instant and always
+succeeds; the work happens later. A capture that carried a photo or a PDF stages
+the binary out of band, so git history stays text-only.
+
+**Ask anything.** Open a session on the folder. Answers come from the wiki with
+citations, newest material preferred, and genuinely new syntheses get filed back
+in so they compound instead of evaporating.
+
+**It corrects itself.** Health checks run on their own when the last one is more
+than a week old. Corrections you make by hand are pinned and survive every
+rebuild.
 
 One **dex**, many brains: each knowledge base is its own private *instance* repo
 (dex-cooking, dex-woodworking, one for your partner's business...) and this public
@@ -80,32 +128,120 @@ repo is the shared engine they all run on.
 
 ## How it works
 
+Two kinds of work, kept strictly apart. The engine fetches, moves, and verifies —
+deterministically, no judgment. Claude reads, decides, and writes.
+
+```mermaid
+flowchart TB
+    subgraph mech["the engine — mechanical, deterministic"]
+        direction LR
+        A["capture<br/>one file in inbox/"] --> B["corpus item<br/>who · where · when · why"]
+        B --> C["work queue<br/>every URL and file, ledgered"]
+        C --> D["enrichment<br/>transcripts, article text,<br/>extracted documents"]
+    end
+    subgraph cog["Claude — judgment"]
+        direction LR
+        E["digest<br/>a permanent fact index"] --> F["topics + entities<br/>discovered bottom-up"]
+        F --> G["wiki pages<br/>dated claims, citations, wikilinks"]
+    end
+    D --> E
+    G --> H["lint + verify<br/>citations resolved, coverage enforced"]
+    H -.->|"rebuild — nothing lost"| G
 ```
-sources (phone captures, chat exports, links dropped in a session)
-  ↓ normalize          one corpus item per share, provenance stamped
-  ↓ enrich             everything behind every link: transcripts, articles, READMEs, papers
-  ↓ digest    (Claude) a permanent fact-index of every item
-  ↓ taxonomy  (Claude) topics + entities, discovered bottom-up
-  ↓ assemble  (Claude) wiki pages — dated claims, [[wikilinks]], citations
-  ↺ verify + lint      claims checked against sources; full coverage enforced
+
+The corpus is the truth. The wiki is a build artifact: pages can be regenerated
+from scratch without losing anything, which is what makes rewriting them safe.
+
+### The work queue
+
+Everything fetchable becomes an entry in an append-only ledger, and a run drains
+whatever isn't finished. Nothing is fire-and-forget, and nothing quietly vanishes:
+
+```mermaid
+flowchart LR
+    Q(["work queue"]) --> DET["detect<br/>what kind of thing is this?"]
+    DET --> FET["fetch<br/>via the matching driver"]
+    FET -->|"got it"| OUT["enrichment file"]
+    FET -->|"links worth following"| Q
+    FET -->|"the server lied<br/>about the type"| Q
+    FET -->|"needs a transcript<br/>or text extraction"| WAIT["waiting"]
+    WAIT -->|"a provider appears"| Q
+    FET -->|"403 · 429 · 5xx"| BLK["blocked"]
+    BLK -->|"every run, then parked<br/>for judgment at 5"| Q
+    FET -->|"404 · no such domain"| DEAD(["dead"])
+    FET -->|"engine bug"| ERR["error"]
+    ERR -->|"retries once the<br/>engine is newer"| Q
 ```
 
-What makes it trustworthy rather than vibes-in-a-wiki:
+**Blocked is never dead.** A Cloudflare challenge, a rate limit, a bad gateway —
+the world misbehaving is not the same as the thing being gone, and only a real
+404 or a domain that doesn't resolve is final. A fetch that returns 200 but comes
+back empty parks for judgment too: that means *our tooling couldn't read it*, not
+that there was nothing there.
 
-- **Provenance at ingest** — who shared it, where, when: captured once, at the only
-  moment it exists.
-- **The wiki is a build artifact** — the corpus is truth; pages regenerate without
-  losing anything.
-- **Every claim cites corpus items** (never other wiki pages), and citations are
-  mechanically checked.
-- **Coverage is enforced** — every item is cited somewhere or explicitly ledgered.
-  Nothing silently vanishes.
-- **Recency first** — pages lead with "current state (as of ...)" and keep superseded
-  practice as marked history. Conflicts between old and new are surfaced, not
-  smoothed over.
+## What it can read
 
-See `example/` for a three-file toy instance showing the shapes, and
-`instance/skills/dex-run/references/schema.md` for the corpus format.
+| source | what it does |
+|---|---|
+| **YouTube** | captions where they exist; otherwise the audio is downloaded and transcribed |
+| **X** | walks the thread up to its root — every post in reading order, each attributed, quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete, never presented as whole |
+| **GitHub** | repos and profiles — README, description, metadata |
+| **Papers** | arXiv and friends |
+| **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the actual audio enclosure, then transcribes it — show notes come from the feed, which is richer than the page |
+| **Web** | article text with the boilerplate stripped, Wayback fallback when the live page has gone |
+| **Files** | PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV — text extracted, embedded images pulled out alongside it. Scanned pages route to OCR |
+
+Three things happen on top of that, which is where most of the value is:
+
+- **Links get followed with judgment.** At every fetched page, Claude decides
+  which links are primary artifacts of the thing itself — the project's repo, the
+  paper, the docs — and promotes those. Blogrolls, footers and "similar projects"
+  never get promoted, at any depth. The engine bounds the judgment mechanically
+  (4 levels deep, 12 fetched URLs per item) rather than trying to make it.
+- **Transcription has a free floor.** Local whisper is the default and needs no
+  API key, no GPU, and no account. Point it at any OpenAI-compatible endpoint if
+  you'd rather have speed; long audio is chunked, so upload limits don't apply.
+- **A source that lies gets corrected mid-fetch.** A URL that claims to be a web
+  page and turns out to be a PDF is re-detected from its actual bytes and
+  re-routed, in the same run, in either direction.
+
+## It looks after itself
+
+- **Failed work retries on its own.** Blocked fetches every run. Engine bugs
+  once the engine is newer — no point retrying a deterministic bug on the same
+  code.
+- **It reports its own bugs.** An engine exception files an issue at this repo,
+  deduplicated by fingerprint. Issue bodies carry no free text at all — version,
+  command, error class, an engine-frames-only traceback, a URL *hash*. Not a
+  scrubber that might miss something: the field simply doesn't exist, so your
+  content has nowhere to leak through.
+- **Fixes arrive by themselves.** Instances pin an engine release. Sync checks
+  for a newer one, bumps the pin, runs any state migrations, and refreshes the
+  synced machinery — before anything touches state, at the start of every run.
+  The loop closes: bug files issue → fix → release → sync → the failed work
+  retries and succeeds.
+- **The wiki is checked mechanically.** Broken wikilinks, citations that don't
+  resolve to a real corpus item, uncited orphans, index drift, pages older than
+  their own sources, restated facts, ledger schema violations. Judgment repairs
+  what the check finds.
+- **Health checks trigger themselves** when the last one is over a week old, and
+  the corrections you pin by hand are re-applied after every rebuild.
+
+## On the way
+
+- **Watchers** — folders, Dropboxes, RSS and social feeds as standing capture
+  sources feeding the same inbox. Designed next.
+- **Instagram** — no clean API exists; the approach isn't settled.
+- **Hosted transcription** — any OpenAI-compatible provider already works; a
+  benchmarked, recommended config is still to come.
+
+Tracked in [`design/roadmap.md`](design/roadmap.md).
+
+---
+
+See [`example/`](example/) for a toy instance showing the shapes, and
+[`instance/skills/dex-run/references/schema.md`](instance/skills/dex-run/references/schema.md)
+for the corpus format.
 
 <details>
 <summary><b>Under the hood</b> (for agents and the curious — humans never need this)</summary>
@@ -138,6 +274,12 @@ central failure classifier (blocked ≠ dead, ever), capabilities with a free
 local floor (faster-whisper transcription; document extraction), and an
 issue filer that reports engine bugs upstream — sanitized by construction —
 so every instance heals through releases and sync.
+
+Every run completes end-to-end inside one Claude session: the run report is
+the session's work list, and the same session finishes the cognitive steps for
+everything on it. There is no headless daemon and no handoff. Entries that
+survive a session are `waiting`, `blocked`, `error` or `manual` — each parked
+for a stated reason, each printed on the report.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the
 GitHub contents API (the phone shortcut) or committed directly by the
