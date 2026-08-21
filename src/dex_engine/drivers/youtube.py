@@ -3,9 +3,10 @@
 A video's identity is its video id: every single-video URL shape —
 ``watch?v=``, bare and ``/live|/shorts|/embed`` youtu.be short links,
 ``youtube.com/live|shorts|embed|v/<id>`` — canonicalizes to
-``watch?v=<id>``, one fetchable work unit per video. A playlist page's
-identity is its list id; playlist units park ``manual`` (a playlist is a
-collection, and which entries deserve capture is judgment).
+``watch?v=<id>``, one fetchable work unit per video. A playlist's identity
+is its list id — the playlist page and the ``/embed/videoseries?list=``
+embed alike; playlist units park ``manual`` (a playlist is a collection,
+and which entries deserve capture is judgment).
 
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
@@ -39,6 +40,9 @@ _HOSTS = frozenset({"youtube.com", "youtu.be"})
 # Path prefixes that address a single video, on youtube.com and youtu.be
 # alike: /live/<id>, /shorts/<id>, /embed/<id>, the legacy /v/<id>.
 _VIDEO_PREFIXES = frozenset({"live", "shorts", "embed", "v"})
+# The standard playlist-embed shape: /embed/videoseries?list=<id> — a
+# playlist, not a video called "videoseries".
+_PLAYLIST_EMBED_SEGMENTS = ["embed", "videoseries"]
 
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
@@ -177,26 +181,27 @@ def _video_id(url: str) -> str | None:
     host = host_of(url)
     parts = urlsplit(url)
     segments = [segment for segment in parts.path.split("/") if segment]
-    if host == "youtu.be":
-        if len(segments) == 1:
-            return segments[0]
-        if len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
-            return segments[1]
+    if segments == _PLAYLIST_EMBED_SEGMENTS:
+        # A playlist embed, never a video — "videoseries" must not leak
+        # out as a (bogus, shared) video id.
         return None
-    if host == "youtube.com":
-        if segments == ["watch"]:
-            return dict(parse_qsl(parts.query)).get("v")
-        if len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
-            return segments[1]
+    if host == "youtube.com" and segments == ["watch"]:
+        return dict(parse_qsl(parts.query)).get("v")
+    if host == "youtu.be" and len(segments) == 1:
+        return segments[0]
+    if host in _HOSTS and len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
+        return segments[1]
     return None
 
 
 def _playlist_id(url: str) -> str | None:
-    """The list id of a playlist-page URL, or None."""
+    """The list id of a playlist-page URL (or playlist embed), or None."""
     parts = urlsplit(url)
-    is_playlist_page = host_of(url) == "youtube.com" and [
-        segment for segment in parts.path.split("/") if segment
-    ] == ["playlist"]
+    segments = [segment for segment in parts.path.split("/") if segment]
+    is_playlist_page = host_of(url) == "youtube.com" and segments in (
+        ["playlist"],
+        _PLAYLIST_EMBED_SEGMENTS,
+    )
     if not is_playlist_page:
         return None
     return dict(parse_qsl(parts.query)).get("list")
