@@ -238,7 +238,7 @@ def _capability_row(
             providers.append({"name": provider.name, "state": "available"})
         else:
             providers.append(
-                {"name": provider.name, "state": "available", "note": availability.reason}
+                {"name": provider.name, "state": "unavailable", "note": availability.reason}
             )
     if floor is not None:
         # The floor is active only when nothing mechanical outranks it.
