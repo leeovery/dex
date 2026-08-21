@@ -41,13 +41,30 @@ state formats). This file holds what's *next*, not what is.
   they need a clone-first run mode and a stored per-instance PAT; not
   built, not needed yet.
 
-- **Driver-based ingestion architecture** — DESIGNED 2026-08-19, BUILT
-  2026-08-20; the design in force is `design/ingestion-pipeline.md`. Shipped:
-  the driver registry, PDF + office formats (anydoc), podcasts, X thread
-  walk-up, harvest subject rule (absorbs the site-driver idea), capability
-  providers (transcription/extraction/OCR), tag-pinned releases, migrations,
-  and the issue filer. Still open on this roadmap: instagram, X walk-down,
-  engine OCR providers, hosted transcription pick.
+- **Ingestion pipeline — open ends** — the ingestion design in force is
+  `design/ingestion-pipeline.md`. Open here: X walk-down, and engine OCR
+  providers (the cognitive floor is the only OCR path). The instagram
+  driver and the hosted-transcription pick are their own entries below.
+
+- **Code cleanup round (post-first-release)** — behavior-neutral debts in
+  the engine, batched so they aren't lost: extract one shared
+  fetch-and-classify helper (eight hand-rolled copies across
+  drivers/transcribe/run); dedupe driver body/slug helpers (youtube
+  `_body` vs `transcribe.youtube_body`; capture vs normalize
+  `URL_RE`/slugify; `run._ext_of` vs `transcribe._audio_ext`; six
+  spellings of Classification→Result); one enrichment-frontmatter module
+  owning render+parse (writer in run.py, reader in transcribe.py); hoist
+  the yt-dlp seam out of drivers.youtube so pipeline.transcribe stops
+  importing a driver; the quarantine filename constant spelled three
+  times; ledger.py's per-word legacy-vocabulary hint tables; registry's
+  module-level DRIVERS vs the zero-import-time-state rule; streaming
+  transport reads (unbounded `response.read()` buffers whole enclosures —
+  enforce the media cap in-stream); a per-item fetched-count cache
+  (`_cap_fired` is quadratic); one long-lived append handle for the
+  ledger; a repo-wide `ruff format` pass (43 files drift under ruff
+  0.16.3 — one mechanical reformat commit); a cheap guard in
+  `run._admit_children` (unreachable until a driver emits children).
+
 - **Per-instance context instructions (beyond scope)** — some instances need
   more than a scope list: standing context that steers scanning, enrichment,
   and digestion (e.g. which link shapes are noise here, what the community's
@@ -86,10 +103,6 @@ state formats). This file holds what's *next*, not what is.
   store (the corpus); queue, digest, and index sections are regenerable
   views. A TUI/newsletter delivery layer waits until the digest proves what
   the owner actually wants to see.
-- **Update channel: main vs pinned releases** — RESOLVED 2026-08-19: tag-
-  pinned with automatic upgrades (shim pins a tag; sync bumps patch/minor,
-  runs migrations, re-syncs skills from the same tag; Mint cuts releases,
-  human-invoked). See `design/ingestion-pipeline.md` §12.
 - **Watchers — feeding sources as a first-class layer** — preliminary
   discussion logged in `design/watchers-discussion.md` (2026-08-20): every
   feeder (shortcut, Discord, RSS, bookmark folders, Dropbox) becomes a

@@ -55,6 +55,7 @@ def write_item(
     item_id: str = ITEM,
     urls: list[str] | None = None,
     media: list[str] | None = None,
+    kinds: list[str] | None = None,
 ) -> Path:
     item = corpus.CorpusItem(
         id=item_id,
@@ -63,7 +64,7 @@ def write_item(
         shared_by="Alex",
         date=datetime.date(2026, 8, 19),
         urls=urls if urls is not None else [URL],
-        kinds=["web"],
+        kinds=kinds if kinds is not None else ["web"],
         media=media if media is not None else [],
         body="the owner's note\n",
     )
@@ -214,6 +215,67 @@ class TestSeedAndDone:
         content = (instance.root / entry_for(ctx).path).read_text()
         assert 'title: "Ledgers: a Field Report"' in content
         assert content.startswith(f"---\nurl: {URL}\nfetched: 2026-08-20\n")
+
+
+class TestFrontmatterRefresh:
+    """The derived-frontmatter contract: status/enrichment converge with disk."""
+
+    def test_media_only_item_converges_on_the_next_run(self, instance):
+        # A kinds:[image] capture seeds no drainable unit; the session
+        # hand-writes the media description — the run still reconciles it.
+        item_id = "2026-08-19-photo-abc123"
+        path = write_item(
+            instance, item_id, urls=[], kinds=["image"], media=[f"media/{item_id}/photo.jpg"]
+        )
+        enrichment = instance.enrichment_dir / item_id / "media-0.md"
+        enrichment.parent.mkdir(parents=True)
+        enrichment.write_text("what the photo depicts, all legible text\n", encoding="utf-8")
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        item = corpus.read_item(path)
+        assert item.status == "enriched"
+        assert item.enrichment == ["media-0.md"]
+        assert item.body == "the owner's note\n"  # byte-exact through the refresh
+
+    def test_mark_refreshes_the_owning_item_in_the_same_call(self, instance):
+        path = write_item(instance)
+        fetch = lambda _unit: Result(status=Status.MANUAL, meta={}, reason="paywalled")  # noqa: E731
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        assert corpus.read_item(path).status == "raw"
+        healed = instance.enrichment_dir / ITEM / "web-healed.md"
+        healed.parent.mkdir(parents=True)
+        healed.write_text("hand-fetched content\n", encoding="utf-8")
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-healed.md")
+        item = corpus.read_item(path)
+        assert item.status == "enriched"
+        assert item.enrichment == ["web-healed.md"]
+
+    def test_record_pass_refreshes_the_items_frontmatter(self, instance):
+        item_id = "2026-08-19-scan-def456"
+        path = write_item(instance, item_id, urls=[], kinds=["image"])
+        item_dir = instance.enrichment_dir / item_id
+        item_dir.mkdir(parents=True)
+        (item_dir / "media-0.md").write_text("described by hand\n", encoding="utf-8")
+        run_mod.record_pass(make_ctx(instance, FakeDriver()), item_id, "digest")
+        item = corpus.read_item(path)
+        assert item.status == "enriched"
+        assert item.enrichment == ["media-0.md"]
+
+    def test_correct_frontmatter_is_not_rewritten(self, instance):
+        untouched = write_item(instance, "2026-08-19-note-aaa111", urls=[], kinds=["text"])
+        write_item(instance)
+        before = untouched.stat().st_mtime_ns
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        assert untouched.stat().st_mtime_ns == before
+
+    def test_mark_for_an_excluded_items_unit_still_heals(self, instance):
+        path = write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        path.unlink()  # the item was excluded; its ledger unit remains
+        confirmation = run_mod.mark(ctx, URL, Status.SKIPPED, reason="item excluded")
+        assert confirmation.endswith("skipped")
+        assert entry_for(ctx).status is Status.SKIPPED
 
 
 class TestChildren:
