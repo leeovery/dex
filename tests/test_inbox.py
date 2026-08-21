@@ -1,10 +1,19 @@
 """Tests for inbox.py: the device-tested materialization sequence, hermetic."""
 
 import hashlib
+import subprocess
 
 import pytest
 
-from dex_engine.inbox import GithubSeams, build_parser, ensure, parse_capture, reconcile
+from dex_engine.inbox import (
+    GithubSeams,
+    _run_git,
+    build_parser,
+    ensure,
+    main,
+    parse_capture,
+    reconcile,
+)
 from tests.capabilities.conftest import fixture_bytes
 
 REPO = "owner/instance"
@@ -225,6 +234,39 @@ class TestMaterialize:
         assert reconcile(instance, gh.seams()) == 1
         assert "1/2 staged asset(s) materialized" in gh.out
 
+    def test_one_unreadable_capture_never_aborts_the_reconcile(self, instance):
+        # Raw bytes saved as .md (a botched phone capture): that file FAILs
+        # alone; the staged capture beside it still materializes.
+        binary = instance.root / "inbox" / "20260818-000000.md"
+        binary.parent.mkdir(exist_ok=True)
+        binary.write_bytes(b"\xff\xfe\x00 raw bytes, not utf-8")
+        write_capture(instance, "20260818-000002.md")
+        gh = FakeGithub()
+        assert reconcile(instance, gh.seams()) == 1
+        assert "FAIL 20260818-000000.md: unreadable capture" in gh.out
+        assert "1/1 staged asset(s) materialized" in gh.out
+        assert "0 text capture(s) untouched" in gh.out
+
+    def test_binary_staged_blob_fails_the_pointer_check_not_the_run(self, instance):
+        # The seam hands back a tolerantly-decoded raw blob (gitattributes
+        # present but `git lfs install` never ran): the intended diagnostic
+        # fires and the remote copy survives.
+        write_capture(instance)
+        gh = FakeGithub()
+
+        def raw_blob_git(args):
+            if args[0] == "cat-file":
+                return 0, b"\xff\xd8\xff\xe0 jpeg bytes".decode("utf-8", "replace")
+            return gh.git(args)
+
+        seams = GithubSeams(
+            api=gh.api, download=gh.download, git=raw_blob_git,
+            token=lambda: "tok", echo=gh.lines.append,
+        )
+        assert reconcile(instance, seams) == 1
+        assert "did not stage as an LFS pointer" in gh.out
+        assert gh.deleted == []
+
 
 class TestReconcileModes:
     def test_no_inbox_dir_is_a_notice(self, instance):
@@ -316,6 +358,20 @@ class TestEnsure:
         assert "release lookup" in gh.out
 
 
+class TestRunGit:
+    def test_binary_blob_stdout_decodes_tolerantly(self, tmp_path, monkeypatch):
+        # `cat-file -p` on a raw binary staged blob is the exact case the
+        # LFS pointer check probes; it must yield a comparable string, not
+        # a UnicodeDecodeError.
+        monkeypatch.chdir(tmp_path)
+        subprocess.run(["git", "init", "-q"], check=True)  # noqa: S607 — git resolves via PATH like every dev tool
+        (tmp_path / "blob.bin").write_bytes(b"\xff\xd8\xff\xe0 raw binary")
+        subprocess.run(["git", "add", "blob.bin"], check=True)  # noqa: S607 — git resolves via PATH like every dev tool
+        code, staged = _run_git(["cat-file", "-p", ":blob.bin"])
+        assert code == 0
+        assert not staged.startswith("version https://git-lfs")
+
+
 class TestParser:
     def test_bare_and_ensure(self):
         assert build_parser().parse_args([]).command is None
@@ -324,6 +380,17 @@ class TestParser:
     def test_unknown_command_is_loud(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["reconcile-harder"])
+
+    def test_main_exits_with_a_message_not_a_traceback(self, instance, monkeypatch):
+        monkeypatch.chdir(instance.root)
+
+        def boom(_instance, _seams):
+            raise OSError("disk trouble")
+
+        monkeypatch.setattr("dex_engine.inbox.reconcile", boom)
+        with pytest.raises(SystemExit) as excinfo:
+            main([])
+        assert "dex-inbox: disk trouble" in str(excinfo.value)
 
 
 class TestCaptureShape:

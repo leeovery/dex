@@ -396,6 +396,17 @@ class TestHealthReport:
         assert "LEDGER SCHEMA FAILURE" in out
         assert "unknown field(s)" in out
 
+    def test_taxonomy_error_renders_loud(self):
+        out = render(
+            "health-report",
+            {
+                "summary": {"corpus_items": 1, "pages": 0, "cited": 0},
+                "taxonomy_error": "taxonomy.json: expected a JSON object, got list",
+            },
+        )
+        assert "TAXONOMY FAILURE" in out
+        assert "expected a JSON object" in out
+
     def test_summary_is_required(self):
         with pytest.raises(PayloadError, match="summary"):
             render("health-report", {})

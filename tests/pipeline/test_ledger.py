@@ -254,10 +254,12 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     )
     parent, depth = provenance if provenance is not None else (None, None)
     path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
+    # Reasons are single-line by schema — every writer normalizes.
+    single_line = st.text(min_size=1).filter(lambda s: "\n" not in s)
     if status in (Status.MANUAL, Status.SKIPPED):
-        reason = draw(st.text(min_size=1))
+        reason = draw(single_line)
     elif status in _REASON_OPTIONAL:
-        reason = draw(st.none() | st.text(min_size=1))
+        reason = draw(st.none() | single_line)
     else:
         reason = None
     return LedgerEntry(

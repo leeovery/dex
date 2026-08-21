@@ -681,6 +681,7 @@ _HEALTH_OPTIONAL = frozenset(
         "stale_pages",
         "count_drift",
         "restated",
+        "taxonomy_error",
         "ledger_entries",
         "ledger_error",
         "waiting",
@@ -716,6 +717,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           "stale_pages": [{"page": str, "newer": int}],
           "count_drift": [{"page": str, "recorded": str, "actual": int}],  # actual = member count
           "restated": [{"page": str, "first": str, "second": str}],
+          "taxonomy_error": str,        # malformed taxonomy — renders loud
           # state checks
           "ledger_entries": int,
           "ledger_error": str,          # schema failure — renders loud
@@ -746,6 +748,13 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
 
     lines = [f"health check — {corpus_items} corpus items · {pages} pages · {cited} cited", ""]
     lines.append("wiki")
+    if "taxonomy_error" in payload:
+        error = _str_at(surface, payload, "taxonomy_error")
+        lines.append(
+            "  TAXONOMY FAILURE — repair state/taxonomy.json "
+            "(the wiki checks below ran against an empty taxonomy):"
+        )
+        lines.extend(kernel.wrap_with_prefix(error, prefix="    ", hang=0))
     lines.extend(_health_pairs(surface, payload, "broken_links", "broken wikilinks",
                                ("page", "target"), lambda p, t: f"{p} -> [[{t}]]"))
     reserved = _int_at(surface, payload, "reserved_links", default=0)
