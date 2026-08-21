@@ -4,15 +4,15 @@ Status: **agreed design, pre-implementation** (discussed and signed off
 2026-08-19/20). This document is the reference for the rewrite of the
 engine's ingestion machinery. The roadmap items it resolves point here.
 
-Design transcript (the full discussion this document distills; consult it if
-a gap or ambiguity is found here):
-`/Users/leeovery/.claude/projects/-Users-leeovery-Code-dex/a3167a12-9c3a-49b8-bdea-d353ba515bb7.jsonl`
+This document was verified line-by-line against the full design-session
+transcript, which is held locally by the owner and is not part of the repo;
+consult it if a gap or ambiguity is found here.
 
 Origin: this rewrite is the roadmap's long-standing **driver-based ingestion
 architecture** item — "this is the core value of the system — solve it
 properly" — queued well before any incident. One incident the day before
 the design discussion usefully illustrated a failure class the design
-addresses: during the dex-curated install (2026-08-19), Cloudflare
+addresses: during a production instance install (2026-08-19), Cloudflare
 transiently challenged the enricher's fetch of the owner's own website; the
 enricher — unable to distinguish a 403 challenge from a dead domain —
 ledgered it `dead` (terminal, never retried), and Claude's in-session heal
@@ -434,8 +434,9 @@ immediately and never queued. The item stays `status: raw` with no
 digest/wiki work until its work units complete.
 
 Heals write the ledger: when Claude repairs something by hand (the
-dex-curated incident), the ingest skill's heal procedure ends by appending a
-corrected ledger entry — last-per-hash makes this the mechanism, not a hack.
+Cloudflare-403 incident above), the ingest skill's heal procedure ends by
+appending a corrected ledger entry — last-per-hash makes this the
+mechanism, not a hack.
 
 ## 6. Capabilities
 
@@ -537,7 +538,7 @@ silent `except: pass` dies here.
   judgment, not driver mechanics.
 - Chain media pooled, captured post's first, media-stage cap applies.
 - **Incomplete chains are recorded, never silently presented as complete**
-  (learned from a 2026-08-20 dex-marketing run — a thread's root promised
+  (learned from a 2026-08-20 production run — a thread's root promised
   "8 things", six existed publicly): a parent fetch failing mid-walk is
   mechanical — the driver records the gap in meta
   (`chain_incomplete: true` + how far it got). A chain that's
@@ -982,7 +983,7 @@ Skill changes shipping with this:
   caught by accident rather than mechanism), and a **shortid-shaped
   citation flag**: backticked 6-hex shortids are probable malformed
   citations everywhere — index included — not just where full-id resolution
-  happens to fail (a 2026-08-20 dex-design run found latent shortid
+  happens to fail (a 2026-08-20 production run found latent shortid
   citations in an index that had never tripped the check because no page
   existed to fail against; the ingest reference states it plainly:
   citations are full item ids, always).
