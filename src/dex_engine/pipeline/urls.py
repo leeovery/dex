@@ -12,11 +12,13 @@ a hypothesis property, because a non-idempotent case IS a duplicate-entry bug.
 
 import hashlib
 import urllib.parse
+from pathlib import Path
 
 __all__ = [
     "STRIP_PARAMS",
     "base_canonical",
     "host_of",
+    "resolve_repo_path",
     "work_hash",
 ]
 
@@ -70,8 +72,8 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
     Args:
         url: An absolute http(s) URL.
         keep_params: When given, only these query params survive (the
-            YouTube driver keeps ``v`` alone); otherwise everything except
-            :data:`STRIP_PARAMS` survives.
+            podcast driver keeps the Apple episode param alone); otherwise
+            everything except :data:`STRIP_PARAMS` survives.
 
     Returns:
         The canonical form — fragment dropped, trailing path slashes
@@ -87,6 +89,29 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
     return urllib.parse.urlunsplit(
         ("https", host, parts.path.rstrip("/"), urllib.parse.urlencode(query), "")
     )
+
+
+def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
+    """Resolve a ``file:<repo-path>`` work key's path strictly under the root.
+
+    Repo paths come from owner-editable frontmatter, so they are data, never
+    trusted as paths: an absolute path (which ``root / path`` would silently
+    substitute for the root), a ``..`` climb, or a symlink pointing outside
+    the root all resolve elsewhere. Both sides are resolved before the
+    containment check so symlinks cannot smuggle a path out.
+
+    Args:
+        root: The instance root directory.
+        repo_path: The repo-relative path from a ``file:`` work key.
+
+    Returns:
+        The resolved path, or ``None`` when it escapes the root — the
+        caller parks the unit; the bytes are never read.
+    """
+    resolved = (root / repo_path).resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        return None
+    return resolved
 
 
 def work_hash(work_key: str) -> str:

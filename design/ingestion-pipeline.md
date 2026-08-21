@@ -247,7 +247,7 @@ vocabulary only and never become work units:
 
 | kind | driver | notes |
 |---|---|---|
-| `youtube` | ✓ | captions; fallback → `needs: transcribe` |
+| `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
 | `github` | ✓ | repos / profiles / gists / issues / blobs |
 | `paper` | ✓ | arxiv / openreview / hf-papers |
@@ -525,6 +525,15 @@ silent `except: pass` dies here.
 
 ## 8. X driver (renamed from tweet)
 
+- **A post's identity is its status id.** Every share shape — the username
+  form, the X app's `/i/web/status/<id>`, `/i/status/<id>`, the legacy
+  `/statuses/` spelling, `/photo/1`-style tails, share params, and the
+  twitter.com / mobile.twitter.com hosts — canonicalizes to
+  `https://x.com/i/status/<id>`, so one post is one work unit however it
+  was shared. Fetches address fxtwitter by the bare `status/<id>` path,
+  the one shape it serves for all of them: the API ignores a username
+  segment but 404s on `/i/web/…`, and that 404 would misread as a dead
+  post — the terminal-mislabel class this design exists to kill.
 - **Thread walk-up inside the driver**, not via children: the chain is
   context for the captured post, not new first-class sources. One enrichment
   file, one ledger entry. fxtwitter parent pointers, **cap 20 hops**, all
@@ -739,8 +748,16 @@ Shipping migrations for this rewrite:
      walks up and re-harvests, so e.g. a thread's YouTube link now becomes
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
-   the new-engine rule, and `manual` entries stay parked for judgment. The
-   draining session re-fetches with current code (stored text is the
+   the new-engine rule, and `manual` entries stay parked for judgment.
+   Each seed carries the **current** engine's identity: the stored URL is
+   re-canonicalized through the driver registry (the same seam run-layer
+   seeding uses), and a changed canonical re-keys the seed under the
+   recomputed url + hash — so corpus seeding dedupes against the seed
+   instead of raising the same work fresh under the new key, and the drain
+   fetches once. Where identity has changed (x is id-keyed), the
+   superseded `done` line stays under its old hash as inert history; a
+   re-keyed identity already present in the ledger is never seeded over.
+   The draining session re-fetches with current code (stored text is the
    fallback for URLs now dead) and completes the cognitive steps from the
    run report, same as any capture. Legacy items whose `urls:` lists carry
    hand-walked thread parents keep them (frontmatter is immutable

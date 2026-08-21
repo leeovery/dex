@@ -2,6 +2,8 @@
 
 from collections.abc import Sequence
 
+import pytest
+
 from dex_engine.drivers.github import GhResult, GitHubDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.types import Kind, Status
@@ -165,6 +167,22 @@ class TestGist:
         result = driver_for().fetch(make_unit("https://gist.github.com/octomaint", Kind.GITHUB))
         assert result.status is Status.SKIPPED
         assert "gist index" in reason_of(result)
+
+    @pytest.mark.parametrize(
+        "gist_id",
+        [
+            "0f1e2d3c4b5a69788796a5b4c3d2e1f0",  # today's 32-char hex
+            "9f0e8d7c6b5a49382716",  # 2013-era 20-char hex
+            "4277",  # pre-2013 sequential decimal
+        ],
+    )
+    def test_bare_gist_id_links_fetch_by_id(self, gist_id):
+        # Legacy gist.github.com/<id> share links (no username segment)
+        # still resolve — the API call only ever needed the id.
+        driver = driver_for({("api", f"gists/{gist_id}"): ok(fixture_text("github", "gist.json"))})
+        result = driver.fetch(make_unit(f"https://gist.github.com/{gist_id}", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert "### compact.py" in body_of(result)
 
 
 class TestIssue:
