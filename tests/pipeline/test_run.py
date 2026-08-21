@@ -213,6 +213,23 @@ class TestSeedAndDone:
         transcribe_report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
         assert "is unreadable" in " ".join(transcribe_report.split())
 
+    def test_non_utf8_corpus_file_is_skipped_and_reported_never_fatal(self, instance):
+        write_item(instance)
+        bad = instance.corpus_dir / "2026" / "2026-08-19-binary-eeeeee.md"
+        bad.write_bytes(b"---\nid: x\n---\n\xff\xfe not text")
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)  # completes — no abort
+        assert entry_for(ctx).status is Status.DONE  # the readable item enriched
+        flat = " ".join(report.split())
+        assert "corpus item corpus/2026/2026-08-19-binary-eeeeee.md is unreadable" in flat
+
+    def test_directory_matching_the_corpus_glob_is_skipped_never_fatal(self, instance):
+        write_item(instance)
+        (instance.corpus_dir / "2026" / "notes.md").mkdir()
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert "corpus item corpus/2026/notes.md is unreadable" in flat
+
     def test_escaping_media_path_parks_manual_at_seed_never_read(self, instance):
         # `media:` frontmatter is owner-editable data: an absolute path or a
         # ../ climb must park as a bad seed, not have its bytes read into
@@ -304,6 +321,35 @@ class TestFrontmatterRefresh:
         before = untouched.stat().st_mtime_ns
         run_mod.run(make_ctx(instance, FakeDriver()))
         assert untouched.stat().st_mtime_ns == before
+
+    def test_unlistable_enrichment_filename_never_kills_the_run(self, instance):
+        # A session may hand-write an enrichment file whose NAME the corpus
+        # schema cannot hold; the full-corpus sweep must note it — not die
+        # corpus-wide on every verb until someone renames the file.
+        write_item(instance)
+        other = write_item(instance, "2026-08-19-other-bbb222", urls=["https://example.test/o"])
+        bad_dir = instance.enrichment_dir / ITEM
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "Notes, part 2.md").write_text("hand-written\n", encoding="utf-8")
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert f"item {ITEM}: an enrichment file cannot be listed" in flat
+        assert "Notes, part 2.md" in flat
+        assert "rename it" in flat
+        assert corpus.read_item(other).status == "enriched"  # the sweep went on
+
+    def test_mark_still_heals_when_the_listing_cannot_refresh(self, instance):
+        write_item(instance)
+        fetch = lambda _unit: Result(status=Status.MANUAL, meta={}, reason="paywalled")  # noqa: E731
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "web-healed.md").write_text("hand-fetched content\n", encoding="utf-8")
+        (item_dir / "[draft].md").write_text("also hand-written\n", encoding="utf-8")
+        confirmation = run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-healed.md")
+        assert confirmation.endswith("done")  # the heal landed, quietly
+        assert entry_for(ctx).status is Status.DONE
 
     def test_mark_for_an_excluded_items_unit_still_heals(self, instance):
         path = write_item(instance)
