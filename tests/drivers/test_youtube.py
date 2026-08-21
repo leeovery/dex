@@ -4,11 +4,14 @@ import itertools
 import json
 
 import pytest
+from hypothesis import assume, given
+from hypothesis import strategies as st
 
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, clean_vtt
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Kind, Need, Status
+from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
 
 URL = "https://youtube.com/watch?v=dQw4w9WgXcA"
@@ -65,6 +68,77 @@ class TestIdentity:
         driver = driver_for({})
         once = driver.canonical("https://youtu.be/dQw4?si=x")
         assert driver.canonical(once) == once
+
+
+# Real YouTube video ids are 11 chars of this alphabet; 8+ keeps generated
+# ids clear of the live/shorts/embed path prefixes.
+_ids = st.text(
+    alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+    min_size=8,
+    max_size=11,
+)
+
+
+def _video_shapes(video_id: str) -> list[str]:
+    return [
+        f"https://youtube.com/watch?v={video_id}",
+        f"https://www.youtube.com/watch?v={video_id}&t=42",
+        f"https://m.youtube.com/watch?v={video_id}",
+        f"https://youtu.be/{video_id}?si=share123",
+        f"https://youtu.be/live/{video_id}",
+        f"https://youtu.be/shorts/{video_id}",
+        f"https://youtu.be/embed/{video_id}",
+        f"https://youtube.com/live/{video_id}",
+        f"https://youtube.com/shorts/{video_id}",
+        f"https://youtube.com/embed/{video_id}",
+        f"https://youtube.com/v/{video_id}",
+    ]
+
+
+class TestIdentityProperties:
+    @given(_ids)
+    def test_every_shape_of_a_video_is_one_fetchable_work_unit(self, video_id):
+        driver = driver_for({})
+        canonicals = {driver.canonical(shape) for shape in _video_shapes(video_id)}
+        assert canonicals == {f"https://youtube.com/watch?v={video_id}"}
+
+    @given(_ids, _ids)
+    def test_different_videos_stay_different_work_units(self, id_a, id_b):
+        assume(id_a != id_b)
+        driver = driver_for({})
+        hashes_a = {work_hash(driver.canonical(s)) for s in _video_shapes(id_a)}
+        hashes_b = {work_hash(driver.canonical(s)) for s in _video_shapes(id_b)}
+        assert hashes_a.isdisjoint(hashes_b)
+
+    @given(_ids, _ids)
+    def test_different_playlists_stay_different_work_units(self, id_a, id_b):
+        assume(id_a != id_b)
+        driver = driver_for({})
+        canonical_a = driver.canonical(f"https://youtube.com/playlist?list=PL{id_a}")
+        canonical_b = driver.canonical(f"https://www.youtube.com/playlist?list=PL{id_b}")
+        assert canonical_a == f"https://youtube.com/playlist?list=PL{id_a}"
+        assert work_hash(canonical_a) != work_hash(canonical_b)
+
+    @given(_ids)
+    def test_a_playlist_and_a_video_never_collide(self, some_id):
+        driver = driver_for({})
+        video = driver.canonical(f"https://youtube.com/watch?v={some_id}")
+        playlist = driver.canonical(f"https://youtube.com/playlist?list={some_id}")
+        assert work_hash(video) != work_hash(playlist)
+
+
+class TestPlaylists:
+    def test_playlist_identity_is_the_list_id_share_noise_dropped(self):
+        driver = driver_for({})
+        assert driver.canonical("https://www.youtube.com/playlist?list=PLabc&si=share123") == (
+            "https://youtube.com/playlist?list=PLabc"
+        )
+
+    def test_playlist_parks_manual_with_reason_and_never_probes(self):
+        driver = driver_for(AssertionError("the probe must not run for a playlist"))
+        result = driver.fetch(make_unit("https://youtube.com/playlist?list=PLabc", Kind.YOUTUBE))
+        assert result.status is Status.MANUAL
+        assert "playlist" in reason_of(result)
 
 
 class TestCaptions:

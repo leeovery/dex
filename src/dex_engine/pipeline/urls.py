@@ -70,8 +70,8 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
     Args:
         url: An absolute http(s) URL.
         keep_params: When given, only these query params survive (the
-            YouTube driver keeps ``v`` alone); otherwise everything except
-            :data:`STRIP_PARAMS` survives.
+            podcast driver keeps the Apple episode param alone); otherwise
+            everything except :data:`STRIP_PARAMS` survives.
 
     Returns:
         The canonical form — fragment dropped, trailing path slashes

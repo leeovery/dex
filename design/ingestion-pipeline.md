@@ -247,7 +247,7 @@ vocabulary only and never become work units:
 
 | kind | driver | notes |
 |---|---|---|
-| `youtube` | ✓ | captions; fallback → `needs: transcribe` |
+| `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
 | `github` | ✓ | repos / profiles / gists / issues / blobs |
 | `paper` | ✓ | arxiv / openreview / hf-papers |
