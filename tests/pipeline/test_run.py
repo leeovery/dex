@@ -337,6 +337,7 @@ class TestChildren:
         entries = ledger.load(instance.ledger_path)
         capped = entries[work_hash(f"https://chain.test/{MAX_DEPTH + 1}")]
         assert capped.status is Status.SKIPPED
+        assert capped.capped is True
         assert capped.reason == f"depth cap ({MAX_DEPTH}) reached"
         assert capped.depth == MAX_DEPTH + 1
         fetched = [e for e in entries.values() if e.status is Status.DONE]
@@ -360,6 +361,7 @@ class TestChildren:
         admitted = [e for e in entries.values() if e.status is Status.DONE]
         assert len(admitted) == MAX_URLS_PER_ITEM  # the root + 11 children
         assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)
+        assert all(e.capped for e in capped)
         assert all(e.reason == f"url cap ({MAX_URLS_PER_ITEM} per item) reached" for e in capped)
         assert "url cap" not in report
 
@@ -1008,6 +1010,7 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         refused = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert refused.status is Status.SKIPPED
+        assert refused.capped is True
         assert "url cap" in (refused.reason or "")
 
         # A repeat WITHOUT --force is refused again — the refusal marker is
@@ -1021,6 +1024,38 @@ class TestVerbs:
         # The cap fire stayed in the audit trail:
         lines = instance.ledger_path.read_text().split("\n")
         assert any("exceeded by --force" in line for line in lines)
+
+    def test_cap_markers_are_recognized_by_the_flag_not_the_wording(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        extra = "https://example.test/extra"
+        run_mod.fetch_urls(ctx, ITEM, [extra])
+        refused = ledger.load(instance.ledger_path)[work_hash(extra)]
+        # Reword the marker's prose entirely — recognition must not read it.
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(refused, reason="twelve fetches is plenty for one item"),
+        )
+        run_mod.fetch_urls(ctx, ITEM, [extra])
+        again = ledger.load(instance.ledger_path)[work_hash(extra)]
+        assert again.status is Status.SKIPPED
+        assert again.capped is True
+
+    def test_a_marked_skip_with_cap_lookalike_prose_is_not_a_cap_marker(self, instance):
+        # Session-authored --reason text lives in the same namespace as the
+        # engine's cap wording; only the typed flag may route.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.mark(
+            ctx, URL, Status.SKIPPED, reason=f"url cap ({MAX_URLS_PER_ITEM} per item) reached"
+        )
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        entry = ledger.load(instance.ledger_path)[work_hash(URL)]
+        assert entry.status is Status.DONE  # requeued in place and re-fetched
+        assert entry.rerun is True
 
     def test_mark_heals_through_the_verb(self, instance):
         write_item(instance)

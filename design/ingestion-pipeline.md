@@ -277,12 +277,18 @@ done; staleness is derived because it's a fact that shows.
 dispatched on. **One blessed exception**: the run loop routes
 `via == "media"` entries to the media redrain — §7 mandates media entries
 carry the parent's kind, leaving `via` as their only marker. That single
-commented dispatch site — plus exactly one sibling blessed at final
-review: blocked audio-acquisition retries route back to the transcribe
-drain by a written-and-matched-in-one-place reason prefix (blocked lines
-cannot carry `needs`, so the reason string is the only §5-conformant
-marker). Those two commented sites are the sanctioned total of
-string-routed dispatch, forever.
+commented dispatch site is the sanctioned total of value-routed dispatch,
+forever — and it dispatches on a controlled single-token field, not prose.
+
+**Lifecycle signals are typed schema fields, never prose.** `reason` is
+display text: reports render it, nothing matches on it, and rewording one
+can never change routing. The two signals that once looked reason-shaped
+are §5 fields instead: a blocked audio-acquisition retry carries
+`needs: transcribe` (routing it back through the transcribe drain, not the
+driver), and a cap-fire marker line carries `capped: true`. This keeps the
+`reason` namespace safe for session-authored free text
+(`enrich mark --reason …`), which must never be able to collide with a
+routing signal.
 
 ## 4. State
 
@@ -325,9 +331,14 @@ union merges). Superseded lines until then are the audit trail.
   "kind": "web",
   "format": "pdf",             // file work only
   "status": "waiting",
-  "needs": "transcribe",       // status=waiting only
+  "needs": "transcribe",       // waiting parks (required) and blocked
+                               // acquisition retries — the typed routing
+                               // signal back to the capability drain
   "attempts": 3,               // blocked only (error's retry gate is the
                                // engine field — once per newer engine)
+  "capped": true,              // skipped only, serialized only when true:
+                               // a cap-fire marker — refused work, not an
+                               // admitted unit
   "engine": "0.2.1",           // engine version that wrote this line
   "date": "2026-08-19",
   // provenance — children and reruns only
@@ -342,7 +353,9 @@ union merges). Superseded lines until then are the audit trail.
   "reason": "…"                // the stated parking reason (§1): REQUIRED on
                                // manual/skipped, optional on
                                // waiting/blocked/dead, forbidden on
-                               // done/queued/error (error has its own field)
+                               // done/queued/error (error has its own field).
+                               // Display prose only — the engine never
+                               // matches on it (§3)
 }
 ```
 
@@ -409,7 +422,8 @@ issues about itself.
 
 **LedgerEntry is a frozen, validated dataclass, not a dict**: the schema
 comments above are runtime invariants enforced in `__post_init__`
-(`waiting` ⇒ `needs` present; `blocked` ⇒ `attempts ≥ 1`; `error` ⇒
+(`waiting` ⇒ `needs` present; `needs` on `waiting`/`blocked` only;
+`blocked` ⇒ `attempts ≥ 1`; `capped` on `skipped` only; `error` ⇒
 `error` + `engine` present; `done` with output ⇒ `path` present; `via`
 validated against the known prefixes). Serialization happens in exactly one
 place (`ledger.py`: `from_line`/`to_line`, dropping None fields); a
@@ -497,7 +511,10 @@ retry on new engine). The availability seam is **per-format** —
 provider. **Acquisition failures are not provider failures**: a failed
 audio download (yt-dlp breakage, blocked enclosure GET) classifies through
 the normal §5 lifecycle — `blocked` with attempts, escalating to `manual`
-at 5 — never as no-clock waiting. Config keys: `transcribe_base_url`,
+at 5 — never as no-clock waiting. The blocked line keeps
+`needs: transcribe`, so the retry routes back through the transcribe drain
+rather than the driver (§3: a typed field, never the reason's wording).
+Config keys: `transcribe_base_url`,
 `transcribe_api_key`, `transcribe_api_model` (the API-side model name;
 local size names stay in `transcribe_model`). **The API key's home is the
 instance's gitignored `.env`** (`OPENAI_API_KEY=…`; `OPENAI_BASE_URL` works

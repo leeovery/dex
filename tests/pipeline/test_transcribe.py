@@ -1,5 +1,6 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
+import dataclasses
 import os
 import re
 from pathlib import Path
@@ -182,6 +183,7 @@ class TestYoutubeDrain:
         entry = entry_for(ctx, VIDEO_URL)
         assert entry.status is Status.BLOCKED
         assert entry.attempts == 1
+        assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
         assert (entry.reason or "").startswith("audio acquisition failed")
 
     def test_acquisition_failures_escalate_manual_at_five(self, instance):
@@ -215,6 +217,48 @@ class TestYoutubeDrain:
         ctx = transcribe_ctx(instance)
         run_mod.run_transcribe(ctx)
         assert entry_for(ctx, VIDEO_URL).status is Status.DONE
+
+    def test_blocked_retry_routes_by_the_typed_field_not_the_reason_wording(self, instance):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        blocked = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert blocked.needs is Need.TRANSCRIBE
+        # Reword the parked prose entirely — routing must survive it.
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(blocked, reason="the tube said no; try again later"),
+        )
+        ctx = transcribe_ctx(instance)
+        run_mod.run_transcribe(ctx)
+        assert entry_for(ctx, VIDEO_URL).status is Status.DONE
+
+    def test_prose_mimicking_the_old_acquisition_wording_never_routes(self, instance):
+        # A session-authored reason lives in the same namespace as the
+        # engine's park wording; without `needs` it must not become a
+        # transcribe job.
+        page = "https://example.test/an-article"
+        write_item(instance, urls=[page])
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(page),
+                url=page,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.BLOCKED,
+                attempts=1,
+                reason="audio acquisition failed: session note, not a signal",
+                engine="0.2.0",
+                date=TODAY,
+            ),
+        )
+        ctx = transcribe_ctx(instance)
+        run_mod.run_transcribe(ctx)
+        after = ledger.load(instance.ledger_path)[work_hash(page)]
+        assert after.status is Status.BLOCKED  # untouched — not transcribe work
+        assert after.attempts == 1
 
     def test_confirmed_gone_video_is_dead(self, instance):
         write_item(instance, urls=[VIDEO_URL])
@@ -478,6 +522,7 @@ class TestPodcastDrain:
         entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
         assert entry.status is Status.BLOCKED
         assert entry.attempts == 1
+        assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
         assert (entry.reason or "").startswith("audio acquisition failed")
 
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
