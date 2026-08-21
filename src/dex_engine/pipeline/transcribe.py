@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dex_engine import atomic
 from dex_engine.drivers.transport import Transport
 from dex_engine.drivers.youtube import ProbeError, classify_probe_failure
 
@@ -222,9 +223,10 @@ def _pre_transcript(body: str) -> str:
     return body.split(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
 
 
-# yt-dlp's in-flight artifacts: `.part` bodies (also `.part-Frag…`), `.ytdl`
-# state files, and the odd `.download`/`.temp` from other tooling.
-_PARTIAL_MARKERS = (".part", ".ytdl", ".download", ".temp")
+# In-flight artifacts: yt-dlp's `.part` bodies (also `.part-Frag…`) and
+# `.ytdl` state files, the enclosure download's atomic-write `.tmp` temps,
+# and the odd `.download`/`.temp` from other tooling.
+_PARTIAL_MARKERS = (".part", ".ytdl", ".download", ".temp", ".tmp")
 
 
 def _is_partial(name: str) -> bool:
@@ -260,7 +262,9 @@ def _download_enclosure(
         return classify_http(response.status)
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{stem}.{_audio_ext(url)}"
-    path.write_bytes(response.body)
+    # Atomic: a crash mid-write must never leave a truncated file under the
+    # final cache name — _cached_audio would reuse it as completed audio.
+    atomic.write_bytes(path, response.body)
     return path
 
 

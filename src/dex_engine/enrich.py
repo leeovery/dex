@@ -6,6 +6,7 @@ Thin by design: parse arguments, build ``Instance``/``Config``/
 
 import argparse
 import datetime
+import os
 import sys
 from pathlib import Path
 
@@ -170,10 +171,30 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             )
 
 
+def _load_env(root: Path) -> None:
+    """Fold the instance's gitignored ``.env`` into the environment.
+
+    The local-secret slot: keys (``OPENAI_API_KEY`` for whisper-api) live
+    here rather than in the committed config. Simple ``KEY=VALUE`` lines,
+    ``#`` comments and malformed lines skipped; setdefault semantics — a
+    real environment variable always wins.
+    """
+    env = root / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text(encoding="utf-8").splitlines():
+        if "=" not in line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        if key.strip():  # a nameless `=value` line would crash setdefault
+            os.environ.setdefault(key.strip(), value.strip())
+
+
 def main(argv: list[str] | None = None) -> None:
     """Parse, build the context from the instance at cwd, call the pipeline."""
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
+    _load_env(instance.root)
     try:
         config = Config.load(instance.config_path)
         # One Capabilities object feeds the drain seam, the transcribe path,

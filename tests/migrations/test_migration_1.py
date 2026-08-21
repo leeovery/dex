@@ -119,6 +119,69 @@ class TestEnrichmentRenames:
         assert (item_dir / "x-abc123.md").read_text() == "healed by hand\n"
         assert any("refusing to overwrite" in s.why for s in report.skipped)
 
+    def test_collision_keeps_listing_and_ledger_on_the_old_name(self, tmp_path, migration):
+        # A skipped disk rename must skip the reference rewrites too:
+        # renaming the listing would list x-abc123.md twice, and renaming
+        # the ledger path would point the line at the OTHER file's content,
+        # stranding tweet-abc123.md on disk unlisted.
+        item_id = "2026-05-01-item-a1b2c3"
+        other_id = "2026-05-02-other-d4e5f6"
+        item_dir = tmp_path / "enrichment" / item_id
+        item_dir.mkdir(parents=True)
+        (item_dir / "tweet-abc123.md").write_text("old\n")
+        (item_dir / "x-abc123.md").write_text("healed by hand\n")
+        # The SAME basename under another item has no collision there — the
+        # skip is keyed per directory, so this one renames normally.
+        other_dir = tmp_path / "enrichment" / other_id
+        other_dir.mkdir(parents=True)
+        (other_dir / "tweet-abc123.md").write_text("other item's post\n")
+        item_path = tmp_path / "corpus" / "2026" / f"{item_id}.md"
+        item_path.parent.mkdir(parents=True)
+        item_path.write_text(
+            corpus_text(item_id, kinds=("tweet",), enrichment=("tweet-abc123.md", "x-abc123.md"))
+        )
+        other_path = tmp_path / "corpus" / "2026" / f"{other_id}.md"
+        other_path.write_text(
+            corpus_text(other_id, kinds=("tweet",), enrichment=("tweet-abc123.md",))
+        )
+        write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "1111111111",
+                    "url": "https://x.com/a/status/1",
+                    "kind": "tweet",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": f"enrichment/{item_id}/tweet-abc123.md",
+                },
+                {
+                    "hash": "2222222222",
+                    "url": "https://x.com/b/status/2",
+                    "kind": "tweet",
+                    "status": "done",
+                    "date": "2026-05-02",
+                    "path": f"enrichment/{other_id}/tweet-abc123.md",
+                },
+            ],
+        )
+        report = migration.apply(tmp_path)
+        # Disk: the collision pair untouched; the collision-free dir renamed.
+        assert (item_dir / "tweet-abc123.md").read_text() == "old\n"
+        assert (item_dir / "x-abc123.md").read_text() == "healed by hand\n"
+        assert (other_dir / "x-abc123.md").read_text() == "other item's post\n"
+        assert not (other_dir / "tweet-abc123.md").exists()
+        # Listings follow the disk, not the rename table.
+        assert read_item(item_path).enrichment == ["tweet-abc123.md", "x-abc123.md"]
+        assert read_item(other_path).enrichment == ["x-abc123.md"]
+        # Ledger paths likewise.
+        entries = ledger.load(tmp_path / "state" / "enrichment-ledger.jsonl")
+        assert entries["1111111111"].path == f"enrichment/{item_id}/tweet-abc123.md"
+        assert entries["2222222222"].path == f"enrichment/{other_id}/x-abc123.md"
+        # The skip note states that the references still use the old name.
+        note = next(s.why for s in report.skipped if "refusing to overwrite" in s.why)
+        assert "corpus listings and ledger paths still say tweet-abc123.md" in note
+
 
 class TestLedgerTranslation:
     def test_done_line_gets_kind_path_item_engine(self, tmp_path, migration):
