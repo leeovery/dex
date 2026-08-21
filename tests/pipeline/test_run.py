@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -1687,9 +1688,11 @@ class TestRedetection:
 class TestYamlValue:
     # Values a YAML 1.1 reader would retype (booleans, nulls, numbers in
     # every 1.1 spelling, dates/timestamps) or that break/restructure the
-    # line (leading indicators, padding): each must survive the
-    # frontmatter round trip as the intended string.
+    # line (leading indicators, padding, interior tabs — a tab in a plain
+    # scalar invalidates the whole frontmatter block): each must survive
+    # the frontmatter round trip as the intended string.
     RETYPED = (
+        "col1\tcol2",
         "- 10 lessons",
         "? maybe",
         ", and more",
@@ -1749,6 +1752,16 @@ class TestYamlValue:
 
     def test_ints_are_emitted_bare(self):
         assert _yaml_value(42) == "42"
+
+    def test_tabbed_value_leaves_the_block_parseable_by_a_real_yaml_reader(self, tmp_path):
+        value = "col1\tcol2"
+        text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
+        record = tmp_path / "web-abc123.md"
+        record.write_text(text)
+        fields, _ = read_enrichment(record)
+        assert fields["title"] == value
+        head = text[4:].partition("\n---\n")[0]
+        assert yaml.safe_load(head)["title"] == value
 
 
 class TestMediaSniff:

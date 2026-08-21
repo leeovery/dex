@@ -1699,6 +1699,7 @@ def _yaml_value(value: str | int) -> str:
     needs_quoting = (
         value != value.strip()
         or "\n" in value
+        or "\t" in value  # a tab in a plain scalar invalidates the whole block
         or value[:1] in ("-", "?", ",")
         or any(ch in value for ch in _YAML_UNSAFE)
         or value.lower() in _YAML_KEYWORDS
