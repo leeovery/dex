@@ -77,6 +77,17 @@ class TestUrlPath:
         new(instance, path, slug="The Chosen Name!")
         assert "-the-chosen-name-" in only_item(instance).id
 
+    def test_trailing_punctuation_never_creates_duplicate_urls(self, instance):
+        # Punctuation strips BEFORE dedupe: sentence-final "…/post." and a
+        # bare "…/post" in one note are one URL, recorded once.
+        path = write_capture(
+            instance,
+            "20260818-101530.md",
+            "See https://example.test/post.\nAlso https://example.test/post\n",
+        )
+        new(instance, path)
+        assert only_item(instance).urls == ["https://example.test/post"]
+
     def test_multiple_urls_all_recorded_first_keys_the_id(self, instance):
         path = write_capture(
             instance,
