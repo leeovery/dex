@@ -79,7 +79,7 @@ class TestThreadWalkUp:
         ]
 
     def test_mid_walk_fetch_failure_records_the_gap(self):
-        # Learned 2026-08-20 (dex-marketing): a chain that fetched short was
+        # Learned from a production run: a chain that fetched short was
         # silently presented as complete.
         responses = full_chain()
         responses[API + "alice/status/100"] = json_response({}, status=404)

@@ -91,8 +91,8 @@ class TestUrlPath:
 
     def test_shared_by_is_stamped(self, instance):
         path = write_capture(instance, "20260818-101530.md", "https://example.test/p\n")
-        new(instance, path, shared_by="Lee")
-        assert only_item(instance).shared_by == "Lee"
+        new(instance, path, shared_by="Alex")
+        assert only_item(instance).shared_by == "Alex"
 
 
 class TestNoteOnly:

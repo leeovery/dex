@@ -25,8 +25,8 @@ def message(  # noqa: PLR0913 — a fixture builder mirrors the export's fields
     content: str,
     *,
     author_id: str = "u1",
-    name: str = "lee",
-    nickname: str | None = "Lee",
+    name: str = "alex",
+    nickname: str | None = "Alex",
     timestamp: str = "2026-08-19T10:00:00+00:00",
     msg_type: str = "Default",
     reference: str | None = None,
@@ -97,12 +97,12 @@ class TestNormalize:
         item = next(iter(items(instance).values()))
         assert item.source == "discord"
         assert item.channel == CHANNEL
-        assert item.shared_by == "Lee"  # nickname over name
+        assert item.shared_by == "Alex"  # nickname over name
         assert item.urls == ["https://example.test/post"]
         assert item.kinds == ["web"]
         assert item.status == "raw"
         assert item.id.endswith(shortid("m1"))
-        assert "**Lee** (2026-08-19 10:00):" in item.body
+        assert "**Alex** (2026-08-19 10:00):" in item.body
         assert "great read" in item.body
 
     def test_same_author_burst_clusters_and_reply_joins_target(self, instance):

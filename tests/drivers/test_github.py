@@ -107,13 +107,13 @@ class TestRepo:
         driver = driver_for(
             {
                 ("api", "repos/acme/pipeline-kit"): fail(
-                    "error connecting to api.github.com from /Users/lee/base"
+                    "error connecting to api.github.com from /Users/owner/base"
                 )
             }
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
         assert result.status is Status.BLOCKED
-        assert "/Users/lee" not in reason_of(result)
+        assert "/Users/owner" not in reason_of(result)
 
 
 class TestProfile:
