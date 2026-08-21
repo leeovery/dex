@@ -40,7 +40,7 @@ from dex_engine.pipeline.types import (
     Status,
     WorkUnit,
 )
-from dex_engine.pipeline.urls import base_canonical
+from dex_engine.pipeline.urls import base_canonical, resolve_repo_path
 
 from .transport import Transport, urllib_transport
 
@@ -140,7 +140,13 @@ class FileDriver:
             # An engine wiring bug, not a content problem: the run layer's
             # broad except files it as `error` rather than mislabeling work.
             raise RuntimeError("FileDriver needs an instance root for local file work")
-        path = self._root / repo_path
+        path = resolve_repo_path(self._root, repo_path)
+        if path is None:
+            return Result(
+                status=Status.MANUAL,
+                meta={},
+                reason=f"{repo_path} points outside the instance root — heal the capture",
+            )
         if not path.is_file():
             return Result(
                 status=Status.MANUAL,
