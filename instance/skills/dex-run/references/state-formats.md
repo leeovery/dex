@@ -126,12 +126,14 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, engine, date, via?, parent?, depth?, rerun?, path?, title?,
-  error?, reason?}`. Last line per hash wins; `bin/dex enrich compact`
-  settles it. Statuses: queued · done · dead · skipped · manual · waiting ·
-  blocked · error. `reason` is the stated parking reason (required on
-  manual/skipped); `error` entries carry a scrubbed message and retry once
-  per newer engine. Heals and manual resolutions: `bin/dex enrich mark`.
+  attempts?, capped?, engine, date, via?, parent?, depth?, rerun?, path?,
+  title?, error?, reason?}`. Last line per hash wins; `bin/dex enrich
+  compact` settles it. Statuses: queued · done · dead · skipped · manual ·
+  waiting · blocked · error. `reason` is the stated parking reason
+  (required on manual/skipped); `error` entries carry a scrubbed message
+  and retry once per newer engine; `capped` marks a skip that records
+  cap-refused work, not an admitted unit. Heals and manual resolutions:
+  `bin/dex enrich mark`.
 - `state/enrichment-ledger.unmigrated.jsonl` — the migration quarantine
   (normally ABSENT/empty): ledger lines a migration could not provably
   translate. Lint flags it non-empty. **The quarantine review procedure**
