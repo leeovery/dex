@@ -72,6 +72,45 @@ class TestPreTaxonomy:
         assert ITEM in outcome.report
 
 
+class TestMalformedTaxonomy:
+    """A broken state/taxonomy.json is a lint FINDING, never a crash."""
+
+    def test_non_object_taxonomy_is_a_loud_finding(self, instance):
+        (instance.state_dir / "taxonomy.json").write_text('["not", "an", "object"]')
+        write_corpus_stub(instance)
+        outcome = lint(instance)  # pre-fix: AttributeError traceback
+        assert outcome.exit_code == 1
+        assert "TAXONOMY FAILURE" in outcome.report
+        assert "expected a JSON object, got list" in outcome.report
+
+    def test_unparseable_taxonomy_is_a_loud_finding(self, instance):
+        (instance.state_dir / "taxonomy.json").write_text("{not json")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "TAXONOMY FAILURE" in outcome.report
+        assert "invalid JSON" in outcome.report
+
+    def test_non_dict_topics_never_crashes_the_uncategorized_ledger(self, instance):
+        write_corpus_stub(instance)
+        (instance.state_dir / "taxonomy.json").write_text(
+            json.dumps({"topics": ["uncategorized-shares"]})
+        )
+        write_index(instance, "")
+        outcome = lint(instance)  # pre-fix: AttributeError on list.get
+        assert ITEM in outcome.report  # nothing ledgered — the item is an orphan
+
+    def test_non_string_topic_items_never_crash_staleness(self, instance):
+        # A hand-mangled member list: the string member still counts, the
+        # non-string one is ignored instead of a TypeError on slicing.
+        newer = "2026-08-19-newer-cccccc"
+        write_taxonomy(instance, topics={"brewing": {"items": [123, newer]}})
+        write_corpus_stub(instance, newer)
+        write_page(instance, "brewing", page_text(body=f"cite `{newer}`\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "brewing: 1 newer item(s)" in outcome.report
+
+
 class TestWikiChecks:
     def test_clean_instance_passes(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
