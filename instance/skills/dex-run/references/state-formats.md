@@ -103,11 +103,19 @@ this file — they propose changes in the run report.
 |---|---|
 | `media_fetch` | `none` \| `lead` — media-stage URL downloads |
 | `transcribe_model` | whisper-local size (default `medium`) |
-| `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) credentials + model id |
+| `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
 | `report_issues` | auto-file engine bugs upstream (default `true`) |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
+
+## `.env` — local secrets, gitignored
+
+`KEY=VALUE` lines at the instance root (`#` comments skipped). The enrich
+CLI folds it into the environment on every command, real environment
+variables winning — so `OPENAI_API_KEY=…` here is how whisper-api gets its
+key on this machine without the secret ever being committed. Config stays
+for non-secrets (base_url, model names).
 
 ## Engine-owned files (written through verbs, never by hand)
 

@@ -499,7 +499,13 @@ audio download (yt-dlp breakage, blocked enclosure GET) classifies through
 the normal §5 lifecycle — `blocked` with attempts, escalating to `manual`
 at 5 — never as no-clock waiting. Config keys: `transcribe_base_url`,
 `transcribe_api_key`, `transcribe_api_model` (the API-side model name;
-local size names stay in `transcribe_model`). A waiting-transcribe park
+local size names stay in `transcribe_model`). **The API key's home is the
+instance's gitignored `.env`** (`OPENAI_API_KEY=…`; `OPENAI_BASE_URL` works
+too) — the enrich CLI folds `.env` into the environment before building
+capabilities, real environment variables winning, so secrets never sit in
+the committed config; the config keys carry the non-secrets
+(base_url/model) and exist for the rare deliberate committed-key case. A
+waiting-transcribe park
 that carries an enclosure pointer **always writes its park file** — §9's
 round-trip depends on the frontmatter pointer existing, show notes or not.
 
