@@ -11,7 +11,7 @@ never freehand — code writes frontmatter, prose stays yours. Frontmatter:
 id: 2026-08-18-rag-eval-harness-a1b2c3      # YYYY-MM-DD-<slug>-<shortid>; shortid = sha1 of a stable key, first 6 hex
 source: inbox                               # inbox | manual | <exporter name, e.g. discord>
 channel: inbox                              # channel / space name; `inbox` for captures
-shared_by: Lee                              # display name as seen in the source
+shared_by: Alex                             # display name as seen in the source
 date: 2026-08-18                            # date shared (capture timestamp / message timestamp, ISO)
 urls:
   - https://www.youtube.com/watch?v=...     # capture provenance — what was SHARED, verbatim;

@@ -262,54 +262,54 @@ class TestSanitization:
         exc = OSError(
             28,
             "No space left on device",
-            "/Users/leeovery/Code/dex/dex-health/enrichment/"
-            "2026-08-18-lee-mri-results-and-diagnosis-abc123/web-9f2c11.md",
+            "/Users/owner/Code/dex/dex-notes/enrichment/"
+            "2026-08-18-laravel-queue-retries-abc123/web-9f2c11.md",
         )
         body = self._body(exc, tmp_path)
         assert "- errno: 28" in body
         assert "- error: OSError" in body
         assert "message:" not in body
         assert "No space left" not in body  # the message is gone, not scrubbed
-        for leak in ("leeovery", "dex-health", "mri", "diagnosis", "web-9f2c11"):
+        for leak in ("/Users/owner", "dex-notes", "laravel", "queue-retries", "web-9f2c11"):
             assert leak not in body
 
     def test_relative_instance_paths_never_leak(self, tmp_path):
         exc = ValueError(
-            "cannot write enrichment/2026-08-19-private-family-dispute-notes-9a1b2c/"
+            "cannot write enrichment/2026-08-19-agentic-coding-notes-9a1b2c/"
             "x-112233.md: name too long"
         )
         body = self._body(exc, tmp_path, kind=Kind.X)
-        assert "private-family-dispute" not in body
+        assert "agentic-coding-notes" not in body
         assert "9a1b2c" not in body
         assert "name too long" not in body  # no residue of the message at all
         assert "<path>" not in body  # nothing to redact — the field is gone
 
     def test_urls_and_emails_never_leak(self, tmp_path):
         exc = RuntimeError(
-            "fetch of https://secret-internal.example.com/med/records?id=42 "
-            "failed for me@leeovery.com"
+            "fetch of https://ci-internal.example.com/builds/logs?id=42 "
+            "failed for owner@example.com"
         )
         body = self._body(exc, tmp_path)
-        assert "secret-internal" not in body
-        assert "leeovery" not in body
+        assert "ci-internal" not in body
+        assert "owner@example.com" not in body
         assert "failed for" not in body  # the message never made it in
 
     def test_windows_home_paths_never_leak(self, tmp_path):
-        exc = ValueError(r"bad path C:\Users\leeovery\dex-health\inbox\therapy.md")
+        exc = ValueError(r"bad path C:\Users\owner\dex-notes\inbox\claude-skills-review.md")
         body = self._body(exc, tmp_path, kind=Kind.FILE, unit_format=Format.PDF)
-        for leak in ("leeovery", "dex-health", "therapy", "bad path"):
+        for leak in (r"Users\owner", "dex-notes", "claude-skills-review", "bad path"):
             assert leak not in body
 
     def test_instance_repo_names_never_leak(self, tmp_path):
-        body = self._body(ValueError("repo dex-health unreachable"), tmp_path)
-        assert "dex-health" not in body
+        body = self._body(ValueError("repo dex-notes unreachable"), tmp_path)
+        assert "dex-notes" not in body
         assert "unreachable" not in body
 
     def test_bare_item_ids_never_leak(self, tmp_path):
         body = self._body(
-            ValueError("unknown corpus item 2026-08-19-embarrassing-note-ab12cd"), tmp_path
+            ValueError("unknown corpus item 2026-08-19-claude-agent-teardown-ab12cd"), tmp_path
         )
-        assert "embarrassing-note" not in body
+        assert "claude-agent-teardown" not in body
         assert "unknown corpus item" not in body
 
     def test_engine_frames_survive_sanitization(self, tmp_path):

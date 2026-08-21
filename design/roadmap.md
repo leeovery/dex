@@ -12,8 +12,8 @@ state formats). This file holds what's *next*, not what is.
   were ledgered `dead`, a terminal status that is never retried. The engine no
   longer does this (403/429/5xx → `blocked`, retried every run; `dead` reserved
   for 404/410/NXDOMAIN), but migration 2 seeds only `done` entries — verdicts
-  the old code condemned are not reseeded. Known case: curatedretail.uk in
-  dex-curated (2026-08-19), hand-healed into `enrichment/` while the ledger
+  the old code condemned are not reseeded. Known case: a business site in one
+  production instance (2026-08-19), hand-healed into `enrichment/` while the ledger
   still says `dead`, so healed state and ledger disagree. Close these out with
   `bin/dex enrich mark` during each instance's post-merge sync review.
 
@@ -22,7 +22,7 @@ state formats). This file holds what's *next*, not what is.
 - **Self-tuning cadence** — a scheduled run can reschedule its own task
   (`update_scheduled_task` is available to desktop scheduled sessions):
   hourly while captures flow, daily when quiet. Precondition met
-  2026-08-20: first real run history exists (dex-engineering, 17 hourly
+  2026-08-20: first real run history exists (one instance, 17 hourly
   runs — work clustered 20:05/23:05/09:05, nine consecutive overnight
   no-ops; owner interest confirmed). Shape: simple backoff with hard
   bounds — tighten after working runs, stretch after consecutive no-ops,

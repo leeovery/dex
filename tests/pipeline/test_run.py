@@ -60,7 +60,7 @@ def write_item(
         id=item_id,
         source="discord",
         channel="general",
-        shared_by="Lee",
+        shared_by="Alex",
         date=datetime.date(2026, 8, 19),
         urls=urls if urls is not None else [URL],
         kinds=["web"],
@@ -328,7 +328,7 @@ class TestParking:
         write_item(instance)
 
         def fetch(_unit):
-            raise RuntimeError("exploded at /Users/lee/base fetching https://secret.test/a")
+            raise RuntimeError("exploded at /Users/owner/base fetching https://secret.test/a")
 
         driver = FakeDriver(fetch_fn=fetch)
         ctx = make_ctx(instance, driver)
@@ -336,7 +336,7 @@ class TestParking:
         entry = entry_for(ctx)
         assert entry.status is Status.ERROR
         assert "RuntimeError" in (entry.error or "")
-        assert "/Users/lee" not in (entry.error or "")
+        assert "/Users/owner" not in (entry.error or "")
         assert "secret.test" not in (entry.error or "")
         assert "secret.test" not in report
 
@@ -1109,7 +1109,7 @@ class TestNoSourceItems:
             id=item_id,
             source="inbox",
             channel="inbox",
-            shared_by="Lee",
+            shared_by="Alex",
             date=datetime.date(2026, 8, 19),
             urls=[],
             kinds=["text"],

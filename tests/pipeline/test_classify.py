@@ -101,10 +101,10 @@ class TestClassifyConnection:
         assert classification.reason
 
     def test_reasons_are_scrubbed(self):
-        exc = OSError("cannot reach https://example.test/x from /Users/lee/repo")
+        exc = OSError("cannot reach https://example.test/x from /Users/owner/repo")
         reason = classify_connection(exc).reason
         assert "example.test" not in reason
-        assert "/Users/lee" not in reason
+        assert "/Users/owner" not in reason
 
 
 class TestScrub:
@@ -114,36 +114,36 @@ class TestScrub:
         )
 
     def test_emails_are_redacted(self):
-        assert scrub("mail me@leeovery.com now") == "mail <email> now"
+        assert scrub("mail owner@example.com now") == "mail <email> now"
 
     @pytest.mark.parametrize(
         "path",
-        ["/Users/lee/Code/x", "/home/lee/code", "C:\\Users\\lee\\code"],
+        ["/Users/owner/Code/x", "/home/owner/code", "C:\\Users\\owner\\code"],
     )
     def test_home_paths_are_redacted(self, path):
-        assert "lee" not in scrub(f"open {path} failed")
+        assert "owner" not in scrub(f"open {path} failed")
 
     def test_home_paths_are_redacted_to_end_of_token(self):
         # The tail under the home dir is owner data too: repo names, item
         # slugs, media filenames.
         out = scrub(
-            "open /Users/lee/Code/dex/dex-health/corpus/2026/"
-            "2026-08-18-private-note-abc123.md failed"
+            "open /Users/owner/Code/dex/dex-notes/corpus/2026/"
+            "2026-08-18-laravel-queue-retries-abc123.md failed"
         )
         assert out == "open <home> failed"
 
     @pytest.mark.parametrize(
         "token",
         [
-            "corpus/2026/2026-08-19-secret-note-9a1b2c.md",
-            "enrichment/2026-08-19-private-dispute-9a1b2c/x-112233.md",
+            "corpus/2026/2026-08-19-agentic-coding-notes-9a1b2c.md",
+            "enrichment/2026-08-19-claude-skills-review-9a1b2c/x-112233.md",
             "media/1ba269/owner-chosen-name.jpg",
             "inbox/20260818-101530.md",
             "cache/audio/abc.mp3",
             "raw/discord/general/messages.json",
             "state/config.json",
-            "dex-health/inbox/therapy.md",
-            "dex-health",
+            "dex-notes/inbox/claude-skills-review.md",
+            "dex-notes",
         ],
     )
     def test_instance_content_tokens_are_redacted_whole(self, token):
@@ -151,7 +151,9 @@ class TestScrub:
 
     def test_bare_item_ids_are_redacted(self):
         # Item-id slugs derive from owner notes — they are content, not ids.
-        assert scrub("unknown item 2026-08-19-secret-plan-ab12cd") == "unknown item <path>"
+        assert scrub("unknown item 2026-08-19-claude-agent-teardown-ab12cd") == (
+            "unknown item <path>"
+        )
 
     def test_lookalike_words_pass_through(self):
         # "index-" contains "dex-" only mid-word; "estate/" is not "state/".

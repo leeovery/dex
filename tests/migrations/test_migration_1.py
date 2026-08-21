@@ -31,13 +31,13 @@ def migration():
     return build(today=fixed_today, engine_version=ENGINE)
 
 
-def corpus_text(item_id, *, urls=(), kinds=("web",), enrichment=(), body="**lee**: note\n"):
+def corpus_text(item_id, *, urls=(), kinds=("web",), enrichment=(), body="**alex**: note\n"):
     lines = [
         "---",
         f"id: {item_id}",
         "source: manual",
         "channel: inbox",
-        "shared_by: lee",
+        "shared_by: alex",
         "date: 2026-05-01",
     ]
     if urls:
@@ -59,7 +59,7 @@ def write_ledger(root, records):
 
 class TestCorpusRenames:
     def test_kinds_and_enrichment_listing_renamed_body_byte_exact(self, tmp_path, migration):
-        body = "**lee** (2026-05-01):\ntrailing spaces  \n\nunicode — em\n"
+        body = "**alex** (2026-05-01):\ntrailing spaces  \n\nunicode — em\n"
         path = tmp_path / "corpus" / "2026" / "2026-05-01-item-a1b2c3.md"
         path.parent.mkdir(parents=True)
         path.write_text(
@@ -424,7 +424,7 @@ class TestLedgerTranslation:
             "kind": "blog",
             "status": "done",
             "date": "2026-05-01",
-            "healed_by": "lee",
+            "healed_by": "alex",
         }
         path = write_ledger(tmp_path, [record])
         report = migration.apply(tmp_path)
@@ -528,7 +528,7 @@ class TestLedgerTranslation:
 
 class TestConfigRename:
     OLD = (
-        '{\n  "name_map": {"u1": "lee"},\n  "internal_domains": ["a.test"],\n'
+        '{\n  "name_map": {"u1": "alex"},\n  "internal_domains": ["a.test"],\n'
         '  "noise_prefixes": ["fwd:"]\n}\n'
     )
     # What the migration writes: OLD minus name_map (dropped, not carried).

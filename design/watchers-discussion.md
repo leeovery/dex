@@ -10,11 +10,12 @@ Relation to the pipeline design: this sits entirely **upstream** of it. The
 interface between the two systems is the capture protocol (one `.md` in
 `inbox/`); the pipeline design needs zero changes to accommodate any of
 this, which was checked deliberately. Same discussion transcript as the
-pipeline design (path at the top of that document).
+pipeline design (held locally by the owner, as noted at the top of that
+document).
 
 ---
 
-## The core idea (Lee's framing)
+## The core idea (the owner's framing)
 
 Separate **feeding items in** from **processing them**. The phone shortcut
 is not special — it's just the first mechanism we built for putting
@@ -25,7 +26,7 @@ into a session and saying "queue this" is the same act. All of them should
 converge on one artifact — the inbox capture file — and one downstream
 process.
 
-Consequences Lee named:
+Consequences the owner named:
 
 - There could be many feeders, attached as required, at setup or any time:
   a Discord channel, an Instagram saved folder ("Dex Engineering"), an X
@@ -63,7 +64,7 @@ Consequences Lee named:
   folder) in config, creds in `.env`.
 - Watchers run inside the dex-run session, right after sync/pull: poll,
   write captures, then inbox materialize and everything downstream proceeds
-  as designed. No second schedule. **(Lee: agreed.)**
+  as designed. No second schedule. **(Owner: agreed.)**
 - Staleness becomes honest machinery instead of magic: a configured watcher
   owns its source, has a cursor and an `available()`, and reports its own
   state ("discord: unavailable (no exporter), cursor 2d old"). This
@@ -72,7 +73,7 @@ Consequences Lee named:
   watcher as demoting `normalize` to a "bulk history tool for initial
   backfill".
 
-## Lee's refinements and rulings (this discussion)
+## The owner's refinements and rulings (this discussion)
 
 1. **A watcher is not "now-forward". Discord is a watcher, not history.**
    "Watch this place — this box, this channel — and import anything you
@@ -97,9 +98,9 @@ Consequences Lee named:
    the system needs a way to make attachable watchers **discoverable**
    (what could I attach?). How, is an open question.
 5. **Naming is open.** "Importer" suggests bulk; "watcher" suggests
-   new-only; Lee leans **watcher** with the corrected meaning from (1), but
-   wants the naming discussed. (Candidates floated for later: watcher,
-   source, feed, tap, collector.)
+   new-only; the owner leans **watcher** with the corrected meaning from
+   (1), but wants the naming discussed. (Candidates floated for later:
+   watcher, source, feed, tap, collector.)
 
 ## Claude's positions logged for the future discussion
 

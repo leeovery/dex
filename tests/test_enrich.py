@@ -55,11 +55,11 @@ class TestParser:
     def test_item_new_takes_capture_slug_shared_by(self):
         args = build_parser().parse_args(
             ["item", "new", "inbox/20260818-101530.md", "--slug", "great-post",
-             "--shared-by", "Lee"]
+             "--shared-by", "Alex"]
         )
         assert (args.command, args.item_command) == ("item", "new")
         assert str(args.capture) == "inbox/20260818-101530.md"
-        assert (args.slug, args.shared_by) == ("great-post", "Lee")
+        assert (args.slug, args.shared_by) == ("great-post", "Alex")
 
     def test_item_requires_a_subcommand(self):
         with pytest.raises(SystemExit):
@@ -107,7 +107,7 @@ class TestMain:
         capture = instance.root / "inbox" / "20260818-101530.md"
         capture.parent.mkdir()
         capture.write_text("https://example.test/post\n\nwhy I saved it\n")
-        main(["item", "new", str(capture), "--shared-by", "Lee"])
+        main(["item", "new", str(capture), "--shared-by", "Alex"])
         out = capsys.readouterr().out
         assert out.startswith("created corpus/2026/")
         assert len(list(instance.corpus_dir.glob("*/*.md"))) == 1
