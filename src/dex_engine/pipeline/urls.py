@@ -105,10 +105,14 @@ def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
         repo_path: The repo-relative path from a ``file:`` work key.
 
     Returns:
-        The resolved path, or ``None`` when it escapes the root — the
-        caller parks the unit; the bytes are never read.
+        The resolved path, or ``None`` when it escapes the root or cannot
+        be a path at all (an embedded NUL byte) — the caller parks the
+        unit; the bytes are never read.
     """
-    resolved = (root / repo_path).resolve()
+    try:
+        resolved = (root / repo_path).resolve()
+    except ValueError:
+        return None
     if not resolved.is_relative_to(root.resolve()):
         return None
     return resolved

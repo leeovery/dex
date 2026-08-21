@@ -230,6 +230,18 @@ class TestSeedAndDone:
             assert "outside the instance root" in (entry.reason or "")
         assert "outside the instance root" in report  # parked rows are printed
 
+    def test_media_path_with_nul_byte_parks_manual_and_the_run_completes(self, instance):
+        # A NUL byte cannot resolve to any path; the poisoned entry must
+        # park as a bad seed while the rest of the corpus still runs.
+        write_item(instance, media=["media/bad\x00name.pdf"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)  # completes — no abort
+        entries = ledger.load(instance.ledger_path)
+        poisoned = entries[work_hash("file:media/bad\x00name.pdf")]
+        assert poisoned.status is Status.MANUAL
+        assert poisoned.kind is Kind.FILE
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731
