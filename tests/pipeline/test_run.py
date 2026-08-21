@@ -992,6 +992,22 @@ class TestVerbs:
         with pytest.raises(ValueError, match="reason"):
             run_mod.mark(ctx, URL, Status.MANUAL)
 
+    def test_mark_normalizes_a_multiline_reason_so_the_item_view_still_renders(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.mark(ctx, URL, Status.MANUAL, reason="paywalled;\nrescue\tby hand")
+        assert entry_for(ctx).reason == "paywalled; rescue by hand"
+        view = run_mod.status_report(ctx, item_id=ITEM)  # would raise PayloadError on \n
+        assert "paywalled; rescue by hand" in " ".join(view.split())
+
+    def test_mark_whitespace_only_reason_on_manual_is_loud_not_blank(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        with pytest.raises(ValueError, match="reason"):
+            run_mod.mark(ctx, URL, Status.MANUAL, reason=" \n\t ")
+
     def test_mark_error_is_refused(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="engine outcomes"):

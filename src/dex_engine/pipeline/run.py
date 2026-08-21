@@ -1497,6 +1497,11 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     """
     if status is Status.ERROR:
         raise ValueError("mark cannot write 'error' — errors are engine outcomes, not heals")
+    if reason is not None:
+        # Session-typed reasons arrive with tabs and newlines; the ledger
+        # schema is single-line, so the verb normalizes exactly as the
+        # scrubber does for engine-produced reasons.
+        reason = " ".join(reason.split()) or None
     drain = _Drain(ctx=ctx)
     canonical, unit_hash = drain.identify(url)
     prior = drain.entries.get(unit_hash)

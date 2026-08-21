@@ -376,6 +376,12 @@ class TestLedgerEntryReason:
         with pytest.raises(ValueError, match="forbidden"):
             entry(status=Status.ERROR, error="scrubbed: boom", reason="also a reason")
 
+    def test_reason_is_single_line_for_every_writer(self):
+        # Reasons render on single-line report surfaces; a newline written
+        # here would brick the item-status view at read time instead.
+        with pytest.raises(ValueError, match="single line"):
+            entry(status=Status.MANUAL, reason="paywalled;\nrescue by hand")
+
 
 class TestMigrationReport:
     def test_defaults(self):

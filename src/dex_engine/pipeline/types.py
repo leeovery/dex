@@ -507,6 +507,10 @@ def _validate_entry_outcome_fields(entry: LedgerEntry) -> None:
         raise ValueError(f"error message is error-only, got status {entry.status!r}")
     if entry.status in _REASON_REQUIRED and not entry.reason:
         raise ValueError(f"status {entry.status!r} requires a stated reason")
+    if entry.reason is not None and "\n" in entry.reason:
+        # Reasons render on single-line report surfaces; every writer
+        # (scrub, the mark verb) normalizes before construction.
+        raise ValueError(f"reason must be a single line: {entry.reason!r}")
     if entry.status in _REASON_FORBIDDEN and entry.reason is not None:
         raise ValueError(
             f"reason is forbidden on status {entry.status!r} — error entries carry "
