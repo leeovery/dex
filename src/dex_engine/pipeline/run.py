@@ -1642,16 +1642,27 @@ def compact(ctx: RunContext) -> str:
 _YAML_UNSAFE = ":#[]{}&*!|>%@`\"'"
 
 # Values a YAML 1.1 reader (Obsidian's among them) would retype away from
-# the intended string: boolean/null words, and int/float lookalikes in
-# every 1.1 spelling (sign, underscores, hex/octal/binary, exponent,
-# .inf/.nan). Leading `-`/`?`/`,` are indicator characters that make the
-# line invalid or restructure it. All are emitted JSON-quoted.
+# the intended string: boolean/null words, int/float lookalikes in every
+# 1.1 spelling (sign, underscores, hex/octal/binary, exponent, .inf/.nan),
+# and date/timestamp lookalikes. Leading `-`/`?`/`,` are indicator
+# characters that make the line invalid or restructure it. All are
+# emitted JSON-quoted.
 _YAML_KEYWORDS = frozenset({"true", "false", "yes", "no", "on", "off", "null", "~"})
 _YAML_NUMBER_RE = re.compile(
     r"[-+]?(?:\.inf|\.nan|0x[0-9a-f_]+|0b[01_]+|0o?[0-7_]+"
     r"|[0-9][0-9_]*(?:\.[0-9_]*)?(?:e[-+]?[0-9]+)?"
     r"|\.[0-9][0-9_]*(?:e[-+]?[0-9]+)?)",
     re.IGNORECASE,
+)
+# The 1.1 timestamp resolver's shape, mirrored: a bare YYYY-MM-DD retypes
+# to a date and a full timestamp to a datetime — and a shape-matching but
+# calendar-invalid value (2026-08-99) makes those readers RAISE, so the
+# match is on shape alone, never calendar validity.
+_YAML_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}"
+    r"(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?"
+    r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?"
 )
 
 
@@ -1677,6 +1688,7 @@ def _yaml_value(value: str | int) -> str:
         or any(ch in value for ch in _YAML_UNSAFE)
         or value.lower() in _YAML_KEYWORDS
         or _YAML_NUMBER_RE.fullmatch(value) is not None
+        or _YAML_TIMESTAMP_RE.fullmatch(value) is not None
     )
     return json.dumps(value, ensure_ascii=False) if needs_quoting else value
 

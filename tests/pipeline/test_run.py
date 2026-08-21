@@ -1593,9 +1593,9 @@ class TestRedetection:
 
 class TestYamlValue:
     # Values a YAML 1.1 reader would retype (booleans, nulls, numbers in
-    # every 1.1 spelling) or that break/restructure the line (leading
-    # indicators, padding): each must survive the frontmatter round trip
-    # as the intended string.
+    # every 1.1 spelling, dates/timestamps) or that break/restructure the
+    # line (leading indicators, padding): each must survive the
+    # frontmatter round trip as the intended string.
     RETYPED = (
         "- 10 lessons",
         "? maybe",
@@ -1623,14 +1623,17 @@ class TestYamlValue:
         "-.Inf",
         ".NaN",
         "20260810",
+        "2026-08-21",
+        "2026-08-99",  # shape-matching but calendar-invalid: 1.1 readers RAISE on it bare
+        "2026-8-21T10:00:00",
+        "2026-08-21 10:00:00",
+        "2001-12-14 21:59:43.10 -5",
         " padded ",
     )
 
     def test_retyping_and_indicator_values_round_trip(self, tmp_path):
         for value in self.RETYPED:
-            text = _render_enrichment(
-                "https://example.test/post", TODAY, {"title": value}, "body"
-            )
+            text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
             record = tmp_path / "web-abc123.md"
             record.write_text(text)
             fields, _ = read_enrichment(record)
@@ -1642,6 +1645,13 @@ class TestYamlValue:
 
     def test_plain_prose_stays_unquoted(self):
         for value in ("Ledgers at Scale", "10 lessons from prod", "a-b (c)", "v1.2 notes"):
+            assert _yaml_value(value) == value
+
+    def test_timestamp_near_misses_stay_bare(self):
+        # Colon-free shapes the 1.1 timestamp resolver rejects — these
+        # load as strings already, so they need no quotes. (Anything with
+        # a time part carries ':' and is quoted by the unsafe-char rule.)
+        for value in ("2026-8-15", "2026-08", "21-08-2026"):
             assert _yaml_value(value) == value
 
     def test_ints_are_emitted_bare(self):
