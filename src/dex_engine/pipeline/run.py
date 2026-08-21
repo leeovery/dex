@@ -279,7 +279,19 @@ class _Drain:
     def seed_from_corpus(self) -> None:
         """Every captured URL and media file becomes a ledger entry from birth."""
         for path in sorted(self.ctx.instance.corpus_dir.glob("*/*.md")):
-            item = corpus.read_item(path)
+            try:
+                item = corpus.read_item(path)
+            except corpus.CorpusSchemaError as e:
+                # A nonconforming item (hand-healed file, unfinished
+                # migration repair) is judgment work: named on the report,
+                # skipped this run, never fatal to seeding.
+                rel = path.relative_to(self.ctx.instance.root)
+                detail = " ".join(str(e).removeprefix(f"{path}: ").split())
+                self.notes.append(
+                    f"corpus item {rel} is unreadable — {detail} — "
+                    "skipped this run; repair the file by hand"
+                )
+                continue
             self.item_paths[item.id] = path
             self.item_status[item.id] = item.status
             for url in item.urls:
@@ -289,7 +301,7 @@ class _Drain:
                     # One malformed capture URL parks THAT URL; it never
                     # aborts the run (frontmatter is immutable provenance —
                     # garbage in it is judgment work, hence manual).
-                    self._park_bad_seed(item.id, url, e)
+                    self.park_bad_seed(item.id, url, e)
             for repo_path in item.media:
                 self._seed_media_file(item.id, repo_path)
 
@@ -323,8 +335,11 @@ class _Drain:
             )
         )
 
-    def _park_bad_seed(self, item_id: str, url: str, exc: ValueError) -> None:
-        unit_hash = work_hash(url)  # canonicalization failed — key on the raw URL
+    def park_bad_seed(
+        self, item_id: str, url: str, exc: ValueError, *, what: str = "capture URL"
+    ) -> None:
+        """Park one unfetchable URL manual — the bad-seed containment."""
+        unit_hash = work_hash(url)  # canonicalization may have failed — key on the raw URL
         if unit_hash in self.entries:
             return
         self.record(
@@ -336,7 +351,7 @@ class _Drain:
                 status=Status.MANUAL,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
-                reason=f"unfetchable capture URL: {scrub(str(exc))}",
+                reason=f"unfetchable {what}: {scrub(str(exc))}",
             ),
             count=True,
         )
@@ -1292,7 +1307,13 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
 def _admit_fetch(
     drain: _Drain, item_id: str, url: str, parent: LedgerEntry, *, force: bool
 ) -> str | None:
-    canonical, unit_hash = drain.identify(url)
+    try:
+        canonical, unit_hash = drain.identify(url)
+    except ValueError as e:
+        # An uncanonicalizable URL is the same bad-seed class the corpus
+        # seeding path parks — one bad URL never aborts the batch.
+        drain.park_bad_seed(item_id, url, e, what="fetch URL")
+        return None
     existing = drain.entries.get(unit_hash)
     if existing is not None:
         if existing.item != item_id:
@@ -1335,7 +1356,13 @@ def _admit_fetch(
         )
         if not force:
             return None
-    detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
+    try:
+        detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
+    except ValueError as e:
+        # The sniff HEAD refuses non-http(s) URLs; park the URL rather
+        # than abort a batch whose earlier URLs are already ledgered.
+        drain.park_bad_seed(item_id, url, e, what="fetch URL")
+        return None
     drain.record(
         LedgerEntry(
             hash=unit_hash,
