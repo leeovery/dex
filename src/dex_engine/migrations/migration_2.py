@@ -20,9 +20,19 @@ seeded — old ``error`` entries already retry under the new-engine rule, and
 The seed is queue seeding with provenance, one of the two permitted acts:
 the existing URL-keyed work unit re-enters as ``{status: queued, rerun:
 true, via: migration-2}`` — a real URL through the front door; the pipeline
-does the actual work with current code. Idempotent: seeds append to the
-ledger, last-per-hash wins, so a hash whose latest line is already the
-seed is no longer ``done`` and is never seeded twice.
+does the actual work with current code. Each seed carries the CURRENT
+engine's identity: the stored URL is re-canonicalized through the driver
+registry (the same seam the run layer's seeding uses) and a changed
+canonical re-keys the seed under the recomputed url + hash, so the next
+run's corpus seeding dedupes against it instead of raising the same work
+fresh under the new key — and the drain fetches once. Where identity has
+changed (x is id-keyed now), the superseded ``done`` line stays under its
+old hash as inert history.
+
+Idempotent both ways: an identity-unchanged seed appends under the same
+hash and last-per-hash wins (the latest line is no longer ``done``, so it
+never seeds twice); a re-keyed identity already present in the ledger —
+from a prior apply or a corpus seed — is never seeded over.
 """
 
 import datetime
@@ -30,7 +40,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dex_engine.migrations import MigrationError
+from dex_engine.pipeline.detect import canonical_url
 from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line
+from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import (
     Kind,
     LedgerEntry,
@@ -39,6 +51,7 @@ from dex_engine.pipeline.types import (
     Status,
     parse_version,
 )
+from dex_engine.pipeline.urls import work_hash
 
 __all__ = ["RerunSeed", "build"]
 
@@ -100,15 +113,29 @@ class RerunSeed:
         if not path.exists():
             return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
         latest = _latest_per_hash(path, skipped)
+        tracked = set(latest)
         counts = {Kind.X: 0, Kind.WEB: 0}
         for entry in latest.values():
             if not _qualifies(entry, skipped):
                 continue
+            url, unit_hash = entry.url, entry.hash
+            canonical = canonical_url(entry.url, DRIVERS)
+            if canonical != entry.url:
+                # Canonicalization moved since this line was written: the
+                # seed must carry the CURRENT identity, or the next run
+                # would raise the same work fresh under the new key while
+                # also draining this rerun — every such URL fetched twice.
+                url, unit_hash = canonical, work_hash(canonical)
+                if unit_hash in tracked:
+                    # The re-keyed identity is already tracked (a prior
+                    # apply, a corpus seed, or another old spelling of the
+                    # same unit) — seeding over it would stomp its status.
+                    continue
             append(
                 path,
                 LedgerEntry(
-                    hash=entry.hash,
-                    url=entry.url,
+                    hash=unit_hash,
+                    url=url,
                     item=entry.item,
                     kind=entry.kind,
                     status=Status.QUEUED,
@@ -118,6 +145,7 @@ class RerunSeed:
                     rerun=True,
                 ),
             )
+            tracked.add(unit_hash)
             counts[entry.kind] += 1
         seeded = counts[Kind.X] + counts[Kind.WEB]
         if seeded:

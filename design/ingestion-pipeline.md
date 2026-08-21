@@ -748,8 +748,16 @@ Shipping migrations for this rewrite:
      walks up and re-harvests, so e.g. a thread's YouTube link now becomes
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
-   the new-engine rule, and `manual` entries stay parked for judgment. The
-   draining session re-fetches with current code (stored text is the
+   the new-engine rule, and `manual` entries stay parked for judgment.
+   Each seed carries the **current** engine's identity: the stored URL is
+   re-canonicalized through the driver registry (the same seam run-layer
+   seeding uses), and a changed canonical re-keys the seed under the
+   recomputed url + hash — so corpus seeding dedupes against the seed
+   instead of raising the same work fresh under the new key, and the drain
+   fetches once. Where identity has changed (x is id-keyed), the
+   superseded `done` line stays under its old hash as inert history; a
+   re-keyed identity already present in the ledger is never seeded over.
+   The draining session re-fetches with current code (stored text is the
    fallback for URLs now dead) and completes the cognitive steps from the
    run report, same as any capture. Legacy items whose `urls:` lists carry
    hand-walked thread parents keep them (frontmatter is immutable

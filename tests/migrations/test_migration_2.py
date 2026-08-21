@@ -5,10 +5,16 @@ import json
 
 import pytest
 
+from dex_engine.drivers.x import XDriver
 from dex_engine.migrations import MigrationError
 from dex_engine.migrations.migration_2 import build
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.types import Kind, LedgerEntry, Status
+from dex_engine.pipeline.urls import work_hash
+from tests.conftest import FakeDriver
+from tests.drivers.conftest import FakeTransport, json_response
+from tests.pipeline.test_run import ITEM, make_ctx, write_item
 
 ENGINE = "0.5.0"
 TODAY = datetime.date(2026, 8, 20)
@@ -177,3 +183,115 @@ class TestIdempotency:
         second_report = migration.apply(tmp_path)
         assert path.read_text() == first
         assert second_report.actions == []
+
+
+OLD_X_URL = "https://x.com/carol/status/300"  # the pre-rewrite canonical form
+NEW_X_URL = "https://x.com/i/status/300"  # the id-keyed identity
+
+
+def stored_done(url, *, kind, item="2026-05-01-item-a1b2c3"):
+    unit_hash = work_hash(url)
+    return LedgerEntry(
+        hash=unit_hash,
+        url=url,
+        item=item,
+        kind=kind,
+        status=Status.DONE,
+        engine="0.0.1",
+        date=datetime.date(2026, 5, 1),
+        path=f"enrichment/{item}/{kind.value}-{unit_hash[:6]}.md",
+    )
+
+
+class TestIdentityRekey:
+    """Seeds carry the CURRENT engine's identity, not the frozen legacy hash."""
+
+    def test_pre_rewrite_x_entry_requeues_under_the_id_keyed_identity(self, tmp_path, migration):
+        path = write_entries(tmp_path, [stored_done(OLD_X_URL, kind=Kind.X)])
+        migration.apply(tmp_path)
+        seed = ledger.load(path)[work_hash(NEW_X_URL)]
+        assert seed.status is Status.QUEUED
+        assert seed.url == NEW_X_URL
+        assert seed.kind is Kind.X
+        assert seed.rerun is True
+        assert seed.via == "migration-2"
+
+    def test_the_superseded_done_line_stays_as_inert_history(self, tmp_path, migration):
+        path = write_entries(tmp_path, [stored_done(OLD_X_URL, kind=Kind.X)])
+        migration.apply(tmp_path)
+        old = ledger.load(path)[work_hash(OLD_X_URL)]
+        assert old.status is Status.DONE
+        assert old.engine == "0.0.1"  # untouched — history, not work
+
+    def test_web_identity_is_unchanged_so_the_requeue_is_hash_stable(self, tmp_path, migration):
+        url = "https://blog.example.test/post"
+        path = write_entries(tmp_path, [stored_done(url, kind=Kind.WEB)])
+        migration.apply(tmp_path)
+        entries = ledger.load(path)
+        assert set(entries) == {work_hash(url)}  # no second key was minted
+        seed = entries[work_hash(url)]
+        assert seed.status is Status.QUEUED
+        assert seed.url == url
+
+    def test_two_old_spellings_of_one_post_seed_once(self, tmp_path, migration):
+        # Pre-rewrite, x.com and twitter.com hashed separately; both re-key
+        # to the one id-keyed identity and the drain fetches once.
+        path = write_entries(
+            tmp_path,
+            [
+                stored_done(OLD_X_URL, kind=Kind.X),
+                stored_done("https://twitter.com/carol/status/300", kind=Kind.X),
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[work_hash(NEW_X_URL)].status is Status.QUEUED
+        assert any("1 x (thread walk-up)" in action for action in report.actions)
+
+    def test_second_apply_is_a_no_op_after_the_rekey(self, tmp_path, migration):
+        # The old done line stays latest under its old hash forever, so
+        # idempotency here rests on the re-keyed identity being tracked.
+        path = write_entries(tmp_path, [stored_done(OLD_X_URL, kind=Kind.X)])
+        migration.apply(tmp_path)
+        first = path.read_text()
+        second_report = migration.apply(tmp_path)
+        assert path.read_text() == first
+        assert second_report.actions == []
+
+
+class TestSeedDedupe:
+    def test_corpus_seeding_dedupes_against_the_rekeyed_seed(self, instance, migration):
+        # The rollout property: after migration 2, the next run must NOT
+        # raise the same x post fresh under the new hash while also
+        # draining the rerun — one queued unit, one fetch.
+        ledger.append(instance.ledger_path, stored_done(OLD_X_URL, kind=Kind.X, item=ITEM))
+        migration.apply(instance.root)
+        write_item(instance, urls=[OLD_X_URL])
+        tweet = {
+            "id": "300",
+            "text": "thread body " * 30,
+            "created_at": "Thu Aug 20 10:00:00 +0000 2026",
+            "author": {"name": "Carol Chen", "screen_name": "carol"},
+            "replying_to": None,
+            "replying_to_status": None,
+        }
+        transport = FakeTransport(
+            {"https://api.fxtwitter.com/status/300": json_response({"tweet": tweet})}
+        )
+        ctx = make_ctx(instance, FakeDriver(), drivers=[XDriver(transport=transport)])
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert set(entries) == {work_hash(OLD_X_URL), work_hash(NEW_X_URL)}
+        assert entries[work_hash(NEW_X_URL)].status is Status.DONE
+        assert entries[work_hash(OLD_X_URL)].engine == "0.0.1"  # inert history
+        lines = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip()
+        ]
+        queued = [
+            line
+            for line in lines
+            if line["hash"] == work_hash(NEW_X_URL) and line["status"] == "queued"
+        ]
+        assert len(queued) == 1  # the migration seed; corpus seeding minted no second unit
+        assert transport.calls == [("GET", "https://api.fxtwitter.com/status/300")]
