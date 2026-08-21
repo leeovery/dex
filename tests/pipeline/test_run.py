@@ -24,9 +24,12 @@ from dex_engine.pipeline.run import (
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
+    _render_enrichment,
+    _yaml_value,
     is_drainable,
     no_providers,
 )
+from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
     Child,
@@ -1581,3 +1584,60 @@ class TestRedetection:
         # The next run drains the corrected unit.
         run_mod.run(make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport)))
         assert entry_for(ctx, self.PDF_URL).status is Status.DONE
+
+
+class TestYamlValue:
+    # Values a YAML 1.1 reader would retype (booleans, nulls, numbers in
+    # every 1.1 spelling) or that break/restructure the line (leading
+    # indicators, padding): each must survive the frontmatter round trip
+    # as the intended string.
+    RETYPED = (
+        "- 10 lessons",
+        "? maybe",
+        ", and more",
+        "yes",
+        "No",
+        "TRUE",
+        "false",
+        "on",
+        "Off",
+        "null",
+        "~",
+        "42",
+        "-42",
+        "+42",
+        "3.14",
+        ".5",
+        "1e5",
+        "1_000",
+        "0x1A",
+        "0o17",
+        "0b101",
+        "05",
+        ".inf",
+        "-.Inf",
+        ".NaN",
+        "20260810",
+        " padded ",
+    )
+
+    def test_retyping_and_indicator_values_round_trip(self, tmp_path):
+        for value in self.RETYPED:
+            text = _render_enrichment(
+                "https://example.test/post", TODAY, {"title": value}, "body"
+            )
+            record = tmp_path / "web-abc123.md"
+            record.write_text(text)
+            fields, _ = read_enrichment(record)
+            assert fields["title"] == value, value
+
+    def test_retyping_shapes_are_emitted_quoted(self):
+        for value in self.RETYPED:
+            assert _yaml_value(value) == json.dumps(value, ensure_ascii=False), value
+
+    def test_plain_prose_stays_unquoted(self):
+        for value in ("Ledgers at Scale", "10 lessons from prod", "a-b (c)", "v1.2 notes"):
+            assert _yaml_value(value) == value
+
+    def test_ints_are_emitted_bare(self):
+        assert _yaml_value(42) == "42"

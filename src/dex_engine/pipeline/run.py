@@ -14,6 +14,7 @@ injected clock and engine version.
 import dataclasses
 import datetime
 import json
+import re
 import time
 import urllib.parse
 from collections import deque
@@ -1609,6 +1610,19 @@ def compact(ctx: RunContext) -> str:
 
 _YAML_UNSAFE = ":#[]{}&*!|>%@`\"'"
 
+# Values a YAML 1.1 reader (Obsidian's among them) would retype away from
+# the intended string: boolean/null words, and int/float lookalikes in
+# every 1.1 spelling (sign, underscores, hex/octal/binary, exponent,
+# .inf/.nan). Leading `-`/`?`/`,` are indicator characters that make the
+# line invalid or restructure it. All are emitted JSON-quoted.
+_YAML_KEYWORDS = frozenset({"true", "false", "yes", "no", "on", "off", "null", "~"})
+_YAML_NUMBER_RE = re.compile(
+    r"[-+]?(?:\.inf|\.nan|0x[0-9a-f_]+|0b[01_]+|0o?[0-7_]+"
+    r"|[0-9][0-9_]*(?:\.[0-9_]*)?(?:e[-+]?[0-9]+)?"
+    r"|\.[0-9][0-9_]*(?:e[-+]?[0-9]+)?)",
+    re.IGNORECASE,
+)
+
 
 def _render_enrichment(
     url: str, fetched: datetime.date, meta: dict[str, str | int | None], body: str
@@ -1626,7 +1640,12 @@ def _yaml_value(value: str | int) -> str:
     if isinstance(value, int):
         return str(value)
     needs_quoting = (
-        value != value.strip() or "\n" in value or any(ch in value for ch in _YAML_UNSAFE)
+        value != value.strip()
+        or "\n" in value
+        or value[:1] in ("-", "?", ",")
+        or any(ch in value for ch in _YAML_UNSAFE)
+        or value.lower() in _YAML_KEYWORDS
+        or _YAML_NUMBER_RE.fullmatch(value) is not None
     )
     return json.dumps(value, ensure_ascii=False) if needs_quoting else value
 

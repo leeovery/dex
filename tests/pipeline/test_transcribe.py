@@ -130,7 +130,8 @@ class TestYoutubeDrain:
         assert "via: whisper-local" in content
         assert "model: medium" in content
         assert "duration_min: 42" in content
-        assert "upload_date: 20260810" in content  # captions-path parity
+        # Captions-path parity; quoted — bare it would retype as a YAML int.
+        assert 'upload_date: "20260810"' in content
         assert "## Description" in content
         assert "## Transcript\n\nThe transcript text." in content
         # Audio lifecycle: deleted on successful transcription.
