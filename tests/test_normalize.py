@@ -223,6 +223,17 @@ class TestRegeneration:
         run_normalize(instance, Config())
         assert path.read_bytes() == first
 
+    def test_unchanged_items_are_not_rewritten_on_disk(self, instance):
+        # Idempotent re-runs must not churn every corpus file through a
+        # temp-write-and-replace: an untouched item keeps its very inode.
+        write_export(instance, [message("m1", "https://example.test/post\nnote")])
+        run_normalize(instance, Config())
+        (path,) = instance.corpus_dir.glob("*/*.md")
+        before = path.stat()
+        run_normalize(instance, Config())
+        after = path.stat()
+        assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+
     def test_regeneration_preserves_enricher_owned_fields(self, instance):
         write_export(instance, [message("m1", "https://example.test/post\nnote")])
         run_normalize(instance, Config())

@@ -15,6 +15,7 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
 from dex_engine.pipeline.registry import build_drivers
+from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
@@ -523,6 +524,47 @@ class TestRunAutoDrain:
         done = [e for e in entries.values() if e.status is Status.DONE]
         assert len(done) == TRANSCRIBE_RUN_CAP  # never monopolize a machine
         assert f"transcription capped at {TRANSCRIBE_RUN_CAP}" in report
+
+    def test_cap_deferrals_do_not_burn_the_run_limit(self, instance):
+        # A waiting-transcribe backlog ahead of fresh captures: units the
+        # cap defers are no-ops and must not spend `--limit`, or the fresh
+        # work behind them never gets fetched.
+        waiting = [f"https://youtube.com/watch?v=v{n:02d}" for n in range(TRANSCRIBE_RUN_CAP + 4)]
+        fresh = [f"https://example.test/post-{n}" for n in range(3)]
+        write_item(instance, urls=waiting)
+        write_item(instance, "2026-08-19-fresh-99aa00", urls=fresh)
+        for url in waiting:
+            seed_waiting(instance, url)
+        ctx = transcribe_ctx(instance)
+        run_mod.run(ctx, limit=TRANSCRIBE_RUN_CAP + 5)
+        entries = ledger.load(instance.ledger_path)
+        transcribed = [
+            e for e in entries.values() if e.kind is Kind.YOUTUBE and e.status is Status.DONE
+        ]
+        assert len(transcribed) == TRANSCRIBE_RUN_CAP
+        fetched = [e for e in entries.values() if e.kind is Kind.WEB and e.status is Status.DONE]
+        assert len(fetched) == len(fresh)  # deferrals spent none of the limit
+
+    def test_unknown_kind_body_dispatch_is_loud_never_the_podcast_body(self, instance, monkeypatch):
+        # The body pick must be total over the same kinds _acquire_audio
+        # admits — a kind added to acquisition alone fails loudly instead of
+        # silently taking the podcast body.
+        url = "https://example.test/audio-page"
+        write_item(instance, urls=[url])
+        seed_waiting(instance, url, kind=Kind.WEB)
+        audio = instance.cache_dir / "audio" / "a.mp3"
+        audio.parent.mkdir(parents=True)
+        audio.write_bytes(b"fake-audio")
+        monkeypatch.setattr(
+            _Drain,
+            "_acquire_audio",
+            lambda _self, _entry: Acquired(audio=audio, meta={}, prompt="", prefix=""),
+        )
+        ctx = transcribe_ctx(instance)
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(url)]
+        assert entry.status is Status.ERROR
+        assert "no transcript body for kind" in (entry.error or "")
 
     def test_cognitive_jobs_surface_on_the_report_never_drain(self, instance):
         # Jobs resolving to the cognitive floor are listed for the

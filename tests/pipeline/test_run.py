@@ -2,8 +2,10 @@
 
 import dataclasses
 import datetime
+import io
 import json
 import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -19,12 +21,14 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
 from dex_engine.pipeline.run import (
+    _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
     MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
     _render_enrichment,
+    _sniff_bytes,
     _yaml_value,
     is_drainable,
     no_providers,
@@ -34,6 +38,7 @@ from dex_engine.pipeline.types import (
     Asset,
     Child,
     Config,
+    Format,
     Instance,
     Kind,
     LedgerEntry,
@@ -1641,3 +1646,56 @@ class TestYamlValue:
 
     def test_ints_are_emitted_bare(self):
         assert _yaml_value(42) == "42"
+
+
+class TestMediaSniff:
+    def docx_bytes(self, padding: int = 20_000) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", "x" * padding)
+        return buf.getvalue()
+
+    def test_sniff_bytes_is_bounded_for_non_zip_files(self, tmp_path):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100_000)
+        assert len(_sniff_bytes(clip)) == _SNIFF_PREFIX_BYTES
+
+    def test_zip_containers_read_fully_for_their_package_identity(self, tmp_path):
+        # A ZIP's package identity lives in the central directory at the
+        # END of the file — a prefix would misdetect every large OOXML/ODF.
+        data = self.docx_bytes()
+        assert len(data) > _SNIFF_PREFIX_BYTES
+        doc = tmp_path / "big.docx"
+        doc.write_bytes(data)
+        assert _sniff_bytes(doc) == data
+
+    def test_small_and_missing_files_read_as_before(self, tmp_path):
+        small = tmp_path / "pointer.pdf"
+        small.write_bytes(b"%PDF-1.7 tiny")
+        assert _sniff_bytes(small) == b"%PDF-1.7 tiny"
+        assert _sniff_bytes(tmp_path / "absent.pdf") == b""
+
+    def test_seeding_outcomes_identical_for_large_files(self, instance):
+        media_dir = instance.root / "media" / "aaa111"
+        media_dir.mkdir(parents=True)
+        (media_dir / "paper.pdf").write_bytes(b"%PDF-1.7 " + b"x" * 50_000)
+        (media_dir / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 50_000)
+        (media_dir / "big.docx").write_bytes(self.docx_bytes())
+        write_item(
+            instance,
+            urls=[],
+            media=[
+                "media/aaa111/paper.pdf",
+                "media/aaa111/clip.mp4",
+                "media/aaa111/big.docx",
+            ],
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash("file:media/aaa111/paper.pdf")].format is Format.PDF
+        assert entries[work_hash("file:media/aaa111/big.docx")].format is Format.DOCX
+        # Images/video still never become file work — and no longer cost a
+        # full read every run to say so.
+        assert work_hash("file:media/aaa111/clip.mp4") not in entries
