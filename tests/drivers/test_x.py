@@ -5,6 +5,7 @@ import json
 from dex_engine.drivers.x import MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import (
     FakeTransport,
     body_of,
@@ -29,7 +30,7 @@ def driver_for(responses: dict) -> XDriver:
 
 def full_chain() -> dict:
     return {
-        API + "carol/status/300": api_fixture("captured-300.json"),
+        API + "status/300": api_fixture("captured-300.json"),
         API + "bob/status/200": api_fixture("parent-200.json"),
         API + "alice/status/100": api_fixture("root-100.json"),
     }
@@ -46,14 +47,40 @@ class TestIdentity:
         assert driver.matches("https://x.com/a/status/1")
         assert driver.matches("https://www.twitter.com/a/status/1")
         assert driver.matches("https://m.twitter.com/a/status/1")
+        assert driver.matches("https://mobile.twitter.com/a/status/1")
         assert not driver.matches("https://example.test/a")
 
-    def test_canonical_strips_tracking_noise(self):
+    def test_every_share_shape_of_a_post_canonicalizes_to_the_id(self):
+        # The id IS the identity: username form, the app's /i/web/ share
+        # form, /i/status/, the legacy /statuses/ spelling, host variants,
+        # share params, and /photo/1 tails are all the same work unit.
         driver = driver_for({})
-        assert (
-            driver.canonical("https://x.com/carol/status/300?s=20&ref_src=share")
-            == "https://x.com/carol/status/300?s=20"
-        )
+        shapes = [
+            "https://x.com/carol/status/300",
+            "https://x.com/i/web/status/300",
+            "https://x.com/i/status/300",
+            "https://x.com/carol/status/300?s=20&t=share-token",
+            "https://x.com/carol/status/300/photo/1",
+            "https://twitter.com/carol/statuses/300",
+            "https://mobile.twitter.com/carol/status/300",
+        ]
+        assert {driver.canonical(shape) for shape in shapes} == {"https://x.com/i/status/300"}
+
+    def test_different_posts_stay_different_work_units(self):
+        driver = driver_for({})
+        hashes = {
+            work_hash(driver.canonical(url))
+            for url in (
+                "https://x.com/carol/status/300",
+                "https://x.com/carol/status/301",
+                "https://x.com/i/web/status/302",
+            )
+        }
+        assert len(hashes) == 3
+
+    def test_non_status_urls_keep_the_generic_canonical(self):
+        driver = driver_for({})
+        assert driver.canonical("https://x.com/carol?ref_src=share") == "https://x.com/carol"
 
 
 class TestThreadWalkUp:
@@ -106,6 +133,7 @@ class TestThreadWalkUp:
             }
             responses[API + f"user{i}/status/{i}"] = json_response({"tweet": tweet})
         captured = base + MAX_HOPS + 4
+        responses[API + f"status/{captured}"] = responses[API + f"user{captured}/status/{captured}"]
         url = f"https://x.com/user{captured}/status/{captured}"
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert result.status is Status.DONE
@@ -113,10 +141,28 @@ class TestThreadWalkUp:
         assert result.meta["thread_length"] == MAX_HOPS + 1  # captured + 20 hops
 
 
+class TestShareShapeFetches:
+    def test_i_web_share_link_fetches_the_live_post(self):
+        # The app's standard share form: fxtwitter 404s on /i/web/… — sent
+        # verbatim it would mark a live post terminally dead.
+        transport = FakeTransport(full_chain())
+        driver = XDriver(transport=transport)
+        result = driver.fetch(make_unit("https://x.com/i/web/status/300", Kind.X))
+        assert result.status is Status.DONE
+        assert ("GET", API + "status/300") in transport.calls
+        assert all("i/web" not in url for _method, url in transport.calls)
+
+    def test_username_form_fetches_by_the_bare_status_path_too(self):
+        transport = FakeTransport(full_chain())
+        result = XDriver(transport=transport).fetch(make_unit(CAPTURED_URL, Kind.X))
+        assert result.status is Status.DONE
+        assert transport.calls[0] == ("GET", API + "status/300")
+
+
 class TestQuotes:
     def test_quote_stays_inline_as_a_blockquote(self):
         url = "https://x.com/dana/status/400"
-        responses = {API + "dana/status/400": api_fixture("quoted-400.json")}
+        responses = {API + "status/400": api_fixture("quoted-400.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         body = body_of(result)
         assert "> Quoting @erik: A 403 is not a 404." in body
@@ -126,28 +172,28 @@ class TestQuotes:
 
 class TestClassifiedFailures:
     def test_deleted_post_is_dead(self):
-        responses = {API + "carol/status/300": json_response({}, status=404)}
+        responses = {API + "status/300": json_response({}, status=404)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.status is Status.DEAD
 
     def test_login_walled_post_is_manual_with_reason(self):
-        responses = {API + "carol/status/300": json_response({}, status=401)}
+        responses = {API + "status/300": json_response({}, status=401)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.status is Status.MANUAL
         assert PAYWALL_REASON in reason_of(result)
 
     def test_402_is_manual_x_answers_it(self):
-        responses = {API + "carol/status/300": json_response({}, status=402)}
+        responses = {API + "status/300": json_response({}, status=402)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.status is Status.MANUAL
 
     def test_rate_limit_is_blocked(self):
-        responses = {API + "carol/status/300": json_response({}, status=429)}
+        responses = {API + "status/300": json_response({}, status=429)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.status is Status.BLOCKED
 
     def test_unparseable_json_is_blocked(self):
-        responses = {API + "carol/status/300": html_response("<html>challenge</html>")}
+        responses = {API + "status/300": html_response("<html>challenge</html>")}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.status is Status.BLOCKED
         assert "unparseable JSON" in reason_of(result)
@@ -156,7 +202,7 @@ class TestClassifiedFailures:
 class TestEdges:
     def test_post_with_no_text_and_no_media_is_manual_with_reason(self):
         url = "https://x.com/frank/status/500"
-        responses = {API + "frank/status/500": api_fixture("no-text-500.json")}
+        responses = {API + "status/500": api_fixture("no-text-500.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert result.status is Status.MANUAL
         assert "no text" in reason_of(result)
@@ -177,7 +223,7 @@ class TestEdges:
                 ]
             },
         }
-        responses = {API + "gina/status/600": json_response({"tweet": tweet})}
+        responses = {API + "status/600": json_response({"tweet": tweet})}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert result.status is Status.DONE
         body = body_of(result)

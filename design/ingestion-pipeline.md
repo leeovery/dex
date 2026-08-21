@@ -525,6 +525,15 @@ silent `except: pass` dies here.
 
 ## 8. X driver (renamed from tweet)
 
+- **A post's identity is its status id.** Every share shape — the username
+  form, the X app's `/i/web/status/<id>`, `/i/status/<id>`, the legacy
+  `/statuses/` spelling, `/photo/1`-style tails, share params, and the
+  twitter.com / mobile.twitter.com hosts — canonicalizes to
+  `https://x.com/i/status/<id>`, so one post is one work unit however it
+  was shared. Fetches address fxtwitter by the bare `status/<id>` path,
+  the one shape it serves for all of them: the API ignores a username
+  segment but 404s on `/i/web/…`, and that 404 would misread as a dead
+  post — the terminal-mislabel class this design exists to kill.
 - **Thread walk-up inside the driver**, not via children: the chain is
   context for the captured post, not new first-class sources. One enrichment
   file, one ledger entry. fxtwitter parent pointers, **cap 20 hops**, all
