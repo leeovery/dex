@@ -28,12 +28,12 @@ The LLM's job is everything else."*
 
 ## Getting started
 
-Claude installs it. You answer a few questions; it does the rest.
+Setup is one paste, and Claude does the rest — new dex or joining one that
+already exists, an interview about scope, install, phone capture.
 
-Do this in **Claude Code inside the [Claude desktop app](https://claude.com/download)**
-— only the app can create the *local* routine that runs dex on your own machine,
-with your own GitHub auth and network. The CLI can install a dex; it can't arm
-that routine.
+Use **Claude Code in the [Claude desktop app](https://claude.com/download)**. It
+is the only place that can also arm the schedule: a local routine that runs dex
+on your own machine, with your GitHub auth and network.
 
 1. Open the app → **Code** → new chat.
 2. Set the model to **Opus-class** — the work is judgment, and lighter models
@@ -46,11 +46,19 @@ that routine.
 Fetch https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md and follow it.
 ```
 
-Claude takes it from there — new dex or joining one that exists, an interview
-about scope, install, the routine armed, phone capture set up. Then it's live:
-save things, and open a Claude Code session on the folder to ask questions.
+Then it's live: save things, and open a Claude Code session on the folder to
+ask questions.
 
-Prefer to drive it yourself? [docs/start.md](docs/start.md) is the whole procedure.
+### Other ways in
+
+- **A terminal.** Same paste, same install — it just can't arm the routine, so
+  the trigger becomes yours: cron, launchd, or nothing at all. A schedule is a
+  convenience, not a requirement; captures wait in the inbox until something
+  runs, and nothing expires.
+- **Another agent.** dex isn't Claude-specific — anything that reads skills
+  should be able to drive it. Untested, so treat it as an experiment.
+- **Yourself.** [docs/start.md](docs/start.md) is the procedure itself. Read it
+  and follow it by hand.
 
 ## Living with it
 
