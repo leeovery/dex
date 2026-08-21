@@ -15,8 +15,8 @@ Save things with one tap. Ask questions later. Everything cited, dated, and kept
 ---
 
 You keep finding good things — videos, articles, papers, repos, threads. They pile
-up in bookmarks and group chats and disappear. Six months later you remember that
-someone said something important about a thing, and that's all you've got.
+up in bookmarks and group chats and disappear. Six months later, all you can
+recall is that someone, somewhere, said something that mattered.
 
 **dex** turns that stream into a living wiki. Every source is fetched and read in
 full — captions pulled, audio transcribed, PDFs extracted, threads walked back to
@@ -131,22 +131,23 @@ repo is the shared engine they all run on.
 Two kinds of work, kept strictly apart. The engine fetches, moves, and verifies —
 deterministically, no judgment. Claude reads, decides, and writes.
 
-```mermaid
-flowchart TB
-    subgraph mech["the engine — mechanical, deterministic"]
-        direction LR
-        A["capture<br/>one file in inbox/"] --> B["corpus item<br/>who · where · when · why"]
-        B --> C["work queue<br/>every URL and file, ledgered"]
-        C --> D["enrichment<br/>transcripts, article text,<br/>extracted documents"]
-    end
-    subgraph cog["Claude — judgment"]
-        direction LR
-        E["digest<br/>a permanent fact index"] --> F["topics + entities<br/>discovered bottom-up"]
-        F --> G["wiki pages<br/>dated claims, citations, wikilinks"]
-    end
-    D --> E
-    G --> H["lint + verify<br/>citations resolved, coverage enforced"]
-    H -.->|"rebuild — nothing lost"| G
+```
+ ENGINE — mechanical, deterministic
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │  capture ──▶ corpus item ──▶ work queue ──▶ enrichment               │
+ │  one file    who · where     every URL      transcripts, article     │
+ │  in inbox/   when · why      and file       text, extracted docs     │
+ └──────────────────────────────────────────────────────┬───────────────┘
+                                                        ▼
+ CLAUDE — judgment
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │  digest ──▶ topics + entities ──▶ wiki pages                         │
+ │  a fact     discovered            dated claims,                      │
+ │  index      bottom-up             citations, [[wikilinks]]           │
+ └──────────────────────────────────────────────────────┬───────────────┘
+                                                        ▼
+        lint + verify — every citation resolves to a real corpus item,
+        every item is cited on a page or explicitly ledgered
 ```
 
 The corpus is the truth. The wiki is a build artifact: pages can be regenerated
@@ -157,20 +158,30 @@ from scratch without losing anything, which is what makes rewriting them safe.
 Everything fetchable becomes an entry in an append-only ledger, and a run drains
 whatever isn't finished. Nothing is fire-and-forget, and nothing quietly vanishes:
 
-```mermaid
-flowchart LR
-    Q(["work queue"]) --> DET["detect<br/>what kind of thing is this?"]
-    DET --> FET["fetch<br/>via the matching driver"]
-    FET -->|"got it"| OUT["enrichment file"]
-    FET -->|"links worth following"| Q
-    FET -->|"the server lied<br/>about the type"| Q
-    FET -->|"needs a transcript<br/>or text extraction"| WAIT["waiting"]
-    WAIT -->|"a provider appears"| Q
-    FET -->|"403 · 429 · 5xx"| BLK["blocked"]
-    BLK -->|"every run, then parked<br/>for judgment at 5"| Q
-    FET -->|"404 · no such domain"| DEAD(["dead"])
-    FET -->|"engine bug"| ERR["error"]
-    ERR -->|"retries once the<br/>engine is newer"| Q
+```
+        ┌────────────────────────────────────────────────────┐
+   ┌───▶│                    WORK QUEUE                      │
+   │    │        append-only; a run drains what is left      │
+   │    └─────────────────────────┬──────────────────────────┘
+   │                              ▼
+   │                      detect ──▶ fetch
+   │                                  │
+   │        enrichment file ◀─────────┤  got it
+   │                                  │
+   ├──────────────────────────────────┤  links worth following
+   │                                  │
+   ├──────────────────────────────────┤  the server lied about the type
+   │                                  │
+   ├── waiting ◀──────────────────────┤  needs a transcript or extraction
+   │     returns when a provider appears
+   │                                  │
+   ├── blocked ◀──────────────────────┤  403 · 429 · 5xx
+   │     retried every run; parked for judgment at 5
+   │                                  │
+   └── error ◀────────────────────────┤  an engine bug — files an issue
+         retried once the engine is newer
+                                      │
+            dead ◀────────────────────┘  404 · no such domain — final
 ```
 
 **Blocked is never dead.** A Cloudflare challenge, a rate limit, a bad gateway —
@@ -196,8 +207,8 @@ Three things happen on top of that, which is where most of the value is:
 - **Links get followed with judgment.** At every fetched page, Claude decides
   which links are primary artifacts of the thing itself — the project's repo, the
   paper, the docs — and promotes those. Blogrolls, footers and "similar projects"
-  never get promoted, at any depth. The engine bounds the judgment mechanically
-  (4 levels deep, 12 fetched URLs per item) rather than trying to make it.
+  never get promoted, at any depth. The engine never makes that call itself; it
+  only enforces the bounds — 4 levels deep, 12 fetched URLs per item.
 - **Transcription has a free floor.** Local whisper is the default and needs no
   API key, no GPU, and no account. Point it at any OpenAI-compatible endpoint if
   you'd rather have speed; long audio is chunked, so upload limits don't apply.
