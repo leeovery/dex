@@ -34,6 +34,12 @@ _RAW_HOST = "https://raw.githubusercontent.com"
 _GH_HTTP_RE = re.compile(r"HTTP (\d{3})")
 _GH_TIMEOUT = 120.0
 
+# Gist id shapes in the wild: 32-char hex today, 20-char hex from the 2013
+# era, short sequential decimals before that. A bare gist.github.com/<id>
+# link is a legacy share shape that still resolves; a one-segment path that
+# cannot be a gist id is a username's index page.
+_GIST_ID_RE = re.compile(r"[0-9a-f]{32}|[0-9a-f]{20}|\d{1,8}")
+
 # Body size ceilings, ported from the proven enricher.
 _MAX_GIST_FILE_CHARS = 20_000
 _MAX_BLOB_CHARS = 40_000
@@ -124,11 +130,12 @@ class GitHubDriver:
     # -- routes ----------------------------------------------------------
 
     def _fetch_gist(self, segments: list[str]) -> Result:
-        if len(segments) < 2:  # noqa: PLR2004 — /user/<gist-id>
+        gist_id = _gist_id(segments)
+        if gist_id is None:
             return Result(
                 status=Status.SKIPPED, meta={}, reason="gist index page — no single gist to fetch"
             )
-        payload = self._api(f"gists/{segments[1]}")
+        payload = self._api(f"gists/{gist_id}")
         if isinstance(payload, Classification):
             return _classified(payload)
         files = payload.get("files") or {}
@@ -225,6 +232,15 @@ class GitHubDriver:
         except json.JSONDecodeError:
             return []
         return payload if isinstance(payload, list) else []
+
+
+def _gist_id(segments: list[str]) -> str | None:
+    """The gist id a gist.github.com path addresses, or None for index pages."""
+    if len(segments) >= 2:  # noqa: PLR2004 — /user/<gist-id>
+        return segments[1]
+    if len(segments) == 1 and _GIST_ID_RE.fullmatch(segments[0]):
+        return segments[0]
+    return None
 
 
 def _classify_gh_failure(stderr: str) -> Classification:
