@@ -10,14 +10,13 @@ version are injected so date-stamping and retry-on-new-engine are
 testable.
 """
 
-import contextlib
 import datetime
 import json
-import os
-import tempfile
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+
+from dex_engine import atomic
 
 from .types import Format, Kind, LedgerEntry, Need, Status
 
@@ -243,25 +242,9 @@ def compact(path: Path) -> int:
         return 0
     lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
     entries = load(path)
-    _atomic_write(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
+    # Atomic: a crash mid-write must never lose the ledger.
+    atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
     return len(lines) - len(entries)
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` atomically: same-dir temp file, then replace.
-
-    A crash mid-write must never lose the ledger — the original file stays
-    intact until the finished temp file replaces it in one step.
-    """
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
 
 
 def stamp(

@@ -835,6 +835,10 @@ src/dex_engine/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
     ocr/         cognitive.py
+  atomic.py    the ONE atomic-write implementation (same-dir temp file,
+               then one replace; no temp orphan on failure) — every state
+               write shares it: ledger, corpus items, the pin file,
+               capture pointers, cached audio, migration rewrites
   corpus.py    the ONE corpus-item frontmatter read/write point: a frozen
                `CorpusItem` dataclass, parse/serialize that passes the
                Claude-authored body through byte-exact. Replaces the old

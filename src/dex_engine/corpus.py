@@ -12,13 +12,12 @@ and migration 1 must parse pre-rename vocabulary (``tweet``/``blog``) in
 order to rewrite it.
 """
 
-import contextlib
 import datetime
-import os
 import re
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import atomic
 
 __all__ = [
     "CorpusItem",
@@ -258,12 +257,4 @@ def write_item(path: Path, item: CorpusItem) -> None:
     existing item.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(serialize(item))
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
+    atomic.write_text(path, serialize(item))

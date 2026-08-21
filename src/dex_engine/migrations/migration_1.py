@@ -39,14 +39,12 @@ import dataclasses
 import datetime
 import hashlib
 import json
-import os
 import re
-import tempfile
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
-from dex_engine import corpus
+from dex_engine import atomic, corpus
 from dex_engine.pipeline.ledger import to_line
 from dex_engine.pipeline.types import (
     Format,
@@ -327,7 +325,7 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     _append_quarantine(path.with_name(QUARANTINE_NAME), quarantined)
     new_text = "".join(out_line + "\n" for out_line in out_lines)
     if new_text != original:
-        _atomic_write(path, new_text)
+        atomic.write_text(path, new_text)
     if translated:
         actions.append(f"ledger: {translated} line(s) translated to the current schema")
     if quarantined:
@@ -657,26 +655,8 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
                 )
             )
         return
-    _atomic_write(new, json.dumps(raw, indent=2) + "\n")
+    atomic.write_text(new, json.dumps(raw, indent=2) + "\n")
     old.unlink()
     actions.append("config: normalize-config.json → config.json")
     if dropped_name_map:
         actions.append(_NAME_MAP_NOTE)
-
-
-# ---------------------------------------------------------------------------
-# Atomic write — same discipline as ledger.py: a crash mid-write must never
-# lose the ledger; the original stays intact until the temp file replaces it.
-# ---------------------------------------------------------------------------
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()

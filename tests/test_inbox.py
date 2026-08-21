@@ -1,12 +1,14 @@
 """Tests for inbox.py: the device-tested materialization sequence, hermetic."""
 
 import hashlib
+import os
 import subprocess
 
 import pytest
 
 from dex_engine.inbox import (
     GithubSeams,
+    _rewrite_pointer,
     _run_git,
     build_parser,
     ensure,
@@ -416,3 +418,22 @@ class TestCaptureShape:
         reconcile(instance, gh.seams())
         fm, _ = parse_capture(path.read_text())
         assert fm == {"media": REL, "from": "phone"}
+
+    def test_crashed_pointer_rewrite_keeps_the_original_capture(self, tmp_path, monkeypatch):
+        # By rewrite time the release asset is already deleted — a crash
+        # mid-write must never leave a truncated capture as the only copy.
+        original = f"---\nasset: {ASSET_URL}\nname: {NAME}\n---\n\nwhy this caught my eye\n"
+        path = tmp_path / "20260818-101530.md"
+        path.write_text(original)
+        real = os.fdopen
+
+        def failing(fd, *args, **kwargs):
+            real(fd, *args, **kwargs).close()
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr("dex_engine.atomic.os.fdopen", failing)
+        frontmatter = {"asset": ASSET_URL, "name": NAME}
+        with pytest.raises(OSError, match="No space left"):
+            _rewrite_pointer(path, frontmatter, REL, "why this caught my eye")
+        assert path.read_text() == original
+        assert [p.name for p in tmp_path.iterdir()] == [path.name]

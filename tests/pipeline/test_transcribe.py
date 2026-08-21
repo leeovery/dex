@@ -1,6 +1,10 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
+import os
 import re
+from pathlib import Path
+
+import pytest
 
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
@@ -16,6 +20,7 @@ from dex_engine.pipeline.transcribe import (
     Acquired,
     YoutubeAudio,
     _cached_audio,
+    _download_enclosure,
     acquire_youtube_audio,
     read_enrichment,
 )
@@ -608,7 +613,43 @@ class TestStatusIncludesCapabilities:
         assert "capabilities" not in report
 
 
+class TestEnclosureDownloadAtomicity:
+    ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
+
+    def test_crashed_download_leaves_nothing_under_the_final_name(self, tmp_path, monkeypatch):
+        # A truncated <hash>.mp3 has no `.part` marker — the next run would
+        # transcribe truncated audio and ledger it done. The write must be
+        # atomic: temp in the cache dir, replace only when complete.
+        real = os.fdopen
+
+        def failing(fd, *args, **kwargs):
+            real(fd, *args, **kwargs).close()
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr("dex_engine.atomic.os.fdopen", failing)
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        with pytest.raises(OSError, match="No space left"):
+            _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        assert _cached_audio(tmp_path, "abc") is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_completed_download_lands_under_the_final_name(self, tmp_path):
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        path = _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        assert isinstance(path, Path)
+        assert path == tmp_path / "abc.mp3"
+        assert b"AUDIO-BYTES" in path.read_bytes()
+        assert [p.name for p in tmp_path.iterdir()] == ["abc.mp3"]
+
+
 class TestCachedAudio:
+    def test_hard_crash_atomic_temp_is_a_partial_never_audio(self, tmp_path):
+        # A kill mid-atomic-write can orphan the temp file itself; it must
+        # be cleared like any partial, never picked up as completed audio.
+        (tmp_path / "abc.mp3.k3j2f9.tmp").write_bytes(b"TRUNCATED")
+        assert _cached_audio(tmp_path, "abc") is None
+        assert list(tmp_path.iterdir()) == []
+
     def test_partials_are_deleted_and_never_reused(self, tmp_path):
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
         (tmp_path / "abc.ytdl").write_bytes(b"state")
