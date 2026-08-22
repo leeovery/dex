@@ -277,7 +277,17 @@ class TestBlob:
         assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
 
     def test_missing_path_is_dead_through_the_gh_404(self):
-        driver = driver_for({self.CONTENTS: fail("gh: Not Found (HTTP 404)")})
+        # The 404 sends the driver to look for a longer ref first; `main` is
+        # the whole ref, so nothing re-splits and the 404 stands.
+        driver = driver_for(
+            {
+                self.CONTENTS: fail("gh: Not Found (HTTP 404)"),
+                ("api", "repos/acme/pipeline-kit/git/matching-refs/heads/main"): ok(
+                    json.dumps([{"ref": "refs/heads/main"}])
+                ),
+                ("api", "repos/acme/pipeline-kit/git/matching-refs/tags/main"): ok("[]"),
+            }
+        )
         assert driver.fetch(make_unit(self.URL, Kind.GITHUB)).status is Status.DEAD
 
     def test_a_document_blob_parks_manual_naming_its_format(self):
@@ -301,6 +311,14 @@ class TestBlob:
         assert result.status is Status.DONE
         assert "naïve — résumé" in body_of(result)
 
+    def test_a_sha_ref_needs_no_lookup(self):
+        sha = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
+        args = ("api", f"repos/acme/pipeline-kit/contents/src/detect.py?ref={sha}")
+        gh = FakeGh({args: contents(b"def detect(): ...")})
+        url = f"https://github.com/acme/pipeline-kit/blob/{sha}/src/detect.py"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+        assert len(gh.calls) == 1  # the guess was right; no ref lookup was spent
+
     def test_oversize_blob_parks_manual_never_dead(self):
         # Over 1MB the contents API answers `encoding: "none"` with an empty
         # body — the file is there, just not inline.
@@ -310,6 +328,206 @@ class TestBlob:
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
         assert result.status is Status.MANUAL
         assert "larger than the contents API serves inline" in reason_of(result)
+
+
+def matching_refs(*names: str) -> GhResult:
+    """A ``git/matching-refs`` page, in the API's own shape."""
+    return ok(json.dumps([{"ref": name, "object": {"sha": "0" * 40}} for name in names]))
+
+
+class TestBlobRefBoundary:
+    """Where the ref stops and the path starts is not in the URL — resolve it.
+
+    raw.githubusercontent.com settled the boundary server-side. The contents
+    API takes the two halves apart, so a slashed branch or a `refs/heads/`
+    permalink sent a wrong ref AND a wrong path, 404'd, and ledgered live
+    files `dead`.
+    """
+
+    REPO = "repos/rust-lang/rust"
+
+    def test_a_slashed_branch_resolves_through_the_repos_own_refs(self):
+        gh = FakeGh(
+            {
+                # The one-segment guess: branch `automation`, path `bors/…`.
+                ("api", f"{self.REPO}/contents/bors/auto/README.md?ref=automation"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): matching_refs(
+                    "refs/heads/automation/bors/auto",
+                    "refs/heads/automation/bors/auto-merge",
+                    "refs/heads/automation/bors/try",
+                ),
+                (
+                    "api",
+                    f"{self.REPO}/contents/README.md?ref=automation%2Fbors%2Fauto",
+                ): contents(b"# The Rust Programming Language"),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/auto/README.md"
+        result = GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert result.meta["file"] == "README.md"
+        assert "Rust" in body_of(result)
+
+    def test_a_sibling_ref_never_claims_the_path_by_string_prefix(self):
+        # `automation/bors-next` starts with `automation/bors` as a string;
+        # segment-wise it is a different branch and must not take the URL.
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/bors/README.md?ref=automation"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): matching_refs(
+                    "refs/heads/automation/bors-next", "refs/heads/automation/bors"
+                ),
+                ("api", f"{self.REPO}/contents/README.md?ref=automation%2Fbors"): contents(b"ok"),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/README.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+    def test_the_longest_matching_ref_wins(self):
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/1.2/docs/x.md?ref=release"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/release"): matching_refs(
+                    "refs/heads/release", "refs/heads/release/1.2"
+                ),
+                ("api", f"{self.REPO}/contents/docs/x.md?ref=release%2F1.2"): contents(b"ok"),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/release/1.2/docs/x.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+    def test_a_ref_that_would_swallow_the_whole_tail_is_not_a_split(self):
+        # Branch `docs/x.md` exists, but then the URL addresses no file at
+        # all — the guess (and its 404) stands.
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/x.md?ref=docs"): fail("gh: Not Found (HTTP 404)"),
+                ("api", f"{self.REPO}/git/matching-refs/heads/docs"): matching_refs(
+                    "refs/heads/docs/x.md"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/tags/docs"): matching_refs(),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/docs/x.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+
+    def test_a_slashed_tag_resolves_after_the_branches_come_back_empty(self):
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/9/README.md?ref=v1"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/v1"): matching_refs(),
+                ("api", f"{self.REPO}/git/matching-refs/tags/v1"): matching_refs("refs/tags/v1/9"),
+                ("api", f"{self.REPO}/contents/README.md?ref=v1%2F9"): contents(b"ok"),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/v1/9/README.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+    @pytest.mark.parametrize(
+        ("tail", "endpoint"),
+        [
+            ("refs/heads/master/README", "contents/README?ref=refs%2Fheads%2Fmaster"),
+            ("refs/tags/v1.0.0/docs/x.md", "contents/docs/x.md?ref=refs%2Ftags%2Fv1.0.0"),
+        ],
+    )
+    def test_the_refs_prefix_permalink_form_needs_no_lookup(self, tail, endpoint):
+        # GitHub code search returns four figures of `blob/refs/heads/` links;
+        # the form names its own namespace, so the split is free.
+        gh = FakeGh({("api", f"{self.REPO}/{endpoint}"): contents(b"Hello World!")})
+        url = f"https://github.com/rust-lang/rust/blob/{tail}"
+        result = GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert len(gh.calls) == 1
+
+    def test_a_refs_prefix_permalink_on_a_slashed_branch_still_resolves(self):
+        gh = FakeGh(
+            {
+                (
+                    "api",
+                    f"{self.REPO}/contents/bors/auto/README.md?ref=refs%2Fheads%2Fautomation",
+                ): fail("gh: Not Found (HTTP 404)"),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): matching_refs(
+                    "refs/heads/automation/bors/auto"
+                ),
+                (
+                    "api",
+                    f"{self.REPO}/contents/README.md?ref=refs%2Fheads%2Fautomation%2Fbors%2Fauto",
+                ): contents(b"ok"),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/refs/heads/automation/bors/auto/README.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+    def test_a_genuinely_missing_path_is_still_dead(self):
+        # The floor the resolution must not break: no ref rescues a file
+        # that is not there, and the unit must not go unclassifiable.
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/no-such-file.txt?ref=master"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/master"): matching_refs(
+                    "refs/heads/master"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/tags/master"): matching_refs(),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/master/no-such-file.txt"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+
+    def test_a_missing_path_on_a_resolved_slashed_branch_is_dead(self):
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/bors/auto/nope.md?ref=automation"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): matching_refs(
+                    "refs/heads/automation/bors/auto"
+                ),
+                ("api", f"{self.REPO}/contents/nope.md?ref=automation%2Fbors%2Fauto"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/auto/nope.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+
+    def test_a_failing_ref_lookup_leaves_the_original_classification(self):
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/bors/auto/README.md?ref=automation"): fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): fail(
+                    "gh: API rate limit exceeded (HTTP 403)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/tags/automation"): fail(
+                    "gh: API rate limit exceeded (HTTP 403)"
+                ),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/auto/README.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+
+    def test_a_non_404_failure_never_spends_a_ref_lookup(self):
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/bors/auto/README.md?ref=automation"): fail(
+                    "gh: API rate limit exceeded (HTTP 403)"
+                )
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/auto/README.md"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.BLOCKED
+        assert len(gh.calls) == 1
 
 
 class TestEdges:

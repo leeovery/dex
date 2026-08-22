@@ -7,6 +7,12 @@ stderr names the HTTP status (``gh: Not Found (HTTP 404)``), which routes
 through the central classifier; anything without a visible code is
 ``blocked``, never silently terminal.
 
+A blob URL does not say where its ref ends and its file path begins —
+branch names hold slashes, and the ``refs/heads/`` permalink form spends
+two segments before the name even starts. The driver guesses the shortest
+ref the shape allows and, only when that 404s, asks the repo which of its
+refs the path really starts with.
+
 Blob bytes are sniffed before they are fenced: a document or any other
 binary committed to a repo parks ``manual`` naming what it is, because a
 GitHub blob URL serves an HTML viewer rather than the bytes, so no other
@@ -91,6 +97,17 @@ _RESERVED_SEGMENTS = frozenset(
 
 _GH_HTTP_RE = re.compile(r"HTTP (\d{3})")
 _GH_TIMEOUT = 120.0
+
+# A blob URL hides its ref/path boundary: `blob/automation/bors/auto/README.md`
+# is branch `automation/bors/auto` holding `README.md`, and nothing in the
+# string says where the ref stops. raw.githubusercontent.com resolved that
+# boundary server-side; the contents API wants the two halves separately, so
+# the driver has to settle it. The `refs/heads/`, `refs/tags/` permalink form
+# names its own namespace, and one segment is right for nearly every other
+# link — so guess that first (no extra request), and only when the guess 404s
+# ask the repo which of its refs the path actually starts with.
+_REF_NAMESPACES = ("heads", "tags")
+_QUALIFIED_REF_SEGMENTS = 4  # refs/<namespace>/<name>/<path…>, at minimum
 
 # Gist id shapes in the wild: 32-char hex today, 20-char hex from the 2013
 # era, short sequential decimals before that. A bare gist.github.com/<id>
@@ -219,11 +236,18 @@ class GitHubDriver:
         return Result(status=Status.DONE, meta=meta, body=body)
 
     def _fetch_blob(self, owner: str, repo: str, tail: list[str]) -> Result:
-        ref, file_path = tail[0], "/".join(tail[1:])
-        payload = self._api(
-            f"repos/{owner}/{repo}/contents/{_requote(file_path, safe='/')}"
-            f"?ref={_requote(ref, safe='')}"
-        )
+        ref, file_path = _guessed_split(tail)
+        payload = self._api(_contents_endpoint(owner, repo, ref, file_path))
+        if isinstance(payload, Classification) and payload.status is Status.DEAD:
+            # 404/410 on ref+path is the one failure a different boundary
+            # could fix. Re-splitting on a ref the repo really has costs an
+            # extra request only here; when there is no such ref, or the
+            # lookup itself fails, the original classification stands and a
+            # genuinely missing path stays `dead`.
+            resplit = self._resolve_split(owner, repo, tail)
+            if resplit is not None and resplit != (ref, file_path):
+                ref, file_path = resplit
+                payload = self._api(_contents_endpoint(owner, repo, ref, file_path))
         if isinstance(payload, Classification):
             return _classified(payload)
         data = _blob_bytes(payload)
@@ -288,6 +312,28 @@ class GitHubDriver:
         body = readme.stdout if readme.returncode == 0 else "(no README)"
         return Result(status=Status.DONE, meta=meta, body=body[:_MAX_README_CHARS])
 
+    # -- blob ref resolution ---------------------------------------------
+
+    def _resolve_split(self, owner: str, repo: str, tail: list[str]) -> tuple[str, str] | None:
+        """The ref/path split the repo's own refs support, or None for no match.
+
+        ``git/matching-refs`` is asked only about refs starting with the
+        tail's first segment, so a repo with thousands of branches costs the
+        same one page as a repo with three. A SHA ref matches nothing and
+        answers ``[]``, which leaves the guess (and its classification) alone.
+        """
+        namespaces, start = _ref_search(tail)
+        for namespace in namespaces:
+            refs = self._api_list(
+                f"repos/{owner}/{repo}/git/matching-refs/"
+                f"{namespace}/{_requote(tail[start], safe='')}"
+            )
+            length = _longest_ref_match(_ref_names(refs, namespace), tail, start)
+            if length is not None:
+                boundary = start + length
+                return "/".join(tail[:boundary]), "/".join(tail[boundary:])
+        return None
+
     # -- gh plumbing -----------------------------------------------------
 
     def _api(self, endpoint: str) -> dict | Classification:
@@ -308,9 +354,10 @@ class GitHubDriver:
     def _api_list(self, endpoint: str) -> list:
         """``gh api <endpoint>`` parsed as a JSON array; failures yield [].
 
-        Only the non-essential profile repo listing uses this — the profile
-        itself already classified successfully, and a missing listing is
-        noted in the body rather than failing the unit.
+        Both callers treat an empty answer as "no extra information": the
+        profile notes a missing repo listing in its body rather than failing
+        the unit, and a blob whose ref lookup came back empty keeps the
+        classification its contents call already earned.
         """
         result = self._gh(["api", endpoint])
         if result.returncode != 0:
@@ -320,6 +367,62 @@ class GitHubDriver:
         except json.JSONDecodeError:
             return []
         return payload if isinstance(payload, list) else []
+
+
+def _contents_endpoint(owner: str, repo: str, ref: str, file_path: str) -> str:
+    """The contents-API endpoint for one blob at one ref."""
+    return (
+        f"repos/{owner}/{repo}/contents/{_requote(file_path, safe='/')}"
+        f"?ref={_requote(ref, safe='')}"
+    )
+
+
+def _is_qualified_ref(tail: list[str]) -> bool:
+    """True for the ``blob/refs/heads/<name>/…`` permalink form."""
+    return len(tail) >= _QUALIFIED_REF_SEGMENTS and tail[0] == "refs" and tail[1] in _REF_NAMESPACES
+
+
+def _guessed_split(tail: list[str]) -> tuple[str, str]:
+    """The ref/path split assuming the shortest ref the tail's shape allows."""
+    if _is_qualified_ref(tail):
+        return "/".join(tail[:3]), "/".join(tail[3:])
+    return tail[0], "/".join(tail[1:])
+
+
+def _ref_search(tail: list[str]) -> tuple[tuple[str, ...], int]:
+    """Which ref namespaces to search, and where in the tail the ref starts."""
+    if _is_qualified_ref(tail):
+        return (tail[1],), 2
+    return _REF_NAMESPACES, 0
+
+
+def _ref_names(refs: list, namespace: str) -> list[str]:
+    """``refs/heads/x/y`` entries reduced to the bare ref names (``x/y``)."""
+    prefix = f"refs/{namespace}/"
+    names = [ref.get("ref") for ref in refs if isinstance(ref, dict)]
+    return [
+        name.removeprefix(prefix)
+        for name in names
+        if isinstance(name, str) and name.startswith(prefix)
+    ]
+
+
+def _longest_ref_match(names: list[str], tail: list[str], start: int) -> int | None:
+    """Segment count of the longest name matching ``tail[start:]``, or None.
+
+    Compared segment by segment, never as a string prefix: ``automation/bors``
+    must not claim a URL whose branch is ``automation/bors-next``. A name that
+    consumes the whole tail is rejected — that would leave no file path.
+    """
+    best: int | None = None
+    for name in names:
+        segments = [segment for segment in name.split("/") if segment]
+        length = len(segments)
+        if start + length >= len(tail):
+            continue
+        if tail[start : start + length] == segments and (best is None or length > best):
+            best = length
+    return best
 
 
 def _requote(value: str, *, safe: str) -> str:
