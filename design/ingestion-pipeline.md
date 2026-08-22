@@ -2,8 +2,12 @@
 
 Status: **in force, implemented** (designed and signed off 2026-08-19/20;
 the rewrite has landed). This document is the reference for the engine's
-ingestion machinery and describes what IS. The roadmap items it resolves
-point here.
+ingestion machinery and describes what IS. It is also the one design surface
+for this release: work that is agreed and not yet built lives here too,
+marked as such where it belongs — the driver-outcome contract (§2), the
+cleanup round (§16), and the open questions their own sections state. The
+roadmap holds no design; it indexes this file and notes what comes after the
+release.
 
 This document was verified line-by-line against the full design-session
 transcript, which is held locally by the owner and is not part of the repo;
@@ -319,6 +323,91 @@ the `done` entry. Precisely: **`waiting` means no mechanical provider**; a
 job that resolves to the cognitive provider is `waiting` from the queue's
 point of view and work-to-do from the session's. No instance ever hard-fails
 on a missing key or an unsupported format.
+
+### Driver outcomes: drivers report, the orchestrator decides
+
+**Agreed, not yet implemented.** Everything above this heading describes the
+engine as built; this describes the contract that replaces the driver's
+half of it. Drivers stop deciding lifecycle status: they report what they
+found, and the orchestrator decides what that means.
+
+Every driver currently returns a `Result` carrying a `Status`, so each one
+decides the unit's lifecycle for itself. That is the root of the largest
+family of defects the review rounds found, and it recurred in six of them:
+
+- private GitHub blobs classified `dead` because an unauthenticated fetch
+  404s, condemning live content
+- YouTube channel URLs driven as videos, enumerating a whole channel
+- Apple podcast episodes unresolvable because the wrong id was looked up
+- arxiv spellings splitting into separate work units
+- `IncompleteRead` escaping as an engine bug rather than a retryable block
+- a "listen to this article" widget rerouting an article to the podcast
+  driver, discarding the article
+
+Each was fixed where it was found (§3, §5, §9). The class survives because
+there is no single place that decides what a fetch outcome means, and no way
+to audit which statuses a driver may produce.
+
+A driver is a black box over one source shape. It is passed a work unit,
+does its job, and returns an outcome describing what it found:
+
+    Content(body, meta, media, links)   fetched something
+    Missing(evidence)                   confirmed gone
+    Refused(evidence)                   blocked, paywalled, rate limited
+    Unusable(evidence)                  wrong shape, nothing to extract
+    NeedsCapability(need)               needs transcription, extraction, OCR
+    Redetected(kind, format)            this is not what we thought it was
+
+The driver keeps the knowledge only it has. That a particular yt-dlp
+message means confirmed gone, that a 402 means paywalled, that a thin
+extraction is not content: those are per-source judgements and they stay in
+the driver, carried as evidence on the outcome. `Redetected` is the mid-fetch
+kind discovery of §1, which today is the one sanctioned shape in which a
+driver may return `queued`; as an outcome it stops being a special case.
+
+The run layer maps outcome to `Status` in one total match, in one place.
+`Missing` is the only road to `dead`. That mapping becomes auditable and
+testable on its own, and the question "can this driver produce a terminal
+status by accident" stops being answerable only by reading the driver.
+
+**Drivers never raise.** Every escape becomes an outcome at the seam. A
+driver that raises is an engine bug, not a content problem, and the run
+layer's single broad except (§5) records it as such. This kills the
+exception-class defects outright rather than patching one boundary at a
+time, which is what the provider-boundary round had to do for
+`IncompleteRead`, `HFValidationError`, `IndexError` from a container with no
+audio stream, and `csv.Error`.
+
+**Drivers are isolated.** A driver never imports another driver. Behaviour
+two drivers share becomes a lib beside `drivers/transport.py`,
+`drivers/gh.py` and `drivers/audio.py`. **Open question — `paper.py`**,
+which delegates to `WebDriver` wholesale as a fetch strategy rather than
+borrowing a helper, is the one standing exception and needs its own
+decision: either the delegation is legitimate and named, or fetch, wayback
+and extraction hoist into a lib and the exception goes.
+
+**What this replaces.** `Result` becomes the union above rather than a flat
+dataclass whose fields are only meaningful for some statuses. Today 204
+legal combinations carry `media` or `children` on a non-done result, and
+`assets` is validated done-only while the others are not. Making the wrong
+states unrepresentable is the point, not a side effect. (The sketch above
+does not say where `assets` and the driver-stated `reason` ride on the
+union; settle that when it is built.) Two related shapes settle with it:
+
+- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so 828
+  of 2484 legal ledger states cannot convert. One rule, stated once.
+- `via` carries provenance, routing (`via == "media"` dispatches, §3) and a
+  migration marker. Three jobs, one field. Provenance and routing separate.
+
+**Acceptance bar.** Each change must name the defect class from the review
+record that it makes structurally impossible. Moving code is not enough and
+line count is not a criterion. Secondary tests: the rule now lives in
+exactly one place, the dependency graph is strictly simpler, and the tests
+still mean something afterwards, proven by mutation rather than by passing.
+
+**Not in scope**: inheritance for drivers, a plugin system, and coverage
+targets. `matches()` and `canonical()` stay as they are — an ordered chain
+of responsibility with a catch-all last, which is proven here.
 
 ## 3. Enums
 
@@ -996,19 +1085,16 @@ verbatim — never re-derived character-by-character by the model.
 
 ```
 render/kernel.py     markdown composition, zero dex vocabulary — headings,
-                     bullets, detail lines, inline lists. No width, no
-                     wrapping, no truncation: identity reaches the reader
-                     whole. Composition bugs can exist in exactly one
-                     place, and it has tests.
+                     bullets, detail lines, `·`-joined inline lists, and the
+                     pluralizer that makes a heading's scale read as
+                     English. No width, no wrapping, no truncation:
+                     identity reaches the reader whole. Composition bugs
+                     can exist in exactly one place, and it has tests.
 render/surfaces.py   named surfaces, loud payload validation:
                      enrich-report, status, item-status,
                      capability-report, sync-report, ingest-receipt,
                      health-report
 ```
-
-Every surface renders markdown, and its sections group by who owns the next
-action rather than by the ledger status the engine stores. The vocabulary
-and the layout rules are `design/report-surfaces.md`.
 
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
 in-process — includes a "reported upstream: N issues" line when the filer
@@ -1016,8 +1102,121 @@ acted) and cognitive (Claude writes a JSON payload — including free-prose
 fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
 Standing skill rule: **never hand-draw a report; there is a surface for it
-— call it.** Cap-fired events are internal (ledger/log) and appear on
-no user-facing surface.
+— call it.** Harvest-time cap fires are internal (ledger/log) and appear on
+no user-facing surface; an owner-requested `enrich fetch` refusal is
+answered on the report of the run the owner asked for (§1).
+
+### Who reads a report
+
+The primary reader is the Claude session driving a scheduled run. It reads
+the report to decide what to do next, and it reads every line of it. The
+owner reads the same reports rarely, in whatever client he happens to be in.
+
+The surfaces were originally laid out for a person at a 72-column terminal:
+fixed-width tables, column fitting, hard wrapping, and middle-elision of any
+cell too wide for its column. Measured against real instance data, that
+layout destroyed the data the reports exist to carry. In one table 71-79% of
+item ids were elided and in another 100% were; across 2452 real URLs, 106
+rendered identically to a different URL, including four corpus items holding
+two of their own URLs that collapsed onto each other. A report that renders
+two different rows the same way is worse than no report. So **every surface
+emits markdown, not fixed-width layout**: no column arithmetic, no padding,
+no rules, no box glyphs.
+
+### Layout rules
+
+**Headings.** `##` opens the report and names it plus its scale
+(`## Enrich run — 6 units processed`). `###` opens each section and names
+the section plus its scale (`### Needs you — 1 entry the engine has given up
+on`). A reader who stops at the headings still knows what happened and how
+much of it there is.
+
+**Bullets.** `-` for every list. One entry per bullet. A detail hanging off
+an entry is a continuation line indented two spaces and opened with `↳`;
+several details are several `↳` lines. Nested `-` bullets are for genuine
+nesting (a migration's actions inside the migration), not for the details of
+a single entry.
+
+**Bold for identifiers.** Item ids, page names, URLs standing as an entry's
+identity, and the count in a finding are `**bold**`. The bold is what the
+eye lands on and what a grep for an id finds.
+
+**Backticks for statuses and literals.** A ledger status (`manual`,
+`blocked`), a capability (`transcribe`), a path or filename, a wikilink
+target, a command. Backticked text is a value the reader can copy, type, or
+match; it is never prose.
+
+**Identity is never truncated and never wrapped.** An item id, a URL, or a
+file path renders whole, on its own line, whatever its length. Real item ids
+average 58 characters and one real URL in a live instance is 375. Nothing in
+the render path may shorten one, split one, or elide the middle of one. The
+elision code that could do so is deleted rather than bounded, because a
+bound is a setting and a deletion is a guarantee — and with it went the rest
+of the terminal geometry the kernel used to hold: display-column
+measurement, greedy word wrap, hanging-indent wrap, fill-to-width, table
+column fitting, key-value blocks and tree gutters.
+
+**Prose may soft-wrap.** No renderer hard-wraps anything. Terminals,
+editors and chat clients all soft-wrap, and a hard wrap inserted at render
+time is a newline that is wrong in every viewport but one, and that a reader
+searching for a phrase cannot match across.
+
+**No tables.** Not a markdown table, not an aligned one. The only exception
+is a genuinely short columnar count where every cell is a short label and a
+small integer, and even those render as bullets or as one `·`-joined line
+(`**done** 4 · **waiting** 1 · **blocked** 1`) rather than as a table.
+
+**Sections group by who owns the next action, not by internal status.** The
+old enrich report had one `parked` block holding four ledger statuses,
+because that is how the ledger stores them. A reader does not need to know
+that: he needs to know which entries wait on him and which the engine will
+retry without being asked. So `manual` (the engine has given up) becomes
+**Needs you**, while `blocked`, `waiting` and `error` (the engine retries by
+itself) become **Waiting on the engine**, with the retry state visible on
+the entry. The same rule renames every other engine-internal label to what
+the reader must do about it.
+
+**Open question — where `error` entries belong.** They sit under **Waiting
+on the engine** today, on the rule above: `error` retries by itself, once
+per newer engine (§5). The counter-argument is that the retry needs a
+release to happen at all, so an `error` is closer to work the owner owns
+than to work the engine will get to unasked. Undecided.
+
+**A marker rides inside the bullet text, never in the prefix.** A restated
+fact is `- ~ the fact`, not a `~` gutter applied to the entry. This is the
+one behaviour kept from the superseded wrapping work: a prefix repeats on
+every continuation line, so two facts rendered four markers.
+
+**Absent sections are absent; present checks state "none".** The two kinds
+of report differ. A run report (enrich, sync, receipt) omits a section with
+nothing in it, and says in one line when nothing at all happened; a list of
+headings each reading "none" is exactly the noise markdown removes. A check
+report (health) keeps one bullet per check even at zero, because there the
+absence is the finding and its presence proves the check ran.
+
+**A capped listing says it is capped.** A findings list showing only its
+first N entries ends with a bullet naming how many it did not show. A
+silently short list is a lie about scale.
+
+### Reader-facing vocabulary
+
+| label | what it holds |
+|---|---|
+| **Needs writing up** | items with new enrichment for the session to digest |
+| **Read these yourself** | jobs resolving to the cognitive floor (OCR, extraction Claude must do with eyes) |
+| **Needs you** | entries the engine has given up on: ledger status `manual` |
+| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` |
+| **Not finished** | items still `raw` because a unit they own has not landed |
+| **Digest these** | items whose enrichment is newer than their digest |
+| **Waiting on a capability** | the `waiting` cohort, counted by the capability it needs |
+| **Repair with judgment** | a migration's skipped records |
+| **REVIEW REQUIRED** | a migration's anomalies |
+
+(That table is documentation, not a rendered surface — the no-tables rule
+binds the renderers, not this document.)
+
+Detail text says what changed in plain terms. "3 new enrichment files, 1
+rewritten" replaces "3 new, 1 changed", which never said new *what*.
 
 ## 12. Releases, sync, migrations
 
@@ -1168,6 +1367,15 @@ Shipping migrations for this rewrite:
    left with no reason at all gets one, since the schema requires it.
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
+
+   **Open question — a guard on an absent or empty corpus.** Migration 1
+   reads the corpus to attribute ledger lines, so it could refuse to run
+   where the corpus is missing or empty rather than dropping every line it
+   cannot attribute. The recommendation is no guard: corpus and ledger live
+   in the same repo and arrive together, so an empty corpus beside a
+   populated ledger is not a state a checkout produces — and a guard teaches
+   a migration to distrust its own repo, which is the ghost-item sweep's
+   mistake in a different costume. Not ruled on.
 2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
    this order. First, identities: the rewrite moved canonical identity
    for two kinds (x posts are keyed by status id; youtube's single-video
@@ -1411,7 +1619,7 @@ src/dex_engine/
 ```
 
 Dependencies: `trafilatura` (extraction only), `yt-dlp`, **`firecrawl-anydoc`**
-(+), **`faster-whisper`** (+, packaging pending — §16), `pypdf` (−, replaced
+(+), **`faster-whisper`** (+, packaging pending — §17), `pypdf` (−, replaced
 by anydoc). License: MIT (LICENSE + pyproject, in place; all deps
 MIT-compatible — AGPL options were rejected for this reason and anydoc made
 the question moot).
@@ -1607,7 +1815,7 @@ old monolith had no seams.
   non-audit lines; `canonical(canonical(u)) == canonical(u)` over generated
   URLs (canonicalization keys the ledger hash — a non-idempotent case IS a
   duplicate-entry bug).
-- **Render kernel tests**: the column/wrap math.
+- **Render kernel tests**: the markdown composition primitives (§11).
 - **Live tests opt-in** (pytest marker) for real-API drift checks. CI runs
   hermetic only (enforced by the default `-m "not live"`, §14).
 
@@ -1621,7 +1829,48 @@ Suite structure: `tests/` mirrors `src/dex_engine/`
 Driver/provider Protocol conformance is verified by the typed registry
 literal (§2) — no separate conformance tests needed.
 
-## 16. Deferred / out of scope (tracked on the roadmap)
+## 16. Cleanup round: behaviour-neutral debts
+
+Debts the build left in the engine, batched so they aren't lost. Owner
+ruling: these ship **before the first release**, which is what makes them
+release work and puts them here rather than on the roadmap. Sequence them
+after the driver-outcome change (§2) — the cleanup touches the same seams,
+and the outcome union settles several of these on its way past.
+
+- **One shared fetch-and-classify helper.** Eight hand-rolled copies across
+  the drivers, `transcribe` and `run`.
+- **Duplicated body / slug / extension helpers.** youtube `_body` vs
+  `transcribe.youtube_body`; `capture` vs `normalize` for `URL_RE` and
+  slugify; `run._ext_of` vs `transcribe._audio_ext`.
+- **Six spellings of Classification→Result.** One conversion, once.
+- **One enrichment-frontmatter module owning render and parse.** The writer
+  lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
+  contract and belongs to one module.
+- **Hoist the yt-dlp seam out of `drivers/youtube.py`** so
+  `pipeline/transcribe.py` stops importing a driver — the standing
+  violation of the driver-isolation rule (§2) inside the engine's own code.
+- **`ledger.py`'s per-word legacy-vocabulary hint tables.**
+- **The import-time `DRIVERS` registry.** A module-level list against the
+  no-import-time-state rule (§14); the typed registry literal is still the
+  Protocol-conformance point (§2), just not at import.
+- **Streaming transport reads.** An unbounded `response.read()` buffers a
+  whole enclosure in memory; enforce the §7 media cap in-stream instead, so
+  an oversize download is refused while it arrives rather than after.
+- **A per-item fetched-count cache.** `_cap_fired` recounts the item's
+  entries per admission, which is quadratic in the item's ledger.
+- **One long-lived append handle for the ledger.**
+- **A repo-wide `ruff format` pass.** 43 files drift under ruff 0.16.3 —
+  one mechanical reformat commit, on its own.
+- **A cheap guard in `run._admit_children`.** Unreachable until a driver
+  emits children.
+
+Two seams of this round already landed as part of fixes and are **done**:
+`drivers/gh.py`, the authenticated GitHub route the github and file drivers
+share (§3), and `drivers/audio.py`, the audio-on-a-page signal the web and
+podcast drivers share (§9). Neither driver imports the other through them,
+and they are the shape the yt-dlp hoist copies.
+
+## 17. Deferred / out of scope (tracked on the roadmap)
 
 Instagram driver (shape not
 agreed) · X thread walk-down · hosted
