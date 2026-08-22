@@ -13,10 +13,13 @@ two segments before the name even starts. The driver guesses the shortest
 ref the shape allows and, only when that 404s, asks the repo which of its
 refs the path really starts with.
 
-Blob bytes are sniffed before they are fenced: a document or any other
-binary committed to a repo parks ``manual`` naming what it is, because a
-GitHub blob URL serves an HTML viewer rather than the bytes, so no other
-driver can re-fetch it — the rescue is to capture the file itself.
+Blob bytes are sniffed *by name* before they are fenced: a document or any
+other binary committed to a repo parks ``manual`` naming what it is,
+because a GitHub blob URL serves an HTML viewer rather than the bytes, so
+no other driver can re-fetch it — the rescue is to capture the file
+itself. The name matters because two extractable shapes carry no
+signature: a CSV, and a Git-LFS pointer, whose 130 bytes of stand-in text
+would otherwise be fenced as though they were the document.
 """
 
 import base64
@@ -263,7 +266,12 @@ class GitHubDriver:
                     "read it from a clone"
                 ),
             )
-        fmt = sniff_format(data)
+        # Named, because a signature is not always there to find: an
+        # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
+        # for a document, and a CSV has no signature at all. Unnamed, both
+        # decoded cleanly and fenced — the pointer text presented as the
+        # document it points at.
+        fmt = sniff_format(data, name=file_path)
         if fmt is not None:
             return Result(
                 status=Status.MANUAL,

@@ -311,6 +311,47 @@ class TestBlob:
         assert result.status is Status.DONE
         assert "naïve — résumé" in body_of(result)
 
+    def test_an_lfs_pointer_parks_manual_instead_of_fencing_its_stand_in_text(self):
+        # An unsmudged LFS pointer is honest UTF-8 with no signature, so an
+        # unnamed sniff let 130 bytes of `oid sha256:…` fence and ledger
+        # `done` as though it were the document it points at.
+        pointer = (
+            b"version https://git-lfs.github.com/spec/v1\n"
+            b"oid sha256:08709a87567d8311d6fd29c4f4a5386801153e71450e628c4a5a5d7e85feda8b\n"
+            b"size 7416886\n"
+        )
+        args = ("api", "repos/acme/pipeline-kit/contents/docs/sicp.pdf?ref=main")
+        driver = driver_for({args: contents(pointer)})
+        url = "https://github.com/acme/pipeline-kit/blob/main/docs/sicp.pdf"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "is a pdf document" in reason_of(result)
+        assert result.body is None
+
+    def test_a_committed_csv_parks_for_the_extractor_rather_than_fencing(self):
+        # Judgment call: a CSV is text and would fence, but it has no
+        # signature either, so allowing it to fence is what lets an LFS
+        # pointer for a .csv through. One rule — an extractable document
+        # parks for capture — and csv-builtin then renders a real table
+        # instead of a fence truncated at 40k characters.
+        args = ("api", "repos/acme/pipeline-kit/contents/data/runs.csv?ref=main")
+        driver = driver_for({args: contents(b"run,status\n1,done\n2,dead\n")})
+        url = "https://github.com/acme/pipeline-kit/blob/main/data/runs.csv"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "is a csv document" in reason_of(result)
+
+    @pytest.mark.parametrize("path", ["src/detect.py", "README.md", "Makefile", "docs/notes.txt"])
+    def test_source_and_prose_extensions_still_fence(self, path):
+        # The extension fallback only knows Format values: nothing a repo
+        # actually holds as source or prose is diverted by naming the file.
+        args = ("api", f"repos/acme/pipeline-kit/contents/{path}?ref=main")
+        driver = driver_for({args: contents(b"def detect(): ...")})
+        url = f"https://github.com/acme/pipeline-kit/blob/main/{path}"
+        result = driver.fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert body_of(result) == "```\ndef detect(): ...\n```"
+
     def test_a_sha_ref_needs_no_lookup(self):
         sha = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
         args = ("api", f"repos/acme/pipeline-kit/contents/src/detect.py?ref={sha}")

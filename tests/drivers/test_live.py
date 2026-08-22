@@ -78,6 +78,17 @@ class TestGitHubContentsShape:
         assert result.status is Status.DONE
         assert "Hello World!" in body_of(result)
 
+    def test_an_lfs_tracked_blob_still_arrives_as_its_pointer(self):
+        # The contents API serves Git-LFS pointer text, never the object it
+        # names. The blob route depends on that staying true: the pointer is
+        # clean UTF-8 with no signature, so only the filename keeps its 130
+        # bytes of `oid sha256:…` from being fenced as the document.
+        url = "https://github.com/sarabander/sicp-pdf/blob/master/sicp.pdf"
+        result = GitHubDriver().fetch(make_unit(url, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "is a pdf document" in str(result.reason)
+        assert result.body is None
+
     def test_a_slashed_branch_resolves_through_matching_refs(self):
         # rust-lang/rust's bors branches are the routine slashed-name shape.
         # The ref/path boundary is unrecoverable from the URL, so this pins
