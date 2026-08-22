@@ -11,7 +11,9 @@ APPLE_URL = "https://podcasts.apple.com/us/podcast/engineering-distilled/id99900
 SPOTIFY_URL = "https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk"
 FEED_URL = "https://feeds.pods.test/engineering-distilled.rss"
 PAGE_URL = "https://engineering-distilled.test/episodes/ledgers-as-work-queues"
-LOOKUP_URL = "https://itunes.apple.com/lookup?id=8880042&entity=podcastEpisode"
+# Keyed by the SHOW id (9990001), never the episode id: handed an episode id
+# the lookup API answers resultCount 0 for every episode that exists.
+LOOKUP_URL = "https://itunes.apple.com/lookup?id=9990001&entity=podcastEpisode&limit=200"
 ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
 
 
@@ -60,7 +62,8 @@ class TestDetection:
 
 class TestAppleResolution:
     def test_lookup_feed_match_enclosure(self):
-        # Apple link → iTunes lookup (keyless) → show RSS → match → enclosure.
+        # Apple link → iTunes lookup on the SHOW id (keyless) → match the
+        # episode by trackId → show RSS → enclosure.
         d = driver(
             {
                 LOOKUP_URL: html_response(fixture_text("podcast", "itunes-lookup.json")),
@@ -94,11 +97,33 @@ class TestAppleResolution:
         assert result.status is Status.MANUAL
         assert "show, not an episode" in reason_of(result)
 
-    def test_unknown_episode_in_lookup_is_manual(self):
+    def test_the_lookup_is_keyed_by_the_show_id_not_the_episode_id(self):
+        # The pin: the episode-id lookup the driver used to send resolves
+        # NOTHING — resultCount 0 for every episode that exists, so the
+        # whole Apple route could never park anything but manual.
+        transport = FakeTransport(
+            {
+                LOOKUP_URL: html_response(fixture_text("podcast", "itunes-lookup.json")),
+                FEED_URL: feed(),
+            }
+        )
+        result = PodcastDriver(transport=transport).fetch(make_unit(APPLE_URL, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert transport.calls[0] == ("GET", LOOKUP_URL)
+        assert all("id=8880042" not in url for _method, url in transport.calls)
+
+    def test_episode_outside_the_lookup_window_is_manual(self):
         d = driver({LOOKUP_URL: html_response('{"resultCount": 0, "results": []}')})
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
         assert result.status is Status.MANUAL
-        assert "iTunes lookup" in reason_of(result)
+        assert "not among the 200 episodes iTunes lists for this show" in reason_of(result)
+
+    def test_apple_link_without_a_show_id_segment_is_manual(self):
+        d = driver({})
+        url = "https://podcasts.apple.com/us/podcast/engineering-distilled?i=8880042"
+        result = d.fetch(make_unit(url, Kind.PODCAST))
+        assert result.status is Status.MANUAL
+        assert "no show id" in reason_of(result)
 
     def test_episode_pulled_from_feed_is_manual(self):
         pulled = fixture_text("podcast", "itunes-lookup.json").replace("ep-42-guid", "gone-guid")

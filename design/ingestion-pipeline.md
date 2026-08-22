@@ -592,8 +592,12 @@ silent `except: pass` dies here.
 Today a Spotify/Apple link captures marketing chrome. Podcasting is RSS
 underneath; the audio lives in the feed's `<enclosure>`:
 
-- **Apple link** → iTunes lookup API (public, keyless) → show RSS → match
-  episode → enclosure.
+- **Apple link** → iTunes lookup API (public, keyless) on the **show** id
+  from the `/idNNNN` path segment → match the episode by `trackId` against
+  the `?i=` value inside the returned window (200 episodes, the largest the
+  API serves) → show RSS → enclosure. The lookup API resolves show ids
+  only: handed an episode id it answers `resultCount: 0` for every episode
+  that exists. An episode older than the window parks `manual` saying so.
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
   An enclosure that 404s at drain time is treated as an expired signed URL
   → `manual` with a re-resolve route, never `dead` — expired links are not

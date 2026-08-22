@@ -355,7 +355,9 @@ class TestYoutubeDrain:
 
 class TestPodcastDrain:
     APPLE_URL = "https://podcasts.apple.com/us/podcast/engineering/id9990001?i=8880042"
-    LOOKUP_URL = "https://itunes.apple.com/lookup?id=8880042&entity=podcastEpisode"
+    # Keyed by the show id (9990001), not the ?i= episode id — the lookup
+    # API resolves show ids only.
+    LOOKUP_URL = "https://itunes.apple.com/lookup?id=9990001&entity=podcastEpisode&limit=200"
     FEED_URL = "https://feeds.pods.test/engineering-distilled.rss"
     ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
 

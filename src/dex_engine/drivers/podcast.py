@@ -2,8 +2,8 @@
 
 Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 
-- **Apple link** → iTunes lookup API (public, keyless) → show RSS → match
-  episode → enclosure.
+- **Apple link** → iTunes lookup API (public, keyless) on the SHOW id →
+  match the episode in the returned window → show RSS → enclosure.
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
   Spotify exclusives fail honestly → ``manual`` (Claude may rescue via the
   show's own site).
@@ -32,10 +32,16 @@ from .transport import Transport, urllib_transport
 
 __all__ = ["PodcastDriver"]
 
-_ITUNES_LOOKUP = "https://itunes.apple.com/lookup?id={id}&entity=podcastEpisode"
+# The lookup API resolves SHOW ids only: handed an episode id it answers
+# `resultCount: 0` for every episode that exists, so the episode is found by
+# matching trackId inside the show's episode window.
+_ITUNES_LOOKUP = "https://itunes.apple.com/lookup?id={id}&entity=podcastEpisode&limit={limit}"
 _ITUNES_SEARCH = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&term={term}"
+# The largest window the lookup API serves; older episodes fall outside it.
+_ITUNES_EPISODE_WINDOW = 200
 
 _APPLE_EPISODE_PARAM = "i"
+_APPLE_SHOW_RE = re.compile(r"id(\d+)")
 
 _OG_TITLE_RES = (
     re.compile(r"<meta[^>]+(?:property|name)=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)"),
@@ -138,18 +144,25 @@ class PodcastDriver:
     # -- Apple: iTunes lookup → RSS → match --------------------------
 
     def _resolve_apple(self, url: str) -> "_Episode | Result":
-        episode_ids = parse_qs(urlsplit(url).query).get(_APPLE_EPISODE_PARAM, [])
+        parts = urlsplit(url)
+        episode_ids = parse_qs(parts.query).get(_APPLE_EPISODE_PARAM, [])
         if not episode_ids or not episode_ids[0].isdigit():
             return _manual(
                 "Apple link names a show, not an episode — capture an episode link "
                 "(the ?i= parameter)"
             )
-        lookup = self._json(_ITUNES_LOOKUP.format(id=episode_ids[0]))
+        show_id = _apple_show_id(parts.path)
+        if show_id is None:
+            return _manual("Apple link carries no show id to look up — rescue by hand")
+        lookup = self._json(_ITUNES_LOOKUP.format(id=show_id, limit=_ITUNES_EPISODE_WINDOW))
         if isinstance(lookup, Result):
             return lookup
         episode = _itunes_episode(lookup, track_id=int(episode_ids[0]))
         if episode is None:
-            return _manual("iTunes lookup does not know this episode — rescue by hand")
+            return _manual(
+                f"episode {episode_ids[0]} is not among the {_ITUNES_EPISODE_WINDOW} episodes "
+                "iTunes lists for this show — rescue by hand"
+            )
         return self._episode_from_feed(episode)
 
     # -- Spotify: og-title → iTunes search → RSS → match -------------
@@ -254,6 +267,15 @@ class PodcastDriver:
 # ---------------------------------------------------------------------------
 # iTunes payloads.
 # ---------------------------------------------------------------------------
+
+
+def _apple_show_id(path: str) -> str | None:
+    """The show id from the ``/idNNNN`` segment every Apple podcast URL carries."""
+    for segment in path.split("/"):
+        match = _APPLE_SHOW_RE.fullmatch(segment)
+        if match:
+            return match.group(1)
+    return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

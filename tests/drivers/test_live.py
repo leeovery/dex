@@ -12,9 +12,10 @@ import pytest
 
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.paper import PaperDriver
+from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import urllib_transport
 from dex_engine.drivers.x import XDriver
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Kind, Need, Status
 from tests.drivers.conftest import body_of, make_unit
 
 pytestmark = pytest.mark.live
@@ -37,6 +38,21 @@ class TestArxivShape:
         assert result.status is Status.DONE
         assert "Attention" in str(result.meta["title"])
         assert "## Abstract" in body_of(result)
+
+
+class TestItunesLookupShape:
+    def test_an_apple_episode_link_resolves_through_the_show_lookup(self):
+        # Lex Fridman #474. The lookup API resolves SHOW ids only — handed
+        # the ?i= episode id it answers resultCount 0 — so the episode is
+        # matched by trackId inside the show's returned episode window.
+        url = (
+            "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/"
+            "id1434243584?i=1000716969529"
+        )
+        result = PodcastDriver(transport=urllib_transport).fetch(make_unit(url, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert result.needs is Need.TRANSCRIBE
+        assert str(result.meta["enclosure"]).startswith("http")
 
 
 class TestGitHubContentsShape:
