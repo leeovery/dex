@@ -1,15 +1,17 @@
 """Shared driver-test plumbing: fixture loading, fake transports, work units."""
 
+import base64
 import contextlib
 import json
 import re
 import socket
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
+from dex_engine.drivers.gh import GhResult
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.types import Format, Kind, Result, WorkUnit
 from dex_engine.pipeline.urls import work_hash
@@ -79,6 +81,45 @@ class FakeTransport:
 @pytest.fixture
 def fake_transport():
     return FakeTransport
+
+
+class FakeGh:
+    """args tuple -> GhResult; unexpected invocations are loud.
+
+    Shared because two drivers read the same gh seam: the github driver and
+    the file driver both fetch blob bytes through it.
+    """
+
+    def __init__(self, responses: Mapping[tuple[str, ...], GhResult]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, args: Sequence[str]) -> GhResult:
+        key = tuple(args)
+        self.calls.append(key)
+        if key not in self.responses:
+            raise AssertionError(f"unexpected gh invocation {key!r}")
+        return self.responses[key]
+
+
+def gh_ok(stdout: str) -> GhResult:
+    return GhResult(returncode=0, stdout=stdout, stderr="")
+
+
+def gh_fail(stderr: str) -> GhResult:
+    return GhResult(returncode=1, stdout="", stderr=stderr)
+
+
+def gh_contents(data: bytes) -> GhResult:
+    """The contents-API payload shape: base64 `content` plus its encoding."""
+    return gh_ok(
+        json.dumps({"encoding": "base64", "content": base64.b64encode(data).decode("ascii")})
+    )
+
+
+def gh_matching_refs(*names: str) -> GhResult:
+    """A ``git/matching-refs`` page, in the API's own shape."""
+    return gh_ok(json.dumps([{"ref": name, "object": {"sha": "0" * 40}} for name in names]))
 
 
 def _drain_request(conn: socket.socket) -> None:
