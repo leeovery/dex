@@ -41,7 +41,7 @@ from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
 from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
-from .podcast import audio_enclosure
+from .audio import audio_enclosure
 from .transport import Transport, urllib_transport
 
 __all__ = ["HtmlExtract", "WebDriver", "trafilatura_extract"]

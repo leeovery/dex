@@ -31,9 +31,10 @@ from dex_engine.pipeline.classify import Classification, classify_connection, cl
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .audio import audio_enclosure
 from .transport import Transport, urllib_transport
 
-__all__ = ["PodcastDriver", "audio_enclosure"]
+__all__ = ["PodcastDriver"]
 
 # The lookup API resolves SHOW ids only: handed an episode id it answers
 # `resultCount: 0` for every episode that exists, so the episode is found by
@@ -54,23 +55,6 @@ _FEED_LINK_RE = re.compile(
     r"<link[^>]+type=[\"']application/(?:rss|atom)\+xml[\"'][^>]*>", re.IGNORECASE
 )
 _HREF_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.IGNORECASE)
-
-# The two ways an episode page carries its own audio: the og:audio pointer
-# and an <audio> element (its own src, or a nested <source>).
-_OG_AUDIO_RES = (
-    re.compile(
-        r"<meta[^>]+(?:property|name)=[\"']og:audio[\"'][^>]+content=[\"']([^\"'\r\n]+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:audio[\"']",
-        re.IGNORECASE,
-    ),
-)
-_AUDIO_ELEMENT_RE = re.compile(
-    r"<audio\b[^>]*>.*?</audio\s*>|<audio\b[^>]*/?>", re.IGNORECASE | re.DOTALL
-)
-_SRC_RE = re.compile(r"\bsrc=[\"']([^\"'\r\n]+)[\"']", re.IGNORECASE)
 
 _CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
 _ITUNES_NS = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
@@ -510,45 +494,6 @@ def _feed_link(page: str, base_url: str) -> str | None:
             # driver fetches what it is handed, so it is absolutized here.
             return urljoin(base_url, html_lib.unescape(href.group(1)).strip())
     return None
-
-
-def audio_enclosure(page: str, base_url: str) -> str | None:
-    """The audio this page carries as its own, or None — the podcast signal.
-
-    An episode page advertises its episode: an ``og:audio`` pointer, or an
-    ``<audio>`` element holding the file. Both say "the audio IS this
-    page's subject", which is what tells an indie episode page apart from
-    an ordinary post — and the distinction has to be content-driven,
-    because ``/feed`` and ``/rss`` path suffixes are blog vocabulary too
-    and an RSS ``<link rel>`` in the head says nothing but "this site has
-    a feed". A bare link to an audio file is deliberately NOT a signal: a
-    post linking one mp3 is still a post, and stealing it from the web
-    driver would cost its extraction.
-
-    Args:
-        page: The fetched HTML.
-        base_url: The page's URL — relative sources resolve against it.
-
-    Returns:
-        The absolute http(s) audio URL, or None.
-    """
-    for pattern in _OG_AUDIO_RES:
-        match = pattern.search(page)
-        if match:
-            resolved = _absolute(match.group(1), base_url)
-            if resolved is not None:
-                return resolved
-    for element in _AUDIO_ELEMENT_RE.finditer(page):
-        for source in _SRC_RE.finditer(element.group(0)):
-            resolved = _absolute(source.group(1), base_url)
-            if resolved is not None:
-                return resolved
-    return None
-
-
-def _absolute(value: str, base_url: str) -> str | None:
-    candidate = urljoin(base_url, html_lib.unescape(value).strip())
-    return candidate if candidate.startswith(("http://", "https://")) else None
 
 
 # ---------------------------------------------------------------------------
