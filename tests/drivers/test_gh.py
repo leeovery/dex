@@ -125,8 +125,27 @@ class TestRefBoundary:
         assert b"Rust" in outcome.data
 
     def test_a_sibling_ref_never_claims_the_path_by_string_prefix(self):
-        # `automation/bors-next` starts with `automation/bors` as a string;
-        # segment-wise it is a different branch and must not take the URL.
+        # The repo has `automation/bors`; the URL's branch is
+        # `automation/bors-next`, which the repo has NOT pushed. As a string
+        # the short one is a prefix of the URL, and taking it would send
+        # `?ref=automation/bors` with a path of `-next/README.md` — a request
+        # this fake would not even recognize. Segment-wise it does not match
+        # at all, so nothing re-splits and the guess's 404 stands.
+        gh = FakeGh(
+            {
+                ("api", f"{self.REPO}/contents/bors-next/README.md?ref=automation"): gh_fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/heads/automation"): gh_matching_refs(
+                    "refs/heads/automation/bors"
+                ),
+                ("api", f"{self.REPO}/git/matching-refs/tags/automation"): gh_matching_refs(),
+            }
+        )
+        url = "https://github.com/rust-lang/rust/blob/automation/bors-next/README.md"
+        assert status_of(fetched(url, gh)) is Status.DEAD
+
+    def test_the_right_sibling_still_wins_when_the_repo_has_both(self):
         gh = FakeGh(
             {
                 ("api", f"{self.REPO}/contents/bors/README.md?ref=automation"): gh_fail(

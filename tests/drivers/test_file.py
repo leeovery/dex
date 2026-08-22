@@ -237,6 +237,20 @@ class TestGithubBlobs:
         # The name comes from the resolved split, not the guessed one.
         assert result.meta["title"] == "paper.pdf"
 
+    def test_a_blob_with_no_signature_is_routed_by_its_name(self):
+        # A CSV carries no byte signature at all, so only the filename that
+        # came back with the bytes says what it is. Unnamed, these bytes are
+        # "unrecognized" and park — the committed table never reaches an
+        # extractor.
+        url = "https://github.com/acme/pipeline-kit/blob/main/data/runs.csv"
+        args = ("api", "repos/acme/pipeline-kit/contents/data/runs.csv?ref=main")
+        gh = FakeGh({args: gh_contents(b"run,status\n1,done\n2,dead\n")})
+        extractor = FakeExtractor("csv-builtin", formats=frozenset({Format.CSV}))
+        d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(url, Kind.FILE))  # no declared format to fall back on
+        assert result.status is Status.DONE
+        assert extractor.calls[0][1] is Format.CSV
+
     def test_an_lfs_pointer_blob_parks_rather_than_extracting_its_stand_in_text(self):
         # The github driver re-detects a `.pdf` blob by name, pointer bytes
         # or not — it cannot tell. This is where the 130 bytes of
