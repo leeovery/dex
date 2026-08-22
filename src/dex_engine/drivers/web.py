@@ -16,6 +16,11 @@ content type maps to an extractable format) is neither thin nor web work at
 all: detection's HEAD lied or was inconclusive. The driver signals a
 redetection to ``file`` work and the run layer re-routes the unit — never
 ``manual`` for content the file driver can read.
+
+The same mid-fetch discovery carries indie podcast episode pages to the
+``podcast`` driver: a page advertising its own audio is an episode, and
+being the catch-all is what lets that be decided on content rather than on
+URL patterns that cannot tell ``/feed`` the blog from ``/feed`` the show.
 """
 
 import html as html_lib
@@ -36,6 +41,7 @@ from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
 from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
+from .podcast import audio_enclosure
 from .transport import Transport, urllib_transport
 
 __all__ = ["HtmlExtract", "WebDriver", "trafilatura_extract"]
@@ -126,6 +132,14 @@ class WebDriver:
                     status=Status.QUEUED,
                     meta={},
                     redetect=Redetection(kind=Kind.FILE, format=fmt),
+                )
+            if audio_enclosure(page.html, unit.url) is not None:
+                # The page carries its own audio: an indie episode page,
+                # which no URL pattern can tell from a post. The podcast
+                # driver resolves it to an enclosure the transcribe drain
+                # can reach — extraction of the page's chrome would not.
+                return Result(
+                    status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST)
                 )
             return self._extracted(page.html, base_url=unit.url, allow_media=True) or Result(
                 status=Status.MANUAL,

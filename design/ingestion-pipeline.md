@@ -129,8 +129,10 @@ digits, so two units under one item do collide (a real `web-6968e3.md` /
 `file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
 the neighbour's enrichment while its ledger line still read `done`. Nothing
 is dropped for a replacement that is not itself on disk. Works in both
-directions (web→file,
-file→web). Loop guard is per-run state: one correction per hash per run,
+directions (web→file, file→web), and carries two further discoveries that
+only a fetched body can make: an indie podcast episode page the catch-all
+fetched → `podcast` (§9), and a GitHub blob whose bytes are a document →
+`file` (§3). Loop guard is per-run state: one correction per hash per run,
 then `manual` "re-detection loop"; across runs a unit may redetect again —
 the world changes.
 
@@ -739,7 +741,23 @@ underneath; the audio lives in the feed's `<enclosure>`:
   mapping for this one case).
   Spotify exclusives fail honestly → `manual` (Claude may rescue via the
   show's own site).
-- **Direct RSS / indie episode page** → enclosure or `<link rel>` in head.
+- **Direct RSS / indie episode page** → the feed the page's `<link rel>`
+  names (its notes are richer than the page's markup), falling back to the
+  enclosure the page carries itself when that feed is unreachable or does
+  not hold the episode. Either way the unit resolves — it must, because the
+  route it arrives by is a re-detection and bouncing back would park as a
+  loop.
+
+  **The route is content-driven, never URL-guessing.** `matches()` stays
+  narrow (Apple, Spotify, explicit `.rss`) because bare `/feed` and `/rss`
+  suffixes are blog vocabulary and an RSS `<link rel>` in a head says only
+  "this site has a feed". Registry order does the work instead: nothing
+  claims an indie episode page, so the catch-all fetches it, and a page
+  advertising **its own audio** — an `og:audio` pointer or an `<audio>`
+  element holding the file — re-detects to `podcast` (§1's mid-fetch
+  discovery, `web → podcast`). A bare link to an mp3 is deliberately not
+  that signal: a post linking one is still a post, and stealing it from
+  `web` would cost its extraction.
 
 Then: audio → `cache/audio/<hash>` → `needs: transcribe` → whisper drains
 (primed with title + show notes). Show notes from the **feed** (richer than

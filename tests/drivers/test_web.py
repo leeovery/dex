@@ -85,6 +85,34 @@ class TestRedetection:
         assert result.redetect is not None
         assert result.redetect.format is Format.CSV
 
+    def test_an_episode_page_carrying_its_audio_signals_podcast(self):
+        page = fixture_text("podcast", "indie-episode-page.html")
+        driver = driver_for({URL: html_response(page)})
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.PODCAST
+        assert result.status is Status.QUEUED
+
+    def test_a_blog_advertising_an_rss_feed_is_never_stolen(self):
+        # THE boundary: "/feed", "/rss" and an RSS <link rel> are blog
+        # vocabulary. Only audio the page carries makes it an episode.
+        blogish = ARTICLE.replace(
+            "</head>",
+            '<link rel="alternate" type="application/rss+xml" '
+            'href="https://example.test/feed.xml"></head>',
+        )
+        driver = driver_for({URL: html_response(blogish)})
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+
+    def test_a_post_merely_linking_an_mp3_is_never_stolen(self):
+        linked = ARTICLE.replace(
+            "</body>", '<p><a href="/files/talk.mp3">Download the talk</a></p></body>'
+        )
+        driver = driver_for({URL: html_response(linked)})
+        assert driver.fetch(make_unit(URL, Kind.WEB)).redetect is None
+
     def test_ordinary_thin_html_stays_manual_never_redetects(self):
         driver = driver_for({URL: html_response(THIN)}, extract=lambda _html: None)
         result = driver.fetch(make_unit(URL, Kind.WEB))

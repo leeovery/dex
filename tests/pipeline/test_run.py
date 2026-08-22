@@ -16,6 +16,7 @@ from hypothesis import strategies as st
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
+from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline import ledger
@@ -1959,6 +1960,46 @@ class TestRedetection:
             ("file", "done", "sniff"),  # drained through the file driver, same run
         ]
         assert f"re-detected: {self.PDF_URL} — web → file/pdf" in report
+
+    EPISODE_URL = "https://engineering-distilled.test/episodes/ledgers-as-work-queues"
+    EPISODE_FEED = "https://feeds.pods.test/engineering-distilled.rss"
+
+    def test_an_indie_episode_page_reroutes_web_to_podcast_in_run(self, instance):
+        # §9's third route, end to end: no URL pattern claims this page, so
+        # the catch-all fetches it, sees the audio it carries, and hands the
+        # unit to the podcast driver — which resolves the feed's enclosure.
+        transport = FakeTransport(
+            {
+                self.EPISODE_URL: HttpResponse(
+                    status=200,
+                    content_type="text/html",
+                    body=fixture_text("podcast", "indie-episode-page.html").encode("utf-8"),
+                ),
+                self.EPISODE_FEED: HttpResponse(
+                    status=200,
+                    content_type="application/rss+xml",
+                    body=fixture_text("podcast", "feed.xml").encode("utf-8"),
+                ),
+            }
+        )
+        write_item(instance, urls=[self.EPISODE_URL])
+        drivers = [PodcastDriver(transport=transport), WebDriver(transport=transport)]
+        ctx = make_ctx(instance, FakeDriver(), drivers=drivers)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.EPISODE_URL)
+        assert entry.kind is Kind.PODCAST
+        assert entry.status is Status.WAITING
+        assert entry.needs is Need.TRANSCRIBE
+        assert self._lineage(ctx, self.EPISODE_URL) == [
+            ("web", "queued", None),  # nothing but the catch-all claimed it
+            ("podcast", "queued", "sniff"),  # corrected on the page's own audio
+            ("podcast", "waiting", "sniff"),  # resolved, parked for the drain
+        ]
+        park = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        content = park.read_text()
+        assert '"https://cdn.pods.test/ed/ep42.mp3?sig=abc123"' in content  # the drain's pointer
+        assert "Ada Guest" in content  # the feed's show notes, richer than the page
+        assert f"re-detected: {self.EPISODE_URL} — web → podcast" in " ".join(report.split())
 
     def test_blocked_head_still_corrects_on_the_get(self, instance):
         pdf = HttpResponse(

@@ -7,8 +7,11 @@ Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
   Spotify exclusives fail honestly → ``manual`` (Claude may rescue via the
   show's own site).
-- **Direct RSS / indie episode page** → enclosure, or the ``<link rel>``
-  feed pointer in the page head.
+- **Direct RSS / indie episode page** → the ``<link rel>`` feed pointer in
+  the page head (its notes are richer), falling back to the enclosure the
+  page carries itself. Such a page arrives here by re-detection from the
+  web driver, on that same content signal — URL shape cannot tell an
+  episode page from a post.
 
 The driver only ever RESOLVES: the enclosure URL and the show notes (from
 the feed — richer than the page) ride the waiting Result's meta/body, the
@@ -22,7 +25,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 from dex_engine.pipeline.classify import Classification, classify_connection, classify_http
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
@@ -30,7 +33,7 @@ from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .transport import Transport, urllib_transport
 
-__all__ = ["PodcastDriver"]
+__all__ = ["PodcastDriver", "audio_enclosure"]
 
 # The lookup API resolves SHOW ids only: handed an episode id it answers
 # `resultCount: 0` for every episode that exists, so the episode is found by
@@ -51,6 +54,23 @@ _FEED_LINK_RE = re.compile(
     r"<link[^>]+type=[\"']application/(?:rss|atom)\+xml[\"'][^>]*>", re.IGNORECASE
 )
 _HREF_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+# The two ways an episode page carries its own audio: the og:audio pointer
+# and an <audio> element (its own src, or a nested <source>).
+_OG_AUDIO_RES = (
+    re.compile(
+        r"<meta[^>]+(?:property|name)=[\"']og:audio[\"'][^>]+content=[\"']([^\"'\r\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:audio[\"']",
+        re.IGNORECASE,
+    ),
+)
+_AUDIO_ELEMENT_RE = re.compile(
+    r"<audio\b[^>]*>.*?</audio\s*>|<audio\b[^>]*/?>", re.IGNORECASE | re.DOTALL
+)
+_SRC_RE = re.compile(r"\bsrc=[\"']([^\"'\r\n]+)[\"']", re.IGNORECASE)
 
 _CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
 _ITUNES_NS = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
@@ -96,9 +116,11 @@ class PodcastDriver:
 
         Deliberately narrow: bare ``/feed`` / ``/rss`` path suffixes and
         ``feeds.*`` / ``feed.*`` hosts are blog vocabulary too — the web
-        driver keeps those. The long-term answer for a
-        feed-shaped URL whose resolution finds no audio is corrected-kind
-        re-entry — out of scope this phase.
+        driver keeps those. Indie episode pages reach this driver by
+        content, not by URL shape: the web driver fetches them (registry
+        order, catch-all last), finds the page carrying its own audio, and
+        re-detects the unit to ``podcast`` — so no pattern here has to
+        guess which ``/episodes/…`` path is a podcast and which is a blog.
         """
         host = host_of(url)
         if host == "podcasts.apple.com":
@@ -219,7 +241,30 @@ class PodcastDriver:
         return self._resolve_episode_page(url, body)
 
     def _resolve_episode_page(self, url: str, page: str) -> "_Episode | Result":
-        feed_url = _feed_link(page)
+        """Resolve an indie episode page: its feed first, its own audio second.
+
+        The feed is preferred because the feed's show notes are richer than
+        the page's markup — but a page that carries its audio is resolvable
+        with or without one, and it must be: the web driver routed this
+        unit here on that signal, and bouncing it back would be a
+        re-detection loop park.
+        """
+        episode = self._episode_from_page_feed(url, page)
+        if isinstance(episode, _Episode):
+            return episode
+        enclosure = audio_enclosure(page, url)
+        if enclosure is None:
+            return episode  # the feed route's own failure stands
+        return _Episode(
+            title=_og_title(page),
+            show=None,
+            enclosure=enclosure,
+            published=None,
+            notes="",
+        )
+
+    def _episode_from_page_feed(self, url: str, page: str) -> "_Episode | Result":
+        feed_url = _feed_link(page, url)
         if feed_url is None:
             return _manual("page exposes no RSS feed link — rescue by hand")
         feed = self._feed(feed_url)
@@ -457,12 +502,53 @@ def _og_title(page: str) -> str | None:
     return None
 
 
-def _feed_link(page: str) -> str | None:
+def _feed_link(page: str, base_url: str) -> str | None:
     for tag in _FEED_LINK_RE.finditer(page):
         href = _HREF_RE.search(tag.group(0))
         if href:
-            return html_lib.unescape(href.group(1))
+            # Feed pointers are routinely relative ("/feed.xml"); the
+            # driver fetches what it is handed, so it is absolutized here.
+            return urljoin(base_url, html_lib.unescape(href.group(1)).strip())
     return None
+
+
+def audio_enclosure(page: str, base_url: str) -> str | None:
+    """The audio this page carries as its own, or None — the podcast signal.
+
+    An episode page advertises its episode: an ``og:audio`` pointer, or an
+    ``<audio>`` element holding the file. Both say "the audio IS this
+    page's subject", which is what tells an indie episode page apart from
+    an ordinary post — and the distinction has to be content-driven,
+    because ``/feed`` and ``/rss`` path suffixes are blog vocabulary too
+    and an RSS ``<link rel>`` in the head says nothing but "this site has
+    a feed". A bare link to an audio file is deliberately NOT a signal: a
+    post linking one mp3 is still a post, and stealing it from the web
+    driver would cost its extraction.
+
+    Args:
+        page: The fetched HTML.
+        base_url: The page's URL — relative sources resolve against it.
+
+    Returns:
+        The absolute http(s) audio URL, or None.
+    """
+    for pattern in _OG_AUDIO_RES:
+        match = pattern.search(page)
+        if match:
+            resolved = _absolute(match.group(1), base_url)
+            if resolved is not None:
+                return resolved
+    for element in _AUDIO_ELEMENT_RE.finditer(page):
+        for source in _SRC_RE.finditer(element.group(0)):
+            resolved = _absolute(source.group(1), base_url)
+            if resolved is not None:
+                return resolved
+    return None
+
+
+def _absolute(value: str, base_url: str) -> str | None:
+    candidate = urljoin(base_url, html_lib.unescape(value).strip())
+    return candidate if candidate.startswith(("http://", "https://")) else None
 
 
 # ---------------------------------------------------------------------------
