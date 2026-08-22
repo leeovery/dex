@@ -1,7 +1,10 @@
 """Shared driver-test plumbing: fixture loading, fake transports, work units."""
 
+import contextlib
 import json
-from collections.abc import Mapping
+import socket
+import threading
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -75,3 +78,41 @@ class FakeTransport:
 @pytest.fixture
 def fake_transport():
     return FakeTransport
+
+
+@contextlib.contextmanager
+def truncating_server(
+    *, body: bytes = b"ID3\x04\x00\x00\x00partial audio", declared: int = 5_000_000
+) -> Iterator[str]:
+    """Serve one 200 whose Content-Length far exceeds the bytes sent, then hang up.
+
+    A real socket, deliberately: the truncated-body failure lives inside
+    ``http.client``'s read path, and only a genuine short read raises the
+    ``IncompleteRead`` the transport has to normalize. Yields the URL.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    host, port = listener.getsockname()
+
+    def serve() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return  # the listener closed: the context manager is done
+            with conn, contextlib.suppress(OSError):
+                conn.recv(65536)  # drain the request so the close sends FIN, not RST
+                conn.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n"
+                    b"Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (declared, body)
+                )
+                conn.shutdown(socket.SHUT_WR)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield f"http://{host}:{port}/ep42.mp3"
+    finally:
+        listener.close()
+        thread.join(timeout=5)

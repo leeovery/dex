@@ -412,6 +412,13 @@ independently is seven chances to reintroduce it):
   the classifier is total; no HTTP outcome is unclassifiable. Routed
   through by every driver's HTTP path. The §15 regression pin tests the
   classifier once and holds for all drivers.
+- **The transport seam normalizes `http.client`'s protocol failures into
+  `OSError`** before any caller sees them, so the connection classifier
+  covers them like any other. `IncompleteRead` — a server closing the
+  socket mid-body, the routine failure mode for a 100MB enclosure — is an
+  `HTTPException`, not an `OSError`, and would otherwise slip past every
+  `except OSError` guard and land as `error` + a filed issue. A truncated
+  read is a connection failure: **`blocked`, retried**, never an engine bug.
 - **Media URLs are hashed un-canonicalized** — signed query params ARE the
   resource. Side effect, accepted: an expiring signed URL re-mints a fresh
   entry per parent rerun, and the stale one retires through normal blocked

@@ -10,7 +10,7 @@ import pytest
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
-from dex_engine.drivers.transport import HttpResponse
+from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.youtube import ProbeError, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
@@ -39,7 +39,12 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeTranscriber, fixture_bytes
 from tests.conftest import FakeDriver
-from tests.drivers.conftest import FakeTransport, fixture_text, html_response
+from tests.drivers.conftest import (
+    FakeTransport,
+    fixture_text,
+    html_response,
+    truncating_server,
+)
 from tests.pipeline.test_run import ITEM, TODAY, entry_for, make_ctx, write_item
 
 VIDEO_URL = "https://youtube.com/watch?v=abc123"
@@ -526,6 +531,27 @@ class TestPodcastDrain:
         assert entry.attempts == 1
         assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
         assert (entry.reason or "").startswith("audio acquisition failed")
+
+    def test_truncated_enclosure_is_blocked_never_an_engine_error(self, instance):
+        # A server hanging up mid-body is the routine failure for a 100MB
+        # enclosure; the IncompleteRead it raises is not an OSError, so
+        # unnormalized it landed `error` + a filed issue, frozen until the
+        # next engine release.
+        self.park_via_driver(instance)
+        entry = self.entry(instance)
+        record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        with truncating_server() as url:
+            record.write_text(
+                record.read_text(encoding="utf-8").replace(self.ENCLOSURE, url), encoding="utf-8"
+            )
+            ctx = transcribe_ctx(instance, transport=urllib_transport)
+            run_mod.run_transcribe(ctx)
+        drained = ledger.load(instance.ledger_path)[entry.hash]
+        assert drained.status is Status.BLOCKED
+        assert drained.attempts == 1
+        assert "truncated response body" in (drained.reason or "")
+        # The issue filer fires on `error` outcomes only — none here.
+        assert drained.error is None
 
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
         # A 404ing enclosure is often an expired signed URL — the episode is

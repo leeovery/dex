@@ -29,6 +29,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
+from dex_engine.drivers.transport import normalize_httplib_errors
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError, scrub
 from dex_engine.pipeline.types import Availability
 
@@ -96,7 +97,8 @@ def urllib_multipart_post(
         ``(status, body)`` — HTTP failures return, never raise.
 
     Raises:
-        OSError: Connection-level failure (DNS, refused, reset, timeout).
+        OSError: Connection-level failure (DNS, refused, reset, timeout, a
+            body truncated mid-read — normalized by the transport seam).
     """
     boundary = uuid.uuid4().hex
     parts: list[bytes] = []
@@ -116,11 +118,12 @@ def urllib_multipart_post(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310 — https endpoint from config
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
-            return response.status, response.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()
+    with normalize_httplib_errors():
+        try:
+            with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
+                return response.status, response.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
 
 
 def run_ffmpeg(args: list[str]) -> None:
