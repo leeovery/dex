@@ -1422,11 +1422,18 @@ def _item_units(
     alone rather than raise past a write that already landed.
     """
     if entries is None:
-        try:
-            entries = ledger.load(instance.ledger_path)
-        except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        entries = _ledger_or_none(instance)
+        if entries is None:
             return None
     return [entry for entry in entries.values() if entry.item == item_id]
+
+
+def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
+    """The whole ledger, or None when it cannot be read at all."""
+    try:
+        return ledger.load(instance.ledger_path)
+    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        return None
 
 
 def _derived_status(
@@ -1762,22 +1769,35 @@ def digest_orphans(instance: Instance) -> list[str]:
     travel in git, and day granularity is the intent (enriching and
     digesting in one session is not stale).
 
+    An item still owing a unit is never listed, however long it has owed
+    it. Such an item derives ``raw``, and a raw item is one the ingest
+    procedure forbids digesting — so listing it would report the same
+    permanently-parked item as work to do on every run forever. A
+    ``manual`` unit awaiting judgment, an ``error`` unit on an unchanged
+    engine, a ``blocked`` unit past its attempts and a ``waiting`` unit
+    with no provider all sit there indefinitely by design.
+
     Args:
         instance: The instance.
 
     Returns:
-        Item ids whose enrichment landed after their digest pass (or that
-        have enrichment and no digest at all).
+        Item ids that owe no further work and whose enrichment landed
+        after their digest pass (or that have enrichment and no digest at
+        all).
     """
     orphans = []
     if not instance.enrichment_dir.is_dir():
         return orphans
-    enriched_on = _last_enriched(instance)
+    entries = _ledger_or_none(instance)
+    owing = _items_owing_work(entries)
+    enriched_on = _last_enriched(entries)
     digested_on = _last_digested(instance)
     for item_dir in sorted(instance.enrichment_dir.iterdir()):
         if not item_dir.is_dir():
             continue
         if not any(item_dir.glob("*.md")):
+            continue
+        if item_dir.name in owing:
             continue
         if not (instance.digests_dir / f"{item_dir.name}.md").exists():
             orphans.append(item_dir.name)
@@ -1792,13 +1812,24 @@ def digest_orphans(instance: Instance) -> list[str]:
     return orphans
 
 
-def _last_enriched(instance: Instance) -> dict[str, datetime.date]:
-    """Each item's newest ``done`` ledger date."""
-    try:
-        entries = ledger.load(instance.ledger_path)
-    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
-        # A nonconforming ledger is lint's own loud finding; the staleness
-        # backstop simply has nothing to compare and says nothing.
+def _items_owing_work(entries: dict[str, LedgerEntry] | None) -> set[str]:
+    """The items a unit is still outstanding on — the ones deriving ``raw``.
+
+    An unreadable ledger claims nothing: no item is held back, exactly as
+    no item is called stale.
+    """
+    if entries is None:
+        return set()
+    return {entry.item for entry in entries.values() if entry.status in _OUTSTANDING}
+
+
+def _last_enriched(entries: dict[str, LedgerEntry] | None) -> dict[str, datetime.date]:
+    """Each item's newest ``done`` ledger date.
+
+    A nonconforming ledger (``entries`` None) is lint's own loud finding;
+    the staleness backstop simply has nothing to compare and says nothing.
+    """
+    if entries is None:
         return {}
     newest: dict[str, datetime.date] = {}
     for entry in entries.values():

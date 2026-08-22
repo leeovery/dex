@@ -1754,6 +1754,53 @@ class TestStatusReport:
         instance.ledger_path.write_text("{not json\n", encoding="utf-8")
         assert run_mod.digest_orphans(instance) == []
 
+    PARKED_URL = "https://example.test/parked"
+
+    def _second_unit(self, instance, status: Status, **fields) -> None:
+        """A second unit on the same item — the one that owes the work."""
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(self.PARKED_URL),
+                url=self.PARKED_URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=status,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 20),
+                reason="rescue by hand",
+                **fields,
+            ),
+        )
+
+    def test_an_item_still_owing_a_unit_is_never_a_digest_orphan(self, instance):
+        # A `manual` unit holds the item `raw`, and the skill forbids
+        # digesting a raw item — so listing it as a digest to do reports
+        # the same permanently-parked item on every run, forever.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 20)
+        )
+        (instance.digests_dir / f"{ITEM}.md").unlink()
+        self._second_unit(instance, Status.MANUAL)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_stale_digest_is_not_claimed_while_a_unit_is_still_owed(self, instance):
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 18)
+        )
+        self._second_unit(instance, Status.BLOCKED, attempts=2)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_the_item_is_listed_the_moment_its_last_unit_lands(self, instance):
+        # The other half: the skip is owed work, not the parked status.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 20)
+        )
+        (instance.digests_dir / f"{ITEM}.md").unlink()
+        self._second_unit(instance, Status.MANUAL)
+        self._second_unit(instance, Status.SKIPPED)  # last line per hash wins
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
 
 class TestIssueFiling:
     """The filer wiring: error outcomes reach it; the report says so."""

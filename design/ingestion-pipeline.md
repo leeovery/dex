@@ -95,7 +95,11 @@ reruns, newly-drained waiting cohorts — and **the same session immediately
 completes the cognitive steps** (harvest → digest → wiki) for all of them,
 exactly as for a fresh capture. The enrichment-newer-than-digest comparison
 in `enrich status` is purely an **interrupted-session backstop** (a session
-died between fetch and digest), never the handoff mechanism.
+died between fetch and digest), never the handoff mechanism. It lists only
+items that **owe no further work**: an item holding a `manual`, `error`,
+`blocked` or `waiting` unit derives `raw`, and a raw item is one the ingest
+procedure forbids digesting — listing it would name the same permanently
+parked item as work to do on every run, forever.
 
 **Session-end invariant**: everything processable is processed — items are
 digested whole, after their children land. The only entries that survive a
