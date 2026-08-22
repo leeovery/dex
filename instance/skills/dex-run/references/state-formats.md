@@ -139,7 +139,7 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, capped?, engine, date, at?, via?, parent?, depth?, rerun?,
+  attempts?, cap?, engine, date, at?, via?, parent?, depth?, rerun?,
   path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
@@ -149,8 +149,10 @@ a malformed record impossible:
   Statuses: queued · done · dead · skipped · manual ·
   waiting · blocked · error. `reason` is the stated parking reason
   (required on manual/skipped); `error` entries carry a scrubbed message
-  and retry once per newer engine; `capped` marks a skip that records
-  cap-refused work, not an admitted unit. Heals and manual resolutions:
+  and retry once per newer engine; `cap` marks a skip that records
+  cap-refused work, not an admitted unit, and names the bound that refused
+  it (`depth`, `url`, or `url-requested` for a URL you asked for yourself
+  and were refused without `--force`). Heals and manual resolutions:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
   `via: media` line), so pass the URL as the ledger shows it and the heal

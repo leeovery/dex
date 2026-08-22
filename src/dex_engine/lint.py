@@ -20,8 +20,9 @@ Checks:
   backstop, shared with ``enrich status``).
 
   judgment drift — the signals the pipeline records for this check and no
-  other surface: re-entry cap fires (``capped`` ledger lines: are the
-  bounds too tight for this corpus, or is harvest over-promoting?) and
+  other surface: harvest-time re-entry cap fires (ledger lines carrying a
+  ``cap``: are the bounds too tight for this corpus, or is harvest
+  over-promoting?) and
   thread-completeness markers in enrichment frontmatter
   (``thread_cap_hit`` / ``chain_incomplete``: a stored thread a digest
   could otherwise cite as whole).
@@ -57,9 +58,9 @@ from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
-from .pipeline.run import HARVEST_RULES_VERSION, digest_orphans
+from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans
 from .pipeline.transcribe import read_enrichment_fields
-from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
+from .pipeline.types import Cap, Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
@@ -567,7 +568,9 @@ def _state_checks(
         ghost, missing = _referential_integrity(instance, entries, corpus_ids)
         payload["ghost_items"] = ghost
         payload["missing_outputs"] = missing
-        payload["capped"] = _cap_fires(entries)
+        fires = _cap_fires(entries)
+        payload["capped"] = fires.rows
+        notes += fires.notes
     payload["stale_passes"] = _stale_passes(instance)
     threads = _incomplete_threads(instance)
     payload["incomplete_threads"] = threads.rows
@@ -685,8 +688,16 @@ def _stale_passes(instance: Instance) -> list[dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
-def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
-    """The re-entry cap fires standing in the ledger, one row each.
+@dataclass(slots=True, kw_only=True)
+class _CapScan:
+    """The cap fires standing in the ledger, split by who they answer to."""
+
+    rows: list[dict[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
+    """The harvest-time cap fires standing in the ledger, one row each.
 
     A fire is a tuning reading, not a fault: it says either that the
     depth/URL bounds are too tight for this corpus, or that harvest
@@ -694,15 +705,35 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
     is takes the shape of the fires — how many, spread across how many
     items, under which bound — so the row carries the item, the refused
     URL, and the bound that refused it, and the surface aggregates.
+
+    The bound comes from the entry's typed ``cap``, never from its stated
+    reason: the reason is prose written for the audit trail, and a bound
+    worded two ways would aggregate as two bounds.
+
+    An owner-requested ``enrich fetch`` refusal is neither reading — the
+    owner asked for that URL by name, so it says nothing about the bounds
+    being tight or about harvest promoting too much. It leaves the tuning
+    count entirely and stands as a note: it was already answered, with its
+    ``--force`` route, on the run report where it was asked.
     """
-    return sorted(
-        (
-            {"item": entry.item, "url": entry.url, "reason": entry.reason or "cap fired"}
-            for entry in entries.values()
-            if entry.capped
-        ),
-        key=lambda row: (row["item"], row["url"]),
-    )
+    scan = _CapScan()
+    requested = 0
+    for entry in sorted(entries.values(), key=lambda e: (e.item, e.url)):
+        if entry.cap is None:
+            continue
+        if entry.cap is Cap.URL_REQUESTED:
+            requested += 1
+            continue
+        scan.rows.append(
+            {"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]}
+        )
+    if requested:
+        scan.notes.append(
+            f"{requested} owner-requested fetch refusal{'' if requested == 1 else 's'} "
+            f"standing at the {CAP_BOUNDS[Cap.URL_REQUESTED]} — answered on the run "
+            "report when asked, and no part of the tuning reading above"
+        )
+    return scan
 
 
 @dataclass(slots=True, kw_only=True)

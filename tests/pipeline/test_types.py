@@ -10,6 +10,7 @@ import pytest
 from dex_engine.pipeline.types import (
     DRIVER_STATUSES,
     Availability,
+    Cap,
     Child,
     Config,
     Format,
@@ -268,13 +269,13 @@ class TestLedgerEntryInvariants:
         retry = entry(status=Status.BLOCKED, attempts=1, needs=Need.TRANSCRIBE)
         assert retry.needs is Need.TRANSCRIBE
 
-    def test_capped_is_skipped_only(self):
-        marker = entry(status=Status.SKIPPED, capped=True, reason="url cap reached")
-        assert marker.capped is True
+    def test_the_cap_marker_is_skipped_only(self):
+        marker = entry(status=Status.SKIPPED, cap=Cap.URL, reason="url cap reached")
+        assert marker.cap is Cap.URL
         with pytest.raises(ValueError, match="skipped-only"):
-            entry(status=Status.QUEUED, capped=True)
+            entry(status=Status.QUEUED, cap=Cap.URL)
         with pytest.raises(ValueError, match="skipped-only"):
-            entry(status=Status.DONE, capped=True)
+            entry(status=Status.DONE, cap=Cap.URL)
 
     def test_blocked_requires_attempts_of_at_least_one(self):
         with pytest.raises(ValueError, match="attempts"):

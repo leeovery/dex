@@ -39,6 +39,7 @@ from dex_engine.pipeline.run import (
 from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
+    Cap,
     Child,
     Config,
     Format,
@@ -630,7 +631,7 @@ class TestChildren:
         entries = ledger.load(instance.ledger_path)
         capped = entries[work_hash(f"https://chain.test/{MAX_DEPTH + 1}")]
         assert capped.status is Status.SKIPPED
-        assert capped.capped is True
+        assert capped.cap is Cap.DEPTH
         assert capped.reason == f"depth cap ({MAX_DEPTH}) reached"
         assert capped.depth == MAX_DEPTH + 1
         fetched = [e for e in entries.values() if e.status is Status.DONE]
@@ -654,7 +655,7 @@ class TestChildren:
         admitted = [e for e in entries.values() if e.status is Status.DONE]
         assert len(admitted) == MAX_URLS_PER_ITEM  # the root + 11 children
         assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)
-        assert all(e.capped for e in capped)
+        assert all(e.cap is Cap.URL for e in capped)
         assert all(e.reason == f"url cap ({MAX_URLS_PER_ITEM} per item) reached" for e in capped)
         assert "url cap" not in report
 
@@ -1457,7 +1458,8 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         refused = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert refused.status is Status.SKIPPED
-        assert refused.capped is True
+        # The owner asked for this one: same bound, a different reading.
+        assert refused.cap is Cap.URL_REQUESTED
         assert "url cap" in (refused.reason or "")
 
         # A repeat WITHOUT --force is refused again — the refusal marker is
@@ -1513,7 +1515,7 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         again = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert again.status is Status.SKIPPED
-        assert again.capped is True
+        assert again.cap is Cap.URL_REQUESTED
 
     def test_a_marked_skip_with_cap_lookalike_prose_is_not_a_cap_marker(self, instance):
         # Session-authored --reason text lives in the same namespace as the

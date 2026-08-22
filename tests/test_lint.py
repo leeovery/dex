@@ -11,7 +11,8 @@ from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.run import CAP_BOUNDS
+from dex_engine.pipeline.types import Cap, Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
@@ -586,25 +587,27 @@ class TestReferentialIntegrity:
         assert "done entries whose output file is gone from disk — none" in outcome.report
 
 
-def capped_entry(unit_hash: str, *, item: str = ITEM, reason: str, url: str) -> LedgerEntry:
+def capped_entry(unit_hash: str, *, item: str = ITEM, cap: Cap, url: str) -> LedgerEntry:
     return LedgerEntry(
         hash=unit_hash,
         url=url,
         item=item,
         kind=Kind.WEB,
         status=Status.SKIPPED,
-        capped=True,
+        cap=cap,
         engine="0.1.0",
         date=TODAY,
         via="harvest",
         parent="0000000000",
         depth=5,
-        reason=reason,
+        # The engine words the same bound differently per writer; the check
+        # reads the typed cap, never this.
+        reason=f"{CAP_BOUNDS[cap]} reached",
     )
 
 
-DEPTH_CAP = "depth cap (4) reached"
-URL_CAP = "url cap (12 per item) reached"
+DEPTH_CAP = CAP_BOUNDS[Cap.DEPTH]
+URL_CAP = CAP_BOUNDS[Cap.URL]
 
 
 class TestCapFires:
@@ -623,14 +626,12 @@ class TestCapFires:
     def test_fires_are_counted_by_bound_and_by_item(self, instance):
         self._bare_wiki(instance)
         other = "2026-08-19-other-bbbbbb"
-        for i, (item, reason) in enumerate(
-            [(ITEM, DEPTH_CAP), (ITEM, URL_CAP), (other, URL_CAP)]
+        for i, (item, cap) in enumerate(
+            [(ITEM, Cap.DEPTH), (ITEM, Cap.URL), (other, Cap.URL)]
         ):
             ledger.append(
                 instance.ledger_path,
-                capped_entry(
-                    f"{i:010x}", item=item, reason=reason, url=f"https://example.test/{i}"
-                ),
+                capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
             )
         outcome = lint(instance)
         assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in (
@@ -640,16 +641,40 @@ class TestCapFires:
         assert f"most often: {ITEM} 2 · {other} 1" in outcome.report
         assert f"{ITEM} -> https://example.test/0" in outcome.report
 
+    def test_one_bound_reads_as_one_bound(self, instance):
+        # The engine words the same bound three ways — one of them an
+        # owner-requested `fetch` refusal. The bound is one row, and the
+        # owner asking for a URL is not harvest drift.
+        self._bare_wiki(instance)
+        other = "2026-08-19-other-bbbbbb"
+        fires = [
+            (ITEM, Cap.DEPTH),
+            (ITEM, Cap.URL),
+            (other, Cap.URL),
+            (other, Cap.URL_REQUESTED),
+        ]
+        for i, (item, cap) in enumerate(fires):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
+            )
+        flat = " ".join(lint(instance).report.split())
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in flat
+        assert "depth cap (4): 1 · url cap (12 per item): 2" in flat
+        assert "--force" not in flat.split("stored threads")[0].split("re-entry cap fires")[1]
+        assert "1 owner-requested fetch refusal standing at the url cap (12 per item)" in flat
+        assert "https://example.test/3" not in flat  # the refused-on-request URL
+
     def test_a_tuning_signal_never_fails_the_check(self, instance):
         self._bare_wiki(instance)
         ledger.append(
             instance.ledger_path,
-            capped_entry("73bd784849", reason=URL_CAP, url="https://example.test/refused"),
+            capped_entry("73bd784849", cap=Cap.URL, url="https://example.test/refused"),
         )
         assert lint(instance).exit_code == 0
 
     def test_an_ordinary_skip_is_not_a_cap_fire(self, instance):
-        # `capped` is the marker, not the status: a skipped entry parked for
+        # `cap` is the marker, not the status: a skipped entry parked for
         # any other stated reason is not the cap firing.
         self._bare_wiki(instance)
         ledger.append(

@@ -91,7 +91,9 @@ step 4.
      blogrolls and footers being turned away means harvest is promoting
      what the subject rule would not, and the fix is the judgment, not the
      bound. Concentrated in one or two items is normal; spread across many
-     is the signal.
+     is the signal. A URL you asked for yourself with `enrich fetch` and
+     were refused is no part of this reading — it comes through as a note,
+     and the answer to it is `--force` or nothing.
 7. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
 8. Coarse-topic check: when a topic has grown unwieldy or a coherent

@@ -52,6 +52,7 @@ from .transcribe import (
 )
 from .types import (
     Availability,
+    Cap,
     Child,
     Config,
     Format,
@@ -71,6 +72,7 @@ from .types import (
 from .urls import resolve_repo_path, work_hash
 
 __all__ = [
+    "CAP_BOUNDS",
     "HARVEST_RULES_VERSION",
     "MAX_BLOCKED_ATTEMPTS",
     "MAX_DEPTH",
@@ -91,10 +93,19 @@ __all__ = [
     "status_report",
 ]
 
-# Re-entry caps: mechanical backstops, not targets. Fires are recorded
-# in the ledger (a skipped entry with the reason) — never user-surfaced.
+# Re-entry caps: mechanical backstops, not targets. Fires are recorded in
+# the ledger — a skipped entry naming the bound in `cap` — and a harvest-time
+# fire is never user-surfaced.
 MAX_DEPTH = 4
 MAX_URLS_PER_ITEM = 12
+
+# What each bound is called wherever a fire is counted or read. Every
+# reader takes its wording from here, so one bound can never read as two.
+CAP_BOUNDS: dict[Cap, str] = {
+    Cap.DEPTH: f"depth cap ({MAX_DEPTH})",
+    Cap.URL: f"url cap ({MAX_URLS_PER_ITEM} per item)",
+    Cap.URL_REQUESTED: f"url cap ({MAX_URLS_PER_ITEM} per item)",
+}
 
 # Blocked retries every run; the 5th failed attempt escalates to manual.
 MAX_BLOCKED_ATTEMPTS = 5
@@ -1127,35 +1138,33 @@ class _Drain:
             if unit_hash in self.entries:
                 continue  # dedupe by hash — a URL under two items enriches under the first
             depth = (parent.depth or 0) + 1
-            cap_reason = self._cap_fired(parent.item, depth)
-            detection = (
-                None if cap_reason else detect(child.url, self.ctx.drivers, sniff=self.sniff)
-            )
+            cap = self._cap_fired(parent.item, depth)
+            detection = None if cap else detect(child.url, self.ctx.drivers, sniff=self.sniff)
             entry = LedgerEntry(
                 hash=unit_hash,
                 url=canonical,
                 item=parent.item,
                 kind=detection.kind if detection else detect_kind(child.url, self.ctx.drivers),
                 format=detection.format if detection else None,
-                status=Status.SKIPPED if cap_reason else Status.QUEUED,
-                capped=cap_reason is not None,
+                status=Status.SKIPPED if cap else Status.QUEUED,
+                cap=cap,
                 engine="seed",
                 date=datetime.date.min,
                 via=child.via,
                 parent=parent.hash,
                 depth=depth,
-                reason=cap_reason,
+                reason=None if cap is None else f"{CAP_BOUNDS[cap]} reached",
             )
             self.record(entry)
-            if cap_reason is None:
+            if cap is None:
                 self.queue.append(unit_hash)
 
-    def _cap_fired(self, item_id: str, depth: int) -> str | None:
+    def _cap_fired(self, item_id: str, depth: int) -> Cap | None:
         """The re-entry cap check: recorded in the ledger, never user-surfaced."""
         if depth > MAX_DEPTH:
-            return f"depth cap ({MAX_DEPTH}) reached"
+            return Cap.DEPTH
         if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
-            return f"url cap ({MAX_URLS_PER_ITEM} per item) reached"
+            return Cap.URL
         return None
 
     def fetched_count(self, item_id: str) -> int:
@@ -1634,7 +1643,7 @@ def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEn
 
 def _is_cap_refusal(entry: LedgerEntry) -> bool:
     """True for a cap-fire marker line — refused work, not an admitted unit."""
-    return entry.capped
+    return entry.cap is not None
 
 
 def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
@@ -1692,10 +1701,11 @@ def _admit_fetch(
     if capped:
         # The cap fire is recorded either way; --force supersedes it with a
         # queued line (the skipped line stays in the audit trail).
+        bound = CAP_BOUNDS[Cap.URL_REQUESTED]
         reason = (
-            f"url cap ({MAX_URLS_PER_ITEM} per item) exceeded by --force"
+            f"{bound} exceeded by --force"
             if force
-            else f"url cap ({MAX_URLS_PER_ITEM} per item) reached — rerun with --force to exceed"
+            else f"{bound} reached — rerun with --force to exceed"
         )
         repeat = existing is not None and _is_cap_refusal(existing) and existing.reason == reason
         if not repeat:
@@ -1708,7 +1718,9 @@ def _admit_fetch(
                     item=item_id,
                     kind=detect_kind(url, drain.ctx.drivers),
                     status=Status.SKIPPED,
-                    capped=True,
+                    # The owner asked for this URL: the bound is the same
+                    # one harvest hits, the reading is not.
+                    cap=Cap.URL_REQUESTED,
                     engine="seed",
                     date=datetime.date.min,
                     via="harvest",

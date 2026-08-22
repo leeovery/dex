@@ -70,6 +70,7 @@ from pathlib import Path
 from dex_engine import atomic, corpus
 from dex_engine.pipeline.ledger import to_line
 from dex_engine.pipeline.types import (
+    Cap,
     Format,
     Kind,
     LedgerEntry,
@@ -111,7 +112,8 @@ _TOLERATED_KEYS = frozenset(
         "status",
         "needs",
         "attempts",
-        "capped",
+        "capped",  # pre-typing cap fires; migration 5's rule types them here
+        "cap",
         "engine",
         "date",
         "at",
@@ -509,7 +511,7 @@ def _translate_record(
             status=status,
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
-            capped=_expect_bool(raw, "capped") if "capped" in raw else False,
+            cap=_translate_cap(raw),
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             # Carried, never re-stamped: this run's instant would claim the
@@ -741,6 +743,35 @@ def _translate_title(
 # schema shipping WITH it", so the copy cannot drift out from under it.
 _CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
 _CURRENT_VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
+
+
+# Migration 5's rule, copied for the same reason the via vocabulary above is
+# copied: a migration's behavior is frozen at its release, and a shared
+# reader would let a later edit to migration 5 silently change what this one
+# does. A pre-typing line said a cap fired but not which bound; the bound was
+# only ever in the stated reason, from the engine's own closed wording.
+_CAP_DEPTH = "depth cap ("
+_CAP_URL = "url cap ("
+_CAP_REQUESTED_TAIL = "--force"
+
+
+def _translate_cap(raw: dict[str, object]) -> Cap | None:
+    """The typed bound: current-schema lines carry it, pre-typing ones name it.
+
+    An untypeable fire loses the marker rather than inventing a bound — the
+    line survives, and lint's cap reading is a tuning signal that a single
+    unclassifiable refusal does not distort.
+    """
+    if "cap" in raw:
+        return Cap(_expect_str(raw, "cap"))
+    if not raw.get("capped"):
+        return None
+    reason = str(raw.get("reason") or "")
+    if reason.startswith(_CAP_DEPTH):
+        return Cap.DEPTH
+    if reason.startswith(_CAP_URL):
+        return Cap.URL_REQUESTED if _CAP_REQUESTED_TAIL in reason else Cap.URL
+    return None
 
 
 def _translate_via(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> str | None:
