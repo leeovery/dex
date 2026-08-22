@@ -43,6 +43,9 @@ lint = [
     "ruff>=0.16.3",
     "ty>=0.0.73",
 ]
+mutation = [
+    "mutmut>=3.7.0",
+]
 test = [
     "hypothesis>=6.165.10",
     "pytest>=9.1.1",
@@ -90,6 +93,26 @@ markers = [
     "live: hits real network APIs — opt-in via `-m live` (CI runs hermetic only)",
     "ci_hostile: a live check whose endpoint treats a datacenter IP differently from a laptop, or whose cost is a cold multi-megabyte download — the scheduled live workflow runs these best-effort so a blocked runner never mails a false alarm",
 ]
+
+[tool.mutmut]
+# Targeted use only: `uv run --group mutation mutmut run "<module path>.*"`.
+# A whole-repo run mutates thousands of lines against 1300 tests and buries the
+# signal in equivalent mutants — the tool is for auditing ONE module you suspect.
+source_paths = ["src/dex_engine"]
+pytest_add_cli_args_test_selection = ["tests"]
+# mutmut instruments by renaming every function to `x_<name>__mutmut_orig` and
+# dispatching, so a test asserting a traceback frame's function name cannot pass
+# under it. Two do; deselecting them costs nothing (they pin the issue filer's
+# frame formatting, not any mutable branch).
+pytest_add_cli_args = [
+    "--deselect",
+    "tests/pipeline/test_issues.py::TestErrorEvent::test_engine_frames_are_package_relative",
+    "--deselect",
+    "tests/pipeline/test_issues.py::TestSanitization::test_engine_frames_survive_sanitization",
+]
+# mutmut runs the suite from a copied `mutants/` tree; tests/ and pyproject.toml
+# come for free, but tests/test_shim.py reaches out to instance/dex.
+also_copy = ["instance"]
 
 [tool.ty.environment]
 python-version = "3.11"
