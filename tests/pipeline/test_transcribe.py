@@ -576,6 +576,50 @@ class TestPodcastDrain:
         assert "no enrichment record" in (entry.reason or "")
 
 
+class TestMalformedModelName:
+    """A model name HuggingFace rejects must cost one provider, not the verb."""
+
+    MODEL = "Systran/faster-whisper/large-v3"  # the real repo id has no third slash
+
+    @pytest.fixture(autouse=True)
+    def _no_api_key(self, monkeypatch):
+        # Both transcribers must be unavailable for the drain to park —
+        # a developer's exported key would otherwise reach a real endpoint.
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    def ctx(self, instance, *, from_config: bool):
+        # The config shape and the `--model` shape reach the same provider.
+        caps = (
+            Capabilities.build(Config(transcribe_model=self.MODEL))
+            if from_config
+            else Capabilities.build(Config(), model=self.MODEL)
+        )
+        return make_ctx(
+            instance, FakeDriver(), capabilities=caps, provider_available=caps.available
+        )
+
+    @pytest.mark.parametrize("from_config", [True, False])
+    def test_status_reports_the_provider_unavailable(self, instance, from_config):
+        ctx = self.ctx(instance, from_config=from_config)
+        report = " ".join(run_mod.status_report(ctx).split())  # the surface wraps
+        assert "unknown whisper model" in report
+
+    @pytest.mark.parametrize("from_config", [True, False])
+    def test_run_and_transcribe_park_the_job_instead_of_crashing(self, instance, from_config):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        ctx = self.ctx(instance, from_config=from_config)
+        run_mod.run(ctx)
+        assert entry_for(ctx, VIDEO_URL).status is Status.WAITING
+        report = " ".join(run_mod.run_transcribe(ctx).split())  # the surface wraps
+        assert "no transcription provider available" in report
+        assert "unknown whisper model" in report
+        entry = entry_for(ctx, VIDEO_URL)
+        assert entry.status is Status.WAITING  # no clock — it waits for a provider
+        assert entry.needs is Need.TRANSCRIBE
+
+
 class TestRunAutoDrain:
     def test_enrich_run_drains_waiting_transcribe_mechanically(self, instance):
         # Waiting means no mechanical provider — the moment one exists,

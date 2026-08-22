@@ -492,6 +492,9 @@ mechanism, not a hack.
   drop to `small` for long/backlogged queues, stay up for dense technical
   audio). First run downloads the model (~HF cache, once per machine) — the
   report surfaces it so slow-first-run is explained. No file-length limits.
+  **The availability probe never raises**: every CLI verb runs it, so a
+  model name HuggingFace rejects (`a/b/c`) costs one unavailable provider
+  with the reason stated — never a crashed `status`/`run`/`transcribe`.
 - `whisper-api` — one provider class, OpenAI-compatible, `base_url` + key
   from config/env. Pointed at Groq et al: GPU-fast, ~pennies/hour (roadmap
   item tracks the provider investigation). **ffmpeg chunking** (~20-min
@@ -532,7 +535,8 @@ mechanism, not a hack.
 Provider contract: `available()` failures (model missing, broken install)
 park jobs as `waiting` with the reason — the wait list is normally empty for
 transcription, not absent. A provider raises `ProviderInputError` for
-bad-input cases (corrupt audio, malformed file) → the run layer maps it
+bad-input cases (corrupt audio, a container carrying no audio stream at
+all, malformed file) → the run layer maps it
 `manual`; **`ProviderUnavailableError`** for call-time availability
 failures (API 5xx/429, missing binary, model-download failure) → the job
 **re-parks `waiting`** with the reason, never burning blocked attempts; an
