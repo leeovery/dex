@@ -14,15 +14,21 @@ from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.youtube import ProbeError, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
+from dex_engine.pipeline.classify import (
+    Classification,
+    ProviderInputError,
+    ProviderUnavailableError,
+)
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
+    PROMPT_MAX_CHARS,
     TRANSCRIBE_RUN_CAP,
     Acquired,
     YoutubeAudio,
     _cached_audio,
     _download_enclosure,
+    _prompt,
     acquire_youtube_audio,
     read_enrichment,
 )
@@ -553,6 +559,33 @@ class TestPodcastDrain:
         # The issue filer fires on `error` outcomes only — none here.
         assert drained.error is None
 
+    def test_cdn_error_page_takes_the_blocked_lifecycle_not_manual(self, instance):
+        # A 200 carrying an error page cached as <hash>.mp3 decoded as
+        # garbage and parked the episode manual forever; nothing about the
+        # EPISODE was learned, so it is blocked and retried.
+        self.park_via_driver(instance)
+        page = html_response("<!DOCTYPE html>\n<html><body>Access denied</body></html>")
+        ctx = transcribe_ctx(instance, transport=FakeTransport({self.ENCLOSURE: page}))
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert entry.needs is Need.TRANSCRIBE
+        assert "HTML page" in (entry.reason or "")
+        assert audio_files(instance) == []  # the page never became cached "audio"
+
+    def test_real_audio_that_will_not_decode_still_parks_manual(self, instance):
+        # The guards must not swallow the genuine bad-audio case: bytes
+        # that are not markup reach the provider, and its verdict stands.
+        self.park_via_driver(instance)
+        angry = FakeTranscriber(raise_=ProviderInputError("could not decode the audio"))
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        ctx = transcribe_ctx(instance, transcriber=angry, transport=transport)
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
+        assert entry.status is Status.MANUAL
+        assert "could not decode" in (entry.reason or "")
+
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
         # A 404ing enclosure is often an expired signed URL — the episode is
         # NOT confirmed gone; manual, with the requeue route stated.
@@ -802,6 +835,53 @@ class TestEnclosureDownloadAtomicity:
         assert [p.name for p in tmp_path.iterdir()] == ["abc.mp3"]
 
 
+class TestEnclosureBodyGuards:
+    """A 200 that isn't audio is the CDN's failure, not the episode's."""
+
+    ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
+
+    def download(self, tmp_path, response) -> object:
+        transport = FakeTransport({self.ENCLOSURE: response})
+        return _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+
+    def audio(self, body: bytes, **kwargs) -> HttpResponse:
+        return HttpResponse(status=200, content_type="audio/mpeg", body=body, **kwargs)
+
+    def test_an_empty_body_is_blocked(self, tmp_path):
+        outcome = self.download(tmp_path, self.audio(b""))
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "empty response body" in outcome.reason
+        assert list(tmp_path.iterdir()) == []  # nothing cached to poison the retry
+
+    def test_a_body_short_of_its_declared_length_is_blocked(self, tmp_path):
+        outcome = self.download(tmp_path, self.audio(b"ID3" + b"x" * 17, content_length=5_000_000))
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "truncated" in outcome.reason
+        assert list(tmp_path.iterdir()) == []
+
+    def test_an_html_error_page_is_blocked_not_manual(self, tmp_path):
+        # Cached as <hash>.mp3 this decodes as garbage and parks the
+        # episode manual forever; blocked is the honest reading.
+        page = HttpResponse(
+            status=200,
+            content_type="text/html",
+            body=b"<!DOCTYPE html>\n<html><body>Access denied</body></html>",
+        )
+        outcome = self.download(tmp_path, page)
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "HTML page" in outcome.reason
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_complete_body_still_downloads(self, tmp_path):
+        body = b"ID3\x04\x00\x00audio bytes"
+        outcome = self.download(tmp_path, self.audio(body, content_length=len(body)))
+        assert isinstance(outcome, Path)
+        assert outcome.read_bytes() == body
+
+
 class TestCachedAudio:
     def test_hard_crash_atomic_temp_is_a_partial_never_audio(self, tmp_path):
         # A kill mid-atomic-write can orphan the temp file itself; it must
@@ -830,6 +910,56 @@ class TestCachedAudio:
 
     def test_missing_cache_dir_is_simply_empty(self, tmp_path):
         assert _cached_audio(tmp_path / "audio", "abc") is None
+
+
+class TestPromptBudget:
+    """Whisper reads a prompt from its END — the head must never be the casualty."""
+
+    TITLE = "Ledgers as Work Queues"
+    SHOW = "Engineering Distilled"
+    HEAD = f"{TITLE} — {SHOW}"
+
+    def test_the_head_survives_a_vocabulary_far_past_the_budget(self):
+        prompt = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
+        assert prompt.startswith(self.HEAD)
+        assert len(prompt) == PROMPT_MAX_CHARS
+
+    def test_the_vocabulary_is_trimmed_from_its_tail(self):
+        prompt = _prompt(self.TITLE, self.SHOW, "anydoc CTranslate2 " + "x" * 2000)
+        assert prompt.startswith(f"{self.HEAD} — anydoc CTranslate2 ")
+        assert not prompt.endswith("x" * 2000)
+
+    def test_a_short_prompt_is_untouched(self):
+        assert _prompt(self.TITLE, self.SHOW, "notes") == f"{self.HEAD} — notes"
+        assert _prompt(self.TITLE, None, "") == self.TITLE
+
+    def test_vocabulary_alone_is_still_bounded(self):
+        assert len(_prompt(None, None, "y " * 1000)) == PROMPT_MAX_CHARS
+
+    def test_an_overlong_head_keeps_its_front_and_drops_the_vocabulary(self):
+        prompt = _prompt("T" * 900, self.SHOW, "notes")
+        assert prompt == "T" * PROMPT_MAX_CHARS
+
+    def test_the_acquisition_path_composes_within_the_budget(self, instance, tmp_path):
+        # The real composition site, not just the helper: a talkative
+        # video description must not cost the title and channel.
+        entry = seed_waiting(instance)
+
+        def download(_url, cache_dir, stem) -> YoutubeAudio:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            path = cache_dir / f"{stem}.m4a"
+            path.write_bytes(b"fake-audio")
+            return YoutubeAudio(
+                path=path,
+                title="Ledgers at Scale",
+                channel="Engineering Distilled",
+                description="sponsors and links " * 200,
+            )
+
+        acquired = acquire_youtube_audio(entry, tmp_path, download)
+        assert isinstance(acquired, Acquired)
+        assert acquired.prompt.startswith("Ledgers at Scale — Engineering Distilled")
+        assert len(acquired.prompt) <= PROMPT_MAX_CHARS
 
 
 class TestReadEnrichment:

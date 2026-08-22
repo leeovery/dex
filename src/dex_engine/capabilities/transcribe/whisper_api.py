@@ -31,6 +31,7 @@ from typing import Protocol
 
 from dex_engine.drivers.transport import normalize_httplib_errors
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError, scrub
+from dex_engine.pipeline.transcribe import PROMPT_MAX_CHARS
 from dex_engine.pipeline.types import Availability
 
 __all__ = [
@@ -50,9 +51,10 @@ DEFAULT_API_MODEL = "whisper-1"
 # cap at any sane audio bitrate.
 CHUNK_SECONDS = 1200
 
-# Whisper's prompt window is ~224 tokens; the continuity tail plus the
-# vocabulary priming must fit, so the tail is bounded in characters.
-_CONTINUITY_TAIL_CHARS = 400
+# The continuity tail's share of PROMPT_MAX_CHARS: ~65 tokens of the
+# running transcript is ample for carrying word boundaries and style into
+# the next chunk, and it leaves two thirds of the window to the priming.
+_CONTINUITY_TAIL_CHARS = 200
 
 _HTTP_OK_FLOOR, _HTTP_OK_CEILING = 200, 300
 _HTTP_BAD_REQUEST = 400
@@ -310,8 +312,18 @@ class WhisperApi:
 
 
 def _chunk_prompt(initial_prompt: str, previous: list[str]) -> str:
-    """Vocabulary priming plus the running transcript's tail (chunk continuity)."""
+    """Vocabulary priming plus the running transcript's tail (chunk continuity).
+
+    Both halves live inside one ``PROMPT_MAX_CHARS`` budget, because
+    whisper reads a prompt from its END: appending an unbudgeted tail
+    would push the priming's head — the title and show — out of the
+    window it exists to occupy. The tail comes off the transcript's end,
+    the priming off its own end, so the two names always survive.
+    """
     if not previous:
         return initial_prompt
     tail = " ".join(previous)[-_CONTINUITY_TAIL_CHARS:].strip()
-    return f"{initial_prompt}\n{tail}".strip()
+    if not tail:
+        return initial_prompt
+    head = initial_prompt[: max(PROMPT_MAX_CHARS - len(tail) - 1, 0)].rstrip()
+    return f"{head}\n{tail}".strip()

@@ -30,7 +30,7 @@ from dex_engine.pipeline.classify import (
     classify_connection,
     classify_http,
 )
-from dex_engine.pipeline.detect import sniff_format
+from dex_engine.pipeline.detect import looks_like_html, sniff_format
 from dex_engine.pipeline.types import (
     Format,
     Kind,
@@ -47,13 +47,6 @@ from .transport import Transport, urllib_transport
 __all__ = ["FileDriver"]
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs"
-
-_HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
-
-
-def _looks_like_html(data: bytes) -> bool:
-    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
-    return lead.startswith(_HTML_LEADS)
 
 
 class FileDriver:
@@ -115,7 +108,7 @@ class FileDriver:
         if (
             not unit.url.startswith("file:")
             and sniff_format(data) is None
-            and _looks_like_html(data)
+            and looks_like_html(data)
         ):
             return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.WEB))
         fmt = sniff_format(data, name=name) or unit.format

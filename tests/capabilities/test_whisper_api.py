@@ -12,6 +12,7 @@ from dex_engine.capabilities.transcribe.whisper_api import (
     _chunk_prompt,
 )
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
+from dex_engine.pipeline.transcribe import PROMPT_MAX_CHARS, _prompt
 
 
 class FakePost:
@@ -230,4 +231,15 @@ class TestChunkPrompt:
 
     def test_tail_is_bounded(self):
         prompt = _chunk_prompt("v", ["word " * 500])
-        assert len(prompt) <= 402  # initial + newline + bounded tail
+        assert len(prompt) <= 202  # initial + newline + bounded tail
+
+    def test_the_continuity_tail_never_pushes_the_title_out_of_the_window(self):
+        # Whisper keeps the LAST ~224 tokens: an unbudgeted tail appended
+        # to a full priming string would discard the head the priming
+        # exists to carry. Both halves share one budget.
+        priming = _prompt("Ledgers as Work Queues", "Engineering Distilled", "jargon " * 400)
+        assert len(priming) == PROMPT_MAX_CHARS  # the worst case
+        prompt = _chunk_prompt(priming, ["transcribed words " * 200])
+        assert prompt.startswith("Ledgers as Work Queues — Engineering Distilled")
+        assert prompt.endswith("transcribed words")
+        assert len(prompt) <= PROMPT_MAX_CHARS

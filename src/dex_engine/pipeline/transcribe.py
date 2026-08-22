@@ -21,13 +21,15 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from dex_engine import atomic
-from dex_engine.drivers.transport import Transport
+from dex_engine.drivers.transport import HttpResponse, Transport
 from dex_engine.drivers.youtube import ProbeError, classify_probe_failure
 
 from .classify import Classification, classify_connection, classify_http
+from .detect import looks_like_html
 from .types import LedgerEntry, Status
 
 __all__ = [
+    "PROMPT_MAX_CHARS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
     "DownloadAudio",
@@ -44,10 +46,15 @@ __all__ = [
 # never monopolize a machine. `enrich transcribe --limit` overrides.
 TRANSCRIBE_RUN_CAP = 10
 
-# Whisper's prompt window is ~224 tokens; priming beyond it is discarded
-# anyway, so the vocabulary text is bounded in characters.
-_PROMPT_MAX_CHARS = 800
+# Whisper's prompt window is ~224 tokens and it keeps the LAST of them:
+# an overlong prompt loses its FRONT, which is exactly the title/show the
+# priming exists to carry. So the whole composed prompt — vocabulary here
+# plus whisper-api's continuity tail — is budgeted to ~200 tokens. Jargon
+# tokenizes badly: 800 chars of this text measured ~270 tokens (≈2.96
+# chars/token), so 3 chars/token is the conservative rate and 600 the cap.
+PROMPT_MAX_CHARS = 600
 
+_SEPARATOR = " — "
 _AUDIO_EXT_DEFAULT = "mp3"
 _TRANSCRIPT_HEADING = "## Transcript"
 
@@ -260,12 +267,40 @@ def _download_enclosure(
         return classify_connection(e)
     if not response.ok:
         return classify_http(response.status)
+    unusable = _not_audio(response)
+    if unusable is not None:
+        # Never cached under <hash>.<ext>: a stored error page is
+        # indistinguishable from audio on the retry, and the provider
+        # would park the episode manual forever over the CDN's mistake.
+        return Classification(status=Status.BLOCKED, reason=unusable)
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{stem}.{_audio_ext(url)}"
     # Atomic: a crash mid-write must never leave a truncated file under the
     # final cache name — _cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
     return path
+
+
+def _not_audio(response: HttpResponse) -> str | None:
+    """Why this 200 body cannot be the episode's audio, or None.
+
+    A CDN serving an error page — or half a body — under a 200 says
+    nothing about the EPISODE, so it is ``blocked`` and retried, not the
+    ``manual`` a provider would produce after failing to decode the
+    garbage. Only shapes that are certainly not audio are caught here;
+    real audio that turns out to be broken still reaches the provider and
+    still parks manual with what the decoder said.
+    """
+    if not response.body:
+        return "enclosure returned an empty response body"
+    if response.content_length is not None and len(response.body) < response.content_length:
+        return (
+            f"enclosure body is truncated ({len(response.body)} of "
+            f"{response.content_length} declared bytes)"
+        )
+    if looks_like_html(response.body):
+        return f"enclosure served an HTML page ({response.content_type or 'no content type'})"
+    return None
 
 
 def _audio_ext(url: str) -> str:
@@ -276,10 +311,36 @@ def _audio_ext(url: str) -> str:
     return ext
 
 
-def _prompt(*parts: str | None) -> str:
-    """Known-vocabulary priming, single-line, bounded."""
-    text = " — ".join(" ".join(part.split()) for part in parts if part)
-    return text[:_PROMPT_MAX_CHARS]
+def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
+    """Known-vocabulary priming, single-line, budgeted head-first.
+
+    The head (title, then channel/show) always survives: whisper reads a
+    prompt from its END, so the VOCABULARY is what gets truncated — from
+    its own tail — to fit :data:`PROMPT_MAX_CHARS`. Truncating the
+    composed string instead would keep 600 characters of show notes and
+    throw away the two names the priming was built for.
+
+    Args:
+        title: The episode/video title.
+        show: The show or channel name.
+        vocabulary: Show notes or description — the trimmable part.
+
+    Returns:
+        The priming text, at most :data:`PROMPT_MAX_CHARS` characters.
+    """
+    head = _SEPARATOR.join(_flat(part) for part in (title, show) if part and part.strip())
+    vocab = _flat(vocabulary)
+    if not head:
+        return vocab[:PROMPT_MAX_CHARS]
+    head = head[:PROMPT_MAX_CHARS]
+    room = PROMPT_MAX_CHARS - len(head) - len(_SEPARATOR)
+    if not vocab or room <= 0:
+        return head
+    return f"{head}{_SEPARATOR}{vocab[:room]}"
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
 
 
 # ---------------------------------------------------------------------------

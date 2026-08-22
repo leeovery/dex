@@ -507,7 +507,14 @@ mechanism, not a hack.
   `needs: transcribe` with the pointer.
 - Accuracy: **`initial_prompt` priming** with the item's known vocabulary
   (video title + description, episode title + show notes) — mechanical, free,
-  large win on names/jargon. Transcripts are stored **raw**, stamped
+  large win on names/jargon. **Whisper keeps a prompt's LAST ~224 tokens and
+  discards its front**, so the composed prompt is budgeted to ~200 tokens
+  (600 chars, at the 3 chars/token this jargon-dense text measures): the
+  title/show head always survives and the VOCABULARY is trimmed from its
+  tail. whisper-api's chunk-continuity tail shares that one budget rather
+  than adding to it — otherwise the continuity a later chunk gains would
+  cost it the two names priming exists to carry. Transcripts are stored
+  **raw**, stamped
   `via`/`model` in frontmatter; corrections live downstream in digest/wiki
   where judgment already operates — enrichment stays the mechanical record.
 
@@ -551,7 +558,13 @@ retry on new engine). The availability seam is **per-format** —
 provider. **Acquisition failures are not provider failures**: a failed
 audio download (yt-dlp breakage, blocked enclosure GET) classifies through
 the normal §5 lifecycle — `blocked` with attempts, escalating to `manual`
-at 5 — never as no-clock waiting. The blocked line keeps
+at 5 — never as no-clock waiting. **A 200 that cannot be the audio is an
+acquisition failure too**: an empty body, a body short of its declared
+`Content-Length`, or an HTML page where audio was expected (a CDN's cached
+error page) is `blocked` and never written under the audio name — cached as
+`<hash>.mp3` it decodes as garbage and parks the episode `manual` forever
+over a fault that has nothing to do with the episode. Bytes that are merely
+bad audio still reach the provider, and its `manual` stands. The blocked line keeps
 `needs: transcribe`, so the retry routes back through the transcribe drain
 rather than the driver (§3: a typed field, never the reason's wording).
 Config keys: `transcribe_base_url`,

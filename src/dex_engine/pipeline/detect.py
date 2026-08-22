@@ -31,8 +31,27 @@ __all__ = [
     "canonical_url",
     "detect",
     "detect_kind",
+    "looks_like_html",
     "sniff_format",
 ]
+
+# HTML leads, BOM- and whitespace-tolerant. Bytes decide what a body IS,
+# never the content type a server claimed: shared by the file driver's
+# re-route to web work and the enclosure download's error-page guard.
+_HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
+
+
+def looks_like_html(data: bytes) -> bool:
+    """Whether the leading bytes read as an HTML/XML document.
+
+    Args:
+        data: The leading bytes (the whole body is fine).
+
+    Returns:
+        True for a markup lead.
+    """
+    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
+    return lead.startswith(_HTML_LEADS)
 
 # url -> media type ("application/pdf"), or None when the HEAD itself failed.
 # A failed sniff is INCONCLUSIVE, never classified: the GET that follows
