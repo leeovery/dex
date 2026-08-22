@@ -29,6 +29,60 @@ __all__ = ["GhResult", "GitHubDriver", "run_gh"]
 
 _HOSTS = frozenset({"github.com", "gist.github.com"})
 
+# First path segments github.com reserves for its own product surfaces.
+# None of them can be a user or an org, so none of them is repo or profile
+# work: the API 404s them while a browser renders them fine, which turned
+# a live marketing or topic page into a `dead` ledger line. Declining them
+# hands the URL to the web driver, which extracts the page like any other.
+_RESERVED_SEGMENTS = frozenset(
+    {
+        "about",
+        "account",
+        "apps",
+        "blog",
+        "business",
+        "codespaces",
+        "collections",
+        "contact",
+        "copilot",
+        "dashboard",
+        "discussions",
+        "education",
+        "enterprise",
+        "events",
+        "explore",
+        "features",
+        "home",
+        "issues",
+        "join",
+        "login",
+        "logout",
+        "marketplace",
+        "mobile",
+        "new",
+        "notifications",
+        "organizations",
+        "orgs",
+        "pricing",
+        "pulls",
+        "readme",
+        "search",
+        "security",
+        "sessions",
+        "settings",
+        "signup",
+        "site",
+        "sitemap",
+        "solutions",
+        "sponsors",
+        "stars",
+        "team",
+        "topics",
+        "trending",
+        "wiki",
+    }
+)
+
 _GH_HTTP_RE = re.compile(r"HTTP (\d{3})")
 _GH_TIMEOUT = 120.0
 
@@ -92,8 +146,14 @@ class GitHubDriver:
         self._gh = gh
 
     def matches(self, url: str) -> bool:
-        """True for github.com and gist.github.com."""
-        return host_of(url) in _HOSTS
+        """True for github.com and gist.github.com, minus reserved namespaces."""
+        host = host_of(url)
+        if host not in _HOSTS:
+            return False
+        if host == "gist.github.com":
+            return True
+        segments = [segment for segment in urllib.parse.urlsplit(url).path.split("/") if segment]
+        return not segments or segments[0].lower() not in _RESERVED_SEGMENTS
 
     def canonical(self, url: str) -> str:
         """The generic canonical form."""

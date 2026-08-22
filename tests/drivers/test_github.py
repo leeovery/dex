@@ -7,6 +7,8 @@ from collections.abc import Sequence
 import pytest
 
 from dex_engine.drivers.github import GhResult, GitHubDriver
+from dex_engine.pipeline.detect import detect_kind
+from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Kind, Status
 from tests.drivers.conftest import body_of, fixture_text, make_unit, reason_of
 
@@ -64,6 +66,46 @@ class TestIdentity:
         assert driver.matches("https://github.com/acme/pipeline-kit")
         assert driver.matches("https://gist.github.com/octomaint/abc123def456")
         assert not driver.matches("https://gitlab.com/acme/thing")
+
+
+RESERVED_URLS = [
+    "https://github.com/features/copilot",
+    "https://github.com/topics/rust",
+    "https://github.com/sponsors/octomaint",
+    "https://github.com/orgs/acme/repositories",
+    "https://github.com/collections/design-essentials",
+    "https://github.com/marketplace/actions/checkout",
+    "https://github.com/trending",
+    "https://github.com/trending/python?since=weekly",
+    "https://github.com/about",
+    "https://github.com/pricing",
+    "https://github.com/settings/profile",
+    "https://github.com/explore",
+    "https://github.com/security",
+    "https://github.com/readme/featured",
+]
+
+
+class TestReservedNamespaces:
+    """Reserved first segments are neither user nor repo — the web driver's."""
+
+    @pytest.mark.parametrize("url", RESERVED_URLS)
+    def test_github_declines_reserved_first_segments(self, url):
+        # The API 404s these while a browser renders them: driving them as
+        # profile or repo work ledgered live pages dead.
+        assert not driver_for().matches(url)
+
+    @pytest.mark.parametrize("url", RESERVED_URLS)
+    def test_the_web_driver_claims_them_and_no_one_else_does(self, url):
+        assert detect_kind(url, DRIVERS) is Kind.WEB
+
+    def test_a_repo_named_after_a_reserved_word_is_still_repo_work(self):
+        # Only the FIRST segment is reserved: acme/topics is an ordinary repo.
+        assert driver_for().matches("https://github.com/acme/topics")
+        assert driver_for().matches("https://github.com/acme/pipeline-kit/issues/42")
+
+    def test_gist_urls_are_never_screened(self):
+        assert driver_for().matches("https://gist.github.com/topics/abc123def456")
 
 
 class TestRepo:
