@@ -753,6 +753,32 @@ class TestThreadCompleteness:
         write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n')
         assert lint(instance).exit_code == 0
 
+    def test_the_newest_thread_is_listed_first(self, instance):
+        # Nothing clears these markers, so the listing only grows: oldest
+        # first would bury the threads a session is about to cite.
+        self._bare_wiki(instance)
+        old_item = "2026-01-02-old-aaaaaa"
+        new_item = "2026-08-19-new-bbbbbb"
+        for item in (old_item, new_item):
+            write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n', item=item)
+        report = lint(instance).report
+        assert report.index(new_item) < report.index(old_item)
+
+    def test_a_new_marker_is_listed_even_once_the_listing_is_full(self, instance):
+        # The surface caps the listing; the marker stamped today must not be
+        # the one it drops.
+        self._bare_wiki(instance)
+        older = [f"2026-01-{day:02d}-old-{day:06d}" for day in range(1, 26)]
+        newest = "2026-08-19-new-bbbbbb"
+        for item in [*older, newest]:
+            write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n', item=item)
+        report = lint(instance).report
+        assert "stored threads recorded incomplete (never cite one as whole) — 26" in report
+        assert f"enrichment/{newest}/x-abc123.md" in report
+        # the oldest is what the cap drops (bare ids also appear under the
+        # digest-orphan listing, so the path is what this asserts on)
+        assert f"enrichment/{older[0]}/x-abc123.md" not in report
+
     def test_an_unreadable_enrichment_file_is_reported(self, instance):
         # Nothing else in lint reads enrichment files, so a file this scan
         # cannot decode is invisible everywhere unless it says so here.

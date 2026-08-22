@@ -70,15 +70,20 @@ step 4.
      reference (media described with eyes, `enrich mark` closing each).
    - **Enrichment newer than digest** — an interrupted session: finish
      digest → place → wiki for each listed item.
+6. Read the standing signals — they are counts, not a queue that drains.
+   Nothing clears either one, so the same numbers stand at the next check
+   and a rising count is the only news in them. Neither is a chore to work
+   through, and neither fails the check.
    - **Stored threads recorded incomplete** — the walk-up stopped at a
      parent it could not fetch (`chain_incomplete`), or at the driver's
      100-hop bound (`thread_cap_hit`). The bound is a sanity stop against a
      cycle or a self-referencing parent, not an editorial one: 30-post
      threads walk clean, so a cap hit is about the chain being pathological,
-     not about a root left behind. Read the enrichment, then make the gap
-     explicit wherever the item is used: a digest bullet saying what is
-     missing, and no page sentence that reads the stored chain as the whole
-     thread.
+     not about a root left behind. A dead parent stays dead, so these never
+     go away; the listing is newest first, and the ones that matter are the
+     items you are about to write about. When you use one, make the gap
+     explicit: a digest bullet saying what is missing, and no page sentence
+     that reads the stored chain as the whole thread.
    - **Re-entry cap fires** — a tuning signal about the depth-4 / 12-URL
      bounds. Read the refused URLs: primary artifacts of the item's
      subject being turned away means the bounds are too tight for this
@@ -87,14 +92,14 @@ step 4.
      what the subject rule would not, and the fix is the judgment, not the
      bound. Concentrated in one or two items is normal; spread across many
      is the signal.
-6. Judgment sweep over every page you touched: cross-page contradictions
+7. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
-7. Coarse-topic check: when a topic has grown unwieldy or a coherent
+8. Coarse-topic check: when a topic has grown unwieldy or a coherent
    sub-cluster has formed inside it, split it — create the finer-grained
    topic(s), reassign members from their digests, rewrite the affected pages
    with cross-links, and update the index. The taxonomy is flat; a "subtopic"
    is just a sharper topic.
-8. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
+9. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
    pins always win.
-9. Append a `wiki/log.md` line; commit and push. Report findings and fixes to
-   the owner in plain words — no jargon.
+10. Append a `wiki/log.md` line; commit and push. Report findings and fixes to
+    the owner in plain words — no jargon.

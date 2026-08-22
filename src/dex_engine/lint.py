@@ -729,9 +729,16 @@ def _incomplete_threads(instance: Instance) -> _ThreadScan:
     invisible to every check, and the half-thread inside it is invisible
     forever. It stays a note, never a failure — the markers are a caution
     to the session, not a broken contract downstream.
+
+    Newest first, and read as a standing count rather than a work list.
+    Nothing clears a marker — a parent that 404s stays unfetchable — so
+    unlike every other capped listing in the report this one only grows,
+    and oldest-first would mean a thread stamped today is never the one
+    shown. Newest is by item id (date-prefixed): the stamping instant is
+    not recorded, and a file mtime resets on any checkout.
     """
     scan = _ThreadScan()
-    for path in sorted(instance.enrichment_dir.glob("*/*.md")):
+    for path in sorted(instance.enrichment_dir.glob("*/*.md"), reverse=True):
         rel = str(path.relative_to(instance.root))
         try:
             fields = read_enrichment_fields(path)
