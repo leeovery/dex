@@ -6,6 +6,11 @@ error rather than being classified. API failures ARE classified: gh's
 stderr names the HTTP status (``gh: Not Found (HTTP 404)``), which routes
 through the central classifier; anything without a visible code is
 ``blocked``, never silently terminal.
+
+Blob bytes are sniffed before they are fenced: a document or any other
+binary committed to a repo parks ``manual`` naming what it is, because a
+GitHub blob URL serves an HTML viewer rather than the bytes, so no other
+driver can re-fetch it — the rescue is to capture the file itself.
 """
 
 import base64
@@ -22,6 +27,7 @@ from dex_engine.pipeline.classify import (
     classify_http,
     scrub,
 )
+from dex_engine.pipeline.detect import sniff_format
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
@@ -233,8 +239,27 @@ class GitHubDriver:
                     "read it from a clone"
                 ),
             )
-        body = f"```\n{data.decode('utf-8', 'replace')[:_MAX_BLOB_CHARS]}\n```"
-        return Result(status=Status.DONE, meta=meta, body=body)
+        fmt = sniff_format(data)
+        if fmt is not None:
+            return Result(
+                status=Status.MANUAL,
+                meta=meta,
+                reason=(
+                    f"{file_path} is a {fmt.value} document, not source — capture the file "
+                    "itself so the extractors can read it"
+                ),
+            )
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            # Decoding with errors="replace" fenced 40k characters of
+            # replacement-character soup and ledgered it done.
+            return Result(
+                status=Status.MANUAL,
+                meta=meta,
+                reason=f"{file_path} is binary, not UTF-8 text — there is nothing to fence",
+            )
+        return Result(status=Status.DONE, meta=meta, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
 
     def _fetch_issue(self, owner: str, repo: str, number: str) -> Result:
         payload = self._api(f"repos/{owner}/{repo}/issues/{number}")

@@ -280,6 +280,27 @@ class TestBlob:
         driver = driver_for({self.CONTENTS: fail("gh: Not Found (HTTP 404)")})
         assert driver.fetch(make_unit(self.URL, Kind.GITHUB)).status is Status.DEAD
 
+    def test_a_document_blob_parks_manual_naming_its_format(self):
+        # A real ledger PDF blob fenced 40k characters of
+        # replacement-character soup and went done.
+        driver = driver_for({self.CONTENTS: contents(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj")})
+        result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "is a pdf document" in reason_of(result)
+
+    def test_an_unrecognized_binary_blob_parks_manual_never_fenced(self):
+        driver = driver_for({self.CONTENTS: contents(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")})
+        result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "binary, not UTF-8 text" in reason_of(result)
+        assert result.body is None
+
+    def test_utf8_source_with_non_ascii_still_fences(self):
+        driver = driver_for({self.CONTENTS: contents("# naïve — résumé\n".encode())})
+        result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert "naïve — résumé" in body_of(result)
+
     def test_oversize_blob_parks_manual_never_dead(self):
         # Over 1MB the contents API answers `encoding: "none"` with an empty
         # body — the file is there, just not inline.
