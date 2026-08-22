@@ -852,7 +852,14 @@ Shipping migrations for this rewrite:
      walks up and re-harvests, so e.g. a thread's YouTube link now becomes
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
-   the new-engine rule, and `manual` entries stay parked for judgment.
+   the new-engine rule, and `manual` entries stay parked for judgment. And
+   only entries whose item **still exists** (`corpus/<yyyy>/<id>.md`):
+   `dex exclude` deletes the item and its enrichment while its ledger
+   history stays on file, so a seed keyed to a purged item would re-fetch
+   content ruled out of scope and put an owner ruling back in the queue.
+   Those entries are skipped-with-why, naming the `state/exclusions.tsv`
+   record where there is one ("excluded — never reseeded") and flagging the
+   item as removed-by-hand where there is not.
    The re-key pass already ran, so a qualifying entry's hash and URL are
    the current identity: the seed appends under them directly, corpus
    seeding dedupes against it, and the drain fetches once.

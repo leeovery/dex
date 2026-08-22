@@ -29,9 +29,17 @@ stored enrichments deficient:
 - **x**: thread walk-up did not exist; a stored single post may have been a
   thread, and the rerun walks up and re-harvests.
 
-Membership is total by construction: this migration runs directly after
-migration 1, and the old engine had *neither* fix — so **every pre-rewrite
-``done`` web/x entry qualifies**. Pre-rewrite is precise, not fuzzy:
+Membership is every pre-rewrite ``done`` web/x entry **whose item still
+exists**: this migration runs directly after migration 1, and the old
+engine had *neither* fix. The item check is not bookkeeping — an entry
+whose ``corpus/<id[:4]>/<id>.md`` is gone names work the owner purged
+(``dex exclude`` deletes the item and its enrichment, on the record in
+``state/exclusions.tsv``), and seeding it would re-fetch content ruled out
+of scope, re-mint an enrichment directory under a dead item, and put an
+owner ruling back in the queue. Those entries are skipped-with-why, naming
+the exclusion where one is on record.
+
+Pre-rewrite is precise, not fuzzy:
 migration 1 stamps un-versioned old lines ``engine: 0.0.1``, the only
 version the pre-rewrite engine ever shipped as; entries written by the
 rewritten engine always carry a newer version. Only ``done`` entries are
@@ -135,9 +143,10 @@ class IdentityRekeyAndRerunSeed:
         latest: dict[str, LedgerEntry] = {}
         for entry in entries:
             latest[entry.hash] = entry
+        exclusions = _exclusions(root)
         counts = {Kind.X: 0, Kind.WEB: 0}
         for entry in latest.values():
-            if not _qualifies(entry, skipped):
+            if not _qualifies(entry, root=root, exclusions=exclusions, skipped=skipped):
                 continue
             append(
                 path,
@@ -226,11 +235,33 @@ def _rekey_identities(
     return entries
 
 
-def _qualifies(entry: LedgerEntry, skipped: list[Skipped]) -> bool:
+def _exclusions(root: Path) -> dict[str, str]:
+    """``state/exclusions.tsv`` as item id -> stated reason.
+
+    Missing file, blank lines and reason-less rows are all tolerated: this
+    is a corroborating record, not an authority — the corpus file's absence
+    is what decides, and the reason only makes the report readable.
+    """
+    path = root / "state" / "exclusions.tsv"
+    if not path.exists():
+        return {}
+    reasons: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        item, _, reason = line.partition("\t")
+        reasons[item.strip()] = reason.strip()
+    return reasons
+
+
+def _qualifies(
+    entry: LedgerEntry, *, root: Path, exclusions: dict[str, str], skipped: list[Skipped]
+) -> bool:
     if entry.status is not Status.DONE or entry.kind not in _SEEDED_KINDS:
         return False
     try:
-        return parse_version(entry.engine) == _PRE_REWRITE
+        if parse_version(entry.engine) != _PRE_REWRITE:
+            return False
     except ValueError:
         skipped.append(
             Skipped(
@@ -241,3 +272,20 @@ def _qualifies(entry: LedgerEntry, skipped: list[Skipped]) -> bool:
             )
         )
         return False
+    item_path = f"corpus/{entry.item[:4]}/{entry.item}.md"
+    if (root / item_path).exists():
+        return True
+    if entry.item in exclusions:
+        reason = exclusions[entry.item] or "no reason recorded"
+        why = (
+            f"{item_path} is gone and the item is excluded on the record "
+            f"(state/exclusions.tsv: {reason}) — excluded, never reseeded"
+        )
+    else:
+        why = (
+            f"{item_path} does not exist and no state/exclusions.tsv record names the "
+            "item — it was removed by hand or a purge was interrupted; not reseeded, "
+            "because there is no item for the rerun's output to belong to"
+        )
+    skipped.append(Skipped(what=f"rerun seed for {entry.item}", why=why))
+    return False

@@ -73,11 +73,38 @@ def entry(  # noqa: PLR0913 — one keyword per exercised schema slot
     )
 
 
-def write_entries(root, entries):
+def write_entries(root, entries, *, items=True):
+    """Write the ledger; by default give every named item a corpus file.
+
+    Seeding requires the item to still exist, so the live-item case is the
+    default and ``items=False`` is the purged one.
+    """
     path = root / "state" / "enrichment-ledger.jsonl"
     for one in entries:
         ledger.append(path, one)
+    if items:
+        for item_id in {one.item for one in entries}:
+            write_corpus_item(root, item_id)
     return path
+
+
+def write_corpus_item(root, item_id):
+    path = root / "corpus" / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\n"
+        f"id: {item_id}\n"
+        "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-05-01\n"
+        "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def write_exclusions(root, rows):
+    path = root / "state" / "exclusions.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{item}\t{reason}\n" for item, reason in rows), encoding="utf-8")
 
 
 class TestSeeding:
@@ -182,6 +209,68 @@ class TestSeeding:
         # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
         assert report.actions == []
+        assert report.skipped == []
+
+
+class TestPurgedItemsAreNeverReseeded:
+    """`dex exclude` deletes the item; a seed would fetch it right back."""
+
+    def test_excluded_item_is_skipped_with_the_exclusion_named(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(
+            tmp_path, [("2026-05-01-item-a1b2c3", "out of scope — owner ruling 2026-08-20")]
+        )
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        assert report.actions == []
+        (skip,) = report.skipped
+        assert skip.what == "rerun seed for 2026-05-01-item-a1b2c3"
+        assert "excluded, never reseeded" in skip.why
+        assert "owner ruling 2026-08-20" in skip.why
+
+    def test_end_to_end_the_next_run_does_not_resurrect_the_excluded_item(
+        self, instance, migration
+    ):
+        # The whole point: exclude purges the item, the migration must not
+        # queue it, and the following run must fetch nothing for it.
+        ledger.append(instance.ledger_path, stored(OLD_X_URL, kind=Kind.X, item=ITEM))
+        (instance.state_dir / "exclusions.tsv").parent.mkdir(parents=True, exist_ok=True)
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{ITEM}\tout of scope: marketing content — owner ruling\n", encoding="utf-8"
+        )
+        report = migration.apply(instance.root)
+        assert any("never reseeded" in s.why for s in report.skipped)
+        transport = FakeTransport({})
+        ctx = make_ctx(instance, FakeDriver(), drivers=[XDriver(transport=transport)])
+        run_mod.run(ctx)
+        assert transport.calls == []
+        assert '"queued"' not in instance.ledger_path.read_text()
+
+    def test_item_gone_without_an_exclusions_record_is_still_skipped(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "no state/exclusions.tsv record names the item" in skip.why
+
+    def test_a_live_item_still_seeds(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)])
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[work_hash(url_of("post-web"))].status is Status.QUEUED
+        assert report.skipped == []
+
+    def test_only_the_seeded_cohort_is_item_checked(self, tmp_path, migration):
+        # A purged item's parked/other-kind entries are none of this
+        # migration's business: no seed, and no noise in the report.
+        write_entries(
+            tmp_path,
+            [
+                entry("a-video", kind=Kind.YOUTUBE),
+                entry("walled", kind=Kind.WEB, status=Status.MANUAL, reason="paywall"),
+            ],
+            items=False,
+        )
+        report = migration.apply(tmp_path)
         assert report.skipped == []
 
 
@@ -338,8 +427,8 @@ class TestSeedDedupe:
         # raise the same x post fresh under the new hash while also
         # draining the rerun — one queued unit, one fetch.
         ledger.append(instance.ledger_path, stored(OLD_X_URL, kind=Kind.X, item=ITEM))
-        migration.apply(instance.root)
         write_item(instance, urls=[OLD_X_URL])
+        migration.apply(instance.root)
         tweet = {
             "id": "300",
             "text": "thread body " * 30,
