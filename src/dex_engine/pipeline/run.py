@@ -140,6 +140,23 @@ def _unfetchable_media(url: str) -> str | None:
     return None
 
 
+def _is_media_file(path: Path) -> bool:
+    """Whether ``path`` is one of the item's media-family files.
+
+    Downloads (``media-<n>.<ext>``) and extraction assets
+    (``<hash6>-asset-<n>.<ext>``) — the files the 4-per-item cap counts.
+    Markdown is never one of them: ``media-<n>.md`` is the session's
+    written description of a media capture, and reading it as a file the
+    cap counts (or as a slot already taken) let a download land beyond the
+    cap, beside a description of something else entirely.
+    """
+    return (
+        path.is_file()
+        and path.suffix != ".md"
+        and (path.name.startswith("media-") or "-asset-" in path.name)
+    )
+
+
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
@@ -900,13 +917,7 @@ class _Drain:
         item_dir = self.ctx.instance.enrichment_dir / item_id
         if not item_dir.is_dir():
             return 0
-        return sum(
-            1
-            for path in item_dir.iterdir()
-            if path.is_file()
-            and path.suffix != ".md"
-            and (path.name.startswith("media-") or "-asset-" in path.name)
-        )
+        return sum(1 for path in item_dir.iterdir() if _is_media_file(path))
 
     # -- media stage ------------------------------------------------
 
@@ -1049,15 +1060,20 @@ class _Drain:
         next-free scan would then write a second copy beside it. Reruns
         overwrite, never duplicate.
 
-        The cap is shared with extraction assets — 4 media-family files per
-        item total, whichever route wrote them; a slot already on disk is
-        this unit's own file and spends nothing new.
+        The index NAMES the file; it never decides the cap. The cap counts
+        media-family files that exist — 4 per item, shared with extraction
+        assets, whichever route wrote them — so a unit's parked, dead or
+        skipped siblings spend nothing, and an index past the cap is
+        ordinary (a thread pooling six photos whose first two 404 still
+        lands four files, at ``media-2`` through ``media-5``). Counting
+        positions instead recorded a terminal "media cap reached" on units
+        no file had displaced, losing them permanently under a false
+        reason. A slot already on disk is this unit's own file, overwritten
+        in place, and likewise spends nothing new.
         """
         slot = self._media_position(entry)
-        if slot >= MEDIA_MAX_FILES:
-            return None
         item_dir = self.ctx.instance.enrichment_dir / entry.item
-        if next(item_dir.glob(f"media-{slot}.*"), None) is not None:
+        if any(_is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
             return slot
         if self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
             return None

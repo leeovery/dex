@@ -577,7 +577,17 @@ Downloads run through the same per-unit protection as every other unit
 markup named it. **The `N` in `media-N.ext` is the unit's position among the
 item's media units in ledger order**, not the next free index on disk — a
 crash between the file write and the outcome line is overwritten by the
-redrain, never duplicated beside.
+redrain, never duplicated beside. **`N` names the file; it never decides
+the cap.** The cap counts media-family files that exist, so a unit's
+parked, dead or skipped siblings spend none of it and an `N` past the cap
+is ordinary: a thread pooling six photos whose first two 404 still lands
+four files, at `media-2` through `media-5`. Counting positions instead
+recorded a terminal `skipped — media cap (4 files) reached` on units no
+file had displaced, losing them permanently under a reason that was false.
+**`media-N.md` is not a media file**: it is the session's written
+description of a media capture, counted by neither the cap nor
+the "this slot already holds my own file" check — reading it as either put
+a download beyond the cap and beside a description of something else.
 
 ## 8. X driver (renamed from tweet)
 

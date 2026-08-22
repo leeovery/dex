@@ -789,6 +789,60 @@ class TestMediaStage:
         assert all(e.status is Status.SKIPPED for e in skipped)
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
 
+    def test_dead_media_siblings_never_spend_the_file_cap(self, instance):
+        # The wild shape: an X thread pooling 6 photos whose first two 404.
+        # The cap bounds FILES, so all four survivors must land — a cap that
+        # counted ledger positions instead recorded a terminal `skipped
+        # media cap` on two units with only two files on disk, and terminal
+        # means lost forever, with a false reason on the record.
+        urls = [f"https://cdn.example.test/p{n}.png" for n in range(MEDIA_MAX_FILES + 2)]
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        responses = {
+            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls[2:]
+        }
+        responses[urls[0]] = gone
+        responses[urls[1]] = gone
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch(urls)),
+            transport=FakeTransport(responses),
+        )
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        statuses = [entries[work_hash(url)].status for url in urls]
+        assert statuses == [Status.DEAD, Status.DEAD] + [Status.DONE] * MEDIA_MAX_FILES
+        files = sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*"))
+        assert len(files) == MEDIA_MAX_FILES
+        for url in urls[2:]:
+            path = entries[work_hash(url)].path
+            assert path is not None
+            assert (instance.root / path).is_file()
+
+    def test_a_session_written_media_description_never_unlocks_the_cap(self, instance):
+        # `media-N.md` is the session's description of a media capture, not a
+        # media file — `_media_file_count` excludes it and the slot check
+        # must too, or the item ends with five media-family files and a
+        # downloaded `media-0.png` beside a `media-0.md` about something else.
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        for n in range(MEDIA_MAX_FILES):
+            (item_dir / f"aaaaaa-asset-{n}.png").write_bytes(b"asset")
+        (item_dir / "media-0.md").write_text("the captured photo, described\n", encoding="utf-8")
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport(
+                {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+            ),
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.SKIPPED
+        assert entry.reason == f"media cap ({MEDIA_MAX_FILES} files) reached"
+        assert not (item_dir / "media-0.png").exists()
+
     def test_media_entries_are_born_queued_before_the_download(self, instance):
         # Entries exist from birth — a crash mid-download must leave a queued
         # via:media line the next run's redrain path picks up.
