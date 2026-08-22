@@ -684,6 +684,8 @@ _HEALTH_OPTIONAL = frozenset(
         "taxonomy_error",
         "ledger_entries",
         "ledger_error",
+        "ghost_items",
+        "missing_outputs",
         "waiting",
         "cognitive",
         "stale_passes",
@@ -721,6 +723,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           # state checks
           "ledger_entries": int,
           "ledger_error": str,          # schema failure — renders loud
+          "ghost_items": [{"item": str, "why": str}],      # item has no corpus file
+          "missing_outputs": [{"item": str, "path": str}], # done output gone from disk
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
           "stale_passes": [{"item": str, "rules": int}],
@@ -796,6 +800,12 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     else:
         entries = _int_at(surface, payload, "ledger_entries", default=0)
         lines.append(f"  ledger — {_plural(entries, 'entry', 'entries')}, schema valid")
+    lines.extend(_health_pairs(surface, payload, "ghost_items",
+                               "ledger entries naming items with no corpus file",
+                               ("item", "why"), lambda i, w: f"{i} ({w})"))
+    lines.extend(_health_pairs(surface, payload, "missing_outputs",
+                               "done entries whose output file is gone from disk",
+                               ("item", "path"), lambda i, p: f"{i} -> {p}"))
     waiting = _needs_counts(surface, payload, "waiting")
     if waiting:
         parts = " · ".join(f"{need} {count}" for need, count in sorted(waiting))

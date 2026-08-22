@@ -982,7 +982,10 @@ src/dex_engine/
                  drop the binary's provenance silently)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
-  lint.py      grows checks: ledger schema, waiting cohorts, pass records
+  lint.py      grows checks: ledger schema, ledger↔tree referential
+                 integrity (items with no corpus file — excluded-on-record
+                 told apart from vanished; done outputs missing on disk),
+                 waiting cohorts, pass records
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 

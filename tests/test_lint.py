@@ -427,6 +427,118 @@ class TestStateChecks:
         assert ITEM in outcome.report
 
 
+def done_entry(unit_hash: str, *, item: str = ITEM, path: str | None = None) -> LedgerEntry:
+    return LedgerEntry(
+        hash=unit_hash,
+        url=f"https://example.test/{unit_hash}",
+        item=item,
+        kind=Kind.WEB,
+        status=Status.DONE,
+        engine="0.1.0",
+        date=TODAY,
+        path=path,
+    )
+
+
+class TestReferentialIntegrity:
+    """A schema-valid ledger can still point at nothing — lint says so."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_entry_naming_an_excluded_item_is_named_as_excluded(self, instance):
+        self._bare_wiki(instance)
+        (instance.state_dir / "exclusions.tsv").write_text(
+            "2024-04-11-document-library-0a7569\tpensions reference docs\n"
+        )
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", item="2024-04-11-document-library-0a7569"),
+        )
+        outcome = lint(instance)
+        assert "ledger entries naming items with no corpus file — 1" in outcome.report
+        assert "2024-04-11-document-library-0a7569 (excluded on record)" in outcome.report
+
+    def test_entry_naming_a_vanished_item_is_told_apart(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert "ledger entries naming items with no corpus file — 1" in outcome.report
+        assert "removed by hand or a purge was interrupted" in outcome.report
+
+    def test_a_live_item_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert "ledger entries naming items with no corpus file — none" in outcome.report
+
+    def test_done_entry_whose_output_is_gone_is_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+        assert f"{ITEM} -> enrichment/{ITEM}/web-73bd78.md" in outcome.report
+
+    def test_an_output_that_exists_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        output = instance.enrichment_dir / ITEM / "web-73bd78.md"
+        output.parent.mkdir(parents=True)
+        output.write_text("the fetched page\n")
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — none" in outcome.report
+
+    def test_a_purged_item_answers_both_checks(self, instance):
+        # exclude deletes enrichment/<item>/ too; both findings are true of
+        # it, and neither is suppressed by the other.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "ledger entries naming items with no corpus file — 1" in outcome.report
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+
+    def test_findings_are_reported_without_failing_the_check(self, instance):
+        # `dex exclude` deliberately leaves ledger history standing, so a
+        # ghost item is the designed steady state — loud, never exit 1.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        ledger.append(instance.ledger_path, done_entry("aaaaaaaaaa", item="2026-08-19-gone-000000"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "ledger entries naming items with no corpus file — 1" in outcome.report
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+
+    def test_the_superseded_line_is_not_the_one_checked(self, instance):
+        # Latest-per-hash: an old done line whose output was cleaned up is
+        # history, not a finding, once the unit moved on.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — none" in outcome.report
+
+
 class TestCli:
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True
