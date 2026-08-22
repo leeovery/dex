@@ -5,7 +5,7 @@ import pytest
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
 from dex_engine.pipeline.types import Config, Format, Kind, Need, Status
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.drivers.conftest import FakeTransport, make_unit, reason_of
@@ -266,6 +266,20 @@ class TestExtractRouting:
         assert result.status is Status.WAITING
         assert result.needs is Need.OCR
         assert "OCR" in reason_of(result)
+
+    def test_a_call_time_availability_failure_re_parks_waiting(self, tmp_path):
+        # available() said yes and the call said otherwise (a rate-limited
+        # hosted extractor, a model download that died): the capability is
+        # in truth unavailable, so the job waits — never error + an issue
+        # filed about the world's weather, which is the transcribe path's
+        # treatment of the same exception.
+        (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
+        flaky = FakeExtractor(raise_=ProviderUnavailableError("extract API returned HTTP 429"))
+        d = FileDriver(capabilities=caps(flaky), root=tmp_path)
+        result = d.fetch(make_unit("file:doc.pdf", Kind.FILE))
+        assert result.status is Status.WAITING
+        assert result.needs is Need.EXTRACT
+        assert "HTTP 429" in reason_of(result)
 
     def test_provider_input_errors_propagate_for_the_run_loop(self, tmp_path):
         # The driver never swallows bad-input raises: the run loop owns the

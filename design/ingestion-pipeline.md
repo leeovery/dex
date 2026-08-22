@@ -551,7 +551,9 @@ bad-input cases (corrupt audio, a container carrying no audio stream at
 all, malformed file) → the run layer maps it
 `manual`; **`ProviderUnavailableError`** for call-time availability
 failures (API 5xx/429, missing binary, model-download failure) → the job
-**re-parks `waiting`** with the reason, never burning blocked attempts; an
+**re-parks `waiting`** with the reason, never burning blocked attempts —
+for **every** capability, extract included (`waiting` + `needs: extract`),
+not transcribe alone; an
 uncaught crash is an engine bug and takes the `error` path (issue filed,
 retry on new engine). The availability seam is **per-format** —
 `available(need, format)` — so a PDF wait never wakes for a CSV-only
@@ -582,6 +584,11 @@ round-trip depends on the frontmatter pointer existing, show notes or not.
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
 `transcribe: whisper-local (active) · whisper-api available — set OPENAI_API_KEY`.
+A note rides **any** state, active included: an ok-with-caveat availability
+("model not cached — the first transcription downloads it") is exactly what
+this surface exists to explain. Provider order is named once per capability
+— a repeated name is refused as loudly as an unknown one, since it would
+probe the provider twice and print it twice here.
 Discoverable, never nagging. This is how a free-floor instance learns what a
 key would buy.
 

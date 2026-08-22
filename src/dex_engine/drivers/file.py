@@ -8,7 +8,8 @@ sniffed — authoritative over whatever a server claimed — and handed to
 the first available mechanical extractor for the format.
 
 No provider for the format → ``waiting`` + ``needs: extract`` with the
-registry's stated reason. A scanned/image-only document → ``waiting`` +
+registry's stated reason — and so does a provider that reported available
+and then failed at call time. A scanned/image-only document → ``waiting`` +
 ``needs: ocr``. Embedded assets ride the Result for the run layer to write
 under the media caps, ledgered ``via: extract-asset`` — this driver, like
 every driver, never touches the ledger or the disk outputs.
@@ -26,6 +27,7 @@ from urllib.parse import unquote, urlsplit
 
 from dex_engine.capabilities import Capabilities
 from dex_engine.pipeline.classify import (
+    ProviderUnavailableError,
     ScannedDocumentError,
     classify_connection,
     classify_http,
@@ -178,6 +180,13 @@ class FileDriver:
             extraction = extractor.extract(data, fmt)
         except ScannedDocumentError as e:
             return Result(status=Status.WAITING, meta={}, needs=Need.OCR, reason=str(e))
+        except ProviderUnavailableError as e:
+            # A provider that reported available() and then failed at call
+            # time: the capability is, in truth, not available. The same
+            # re-park the transcribe drain gives it — waiting has no
+            # escalation clock — never error + a filed issue about the
+            # world's weather.
+            return Result(status=Status.WAITING, meta={}, needs=Need.EXTRACT, reason=str(e))
         meta: dict[str, str | int | None] = {
             "title": name,
             "format": fmt.value,
