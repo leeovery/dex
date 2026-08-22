@@ -15,6 +15,13 @@ __all__ = ["CsvBuiltinExtractor"]
 _SNIFF_SAMPLE_CHARS = 4096
 _FALLBACK_DELIMITERS = ",;\t|"
 
+# The stdlib's 128KB-per-field default trips on an embedded JSON blob,
+# which is a big cell in a fine file, not a broken one — so the limit is
+# raised. Not removed: one unterminated quote in a file that only looked
+# like CSV makes the whole file a single field, and a bound turns that
+# into a stated `manual` instead of eating the machine's memory.
+_MAX_FIELD_CHARS = 16 * 1024 * 1024
+
 
 class CsvBuiltinExtractor:
     """Render a CSV as a markdown table; the first row is the header."""
@@ -41,12 +48,14 @@ class CsvBuiltinExtractor:
             The extraction; CSVs embed nothing, so assets are always empty.
 
         Raises:
-            ProviderInputError: Not CSV work, or the file has no rows.
+            ProviderInputError: Not CSV work, the file has no rows, or the
+                reader refused it (a field past the size bound, a stray
+                newline in an unquoted field).
         """
         if not self.supports(fmt):
             raise ProviderInputError(f"csv-builtin extracts CSV only, got {fmt.value!r}")
         text = data.decode("utf-8-sig", errors="replace")
-        rows = [row for row in csv.reader(io.StringIO(text), dialect=_dialect(text)) if row]
+        rows = _rows(text)
         if not rows:
             raise ProviderInputError("CSV has no rows")
         width = max(len(row) for row in rows)
@@ -54,6 +63,23 @@ class CsvBuiltinExtractor:
         lines = [_table_row(header), _table_row(["---"] * width)]
         lines.extend(_table_row(row) for row in body)
         return Extraction(markdown="\n".join(lines) + "\n")
+
+
+def _rows(text: str) -> list[list[str]]:
+    """Every non-empty row, or a stated bad input — csv.Error never escapes.
+
+    The reader raises during ITERATION, not construction, so the whole
+    comprehension sits inside the guard.
+    """
+    previous = csv.field_size_limit(_MAX_FIELD_CHARS)
+    try:
+        return [row for row in csv.reader(io.StringIO(text), dialect=_dialect(text)) if row]
+    except csv.Error as e:
+        raise ProviderInputError(f"CSV could not be read: {e}") from e
+    finally:
+        # The limit is process-global state; leaving it raised would
+        # change how every later reader in this run behaves.
+        csv.field_size_limit(previous)
 
 
 def _dialect(text: str) -> type[csv.Dialect] | csv.Dialect:

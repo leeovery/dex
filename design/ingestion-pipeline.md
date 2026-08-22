@@ -522,7 +522,12 @@ mechanism, not a hack.
   form) or returns none — graceful text-only degradation. Images merely
   *linked* from a document stay links in the markdown, like web body links —
   harvest judgment promotes them if they matter.
-- `csv-builtin` — stdlib, zero deps.
+- `csv-builtin` — stdlib, zero deps. The per-field size bound is raised far
+  past the stdlib's 128KB default — an embedded JSON blob is a big cell in a
+  fine file — but stays finite, since one unterminated quote in a file that
+  merely looked like CSV makes the whole file a single field. A reader
+  refusal (past the bound, a stray newline in an unquoted field) is stated
+  bad input → `manual`, never an engine bug.
 - `cognitive` — floor: parks `needs: extract` for the ingest session.
 - The **Format is the contract, not the tool**: providers register per
   format; if anydoc dies, each format falls back independently (or parks) and
