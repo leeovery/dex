@@ -80,7 +80,8 @@ never state, never synced.
   after any page regeneration.
 - Update pages by rewrite-not-append: a page must always read as if written today.
 - Reports and receipts render through surfaces (`bin/dex render`) — never
-  hand-drawn.
+  hand-drawn. Surface output is markdown, and identity in it (item ids,
+  URLs, paths) is always whole: never abbreviate one when quoting a report.
 - Unattended sessions never edit `state/config.json`: proposed changes go in
   the run report; the owner ratifies them in an attended session.
 

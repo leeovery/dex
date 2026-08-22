@@ -82,7 +82,7 @@ class TestScaffold:
         out = io.StringIO()
         monkeypatch.setattr(sys, "stdout", out)
         render_main(["--file", "cache/receipt.json"])
-        assert "ingested 2026-08-18-note-a1b2c3" in out.getvalue()
+        assert "## Ingested 2026-08-18-note-a1b2c3" in out.getvalue()
 
     def test_nonempty_target_is_loud(self, tmp_path):
         root = tmp_path / "dex-cooking"

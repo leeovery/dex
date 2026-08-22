@@ -128,7 +128,7 @@ class TestMalformedTaxonomy:
         write_page(instance, "brewing", page_text(body=f"cite `{newer}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "brewing: 1 newer item(s)" in outcome.report
+        assert "**brewing** — 1 newer item" in outcome.report
 
 
 class TestWikiChecks:
@@ -152,8 +152,8 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert outcome.exit_code == 1  # broken link
-        assert "brewing -> [[no-such-page]]" in outcome.report
-        assert "reserved/unbuilt links: 1" in outcome.report
+        assert "**brewing** → `[[no-such-page]]`" in outcome.report
+        assert "reserved/unbuilt links — 1 (informational)" in outcome.report
 
     def test_bad_citation_fails(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
@@ -165,15 +165,15 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert "brewing -> 2026-01-01-vanished-abc123" in outcome.report
+        assert "**brewing** → **2026-01-01-vanished-abc123**" in outcome.report
 
     def test_shortid_citations_flagged_everywhere_including_index(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
         write_page(instance, "brewing", page_text(items=None, body="A fact `a1b2c3`.\n"))
         write_index(instance, "[[brewing]] and a stray `d4e5f6`\n")
         outcome = lint(instance)
-        assert "brewing -> `a1b2c3`" in outcome.report
-        assert "index -> `d4e5f6`" in outcome.report
+        assert "**brewing** → `a1b2c3`" in outcome.report
+        assert "**index** → `d4e5f6`" in outcome.report
 
     def test_orphans_respect_the_uncategorized_ledger(self, instance):
         ledgered = "2026-08-19-ledgered-aaaaaa"
@@ -184,15 +184,15 @@ class TestWikiChecks:
         write_index(instance, "")
         outcome = lint(instance)
         assert orphaned in outcome.report
-        assert "orphan items (uncited, unledgered) — 1" in outcome.report
+        assert "items no page cites and the taxonomy does not record — **1**" in outcome.report
 
     def test_index_consistency(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
         write_page(instance, "brewing", page_text(items=None, body="text\n"))
         write_index(instance, "[[ghost-page]]\n")  # brewing missing, ghost present
         outcome = lint(instance)
-        assert "pages missing from index — 1" in outcome.report
-        assert "ghost index entries — 1" in outcome.report
+        assert "pages missing from index — **1**" in outcome.report
+        assert "ghost index entries — **1**" in outcome.report
         assert "ghost-page" in outcome.report
 
     def test_stale_pages_count_newer_members(self, instance):
@@ -206,8 +206,8 @@ class TestWikiChecks:
         )
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "stale pages (members newer than the page) — 1" in outcome.report
-        assert "brewing: 1 newer item(s)" in outcome.report
+        assert "stale pages (members newer than the page) — **1**" in outcome.report
+        assert "**brewing** — 1 newer item" in outcome.report
 
     def test_count_drift_compares_members_not_citations(self, instance):
         # items: records the topic's MEMBER count; a page routinely cites
@@ -219,7 +219,7 @@ class TestWikiChecks:
         write_page(instance, "brewing", page_text(items=3, body=f"cite `{ITEM}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "brewing: items: 3, members 2" in outcome.report
+        assert "**brewing** — `items: 3`, 2 members" in outcome.report
         assert outcome.exit_code == 0  # drift is repairable, not a failure
 
     def test_matching_member_count_is_never_drift(self, instance):
@@ -231,7 +231,7 @@ class TestWikiChecks:
         write_page(instance, "brewing", page_text(items=2, body=f"cite `{ITEM}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+        assert "item-count drift (frontmatter `items:` vs members) — none" in outcome.report
 
     def test_entity_pages_count_against_entity_members(self, instance):
         write_corpus_stub(instance)
@@ -243,14 +243,14 @@ class TestWikiChecks:
         write_page(instance, "anthropic", text, group="entities")
         write_index(instance, "[[anthropic]]\n")
         outcome = lint(instance)
-        assert "anthropic: items: 5, members 2" in outcome.report
+        assert "**anthropic** — `items: 5`, 2 members" in outcome.report
 
     def test_unresolvable_pages_skip_the_count_check(self, instance):
         write_taxonomy(instance)  # no topics at all
         write_page(instance, "loose-page", page_text(items=9, body="prose only\n"))
         write_index(instance, "[[loose-page]]\n")
         outcome = lint(instance)
-        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+        assert "item-count drift (frontmatter `items:` vs members) — none" in outcome.report
 
     def test_body_lines_are_not_frontmatter(self, instance):
         # A body line reading `items: 99` is prose — it must never be
@@ -261,7 +261,7 @@ class TestWikiChecks:
         write_page(instance, "brewing", page_text(items=1, body=body))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance, write=True)
-        assert "item-count drift (frontmatter items: vs members) — none" in outcome.report
+        assert "item-count drift (frontmatter `items:` vs members) — none" in outcome.report
         assert "items: 99" in (instance.root / "wiki" / "topics" / "brewing.md").read_text()
 
     def test_restated_facts_flagged_within_a_page(self, instance):
@@ -271,7 +271,7 @@ class TestWikiChecks:
         write_page(instance, "brewing", page_text(items=None, body=f"{a}\n\n{b}\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "possible restated facts (same page — merge?) — 1" in outcome.report
+        assert "possible restated facts (same page, merge?) — **1**" in outcome.report
 
     def test_distinct_sentences_are_not_restatements(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
@@ -282,7 +282,7 @@ class TestWikiChecks:
         write_page(instance, "brewing", page_text(items=None, body=body))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
-        assert "possible restated facts (same page — merge?) — none" in outcome.report
+        assert "possible restated facts (same page, merge?) — none" in outcome.report
 
 
 class TestWrite:
@@ -297,7 +297,7 @@ class TestWrite:
         assert "items: 1" in rewritten
         assert "items: 3" not in rewritten
         # A second run is clean — the reconcile converged.
-        assert "item-count drift (frontmatter items: vs members) — none" in lint(
+        assert "item-count drift (frontmatter `items:` vs members) — none" in lint(
             instance
         ).report
 
@@ -375,8 +375,8 @@ class TestStateChecks:
         self._bare_wiki(instance)
         ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
         outcome = lint(instance)
-        assert "ledger — 1 entry, schema valid" in outcome.report
-        assert "waiting cohorts: transcribe 1" in outcome.report
+        assert "ledger — **1 entry**, schema valid" in outcome.report
+        assert "waiting on a capability — `transcribe` 1" in outcome.report
         assert outcome.exit_code == 0
 
     def test_schema_failure_is_loud_and_fails(self, instance):
@@ -392,10 +392,10 @@ class TestStateChecks:
         self._bare_wiki(instance)
         ledger.append(instance.ledger_path, stamped(waiting_entry(Need.OCR)))
         outcome = lint(instance, is_cognitive=always_cognitive)
-        assert "cognitive jobs (the session completes these with eyes) — 1" in outcome.report
+        assert "read these yourself (the engine cannot do them) — **1**" in outcome.report
         assert "ocr" in outcome.report
         clean = lint(instance, is_cognitive=never_cognitive)
-        assert "cognitive jobs (the session completes these with eyes) — none" in clean.report
+        assert "read these yourself (the engine cannot do them) — none" in clean.report
 
     def test_stale_harvest_passes_flagged(self, instance):
         self._bare_wiki(instance)
@@ -407,8 +407,8 @@ class TestStateChecks:
         ]
         instance.passes_path.write_text("".join(json.dumps(r) + "\n" for r in records))
         outcome = lint(instance)
-        assert "harvest passes under old rules (re-judge) — 1" in outcome.report
-        assert f"{ITEM} (rules v0)" in outcome.report
+        assert "harvest passes under old rules (re-judge) — **1**" in outcome.report
+        assert f"**{ITEM}** — rules v0" in outcome.report
 
     def test_latest_pass_supersedes_older_ones(self, instance):
         self._bare_wiki(instance)
@@ -468,9 +468,9 @@ class TestReferentialIntegrity:
             done_entry("73bd784849", item="2024-04-11-document-library-0a7569"),
         )
         outcome = lint(instance)
-        assert "ledger items with no corpus file — 1" in outcome.report
+        assert "ledger items with no corpus file — **1**" in outcome.report
         assert (
-            "2024-04-11-document-library-0a7569 — 1 entry (excluded on record)"
+            "**2024-04-11-document-library-0a7569** — 1 entry (excluded on record)"
             in outcome.report
         )
 
@@ -478,7 +478,7 @@ class TestReferentialIntegrity:
         self._bare_wiki(instance)
         ledger.append(instance.ledger_path, done_entry("73bd784849"))
         outcome = lint(instance)
-        assert "ledger items with no corpus file — 1" in outcome.report
+        assert "ledger items with no corpus file — **1**" in outcome.report
         assert "no exclusions.tsv record, and no live corpus item lists this work" in (
             outcome.report
         )
@@ -502,7 +502,7 @@ class TestReferentialIntegrity:
             instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url)
         )
         outcome = lint(instance)
-        assert f"{ITEM} — 1 entry (renamed — {renamed} lists this work)" in outcome.report
+        assert f"**{ITEM}** — 1 entry (renamed — {renamed} lists this work)" in outcome.report
         assert "no live corpus item lists this work" not in outcome.report
 
     def test_one_row_per_item_carries_its_entry_count(self, instance):
@@ -512,8 +512,8 @@ class TestReferentialIntegrity:
         ledger.append(instance.ledger_path, done_entry("73bd784849"))
         ledger.append(instance.ledger_path, done_entry("aaaaaaaaaa"))
         outcome = lint(instance)
-        assert "ledger items with no corpus file — 1" in outcome.report
-        assert f"{ITEM} — 2 entries (" in outcome.report
+        assert "ledger items with no corpus file — **1**" in outcome.report
+        assert f"**{ITEM}** — 2 entries (" in outcome.report
 
     def test_a_live_item_is_never_flagged(self, instance):
         self._bare_wiki(instance)
@@ -530,8 +530,8 @@ class TestReferentialIntegrity:
             done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
         )
         outcome = lint(instance)
-        assert "done entries whose output file is gone from disk — 1" in outcome.report
-        assert f"{ITEM} -> enrichment/{ITEM}/web-73bd78.md" in outcome.report
+        assert "done entries whose output file is gone from disk — **1**" in outcome.report
+        assert f"**{ITEM}** → `enrichment/{ITEM}/web-73bd78.md`" in outcome.report
 
     def test_an_output_that_exists_is_never_flagged(self, instance):
         self._bare_wiki(instance)
@@ -555,8 +555,8 @@ class TestReferentialIntegrity:
             done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
         )
         outcome = lint(instance)
-        assert "ledger items with no corpus file — 1" in outcome.report
-        assert "done entries whose output file is gone from disk — 1" in outcome.report
+        assert "ledger items with no corpus file — **1**" in outcome.report
+        assert "done entries whose output file is gone from disk — **1**" in outcome.report
 
     def test_findings_are_reported_without_failing_the_check(self, instance):
         # `dex exclude` deliberately leaves ledger history standing, so a
@@ -570,8 +570,8 @@ class TestReferentialIntegrity:
         ledger.append(instance.ledger_path, done_entry("aaaaaaaaaa", item="2026-08-19-gone-000000"))
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "ledger items with no corpus file — 1" in outcome.report
-        assert "done entries whose output file is gone from disk — 1" in outcome.report
+        assert "ledger items with no corpus file — **1**" in outcome.report
+        assert "done entries whose output file is gone from disk — **1**" in outcome.report
 
     def test_the_superseded_line_is_not_the_one_checked(self, instance):
         # Latest-per-hash: an old done line whose output was cleaned up is
@@ -634,12 +634,12 @@ class TestCapFires:
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
             )
         outcome = lint(instance)
-        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in (
+        assert "re-entry cap fires (tuning signal, not an alarm) — **3** across 2 items" in (
             outcome.report
         )
-        assert f"{DEPTH_CAP}: 1 · {URL_CAP}: 2" in outcome.report
-        assert f"most often: {ITEM} 2 · {other} 1" in outcome.report
-        assert f"{ITEM} -> https://example.test/0" in outcome.report
+        assert f"`{DEPTH_CAP}` 1 · `{URL_CAP}` 2" in outcome.report
+        assert f"most often: **{ITEM}** 2 · **{other}** 1" in outcome.report
+        assert "↳ https://example.test/0" in outcome.report
 
     def test_one_bound_reads_as_one_bound(self, instance):
         # The engine words the same bound three ways — one of them an
@@ -773,16 +773,18 @@ class TestThreadCompleteness:
             'chain_incomplete: "true"\nchain_note: "parent fetch failed after 3 post(s): 404"\n',
         )
         outcome = lint(instance)
-        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
         assert (
-            f"enrichment/{ITEM}/x-abc123.md — parent fetch failed after 3 post(s): 404"
+            "stored threads recorded incomplete (never cite one as whole) — **1**"
+        ) in outcome.report
+        assert (
+            f"`enrichment/{ITEM}/x-abc123.md` — parent fetch failed after 3 post(s): 404"
         ) in outcome.report
 
     def test_thread_cap_hit_names_itself_without_a_note(self, instance):
         self._bare_wiki(instance)
         write_enrichment(instance, "x-abc123.md", 'thread_cap_hit: "true"\n')
         outcome = lint(instance)
-        assert f"enrichment/{ITEM}/x-abc123.md — thread_cap_hit" in outcome.report
+        assert f"`enrichment/{ITEM}/x-abc123.md` — thread_cap_hit" in outcome.report
 
     def test_both_markers_report_together(self, instance):
         self._bare_wiki(instance)
@@ -947,7 +949,7 @@ class TestDigestShape:
         write_digest(instance, ITEM, "- a bare bullet list, no frontmatter\n")
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert f"{ITEM}: no complete frontmatter fence" in outcome.report
+        assert f"**{ITEM}** — no complete frontmatter fence" in outcome.report
 
     def test_unclosed_fence_fails(self, instance):
         self._bare_wiki(instance)
@@ -962,7 +964,7 @@ class TestDigestShape:
         write_digest(instance, ITEM, digest_text(omit=field))
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert f"{ITEM}: frontmatter missing {field}" in outcome.report
+        assert f"**{ITEM}** — frontmatter missing {field}" in outcome.report
 
     def test_bogus_signal_fails(self, instance):
         self._bare_wiki(instance)
@@ -1041,7 +1043,7 @@ class TestDigestShape:
         write_digest(instance, ITEM, digest_text(bullets=0))
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert f"{ITEM}: states no facts" in outcome.report
+        assert f"**{ITEM}** — states no facts" in outcome.report
 
     def test_prose_without_bullets_still_states_no_facts(self, instance):
         self._bare_wiki(instance)

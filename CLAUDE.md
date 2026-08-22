@@ -22,8 +22,10 @@ the engine stays unaware of which ones exist.
     web (catch-all, always last), file; `transport.py` is the HTTP seam.
   - `capabilities/` — transcribe (whisper-local floor, whisper-api),
     extract (anydoc, csv-builtin, cognitive floor), ocr (cognitive floor).
-  - `render/` — `kernel.py` (pure layout), `surfaces.py` (named report
-    surfaces), `cli.py` (`dex-render`). Judgment decides, code renders.
+  - `render/` — `kernel.py` (markdown composition primitives),
+    `surfaces.py` (named report surfaces), `cli.py` (`dex-render`).
+    Judgment decides, code renders; `design/report-surfaces.md` is the
+    vocabulary and layout rules in force.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -45,8 +47,9 @@ the engine stays unaware of which ones exist.
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
   capture protocol any client implements).
 - `design/ingestion-pipeline.md` — the agreed, in-force design for the
-  ingestion machinery; `design/roadmap.md` — queued design work,
-  operational facts, pending tasks.
+  ingestion machinery; `design/report-surfaces.md` — the in-force design
+  for what every rendered surface looks like; `design/roadmap.md` —
+  queued design work, operational facts, pending tasks.
 - `example/` — a toy instance showing the shapes.
 
 ## Design (current, in force)

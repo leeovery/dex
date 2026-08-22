@@ -991,27 +991,32 @@ migration-seeded (§12), not scan-inferred.
 
 ## 11. Rendering: judgment decides, code renders
 
-Ported from the agentic-workflows kernel/surfaces architecture. Layout that
-is fully determined by data is computed in code and emitted verbatim — never
-re-derived character-by-character by the model.
+Composition that is fully determined by data is computed in code and emitted
+verbatim — never re-derived character-by-character by the model.
 
 ```
-render/kernel.py     pure layout, zero dex vocabulary — wrap/width/column
-                     math, tables, trees, kv blocks. Alignment bugs can
-                     exist in exactly one place, and it has tests.
+render/kernel.py     markdown composition, zero dex vocabulary — headings,
+                     bullets, detail lines, inline lists. No width, no
+                     wrapping, no truncation: identity reaches the reader
+                     whole. Composition bugs can exist in exactly one
+                     place, and it has tests.
 render/surfaces.py   named surfaces, loud payload validation:
                      enrich-report, status, item-status,
                      capability-report, sync-report, ingest-receipt,
                      health-report
 ```
 
+Every surface renders markdown, and its sections group by who owns the next
+action rather than by the ledger status the engine stores. The vocabulary
+and the layout rules are `design/report-surfaces.md`.
+
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
 in-process — includes a "reported upstream: N issues" line when the filer
 acted) and cognitive (Claude writes a JSON payload — including free-prose
 fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
-Standing skill rule: **never hand-draw a table or report; there is a surface
-for it — call it.** Cap-fired events are internal (ledger/log) and appear on
+Standing skill rule: **never hand-draw a report; there is a surface for it
+— call it.** Cap-fired events are internal (ledger/log) and appear on
 no user-facing surface.
 
 ## 12. Releases, sync, migrations

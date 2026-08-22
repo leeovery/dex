@@ -95,21 +95,23 @@ Then do a run now, whatever the host.
    run so the pipeline seeds the new items' URLs.
 
 7. **Enrich.** `bin/dex enrich run`, and **read its report — it is the
-   work list**. Complete the per-item cognitive work
-   (`references/ingest-item.md`) for *everything* it names: fresh
-   captures, drained reruns, changed items, newly drained waiting
-   cohorts, its listed cognitive jobs, and its no-source items (text or
-   image captures — nothing to fetch, everything to describe and digest).
-   Items you created this session always get the full per-item procedure
-   whether or not the report names them. Parked entries
-   (waiting/blocked/manual) each show a stated reason — manual ones are
-   yours to judge, per the reference's heal procedure.
+   work list**. It is markdown, and its sections say who owns the next
+   action. Complete the per-item cognitive work
+   (`references/ingest-item.md`) for *everything* under **Needs writing
+   up** — fresh captures, drained reruns, rewritten items, newly drained
+   waiting cohorts — plus everything under **Read these yourself** and
+   its no-source items (text or image captures — nothing to fetch,
+   everything to describe and digest). Items you created this session
+   always get the full per-item procedure whether or not the report names
+   them. **Needs you** holds the entries the engine has given up on, each
+   with a stated reason: judge them per the reference's heal procedure.
+   **Waiting on the engine** is the engine's own retry queue — read it,
+   act on nothing.
 
-8. **Backstop.** `bin/dex enrich status` — any item listed under
-   "enrichment newer than digest" is an interrupted previous session:
-   complete its digest → place → wiki steps now. Every item listed is
-   digestible; one still owing a unit is `raw` and never appears there,
-   however long it stays parked.
+8. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
+   these** is an interrupted previous session: complete its digest →
+   place → wiki steps now. Every item listed is digestible; one still owing
+   a unit is `raw` and never appears there, however long it stays parked.
 
 9. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
    health check reads `## [<date>] lint | …`. If `wiki/log.md` holds no such
@@ -137,7 +139,9 @@ Then do a run now, whatever the host.
 
 ## Rendering
 
-Never hand-draw a table, receipt, or report — there is a surface for it.
+Never hand-draw a receipt or report — there is a surface for it. Surfaces
+emit markdown: headings, bullets, and identity (item ids, URLs, paths)
+whole and never truncated.
 Write the payload JSON to `cache/`, run
 `bin/dex render --file cache/<name>.json` (the file is
 `{"surface": "<name>", "payload": {...}}`), and emit the output verbatim.

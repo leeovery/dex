@@ -133,7 +133,7 @@ class TestBootstrap:
         report, _ = run(inst, channel, template)
         assert read_pin(inst.root) == "v0.1.0"
         assert calls["exec"] == []
-        assert "sync — engine pinned at v0.1.0" in report
+        assert "## Sync — engine pinned at v0.1.0" in report
         assert "first tag-aware sync" in report
 
     def test_bootstrap_runs_migrations_and_template_sync(self, inst, template):
@@ -142,7 +142,7 @@ class TestBootstrap:
         assert read_applied(log_path(inst.root)) == {1, 2, 3}
         assert (inst.root / "bin" / "dex").read_text() == "#!/bin/sh\nshim\n"
         assert (inst.root / ".gitattributes").exists()
-        assert "migrations applied — 3:" in report
+        assert "### Migrations applied — 3" in report
 
     def test_unreleased_newer_engine_stays_unpinned(self, inst, template):
         channel, calls = make_channel(listing_for("v0.1.0"))
@@ -219,7 +219,7 @@ class TestSteadyStateAndEdges:
         channel, calls = make_channel(listing_for("v0.1.0", "v0.2.0"))
         report, _ = run(inst, channel, template)
         assert calls["exec"] == []
-        assert "sync — engine pinned at v0.2.0" in report
+        assert "## Sync — engine pinned at v0.2.0" in report
 
     def test_pin_ahead_of_latest_is_left_alone(self, inst, template):
         write_pin(inst.root, "v0.3.0")
@@ -227,7 +227,7 @@ class TestSteadyStateAndEdges:
         report, _ = run(inst, channel, template)
         assert calls["exec"] == []
         assert read_pin(inst.root) == "v0.3.0"
-        assert "sync — engine pinned at v0.3.0" in report
+        assert "## Sync — engine pinned at v0.3.0" in report
 
     def test_no_releases_yet_runs_unpinned(self, inst, template):
         channel, calls = make_channel("")
@@ -258,7 +258,7 @@ class TestSteadyStateAndEdges:
         write_pin(inst.root, "v0.1.2")
         channel, _ = make_channel(listing_for("v0.1.2"))
         report, _ = run(inst, channel, template, previous_pin="v0.1.0")
-        assert "sync — pin bumped v0.1.0 → v0.1.2" in report
+        assert "## Sync — pin bumped v0.1.0 → v0.1.2" in report
 
 
 class TestMigrationsInTheFlow:
@@ -287,9 +287,9 @@ class TestMigrationsInTheFlow:
         ]
         channel, _ = make_channel(listing_for("v0.1.0"))
         report, _ = run(inst, channel, template, migrate=lambda _root: applied)
-        assert "migration 1 — renames" in report
+        assert "- **migration 1** — renames" in report
         assert "ledger: 3 line(s) translated" in report
-        assert "skipped — 1 (repair with judgment):" in report
+        assert "**Repair with judgment** — 1 skipped" in report
         assert "ledger line 7" in report
 
 
@@ -354,7 +354,7 @@ class TestTemplateSync:
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "refreshed: bin/dex" in report
-        assert "machinery changes: 6" in report
+        assert "**Machinery changes** — 6" in report
 
 
 class TestMain:
@@ -365,8 +365,8 @@ class TestMain:
         monkeypatch.chdir(inst.root)
         main([])
         out = capsys.readouterr().out
-        assert "sync — engine unpinned" in out
-        assert "migrations applied — 3:" in out
+        assert "## Sync — engine unpinned" in out
+        assert "### Migrations applied — 3" in out
 
     def test_main_is_loud_on_a_garbage_pin(self, inst, template, monkeypatch):
         (inst.root / PIN_FILE).write_text("garbage\n")

@@ -1,10 +1,14 @@
-"""Named render surfaces: loud payload validation, layout via the kernel.
+"""Named render surfaces: loud payload validation, markdown via the kernel.
 
 Two call paths feed these: engine-internal (a command renders its own report
 in-process) and cognitive (Claude writes a JSON payload to ``cache/`` and
 runs ``bin/dex render --file …`` — the CLI in ``render/cli.py``). The
-standing skill rule: never hand-draw a table or report; there is a surface
-for it — call it.
+standing skill rule: never hand-draw a report; there is a surface for it —
+call it.
+
+Reports are markdown. Sections group by who owns the next action, not by the
+ledger status the engine happens to store, and an item id, a URL or a path
+reaches the output whole — never shortened, never split across lines.
 
 Payload shapes are documented on each renderer. Validation is loud: a
 missing, unknown, or mistyped key raises :class:`PayloadError` naming the
@@ -27,6 +31,11 @@ class PayloadError(ValueError):
 
 # Statuses an entry may hold when it survives a session, parked.
 _PARKED_STATUSES = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
+# The split that decides which section a parked entry lands in: `manual` is
+# the engine saying it has given up, and only a person moves it. Everything
+# else re-enters the queue unasked — blocked next run, waiting when a
+# provider appears, error when a newer engine ships.
+_OWNER_IS_YOU = frozenset({Status.MANUAL})
 _PROVIDER_STATES = frozenset({"active", "available", "unavailable"})
 
 
@@ -38,12 +47,10 @@ def render(surface: str, payload: Mapping[str, object]) -> str:
         payload: The surface's payload (typically parsed JSON).
 
     Returns:
-        The rendered report, newline-terminated.
+        The rendered markdown report, newline-terminated.
 
     Raises:
         PayloadError: Unknown surface, or a nonconforming payload.
-        NotImplementedError: The surface's payload shape has not firmed up
-            yet (later-phase stubs).
     """
     if surface not in SURFACES:
         known = ", ".join(sorted(SURFACES))
@@ -171,22 +178,54 @@ def _counts_at(surface: str, payload: Mapping[str, object], key: str) -> dict[St
     return counts
 
 
-def _plural(count: int, singular: str, plural: str | None = None) -> str:
-    word = singular if count == 1 else (plural or singular + "s")
-    return f"{count} {word}"
+def _needs_counts(surface: str, payload: Mapping[str, object], key: str) -> list[tuple[str, int]]:
+    raw = payload.get(key, {})
+    if not isinstance(raw, Mapping):
+        _fail(surface, f"{key} must be an object of need -> count")
+    counts: list[tuple[str, int]] = []
+    for raw_need, raw_count in raw.items():
+        if not isinstance(raw_need, str) or raw_need not in {n.value for n in Need}:
+            options = ", ".join(n.value for n in Need)
+            _fail(surface, f"{key} key must be one of {options}, got {raw_need!r}")
+        if not isinstance(raw_count, int) or isinstance(raw_count, bool) or raw_count < 0:
+            _fail(surface, f"{key}[{raw_need!r}] must be a non-negative integer")
+        counts.append((raw_need, raw_count))
+    return counts
 
 
-def _counts_table(counts: dict[Status, int]) -> str:
-    ordered = [s for s in Status if s in counts]
-    rows = [[status.value, str(counts[status])] for status in ordered]
-    return kernel.table(rows, aligns=["l", "r"], indent=2)
+def _need_at(surface: str, obj: Mapping[str, object], key: str, where: str = "") -> str:
+    need = _str_at(surface, obj, key, where)
+    if need not in {n.value for n in Need}:
+        options = ", ".join(n.value for n in Need)
+        _fail(surface, f"{where}{key} must be one of {options}, got {need!r}")
+    return need
 
 
-def _bullets(texts: list[str], *, indent: int = 2) -> list[str]:
-    lines: list[str] = []
-    for text in texts:
-        lines.extend(kernel.wrap_with_prefix("- " + text, prefix=" " * indent, hang=2))
-    return lines
+# ---------------------------------------------------------------------------
+# Shared markdown shapes.
+# ---------------------------------------------------------------------------
+
+
+def _counts_line(counts: dict[Status, int]) -> str:
+    """The status counts as one line — the stand-in for a table of counts."""
+    return kernel.inline(
+        f"{kernel.bold(status.value)} {counts[status]}" for status in Status if status in counts
+    )
+
+
+def _entry(identity: str, *tags: str) -> str:
+    """One bullet: the identity, whole and bold, then its short tags."""
+    return kernel.bullet(kernel.inline([kernel.bold(identity), *(tag for tag in tags if tag)]))
+
+
+def _agree(count: int, singular: str, plural_form: str) -> str:
+    return singular if count == 1 else plural_form
+
+
+def _note_section(title: str, notes: list[str]) -> list[str]:
+    if not notes:
+        return []
+    return ["", kernel.heading(title, level=3), "", *(kernel.bullet(note) for note in notes)]
 
 
 # ---------------------------------------------------------------------------
@@ -201,10 +240,11 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
 
         {
           "counts": {"<status>": int, ...},          # units written this run
-          "items": [{"id": str, "reason": str}],     # cognitive work list:
-                                                     #   fresh / rerun / waiting-drained
-          "parked": [{"item": str, "url": str,
-                      "status": str, "reason": str}],  # survives the session
+          "items": [{"id": str, "reason": str}],     # items with new material
+          "parked": [{"item": str, "url": str,       # survives the session
+                      "status": str, "reason": str,
+                      "attempts": int,               # optional: retry state
+                      "attempt_cap": int}],          #   (blocked entries)
           "incomplete": [{"item": str,               # optional: touched items
                           "landed": int,             #   still owed work — the
                           "total": int,              #   ledger units that have
@@ -217,6 +257,10 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
           "issues_filed": int,                       # optional, default 0
           "notes": [str],                            # optional
         }
+
+    ``parked`` arrives as one list and renders as two sections, split on who
+    owns the next action: ``manual`` is the engine giving up, everything
+    else re-enters the queue by itself.
     """
     surface = "enrich-report"
     _check_keys(
@@ -226,65 +270,179 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         optional=frozenset({"incomplete", "cognitive", "issues_filed", "notes"}),
     )
     counts = _counts_at(surface, payload, "counts")
-    item_rows = _enrich_item_rows(surface, payload)
-    incomplete_rows = _enrich_incomplete_rows(surface, payload)
-    parked_rows = _enrich_parked_rows(surface, payload)
-    cognitive_rows = _enrich_cognitive_rows(surface, payload)
+    parked = _enrich_parked(surface, payload)
     issues_filed = _int_at(surface, payload, "issues_filed", default=0)
     notes = _str_list_at(surface, payload, "notes")
 
     total = sum(counts.values())
-    lines = [f"enrich run — {_plural(total, 'unit')} processed"]
+    blocks = [kernel.heading(f"Enrich run — {kernel.plural(total, 'unit')} processed")]
     if counts:
-        lines.append(_counts_table(counts).rstrip("\n"))
-    lines.append("")
-    if item_rows:
-        lines.append(
-            f"cognitive work — {_plural(len(item_rows), 'item')} with new or changed content:"
-        )
-        lines.append(kernel.table(item_rows, indent=2).rstrip("\n"))
+        blocks += ["", _counts_line(counts)]
+
+    sections = [
+        _enrich_writeups(surface, payload),
+        _enrich_cognitive(surface, payload),
+        _enrich_parked_section(parked, mine=True),
+        _enrich_parked_section(parked, mine=False),
+        _enrich_incomplete(surface, payload),
+    ]
+    rendered = [section for section in sections if section]
+    if rendered:
+        for section in rendered:
+            blocks += ["", section]
     else:
-        lines.append("cognitive work — none (nothing new or changed)")
-    if incomplete_rows:
-        lines.append("")
-        lines.append(
-            f"incomplete — {_plural(len(incomplete_rows), 'item')} still raw "
-            "until every unit lands:"
-        )
-        lines.append(kernel.table(incomplete_rows, indent=2).rstrip("\n"))
-    lines.append("")
-    if parked_rows:
-        verb = "survives" if len(parked_rows) == 1 else "survive"
-        lines.append(
-            f"parked — {_plural(len(parked_rows), 'entry', 'entries')} {verb} "
-            "this session, each for a stated reason:"
-        )
-        lines.append(kernel.table(parked_rows, indent=2).rstrip("\n"))
-    else:
-        lines.append("parked — none")
-    if cognitive_rows:
-        lines.append("")
-        lines.append("cognitive jobs — the session completes these with eyes:")
-        lines.append(kernel.table(cognitive_rows, indent=2).rstrip("\n"))
+        blocks += [
+            "",
+            (
+                "Nothing needs attention: no new material, nothing parked, "
+                "nothing left outstanding."
+            ),
+        ]
     if issues_filed:
-        lines.append("")
-        lines.append(f"reported upstream: {_plural(issues_filed, 'issue')}")
-    if notes:
-        lines.append("")
-        lines.append("notes:")
-        lines.extend(_bullets(notes))
-    return "\n".join(lines) + "\n"
+        blocks += [
+            "",
+            f"{kernel.bold('Reported upstream')} — {kernel.plural(issues_filed, 'issue')} filed",
+        ]
+    blocks += _note_section("Notes", notes)
+    return kernel.document(blocks)
 
 
-def _enrich_item_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
+def _enrich_writeups(surface: str, payload: Mapping[str, object]) -> str:
+    """Items the run gave new material — the session's writing-up queue."""
     rows = []
     for i, entry in enumerate(_obj_list_at(surface, payload, "items", required=True)):
         where = f"items[{i}]."
         _check_keys(surface, entry, required=frozenset({"id", "reason"}), where=where)
         rows.append(
-            [_str_at(surface, entry, "id", where), _str_at(surface, entry, "reason", where)]
+            (_str_at(surface, entry, "id", where), _str_at(surface, entry, "reason", where))
+        )
+    if not rows:
+        return ""
+    lines = [
+        kernel.heading(
+            f"Needs writing up — {kernel.plural(len(rows), 'item')} "
+            f"{_agree(len(rows), 'has', 'have')} new material",
+            level=3,
+        ),
+        "",
+    ]
+    for item, reason in rows:
+        lines += [_entry(item), kernel.detail(reason)]
+    return "\n".join(lines)
+
+
+def _enrich_cognitive(surface: str, payload: Mapping[str, object]) -> str:
+    """Waiting jobs that resolve to the cognitive floor: nobody but the reader."""
+    rows = _cognitive_rows(surface, payload)
+    if not rows:
+        return ""
+    lines = [
+        kernel.heading(
+            f"Read these yourself — {kernel.plural(len(rows), 'job')} the engine cannot do",
+            level=3,
+        ),
+        "",
+    ]
+    for item, need, url in rows:
+        lines += [_entry(item, kernel.code(need)), kernel.detail(url)]
+    return "\n".join(lines)
+
+
+def _cognitive_rows(surface: str, payload: Mapping[str, object]) -> list[tuple[str, str, str]]:
+    rows = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "cognitive", required=False)):
+        where = f"cognitive[{i}]."
+        _check_keys(surface, entry, required=frozenset({"item", "url", "need"}), where=where)
+        rows.append(
+            (
+                _str_at(surface, entry, "item", where),
+                _need_at(surface, entry, "need", where),
+                _str_at(surface, entry, "url", where),
+            )
         )
     return rows
+
+
+def _enrich_parked(surface: str, payload: Mapping[str, object]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "parked", required=True)):
+        where = f"parked[{i}]."
+        _check_keys(
+            surface,
+            entry,
+            required=frozenset({"item", "url", "status", "reason"}),
+            optional=frozenset({"attempts", "attempt_cap"}),
+            where=where,
+        )
+        status = _status_at(surface, entry, "status", where)
+        if status not in _PARKED_STATUSES:
+            allowed = ", ".join(sorted(s.value for s in _PARKED_STATUSES))
+            _fail(
+                surface,
+                f"{where}status must be a parked status ({allowed}), got {status.value!r}",
+            )
+        row: dict[str, object] = {
+            "item": _str_at(surface, entry, "item", where),
+            "url": _str_at(surface, entry, "url", where),
+            "status": status,
+            "reason": _str_at(surface, entry, "reason", where),
+        }
+        if "attempts" in entry:
+            row["attempts"] = _int_at(surface, entry, "attempts", where)
+        if "attempt_cap" in entry:
+            if "attempts" not in entry:
+                _fail(surface, f"{where}attempt_cap without attempts says nothing")
+            row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
+        rows.append(row)
+    return rows
+
+
+# What the engine will do about a parked entry unasked. `blocked` is absent
+# because its entries carry the concrete attempt count instead, and `manual`
+# because it is the one status where the answer is "nothing".
+_RETRY_NOTE = {
+    Status.WAITING: "retries when a provider appears",
+    Status.ERROR: "retries on the next engine release",
+}
+
+
+def _enrich_parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
+    """One parked section: the entries whose next action belongs to one owner."""
+    rows = [row for row in parked if (row["status"] in _OWNER_IS_YOU) == mine]
+    if not rows:
+        return ""
+    if mine:
+        title = (
+            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} "
+            "the engine has given up on"
+        )
+    else:
+        title = (
+            f"Waiting on the engine — {kernel.plural(len(rows), 'entry', 'entries')} "
+            f"it {_agree(len(rows), 'retries', 'retry')} by itself"
+        )
+    lines = [kernel.heading(title, level=3), ""]
+    for row in rows:
+        lines += [
+            _entry(str(row["item"]), *_parked_tags(row)),
+            kernel.detail(str(row["reason"])),
+            kernel.detail(str(row["url"])),
+        ]
+    return "\n".join(lines)
+
+
+def _parked_tags(row: dict[str, object]) -> list[str]:
+    status = Status(str(row["status"]))
+    tags = [kernel.code(status.value)]
+    attempts = row.get("attempts")
+    if isinstance(attempts, int):
+        cap = row.get("attempt_cap")
+        tags.append(
+            f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"
+        )
+    elif status in _RETRY_NOTE:
+        tags.append(_RETRY_NOTE[status])
+    return tags
 
 
 # What an outstanding unit is waiting for, as prose. Statuses that are not
@@ -300,7 +458,8 @@ _STATUS_PHRASES = {
 }
 
 
-def _enrich_incomplete_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
+def _enrich_incomplete(surface: str, payload: Mapping[str, object]) -> str:
+    """Items still raw: one outstanding unit holds the whole item out of digest."""
     rows = []
     for i, entry in enumerate(_obj_list_at(surface, payload, "incomplete", required=False)):
         where = f"incomplete[{i}]."
@@ -314,10 +473,26 @@ def _enrich_incomplete_rows(surface: str, payload: Mapping[str, object]) -> list
         total = _int_at(surface, entry, "total", where)
         if landed > total:
             _fail(surface, f"{where}landed ({landed}) exceeds total ({total})")
-        shape = f"{landed} of {_plural(total, 'unit')} landed"
         outstanding = _enrich_outstanding(surface, entry, where)
-        rows.append([_str_at(surface, entry, "item", where), f"{shape} — {outstanding}"])
-    return rows
+        rows.append(
+            (
+                _str_at(surface, entry, "item", where),
+                f"{landed} of {kernel.plural(total, 'unit')} landed — {outstanding}",
+            )
+        )
+    if not rows:
+        return ""
+    lines = [
+        kernel.heading(
+            f"Not finished — {kernel.plural(len(rows), 'item')} "
+            f"{_agree(len(rows), 'stays', 'stay')} raw until every unit lands",
+            level=3,
+        ),
+        "",
+    ]
+    for item, shape in rows:
+        lines += [_entry(item), kernel.detail(shape)]
+    return "\n".join(lines)
 
 
 def _enrich_outstanding(surface: str, entry: Mapping[str, object], where: str) -> str:
@@ -340,55 +515,11 @@ def _enrich_outstanding(surface: str, entry: Mapping[str, object], where: str) -
             )
         phrase = _STATUS_PHRASES[status]
         if "needs" in group:
-            need = _str_at(surface, group, "needs", gwhere)
-            if need not in {n.value for n in Need}:
-                options = ", ".join(n.value for n in Need)
-                _fail(surface, f"{gwhere}needs must be one of {options}, got {need!r}")
-            phrase += f" on {_NEED_NOUNS[Need(need)]}"
+            phrase += f" on {_NEED_NOUNS[Need(_need_at(surface, group, 'needs', gwhere))]}"
         parts.append(f"{_int_at(surface, group, 'count', gwhere)} {phrase}")
     if not parts:
         _fail(surface, f"{where}outstanding must name at least one outstanding unit")
     return ", ".join(parts)
-
-
-def _enrich_parked_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
-    rows = []
-    for i, entry in enumerate(_obj_list_at(surface, payload, "parked", required=True)):
-        where = f"parked[{i}]."
-        _check_keys(
-            surface, entry, required=frozenset({"item", "url", "status", "reason"}), where=where
-        )
-        status = _status_at(surface, entry, "status", where)
-        if status not in _PARKED_STATUSES:
-            allowed = ", ".join(sorted(s.value for s in _PARKED_STATUSES))
-            _fail(
-                surface,
-                f"{where}status must be a parked status ({allowed}), got {status.value!r}",
-            )
-        rows.append(
-            [
-                _str_at(surface, entry, "item", where),
-                status.value,
-                _str_at(surface, entry, "reason", where),
-                _str_at(surface, entry, "url", where),
-            ]
-        )
-    return rows
-
-
-def _enrich_cognitive_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
-    rows = []
-    for i, entry in enumerate(_obj_list_at(surface, payload, "cognitive", required=False)):
-        where = f"cognitive[{i}]."
-        _check_keys(surface, entry, required=frozenset({"item", "url", "need"}), where=where)
-        need = _str_at(surface, entry, "need", where)
-        if need not in {n.value for n in Need}:
-            options = ", ".join(n.value for n in Need)
-            _fail(surface, f"{where}need must be one of {options}, got {need!r}")
-        rows.append(
-            [_str_at(surface, entry, "item", where), need, _str_at(surface, entry, "url", where)]
-        )
-    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -422,20 +553,33 @@ def _render_status(payload: Mapping[str, object]) -> str:
     waiting = _needs_counts(surface, payload, "waiting")
 
     total = sum(counts.values())
-    lines = [f"ledger — {_plural(total, 'entry', 'entries')}"]
+    blocks = [kernel.heading(f"Ledger — {kernel.plural(total, 'entry', 'entries')}")]
     if counts:
-        lines.append(_counts_table(counts).rstrip("\n"))
+        blocks += ["", _counts_line(counts)]
     if waiting:
-        lines.append("")
-        lines.append("waiting on capabilities:")
-        rows = [[need, str(count)] for need, count in sorted(waiting)]
-        lines.append(kernel.table(rows, aligns=["l", "r"], indent=2).rstrip("\n"))
+        waiting_total = sum(count for _, count in waiting)
+        blocks += [
+            "",
+            kernel.heading(
+                f"Waiting on a capability — {kernel.plural(waiting_total, 'unit')}", level=3
+            ),
+            "",
+        ]
+        blocks += [
+            kernel.bullet(f"{kernel.code(need)} — {count}") for need, count in sorted(waiting)
+        ]
     if orphans:
-        lines.append("")
-        lines.append("enrichment newer than digest — interrupted-session backstop, digest these:")
-        nodes = [kernel.TreeNode(title=item_id) for item_id in orphans]
-        lines.append(kernel.tree(nodes, indent=2).rstrip("\n"))
-    return "\n".join(lines) + "\n"
+        blocks += [
+            "",
+            kernel.heading(
+                f"Digest these — {kernel.plural(len(orphans), 'item')} whose enrichment is "
+                f"newer than {_agree(len(orphans), 'its', 'their')} digest",
+                level=3,
+            ),
+            "",
+        ]
+        blocks += [_entry(item_id) for item_id in orphans]
+    return kernel.document(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +592,8 @@ def _render_item_status(payload: Mapping[str, object]) -> str:
 
     "What was fetched for this item" is a ledger query — promoted URLs live
     in the ledger only, never in corpus frontmatter, so this surface is
-    where an item's full fetch history shows.
+    where an item's full fetch history shows. The URL is the unit's
+    identity, so it leads each entry and reaches the reader whole.
 
     Payload::
 
@@ -468,21 +613,24 @@ def _render_item_status(payload: Mapping[str, object]) -> str:
     item = _str_at(surface, payload, "item")
     units = _obj_list_at(surface, payload, "units", required=True)
     if not units:
-        return (
-            f"item {item} — no ledger work units "
-            "(a no-source capture, or `enrich run` has not seeded it yet)\n"
+        return kernel.document(
+            [
+                kernel.heading(f"Item {item} — no work units"),
+                "",
+                (
+                    "No ledger work units: a no-source capture, or `enrich run` "
+                    "has not seeded it yet."
+                ),
+            ]
         )
-    lines = [f"item {item} — {_plural(len(units), 'unit')}"]
-    width = max(len(_status_at(surface, unit, "status", f"units[{i}].").value)
-                for i, unit in enumerate(units))
-    for i, unit in enumerate(units):
-        lines.extend(_item_status_unit(surface, unit, where=f"units[{i}].", width=width))
-    return "\n".join(lines) + "\n"
+    blocks = [kernel.heading(f"Item {item} — {kernel.plural(len(units), 'unit')}"), ""]
+    blocks += [
+        _item_status_unit(surface, unit, where=f"units[{i}].") for i, unit in enumerate(units)
+    ]
+    return kernel.document(blocks)
 
 
-def _item_status_unit(
-    surface: str, unit: Mapping[str, object], *, where: str, width: int
-) -> list[str]:
+def _item_status_unit(surface: str, unit: Mapping[str, object], *, where: str) -> str:
     _check_keys(
         surface,
         unit,
@@ -491,35 +639,22 @@ def _item_status_unit(
         where=where,
     )
     status = _status_at(surface, unit, "status", where)
-    detail = _str_at(surface, unit, "url", where)
-    annotations = []
+    tags = [kernel.code(status.value)]
     if "needs" in unit:
-        need = _str_at(surface, unit, "needs", where)
-        if need not in {n.value for n in Need}:
-            options = ", ".join(n.value for n in Need)
-            _fail(surface, f"{where}needs must be one of {options}, got {need!r}")
-        annotations.append(f"needs {need}")
-    if "reason" in unit:
-        annotations.append(_str_at(surface, unit, "reason", where))
-    if annotations:
-        detail += " — " + "; ".join(annotations)
+        tags.append(f"needs {kernel.code(_need_at(surface, unit, 'needs', where))}")
     provenance = []
     if "via" in unit:
         provenance.append(f"via {_str_at(surface, unit, 'via', where)}")
     if "depth" in unit:
         provenance.append(f"depth {_int_at(surface, unit, 'depth', where)}")
     if provenance:
-        detail += f" ({', '.join(provenance)})"
-    # The status gutter is alignment, not prose — built by hand because the
-    # wrap kernel collapses runs of whitespace inside its text.
-    gutter = f"  {status.value.ljust(width)}  "
-    blank = " " * len(gutter)
-    wrapped = kernel.wrap(detail, kernel.DEFAULT_WIDTH - len(gutter))
-    lines = [gutter + wrapped[0], *(blank + segment for segment in wrapped[1:])]
+        tags.append(", ".join(provenance))
+    lines = [_entry(_str_at(surface, unit, "url", where), *tags)]
+    if "reason" in unit:
+        lines.append(kernel.detail(_str_at(surface, unit, "reason", where)))
     if "path" in unit:
-        path = _str_at(surface, unit, "path", where)
-        lines.extend(kernel.wrap_with_prefix(f"→ {path}", prefix=blank, hang=2))
-    return lines
+        lines.append(kernel.detail(f"wrote {kernel.code(_str_at(surface, unit, 'path', where))}"))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -548,39 +683,39 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
     capabilities = _obj_list_at(surface, payload, "capabilities", required=True)
     if not capabilities:
         _fail(surface, "capabilities must name at least one capability")
-    pairs: list[tuple[str, str]] = []
+    blocks = [kernel.heading("Capabilities")]
     for i, capability in enumerate(capabilities):
         where = f"capabilities[{i}]."
         _check_keys(surface, capability, required=frozenset({"name", "providers"}), where=where)
-        name = _str_at(surface, capability, "name", where)
-        if name not in {n.value for n in Need}:
-            options = ", ".join(n.value for n in Need)
-            _fail(surface, f"{where}name must be one of {options}, got {name!r}")
+        blocks += ["", kernel.heading(_need_at(surface, capability, "name", where), level=3), ""]
         providers = _obj_list_at(surface, capability, "providers", required=True)
-        parts: list[str] = []
-        for j, provider in enumerate(providers):
-            pwhere = f"{where}providers[{j}]."
-            _check_keys(
-                surface,
-                provider,
-                required=frozenset({"name", "state"}),
-                optional=frozenset({"note"}),
-                where=pwhere,
-            )
-            pname = _str_at(surface, provider, "name", pwhere)
-            state = _str_at(surface, provider, "state", pwhere)
-            if state not in _PROVIDER_STATES:
-                options = ", ".join(sorted(_PROVIDER_STATES))
-                _fail(surface, f"{pwhere}state must be one of {options}, got {state!r}")
-            note = _str_at(surface, provider, "note", pwhere) if "note" in provider else ""
-            if state == "active":
-                parts.append(f"{pname} (active) — {note}" if note else f"{pname} (active)")
-            elif note:
-                parts.append(f"{pname} {state} — {note}")
-            else:
-                parts.append(f"{pname} {state}")
-        pairs.append((name, " · ".join(parts) if parts else "no providers"))
-    return "capabilities\n" + kernel.kv_block(pairs, indent=2)
+        if not providers:
+            blocks.append(kernel.bullet("no providers"))
+            continue
+        blocks += [
+            _capability_provider(surface, provider, where=f"{where}providers[{j}].")
+            for j, provider in enumerate(providers)
+        ]
+    return kernel.document(blocks)
+
+
+def _capability_provider(surface: str, provider: Mapping[str, object], *, where: str) -> str:
+    _check_keys(
+        surface,
+        provider,
+        required=frozenset({"name", "state"}),
+        optional=frozenset({"note"}),
+        where=where,
+    )
+    name = _str_at(surface, provider, "name", where)
+    state = _str_at(surface, provider, "state", where)
+    if state not in _PROVIDER_STATES:
+        options = ", ".join(sorted(_PROVIDER_STATES))
+        _fail(surface, f"{where}state must be one of {options}, got {state!r}")
+    lines = [_entry(name, kernel.code(state))]
+    if "note" in provider:
+        lines.append(kernel.detail(_str_at(surface, provider, "note", where)))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -627,27 +762,26 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     notes = _str_list_at(surface, payload, "notes")
 
     if pin is None:
-        lines = ["sync — engine unpinned (no release pinned; see notes)"]
+        head = "Sync — engine unpinned (no release pinned; see notes)"
     elif previous is not None and previous != pin:
-        lines = [f"sync — pin bumped {previous} → {pin}"]
+        head = f"Sync — pin bumped {previous} → {pin}"
     else:
-        lines = [f"sync — engine pinned at {pin}"]
+        head = f"Sync — engine pinned at {pin}"
+    blocks = [kernel.heading(head), ""]
     if migrations:
-        lines.append(f"migrations applied — {len(migrations)}:")
-        for i, migration in enumerate(migrations):
-            lines.extend(_sync_migration_lines(surface, migration, where=f"migrations[{i}]."))
+        blocks += [kernel.heading(f"Migrations applied — {len(migrations)}", level=3), ""]
+        blocks += [
+            _sync_migration(surface, migration, where=f"migrations[{i}].")
+            for i, migration in enumerate(migrations)
+        ]
     else:
-        lines.append("migrations applied — none (state already current)")
-    lines.append(f"machinery changes: {machinery_changes}")
-    if notes:
-        lines.append("notes:")
-        lines.extend(_bullets(notes))
-    return "\n".join(lines) + "\n"
+        blocks.append("No migrations to apply — state was already current.")
+    blocks += ["", f"{kernel.bold('Machinery changes')} — {machinery_changes}"]
+    blocks += _note_section("Notes", notes)
+    return kernel.document(blocks)
 
 
-def _sync_migration_lines(
-    surface: str, migration: Mapping[str, object], *, where: str
-) -> list[str]:
+def _sync_migration(surface: str, migration: Mapping[str, object], *, where: str) -> str:
     _check_keys(
         surface,
         migration,
@@ -664,22 +798,32 @@ def _sync_migration_lines(
         swhere = f"{where}skipped[{j}]."
         _check_keys(surface, entry, required=frozenset({"what", "why"}), where=swhere)
         skipped.append(
-            f"{_str_at(surface, entry, 'what', swhere)} — "
+            f"{kernel.code(_str_at(surface, entry, 'what', swhere))} — "
             f"{_str_at(surface, entry, 'why', swhere)}"
         )
-    lines = kernel.wrap_with_prefix(f"migration {number} — {intent}", prefix="  ", hang=2)
+    lines = [kernel.bullet(f"{kernel.bold(f'migration {number}')} — {intent}")]
     if actions:
-        lines.append(f"    actions — {len(actions)}:")
-        lines.extend(_bullets(actions, indent=6))
+        lines.append(kernel.bullet(f"actions — {len(actions)}", depth=1))
+        lines += [kernel.bullet(action, depth=2) for action in actions]
     else:
-        lines.append("    actions — none")
+        lines.append(kernel.bullet("actions — none", depth=1))
     if skipped:
-        lines.append(f"    skipped — {len(skipped)} (repair with judgment):")
-        lines.extend(_bullets(skipped, indent=6))
+        lines.append(
+            kernel.bullet(
+                f"{kernel.bold('Repair with judgment')} — {len(skipped)} skipped", depth=1
+            )
+        )
+        lines += [kernel.bullet(entry, depth=2) for entry in skipped]
     if anomalies:
-        lines.append(f"    anomalies — {len(anomalies)} (REVIEW REQUIRED):")
-        lines.extend(_bullets(anomalies, indent=6))
-    return lines
+        lines.append(
+            kernel.bullet(
+                f"{kernel.bold('REVIEW REQUIRED')} — "
+                f"{kernel.plural(len(anomalies), 'anomaly', 'anomalies')}",
+                depth=1,
+            )
+        )
+        lines += [kernel.bullet(anomaly, depth=2) for anomaly in anomalies]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +842,7 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
           "item": str,               # the corpus item id
           "title": str,              # optional: one-line title
           "fetched": int,            # optional: enrichment units landed
-          "parked": int,             # optional: units surviving parked
+          "parked": int,             # optional: units still outstanding
           "signal": str,             # optional: the digest's high|medium|low
           "topics": [str],           # optional: where the item was placed
           "pages": [str],            # optional: wiki pages touched
@@ -724,25 +868,28 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
     pages = _str_list_at(surface, payload, "pages")
     notes = _str_list_at(surface, payload, "notes")
 
-    head = f"ingested {item}" + (f" — {title}" if title else "")
-    lines = kernel.wrap_with_prefix(head, prefix="", hang=2)
-    counts = [part for part in (
-        f"fetched {fetched}" if fetched else "",
-        f"parked {parked}" if parked else "",
-    ) if part]
-    if counts:
-        lines.append("  " + " · ".join(counts))
-    judged = [part for part in (
-        f"signal {signal}" if signal else "",
-        f"topics: {', '.join(topics)}" if topics else "",
-    ) if part]
-    if judged:
-        lines.extend(kernel.wrap_with_prefix(" · ".join(judged), prefix="  ", hang=2))
+    blocks = [kernel.heading(f"Ingested {item}")]
+    if title:
+        blocks += ["", title]
+    counts = [
+        part
+        for part in (
+            f"fetched {fetched}" if fetched else "",
+            f"outstanding {parked}" if parked else "",
+        )
+        if part
+    ]
+    bullets = [kernel.bullet(kernel.inline(counts))] if counts else []
+    if signal:
+        bullets.append(kernel.bullet(f"signal {kernel.code(signal)}"))
+    if topics:
+        bullets.append(kernel.bullet("topics: " + ", ".join(topics)))
     if pages:
-        lines.extend(kernel.wrap_with_prefix("pages: " + ", ".join(pages), prefix="  ", hang=2))
-    if notes:
-        lines.extend(_bullets(notes))
-    return "\n".join(lines) + "\n"
+        bullets.append(kernel.bullet("pages: " + ", ".join(pages)))
+    if bullets:
+        blocks += ["", *bullets]
+    blocks += _note_section("Notes", notes)
+    return kernel.document(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -778,13 +925,20 @@ _HEALTH_OPTIONAL = frozenset(
     }
 )
 
-# Listing caps — the report names the scale and shows enough to act on;
-# the checks' full detail is greppable in the instance itself.
+# Listing caps — the report names the scale, shows enough to act on, and
+# says how much it withheld; the checks' full detail is greppable in the
+# instance itself.
 _HEALTH_LIST_CAP = 20
+# How many worst offenders the cap-fire summary names before the listing.
+_HEALTH_OFFENDERS = 5
 
 
-def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR0915 — one statement block per lint section, sequential by design
+def _render_health_report(payload: Mapping[str, object]) -> str:
     """Render the lint health report.
+
+    Unlike the run reports, a check with nothing to say still renders its
+    line: there the absence IS the finding, and the line is the proof the
+    check ran at all.
 
     Payload::
 
@@ -833,117 +987,160 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
         required=frozenset({"corpus_items", "pages", "cited"}),
         where="summary.",
     )
-    corpus_items = _int_at(surface, summary, "corpus_items", "summary.")
-    pages = _int_at(surface, summary, "pages", "summary.")
-    cited = _int_at(surface, summary, "cited", "summary.")
-
-    lines = [f"health check — {corpus_items} corpus items · {pages} pages · {cited} cited", ""]
-    lines.append("wiki")
-    if "taxonomy_error" in payload:
-        error = _str_at(surface, payload, "taxonomy_error")
-        lines.append(
-            "  TAXONOMY FAILURE — repair state/taxonomy.json "
-            "(the wiki checks below ran against an empty taxonomy):"
-        )
-        lines.extend(kernel.wrap_with_prefix(error, prefix="    ", hang=0))
-    lines.extend(_health_pairs(surface, payload, "broken_links", "broken wikilinks",
-                               ("page", "target"), lambda p, t: f"{p} -> [[{t}]]"))
-    reserved = _int_at(surface, payload, "reserved_links", default=0)
-    if reserved:
-        lines.append(f"  (reserved/unbuilt links: {reserved} — informational)")
-    lines.extend(_health_pairs(surface, payload, "bad_citations",
-                               "bad citations (id not in corpus)",
-                               ("page", "id"), lambda p, i: f"{p} -> {i}"))
-    lines.extend(_health_pairs(surface, payload, "shortid_citations",
-                               "shortid-shaped citations (citations are full item ids, always)",
-                               ("page", "token"), lambda p, t: f"{p} -> `{t}`"))
-    lines.extend(_health_names(surface, payload, "orphans", "orphan items (uncited, unledgered)"))
-    lines.extend(_health_names(surface, payload, "unindexed", "pages missing from index"))
-    lines.extend(_health_names(surface, payload, "ghost_index", "ghost index entries"))
-    stale = _health_rows(surface, payload, "stale_pages", ("page",), int_keys=("newer",))
-    lines.append(_health_count("stale pages (members newer than the page)", len(stale)))
-    lines.extend(f"  {row['page']}: {row['newer']} newer item(s)"
-                 for row in stale[:_HEALTH_LIST_CAP])
-    drift = _health_rows(surface, payload, "count_drift", ("page", "recorded"),
-                         int_keys=("actual",))
-    lines.append(_health_count("item-count drift (frontmatter items: vs members)", len(drift)))
-    lines.extend(
-        f"  {row['page']}: items: {row['recorded']}, members {row['actual']}"
-        for row in drift[:_HEALTH_LIST_CAP]
+    scale = kernel.inline(
+        [
+            f"{_int_at(surface, summary, 'corpus_items', 'summary.')} corpus items",
+            f"{_int_at(surface, summary, 'pages', 'summary.')} pages",
+            f"{_int_at(surface, summary, 'cited', 'summary.')} cited",
+        ]
     )
-    restated = _health_rows(surface, payload, "restated", ("page", "first", "second"))
-    lines.append(_health_count("possible restated facts (same page — merge?)", len(restated)))
-    for row in restated[:_HEALTH_LIST_CAP]:
-        lines.append(f"  {row['page']}:")
-        lines.extend(kernel.wrap_with_prefix(str(row["first"]), prefix="    ~ ", hang=2))
-        lines.extend(kernel.wrap_with_prefix(str(row["second"]), prefix="    ~ ", hang=2))
-
-    lines.append("")
-    lines.append("state")
-    if "ledger_error" in payload:
-        error = _str_at(surface, payload, "ledger_error")
-        lines.append("  LEDGER SCHEMA FAILURE — repair before anything else touches state:")
-        lines.extend(kernel.wrap_with_prefix(error, prefix="    ", hang=0))
-    else:
-        entries = _int_at(surface, payload, "ledger_entries", default=0)
-        lines.append(f"  ledger — {_plural(entries, 'entry', 'entries')}, schema valid")
-    ghost = _health_rows(surface, payload, "ghost_items", ("item", "why"),
-                         int_keys=("entries",))
-    lines.append(_health_count("ledger items with no corpus file", len(ghost)))
-    lines.extend(
-        f"  {row['item']} — {row['entries']} "
-        f"{'entry' if row['entries'] == 1 else 'entries'} ({row['why']})"
-        for row in ghost[:_HEALTH_LIST_CAP]
-    )
-    lines.extend(_health_pairs(surface, payload, "missing_outputs",
-                               "done entries whose output file is gone from disk",
-                               ("item", "path"), lambda i, p: f"{i} -> {p}"))
-    waiting = _needs_counts(surface, payload, "waiting")
-    if waiting:
-        parts = " · ".join(f"{need} {count}" for need, count in sorted(waiting))
-        lines.append(f"  waiting cohorts: {parts}")
-    else:
-        lines.append("  waiting cohorts: none")
-    cognitive = _enrich_cognitive_rows(surface, payload)
-    lines.append(_health_count("cognitive jobs (the session completes these with eyes)",
-                               len(cognitive)))
-    lines.extend(f"  {item} · {need} · {url}"
-                 for item, need, url in cognitive[:_HEALTH_LIST_CAP])
-    stale_passes = _health_rows(surface, payload, "stale_passes", ("item",),
-                                int_keys=("rules",))
-    lines.append(_health_count("harvest passes under old rules (re-judge)", len(stale_passes)))
-    lines.extend(f"  {row['item']} (rules v{row['rules']})"
-                 for row in stale_passes[:_HEALTH_LIST_CAP])
-    lines.extend(_health_cap_fires(surface, payload))
-    lines.extend(_health_pairs(surface, payload, "incomplete_threads",
-                               "stored threads recorded incomplete (never cite one as whole)",
-                               ("path", "why"), lambda p, w: f"{p} — {w}"))
-
-    lines.append("")
-    lines.append("digests")
-    lines.extend(_health_pairs(surface, payload, "digest_errors",
-                               "MALFORMED DIGESTS (the wiki layer reads these)",
-                               ("item", "why"), lambda i, w: f"{i}: {w}"))
-    # The repair ("digest these") lives in the dex-lint skill; the label
-    # names the finding and stays inside the width budget.
-    lines.extend(_health_names(surface, payload, "digest_orphans",
-                               "enrichment newer than digest (interrupted session)"))
-
+    blocks = [kernel.heading(f"Health check — {scale}")]
+    blocks += _health_wiki(surface, payload)
+    blocks += _health_state(surface, payload)
+    blocks += _health_digests(surface, payload)
     reconciled = _str_list_at(surface, payload, "reconciled")
     if reconciled:
-        lines.append("")
-        lines.append("reconciled by --write:")
-        lines.extend(_bullets(reconciled))
-    notes = _str_list_at(surface, payload, "notes")
-    if notes:
-        lines.append("")
-        lines.append("notes:")
-        lines.extend(_bullets(notes))
-    return "\n".join(lines) + "\n"
+        blocks += ["", kernel.heading("Reconciled by `--write`", level=3), ""]
+        blocks += [kernel.bullet(line) for line in reconciled]
+    blocks += _note_section("Notes", _str_list_at(surface, payload, "notes"))
+    return kernel.document(blocks)
 
 
-# How many worst offenders the cap-fire line names before the listing.
-_HEALTH_OFFENDERS = 5
+def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
+    blocks = ["", kernel.heading("Wiki", level=3), ""]
+    if "taxonomy_error" in payload:
+        blocks.append(
+            kernel.bullet(
+                f"{kernel.bold('TAXONOMY FAILURE')} — repair `state/taxonomy.json`; "
+                "the wiki checks below ran against an empty taxonomy"
+            )
+        )
+        blocks.append(kernel.bullet(_str_at(surface, payload, "taxonomy_error"), depth=1))
+    blocks += _health_pairs(
+        surface, payload, "broken_links", "broken wikilinks",
+        ("page", "target"), lambda p, t: f"{kernel.bold(p)} → `[[{t}]]`",
+    )
+    reserved = _int_at(surface, payload, "reserved_links", default=0)
+    if reserved:
+        blocks.append(kernel.bullet(f"reserved/unbuilt links — {reserved} (informational)"))
+    blocks += _health_pairs(
+        surface, payload, "bad_citations", "bad citations (id not in corpus)",
+        ("page", "id"), lambda p, i: f"{kernel.bold(p)} → {kernel.bold(i)}",
+    )
+    blocks += _health_pairs(
+        surface, payload, "shortid_citations",
+        "shortid-shaped citations (citations are full item ids, always)",
+        ("page", "token"), lambda p, t: f"{kernel.bold(p)} → `{t}`",
+    )
+    blocks += _health_names(
+        surface, payload, "orphans", "items no page cites and the taxonomy does not record"
+    )
+    blocks += _health_names(surface, payload, "unindexed", "pages missing from index")
+    blocks += _health_names(surface, payload, "ghost_index", "ghost index entries")
+    stale = _health_rows(surface, payload, "stale_pages", ("page",), int_keys=("newer",))
+    blocks += _health_listing(
+        "stale pages (members newer than the page)",
+        stale,
+        lambda row: f"{kernel.bold(str(row['page']))} — "
+        f"{kernel.plural(int(str(row['newer'])), 'newer item')}",
+    )
+    drift = _health_rows(
+        surface, payload, "count_drift", ("page", "recorded"), int_keys=("actual",)
+    )
+    blocks += _health_listing(
+        "item-count drift (frontmatter `items:` vs members)",
+        drift,
+        lambda row: f"{kernel.bold(str(row['page']))} — "
+        f"`items: {row['recorded']}`, {row['actual']} members",
+    )
+    blocks += _health_restated(surface, payload)
+    return blocks
+
+
+def _health_restated(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """Pairs of sentences on one page that may say the same thing twice.
+
+    The ``~`` marker rides inside the bullet text, never as a prefix: a
+    prefix repeats on every continuation line, so two facts rendered four
+    markers.
+    """
+    rows = _health_rows(surface, payload, "restated", ("page", "first", "second"))
+    lines = [_health_count("possible restated facts (same page, merge?)", len(rows))]
+    for row in rows[:_HEALTH_LIST_CAP]:
+        lines.append(kernel.bullet(kernel.bold(str(row["page"])), depth=1))
+        lines.append(kernel.bullet(f"~ {row['first']}", depth=2))
+        lines.append(kernel.bullet(f"~ {row['second']}", depth=2))
+    lines += _health_elided(len(rows))
+    return lines
+
+
+def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
+    blocks = ["", kernel.heading("State", level=3), ""]
+    if "ledger_error" in payload:
+        blocks.append(
+            kernel.bullet(
+                f"{kernel.bold('LEDGER SCHEMA FAILURE')} — "
+                "repair before anything else touches state"
+            )
+        )
+        blocks.append(kernel.bullet(_str_at(surface, payload, "ledger_error"), depth=1))
+    else:
+        entries = _int_at(surface, payload, "ledger_entries", default=0)
+        blocks.append(
+            kernel.bullet(
+                f"ledger — {kernel.bold(kernel.plural(entries, 'entry', 'entries'))}, schema valid"
+            )
+        )
+    ghost = _health_rows(surface, payload, "ghost_items", ("item", "why"), int_keys=("entries",))
+    blocks += _health_listing(
+        "ledger items with no corpus file",
+        ghost,
+        lambda row: f"{kernel.bold(str(row['item']))} — "
+        f"{kernel.plural(int(str(row['entries'])), 'entry', 'entries')} ({row['why']})",
+    )
+    blocks += _health_pairs(
+        surface, payload, "missing_outputs", "done entries whose output file is gone from disk",
+        ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
+    )
+    waiting = _needs_counts(surface, payload, "waiting")
+    if waiting:
+        cohorts = kernel.inline(f"{kernel.code(need)} {count}" for need, count in sorted(waiting))
+        blocks.append(kernel.bullet(f"waiting on a capability — {cohorts}"))
+    else:
+        blocks.append(kernel.bullet("waiting on a capability — none"))
+    cognitive = _cognitive_rows(surface, payload)
+    blocks.append(_health_count("read these yourself (the engine cannot do them)", len(cognitive)))
+    for item, need, url in cognitive[:_HEALTH_LIST_CAP]:
+        blocks.append(kernel.bullet(kernel.inline([kernel.bold(item), kernel.code(need)]), depth=1))
+        blocks.append(kernel.detail(url, depth=1))
+    blocks += _health_elided(len(cognitive))
+    stale_passes = _health_rows(surface, payload, "stale_passes", ("item",), int_keys=("rules",))
+    blocks += _health_listing(
+        "harvest passes under old rules (re-judge)",
+        stale_passes,
+        lambda row: f"{kernel.bold(str(row['item']))} — rules v{row['rules']}",
+    )
+    blocks += _health_cap_fires(surface, payload)
+    blocks += _health_pairs(
+        surface, payload, "incomplete_threads",
+        "stored threads recorded incomplete (never cite one as whole)",
+        ("path", "why"), lambda p, w: f"`{p}` — {w}",
+    )
+    return blocks
+
+
+def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
+    blocks = ["", kernel.heading("Digests", level=3), ""]
+    blocks += _health_pairs(
+        surface, payload, "digest_errors", "MALFORMED DIGESTS (the wiki layer reads these)",
+        ("item", "why"), lambda i, w: f"{kernel.bold(i)} — {w}",
+    )
+    # The repair ("digest these") is the label; the procedure lives in the
+    # dex-lint skill.
+    blocks += _health_names(
+        surface, payload, "digest_orphans", "digest these (enrichment newer than digest)"
+    )
+    return blocks
 
 
 def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
@@ -964,28 +1161,58 @@ def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
         per_item[str(row["item"])] = per_item.get(str(row["item"]), 0) + 1
         per_reason[str(row["reason"])] = per_reason.get(str(row["reason"]), 0) + 1
     lines = [
-        f"  {label} — {len(rows)} across {_plural(len(per_item), 'item')}",
-        "    " + " · ".join(
-            f"{reason}: {count}" for reason, count in sorted(per_reason.items())
+        kernel.bullet(
+            f"{label} — {kernel.bold(str(len(rows)))} across "
+            f"{kernel.plural(len(per_item), 'item')}"
+        ),
+        kernel.bullet(
+            "by bound: "
+            + kernel.inline(f"`{reason}` {count}" for reason, count in sorted(per_reason.items())),
+            depth=1,
         ),
     ]
     offenders = sorted(per_item.items(), key=lambda pair: (-pair[1], pair[0]))
     lines.append(
-        "    most often: "
-        + " · ".join(f"{item} {count}" for item, count in offenders[:_HEALTH_OFFENDERS])
+        kernel.bullet(
+            "most often: "
+            + kernel.inline(
+                f"{kernel.bold(item)} {count}" for item, count in offenders[:_HEALTH_OFFENDERS]
+            ),
+            depth=1,
+        )
     )
-    lines.extend(f"  {row['item']} -> {row['url']}" for row in rows[:_HEALTH_LIST_CAP])
+    for row in rows[:_HEALTH_LIST_CAP]:
+        lines.append(kernel.bullet(kernel.bold(str(row["item"])), depth=1))
+        lines.append(kernel.detail(str(row["url"]), depth=1))
+    lines += _health_elided(len(rows))
     return lines
 
 
 def _health_count(label: str, count: int) -> str:
-    return f"  {label} — {count or 'none'}"
+    return kernel.bullet(f"{label} — {kernel.bold(str(count)) if count else 'none'}")
+
+
+def _health_elided(total: int) -> list[str]:
+    """Say what the listing cap withheld — a silently short list lies about scale."""
+    if total <= _HEALTH_LIST_CAP:
+        return []
+    return [kernel.bullet(f"… and {total - _HEALTH_LIST_CAP} more, not listed", depth=1)]
+
+
+def _health_listing(
+    label: str, rows: list[dict[str, object]], shape: Callable[[dict[str, object]], str]
+) -> list[str]:
+    lines = [_health_count(label, len(rows))]
+    lines += [kernel.bullet(shape(row), depth=1) for row in rows[:_HEALTH_LIST_CAP]]
+    lines += _health_elided(len(rows))
+    return lines
 
 
 def _health_names(surface: str, payload: Mapping[str, object], key: str, label: str) -> list[str]:
     names = _str_list_at(surface, payload, key)
     lines = [_health_count(label, len(names))]
-    lines.extend(f"  {name}" for name in names[:_HEALTH_LIST_CAP])
+    lines += [kernel.bullet(kernel.bold(name), depth=1) for name in names[:_HEALTH_LIST_CAP]]
+    lines += _health_elided(len(names))
     return lines
 
 
@@ -1017,27 +1244,12 @@ def _health_pairs(  # noqa: PLR0913, PLR0917 — a formatting helper: surface, p
 ) -> list[str]:
     rows = _health_rows(surface, payload, key, fields)
     lines = [_health_count(label, len(rows))]
-    lines.extend(
-        "  " + shape(str(row[fields[0]]), str(row[fields[1]])) for row in rows[:_HEALTH_LIST_CAP]
-    )
+    lines += [
+        kernel.bullet(shape(str(row[fields[0]]), str(row[fields[1]])), depth=1)
+        for row in rows[:_HEALTH_LIST_CAP]
+    ]
+    lines += _health_elided(len(rows))
     return lines
-
-
-def _needs_counts(
-    surface: str, payload: Mapping[str, object], key: str
-) -> list[tuple[str, int]]:
-    raw = payload.get(key, {})
-    if not isinstance(raw, Mapping):
-        _fail(surface, f"{key} must be an object of need -> count")
-    counts: list[tuple[str, int]] = []
-    for raw_need, raw_count in raw.items():
-        if not isinstance(raw_need, str) or raw_need not in {n.value for n in Need}:
-            options = ", ".join(n.value for n in Need)
-            _fail(surface, f"{key} key must be one of {options}, got {raw_need!r}")
-        if not isinstance(raw_count, int) or isinstance(raw_count, bool) or raw_count < 0:
-            _fail(surface, f"{key}[{raw_need!r}] must be a non-negative integer")
-        counts.append((raw_need, raw_count))
-    return counts
 
 
 # The typed registry literal is the conformance point: every renderer is

@@ -172,7 +172,7 @@ class TestSeedAndDone:
     def test_report_renders_via_the_surface(self, instance):
         write_item(instance)
         report = run_mod.run(make_ctx(instance, FakeDriver()))
-        assert report.startswith("enrich run — 1 unit processed")
+        assert report.startswith("## Enrich run — 1 unit processed")
         assert ITEM in report
         assert "1 new" in report
 
@@ -518,8 +518,8 @@ class TestIncompleteItemsOnTheReport:
         )
         report = run_mod.run(self._ctx(instance, waiting))
         flat = " ".join(report.split())
-        assert "incomplete — 1 item still raw until every unit lands" in flat
-        assert f"{ITEM} 1 of 2 units landed — 1 waiting on transcription" in flat
+        assert "### Not finished — 1 item stays raw until every unit lands" in flat
+        assert f"**{ITEM}** ↳ 1 of 2 units landed — 1 waiting on transcription" in flat
 
     def test_a_complete_item_gets_no_line(self, instance, monkeypatch):
         dead = Result(status=Status.DEAD, meta={}, reason="404")
@@ -594,8 +594,8 @@ class TestIncompleteItemsOnTheReport:
             status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
         )
         report = run_mod.run(self._ctx(instance, waiting))
-        assert "cognitive work — 1 item with new or changed content:" in report
-        assert "parked — 1 entry survives this session" in report
+        assert "### Needs writing up — 1 item has new material" in report
+        assert "### Waiting on the engine — 1 entry it retries by itself" in report
 
 
 class TestChildren:
@@ -756,7 +756,7 @@ class TestParking:
         entry = entry_for(ctx)
         assert entry.status is Status.ERROR
         assert entry.error  # scrubbed message recorded
-        assert "enrich run" in report
+        assert "## Enrich run" in report
 
     def test_partial_registries_park_manual_never_crash(self, instance):
         # Every work-unit kind has a driver in the shipped registry; a
@@ -811,7 +811,7 @@ class TestRerun:
         self.seed_rerun(ctx)
         report = run_mod.run(ctx)
         assert (out.read_text(), out.stat().st_mtime_ns) == before  # byte-compare held
-        assert "cognitive work — none" in report
+        assert "Nothing needs attention" in report
         assert entry_for(ctx).status is Status.DONE
 
     def test_unchanged_rerun_on_a_later_day_still_compares_equal(self, instance):
@@ -827,7 +827,7 @@ class TestRerun:
         later = make_ctx(instance, FakeDriver(), today=lambda: datetime.date(2026, 9, 1))
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
-        assert "cognitive work — none" in report
+        assert "Nothing needs attention" in report
 
     def test_a_failed_rewrite_leaves_the_enrichment_whole(self, instance, monkeypatch):
         # A plain write truncates before it writes: an interrupted run left an
@@ -923,7 +923,7 @@ class TestRerun:
         files = sorted(p.name for p in item_dir.glob("*.md"))
         assert files == [f"web-{work_hash(URL)[:6]}.md"]  # overwrite, never a second file
         assert "rewritten body" in (item_dir / files[0]).read_text()
-        assert "1 changed" in report
+        assert "1 rewritten" in report
 
 
 class TestMediaStage:
@@ -1110,7 +1110,7 @@ class TestMediaStage:
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.BLOCKED
         assert entry.reason == "unexpected HTTP 302"
-        assert "enrich run" in report
+        assert "## Enrich run" in report
 
     def test_declared_oversize_media_is_refused_without_a_get(self, instance):
         write_item(instance)
@@ -1738,7 +1738,7 @@ class TestStatusReport:
         assert "waiting" in report
         assert "transcribe" in report
         assert "2026-08-19-orphan-abcdef" in report
-        assert "interrupted-session backstop" in report
+        assert "### Digest these" in report
 
     def test_item_view_lists_every_unit_with_provenance(self, instance):
         write_item(instance)
@@ -1758,18 +1758,18 @@ class TestStatusReport:
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         report = run_mod.status_report(ctx, item_id=ITEM)
-        assert report.startswith(f"item {ITEM} — 2 units")
+        assert report.startswith(f"## Item {ITEM} — 2 units")
         assert "done" in report
-        assert f"→ enrichment/{ITEM}/web-" in report
+        assert f"↳ wrote `enrichment/{ITEM}/web-" in report
         assert "waiting" in report
-        assert "needs transcribe" in report
-        assert "(via harvest, depth" in report
+        assert "needs `transcribe`" in report
+        assert "· via harvest, depth 1" in report
         assert "capabilities" not in report  # a ledger query, not the summary
 
     def test_item_view_without_units_is_honest(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         report = run_mod.status_report(ctx, item_id="2026-08-19-note-aaaaaa")
-        assert "no ledger work units" in report
+        assert "No ledger work units" in report
 
     def test_digested_items_are_not_orphans(self, instance):
         item_dir = instance.enrichment_dir / ITEM
@@ -1959,7 +1959,7 @@ class TestIssueFiling:
         gh = FakeGh()
         report = run_mod.run(self._crashing_ctx(instance, gh))
         assert len(gh.of("create")) == 1
-        assert "reported upstream: 1 issue" in report
+        assert "**Reported upstream** — 1 issue filed" in report
         assert "filed engine issue" in report
         assert (instance.state_dir / "issue-reports.jsonl").exists()
 
@@ -1988,7 +1988,7 @@ class TestIssueFiling:
         (instance.state_dir / "issue-reports.jsonl").write_text('{"note": "torn"}\n')
         report = run_mod.run(self._crashing_ctx(instance, FakeGh()))
         assert "issue filing failed" in report
-        assert "enrich run" in report  # the report itself survived
+        assert "## Enrich run" in report  # the report itself survived
 
 
 class TestNoSourceItems:

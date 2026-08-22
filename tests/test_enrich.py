@@ -73,28 +73,28 @@ class TestMain:
         monkeypatch.chdir(instance.root)
         main(["run"])
         out = capsys.readouterr().out
-        assert out.startswith("enrich run — 0 units processed")
-        assert "parked — none" in out
+        assert out.startswith("## Enrich run — 0 units processed")
+        assert "nothing parked" in out
 
     def test_status_prints_the_surface_and_capability_report(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
         main(["status"])
         out = capsys.readouterr().out
-        assert out.startswith("ledger — 0 entries")
-        assert "capabilities" in out  # how a free-floor instance learns what a key buys
+        assert out.startswith("## Ledger — 0 entries")
+        assert "## Capabilities" in out  # how a free-floor instance learns what a key buys
         assert "transcribe" in out
 
     def test_status_item_renders_the_item_view(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
         main(["status", "--item", "2026-08-19-x-55ad7b"])
         out = capsys.readouterr().out
-        assert out.startswith("item 2026-08-19-x-55ad7b — no ledger work units")
+        assert out.startswith("## Item 2026-08-19-x-55ad7b — no work units")
 
     def test_transcribe_on_an_empty_instance_reports_cleanly(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
         main(["transcribe"])
         out = capsys.readouterr().out
-        assert out.startswith("enrich run — 0 units processed")
+        assert out.startswith("## Enrich run — 0 units processed")
 
     def test_pass_records_a_stage(self, instance: Instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

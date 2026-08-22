@@ -1,23 +1,40 @@
 """Tests for render/surfaces.py: named surfaces, loud payload validation."""
 
+import re
+
 import pytest
 
-from dex_engine.render.kernel import DEFAULT_WIDTH
 from dex_engine.render.surfaces import SURFACES, PayloadError, render
+
+# Shaped like the owner's real data: ids average 58 characters and the
+# longest real URL in a live instance is 375. Both are identity, and no
+# surface may shorten either.
+LONG_ID = "2026-08-19-laravel-read-through-filesystem-migrations-with-real-drivers-14bf49"
+LONG_URL = "https://example.test/watch?v=abcdefghijk&" + "&".join(
+    f"utm_source=partner-{n}&utm_campaign=very-long-campaign-name-{n}" for n in range(9)
+)
 
 ENRICH_PAYLOAD = {
     "counts": {"done": 4, "blocked": 1, "waiting": 1},
     "items": [
-        {"id": "2026-08-19-example-55ad7b", "reason": "fresh"},
-        {"id": "2026-08-18-older-11aa22", "reason": "rerun"},
+        {"id": "2026-08-19-example-55ad7b", "reason": "3 new enrichment files, 1 rewritten"},
+        {"id": "2026-08-18-older-11aa22", "reason": "1 new enrichment file"},
     ],
     "parked": [
         {
             "item": "2026-08-19-example-55ad7b",
             "url": "https://example.test/page",
             "status": "blocked",
-            "reason": "403 challenge, attempt 2 of 5",
-        }
+            "reason": "403 challenge from the edge",
+            "attempts": 2,
+            "attempt_cap": 5,
+        },
+        {
+            "item": "2026-08-18-google-developer-documentation-style-guide-87f21f",
+            "url": "https://example.test/style-guide",
+            "status": "manual",
+            "reason": "thin extraction — fetch it yourself or skip it with a reason",
+        },
     ],
     "cognitive": [
         {"item": "2026-08-19-scan-77cc88", "url": "file:media/x/scan.png", "need": "ocr"}
@@ -30,6 +47,15 @@ ENRICH_PAYLOAD = {
 def assert_no_trailing_whitespace(text: str) -> None:
     for line in text.splitlines():
         assert line == line.rstrip(), f"trailing whitespace in {line!r}"
+
+
+def assert_whole(text: str, *values: str) -> None:
+    """Every value present verbatim, on one line, with no ellipsis anywhere."""
+    assert "…" not in text.replace("… and ", ""), f"an ellipsis reached the output:\n{text}"
+    for value in values:
+        assert any(value in line for line in text.splitlines()), (
+            f"{value!r} is not present whole on any single line of:\n{text}"
+        )
 
 
 class TestRenderDispatch:
@@ -52,27 +78,64 @@ class TestRenderDispatch:
 class TestEnrichReport:
     def test_full_report(self):
         out = render("enrich-report", ENRICH_PAYLOAD)
-        assert "enrich run — 6 units processed" in out
-        assert "done" in out
-        assert "cognitive work — 2 items with new or changed content:" in out
-        assert "2026-08-19-example-55ad7b" in out
-        assert "parked — 1 entry survives this session" in out
-        assert "403 challenge, attempt 2 of 5" in out
-        assert "cognitive jobs — the session completes these with eyes:" in out
-        assert "reported upstream: 2 issues" in out
-        assert "whisper model" in out
+        assert out.startswith("## Enrich run — 6 units processed\n")
+        assert "**done** 4 · **waiting** 1 · **blocked** 1" in out
+        assert "### Needs writing up — 2 items have new material" in out
+        assert "- **2026-08-19-example-55ad7b**" in out
+        assert "  ↳ 3 new enrichment files, 1 rewritten" in out
+        assert "### Read these yourself — 1 job the engine cannot do" in out
+        assert "- **2026-08-19-scan-77cc88** · `ocr`" in out
+        assert "**Reported upstream** — 2 issues filed" in out
+        assert "### Notes" in out
+        assert "- first transcription downloads the whisper model once per machine" in out
         assert_no_trailing_whitespace(out)
 
-    def test_empty_run_states_the_absences(self):
+    def test_parked_splits_by_who_owns_the_next_action(self):
+        out = render("enrich-report", ENRICH_PAYLOAD)
+        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert (
+            "- **2026-08-18-google-developer-documentation-style-guide-87f21f** · `manual`"
+        ) in out
+        assert "  ↳ thin extraction — fetch it yourself or skip it with a reason" in out
+        assert "### Waiting on the engine — 1 entry it retries by itself" in out
+        assert "- **2026-08-19-example-55ad7b** · `blocked` · attempt 2 of 5" in out
+
+    def test_the_manual_entry_never_lands_in_the_engines_section(self):
+        out = render("enrich-report", ENRICH_PAYLOAD)
+        mine = out.split("### Waiting on the engine")[0]
+        assert "style-guide-87f21f" in mine
+        assert "style-guide-87f21f" not in out.split("### Waiting on the engine")[1]
+
+    def test_waiting_and_error_say_what_the_engine_will_do(self):
+        payload = {
+            "counts": {},
+            "items": [],
+            "parked": [
+                {"item": "a", "url": "https://a.test", "status": "waiting",
+                 "reason": "waiting on transcribe"},
+                {"item": "b", "url": "https://b.test", "status": "error",
+                 "reason": "connection reset"},
+            ],
+        }
+        out = render("enrich-report", payload)
+        assert "- **a** · `waiting` · retries when a provider appears" in out
+        assert "- **b** · `error` · retries on the next engine release" in out
+
+    def test_attempt_cap_without_attempts_is_loud(self):
+        parked = [{"item": "a", "url": "u", "status": "blocked", "reason": "r", "attempt_cap": 5}]
+        with pytest.raises(PayloadError, match="attempt_cap"):
+            render("enrich-report", {"counts": {}, "items": [], "parked": parked})
+
+    def test_empty_run_says_so_once_instead_of_a_list_of_nones(self):
         out = render("enrich-report", {"counts": {}, "items": [], "parked": []})
-        assert "0 units processed" in out
-        assert "cognitive work — none (nothing new or changed)" in out
-        assert "parked — none" in out
-        assert "reported upstream" not in out
+        assert "## Enrich run — 0 units processed" in out
+        assert "Nothing needs attention" in out
+        assert "###" not in out
+        assert "Reported upstream" not in out
 
     def test_zero_issues_filed_omits_the_line(self):
         payload = {**ENRICH_PAYLOAD, "issues_filed": 0}
-        assert "reported upstream" not in render("enrich-report", payload)
+        assert "Reported upstream" not in render("enrich-report", payload)
 
     def test_missing_required_key_is_loud(self):
         with pytest.raises(PayloadError, match="parked"):
@@ -122,8 +185,8 @@ class TestEnrichReport:
             ],
         }
         out = render("enrich-report", payload)
-        assert "incomplete — 1 item still raw until every unit lands" in out
-        assert "3 of 4 units landed — 1 waiting on transcription" in out
+        assert "### Not finished — 1 item stays raw until every unit lands" in out
+        assert "  ↳ 3 of 4 units landed — 1 waiting on transcription" in out
         assert_no_trailing_whitespace(out)
 
     def test_several_outstanding_shapes_read_as_one_line(self):
@@ -144,10 +207,10 @@ class TestEnrichReport:
             ],
         }
         out = render("enrich-report", payload)
-        assert "0 of 3 units landed — 2 blocked, 1 needing a decision" in out
+        assert "  ↳ 0 of 3 units landed — 2 blocked, 1 needing a decision" in out
 
     def test_absent_incomplete_says_nothing(self):
-        assert "incomplete" not in render("enrich-report", {**ENRICH_PAYLOAD, "incomplete": []})
+        assert "Not finished" not in render("enrich-report", {**ENRICH_PAYLOAD, "incomplete": []})
 
     def test_a_landed_status_in_outstanding_is_loud(self):
         payload = {
@@ -199,17 +262,20 @@ class TestStatusSurface:
                 "orphans": ["2026-08-19-example-55ad7b"],
             },
         )
-        assert "ledger — 44 entries" in out
-        assert "waiting on capabilities:" in out
-        assert "transcribe" in out
-        assert "interrupted-session backstop" in out
-        assert "└─ 2026-08-19-example-55ad7b" in out
+        assert out.startswith("## Ledger — 44 entries\n")
+        assert "**done** 40 · **manual** 1 · **waiting** 3" in out
+        assert "### Waiting on a capability — 3 units" in out
+        assert "- `transcribe` — 3" in out
+        assert (
+            "### Digest these — 1 item whose enrichment is newer than its digest"
+        ) in out
+        assert "- **2026-08-19-example-55ad7b**" in out
         assert_no_trailing_whitespace(out)
 
     def test_counts_only(self):
         out = render("status", {"counts": {"done": 1}})
-        assert "ledger — 1 entry" in out
-        assert "waiting on capabilities" not in out
+        assert "## Ledger — 1 entry" in out
+        assert "Waiting on a capability" not in out
 
     def test_bad_waiting_need_is_loud(self):
         with pytest.raises(PayloadError, match="summarize"):
@@ -245,9 +311,13 @@ class TestCapabilityReport:
                 ]
             },
         )
-        assert "transcribe" in out
-        assert "whisper-local (active) · whisper-api available — set" in out
-        assert "no providers" in out
+        assert out.startswith("## Capabilities\n")
+        assert "### transcribe" in out
+        assert "- **whisper-local** · `active`" in out
+        assert "- **whisper-api** · `available`" in out
+        assert "  ↳ set OPENAI_API_KEY" in out
+        assert "### ocr" in out
+        assert "- no providers" in out
         assert_no_trailing_whitespace(out)
 
     def test_unknown_capability_is_loud(self):
@@ -293,19 +363,20 @@ class TestSyncReport:
                 "machinery_changes": 6,
             },
         )
-        assert "sync — pin bumped v0.2.1 → v0.3.0" in out
-        assert "migration 1 — renames + status vocabulary" in out
-        assert "rewrote kinds in 214 items" in out
-        assert "repair with judgment" in out
-        assert "corpus/2025/odd.md — frontmatter does not parse" in out
-        assert "REVIEW REQUIRED" in out
-        assert "machinery changes: 6" in out
+        assert out.startswith("## Sync — pin bumped v0.2.1 → v0.3.0\n")
+        assert "### Migrations applied — 1" in out
+        assert "- **migration 1** — renames + status vocabulary" in out
+        assert "    - rewrote kinds in 214 items" in out
+        assert "  - **Repair with judgment** — 1 skipped" in out
+        assert "    - `corpus/2025/odd.md` — frontmatter does not parse" in out
+        assert "  - **REVIEW REQUIRED** — 1 anomaly" in out
+        assert "**Machinery changes** — 6" in out
         assert_no_trailing_whitespace(out)
 
     def test_steady_state_sync(self):
         out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 6})
-        assert "sync — engine pinned at v0.3.0" in out
-        assert "migrations applied — none (state already current)" in out
+        assert "## Sync — engine pinned at v0.3.0" in out
+        assert "No migrations to apply — state was already current." in out
 
     def test_unpinned_pre_first_release(self):
         # Before any release tag exists, sync runs without pinning.
@@ -317,8 +388,8 @@ class TestSyncReport:
                 "notes": ["no release tags on the remote yet — running unpinned"],
             },
         )
-        assert "sync — engine unpinned" in out
-        assert "no release tags on the remote yet" in out
+        assert "## Sync — engine unpinned" in out
+        assert "- no release tags on the remote yet — running unpinned" in out
 
     def test_previous_without_pin_is_loud(self):
         with pytest.raises(PayloadError, match="previous requires pin"):
@@ -379,6 +450,8 @@ HEALTH_PAYLOAD = {
     "notes": ["one free note"],
 }
 
+CLEAN_HEALTH = {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}}
+
 
 class TestItemStatus:
     def test_full_item_view(self):
@@ -396,17 +469,18 @@ class TestItemStatus:
                 ],
             },
         )
-        assert out.startswith("item 2026-08-19-example-55ad7b — 3 units")
-        assert "done" in out
-        assert "→ enrichment/2026-08-19-example-55ad7b/web-73bd78.md" in out
-        assert "needs transcribe" in out
-        assert "(via harvest, depth" in out  # provenance may wrap at width
-        assert "manual" in out
-        assert "thin-extraction" in out
+        assert out.startswith("## Item 2026-08-19-example-55ad7b — 3 units\n")
+        assert "- **https://example.test/post** · `done`" in out
+        assert "  ↳ wrote `enrichment/2026-08-19-example-55ad7b/web-73bd78.md`" in out
+        assert (
+            "- **https://youtube.test/w** · `waiting` · needs `transcribe` · via harvest, depth 1"
+        ) in out
+        assert "- **https://paywalled.test/a** · `manual`" in out
+        assert "  ↳ thin-extraction" in out
 
     def test_no_units_reads_honestly(self):
         out = render("item-status", {"item": "2026-08-19-note-aaaaaa", "units": []})
-        assert "no ledger work units" in out
+        assert "## Item 2026-08-19-note-aaaaaa — no work units" in out
         assert "no-source capture" in out
 
     def test_units_are_required(self):
@@ -442,37 +516,45 @@ class TestItemStatus:
 class TestHealthReport:
     def test_full_report(self):
         out = render("health-report", HEALTH_PAYLOAD)
-        assert out.startswith("health check — 120 corpus items · 14 pages · 118 cited")
-        assert "broken wikilinks — 1" in out
-        assert "pour-over -> [[brewing]]" in out
-        assert "reserved/unbuilt links: 3" in out
-        assert "bad citations (id not in corpus) — 1" in out
-        assert "shortid-shaped citations (citations are full item ids, always) — 1" in out
-        assert "index -> `a1b2c3`" in out
-        assert "orphan items (uncited, unledgered) — 1" in out
-        assert "pages missing from index — 1" in out
-        assert "ghost index entries — 1" in out
-        assert "stale pages (members newer than the page) — 1" in out
-        assert "pour-over: 2 newer item(s)" in out
-        assert "item-count drift (frontmatter items: vs members) — 1" in out
-        assert "pour-over: items: 3, members 5" in out
-        assert "possible restated facts (same page — merge?) — 1" in out
-        assert "ledger — 42 entries, schema valid" in out
-        assert "waiting cohorts: transcribe 3" in out
-        assert "cognitive jobs (the session completes these with eyes) — 1" in out
-        assert "harvest passes under old rules (re-judge) — 1" in out
-        assert "enrichment newer than digest" in out
-        assert "reconciled by --write:" in out
-        assert "notes:" in out
+        assert out.startswith("## Health check — 120 corpus items · 14 pages · 118 cited\n")
+        assert "### Wiki" in out
+        assert "- broken wikilinks — **1**" in out
+        assert "  - **pour-over** → `[[brewing]]`" in out
+        assert "- reserved/unbuilt links — 3 (informational)" in out
+        assert "- bad citations (id not in corpus) — **1**" in out
+        assert "  - **pour-over** → **2026-01-01-gone-aaaaaa**" in out
+        assert "- shortid-shaped citations (citations are full item ids, always) — **1**" in out
+        assert "  - **index** → `a1b2c3`" in out
+        assert "- items no page cites and the taxonomy does not record — **1**" in out
+        assert "- pages missing from index — **1**" in out
+        assert "- ghost index entries — **1**" in out
+        assert "- stale pages (members newer than the page) — **1**" in out
+        assert "  - **pour-over** — 2 newer items" in out
+        assert "- item-count drift (frontmatter `items:` vs members) — **1**" in out
+        assert "  - **pour-over** — `items: 3`, 5 members" in out
+        assert "- possible restated facts (same page, merge?) — **1**" in out
+        assert "### State" in out
+        assert "- ledger — **42 entries**, schema valid" in out
+        assert "- waiting on a capability — `transcribe` 3" in out
+        assert "- read these yourself (the engine cannot do them) — **1**" in out
+        assert "- harvest passes under old rules (re-judge) — **1**" in out
+        assert "### Digests" in out
+        assert "- digest these (enrichment newer than digest) — **1**" in out
+        assert "### Reconciled by `--write`" in out
+        assert "### Notes" in out
+        assert_no_trailing_whitespace(out)
 
     def test_cap_fires_lead_with_the_shape_of_the_drift(self):
         # The tuning question is never "is this one fire wrong" — it is how
         # many, over how many items, under which bound.
         out = render("health-report", HEALTH_PAYLOAD)
-        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in out
-        assert "depth cap (4): 1 · url cap (12 per item): 2" in out
-        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 1" in out
-        assert "2026-01-06-deep-ffffff -> https://example.test/deep" in out
+        assert "- re-entry cap fires (tuning signal, not an alarm) — **3** across 2 items" in out
+        assert "  - by bound: `depth cap (4)` 1 · `url cap (12 per item)` 2" in out
+        assert (
+            "  - most often: **2026-01-06-deep-ffffff** 2 · **2026-01-07-wide-999999** 1"
+        ) in out
+        assert "  - **2026-01-06-deep-ffffff**" in out
+        assert "    ↳ https://example.test/deep" in out
 
     def test_offenders_tied_on_count_are_named_in_id_order(self):
         # Rows arrive in whatever order the check produced; two items with
@@ -493,36 +575,60 @@ class TestHealthReport:
         assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 2" in out
 
     def test_no_cap_fires_reads_as_none(self):
-        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
-        assert "re-entry cap fires (tuning signal, not an alarm) — none" in out
+        out = render("health-report", CLEAN_HEALTH)
+        assert "- re-entry cap fires (tuning signal, not an alarm) — none" in out
 
     def test_incomplete_threads_name_the_file_and_the_gap(self):
         out = render("health-report", HEALTH_PAYLOAD)
-        assert "stored threads recorded incomplete" in out
+        assert "- stored threads recorded incomplete (never cite one as whole) — **1**" in out
         assert (
-            "enrichment/2026-01-08-thread-888888/x-abc123.md — parent fetch failed after 3"
+            "  - `enrichment/2026-01-08-thread-888888/x-abc123.md` — parent fetch failed "
+            "after 3 post(s): fxtwitter says the post is gone"
         ) in out
 
     def test_malformed_digests_render_loud(self):
         out = render("health-report", HEALTH_PAYLOAD)
-        assert "MALFORMED DIGESTS (the wiki layer reads these) — 1" in out
-        assert "2026-01-09-broken-777777: frontmatter missing topics" in out
+        assert "- MALFORMED DIGESTS (the wiki layer reads these) — **1**" in out
+        assert "  - **2026-01-09-broken-777777** — frontmatter missing topics" in out
 
-    def test_clean_instance_reads_clean(self):
-        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
-        assert "broken wikilinks — none" in out
-        assert "waiting cohorts: none" in out
-        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in out
-        assert "reconciled" not in out
+    def test_a_restated_pair_carries_one_marker_each(self):
+        # The marker rides inside the bullet text, not in a prefix — a
+        # prefix repeats on every continuation line, so two facts rendered
+        # four markers.
+        long_fact = (
+            "The dose is 60 grams of coffee per litre of water, measured "
+            "on a scale rather than by volume, for every brew method here."
+        )
+        out = render(
+            "health-report",
+            {
+                "summary": {"corpus_items": 1, "pages": 1, "cited": 1},
+                "restated": [{"page": "pour-over", "first": long_fact, "second": long_fact}],
+            },
+        )
+        marker_lines = [line for line in out.splitlines() if line.lstrip().startswith("- ~")]
+        assert len(marker_lines) == 2
+        assert all(line == f"    - ~ {long_fact}" for line in marker_lines)
 
-    def test_every_finding_label_fits_the_width_budget(self):
-        # The clean report is the surface's static text: one label per
-        # check, nothing data-driven. Item ids and URLs overrun on their
-        # own account and are not this budget's business; the labels are
-        # written here and must fit.
-        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
-        over = [line for line in out.split("\n") if len(line) > DEFAULT_WIDTH]
-        assert over == []
+    def test_clean_instance_still_states_every_check(self):
+        # A check report is not a run report: the "none" line is the finding
+        # and the proof the check ran.
+        out = render("health-report", CLEAN_HEALTH)
+        assert "- broken wikilinks — none" in out
+        assert "- waiting on a capability — none" in out
+        assert "- MALFORMED DIGESTS (the wiki layer reads these) — none" in out
+        assert "Reconciled by" not in out
+
+    def test_a_capped_listing_says_how_much_it_withheld(self):
+        out = render(
+            "health-report",
+            {
+                "summary": {"corpus_items": 30, "pages": 0, "cited": 0},
+                "orphans": [f"2026-01-{n:02d}-item-{n:06x}" for n in range(1, 26)],
+            },
+        )
+        assert "- items no page cites and the taxonomy does not record — **25**" in out
+        assert "  - … and 5 more, not listed" in out
 
     def test_ledger_error_renders_loud(self):
         out = render(
@@ -532,7 +638,7 @@ class TestHealthReport:
                 "ledger_error": "state/enrichment-ledger.jsonl:3: unknown field(s) ['note']",
             },
         )
-        assert "LEDGER SCHEMA FAILURE" in out
+        assert "**LEDGER SCHEMA FAILURE**" in out
         assert "unknown field(s)" in out
 
     def test_taxonomy_error_renders_loud(self):
@@ -543,7 +649,7 @@ class TestHealthReport:
                 "taxonomy_error": "taxonomy.json: expected a JSON object, got list",
             },
         )
-        assert "TAXONOMY FAILURE" in out
+        assert "**TAXONOMY FAILURE**" in out
         assert "expected a JSON object" in out
 
     def test_summary_is_required(self):
@@ -552,19 +658,11 @@ class TestHealthReport:
 
     def test_unknown_key_is_loud(self):
         with pytest.raises(PayloadError, match="broken_wikilinks"):
-            render(
-                "health-report",
-                {"summary": {"corpus_items": 0, "pages": 0, "cited": 0},
-                 "broken_wikilinks": []},
-            )
+            render("health-report", {**CLEAN_HEALTH, "broken_wikilinks": []})
 
     def test_bad_waiting_need_is_loud(self):
         with pytest.raises(PayloadError, match="transcode"):
-            render(
-                "health-report",
-                {"summary": {"corpus_items": 0, "pages": 0, "cited": 0},
-                 "waiting": {"transcode": 1}},
-            )
+            render("health-report", {**CLEAN_HEALTH, "waiting": {"transcode": 1}})
 
 
 class TestIngestReceipt:
@@ -582,15 +680,17 @@ class TestIngestReceipt:
                 "notes": ["thread walk-up found the repo link"],
             },
         )
-        assert out.startswith("ingested 2026-08-18-rag-eval-harness-a1b2c3 — RAG eval harness")
-        assert "fetched 3 · parked 1" in out
-        assert "signal high · topics: agent-architecture" in out
-        assert "pages: agent-architecture, evals" in out
+        assert out.startswith("## Ingested 2026-08-18-rag-eval-harness-a1b2c3\n")
+        assert "RAG eval harness" in out
+        assert "- fetched 3 · outstanding 1" in out
+        assert "- signal `high`" in out
+        assert "- topics: agent-architecture" in out
+        assert "- pages: agent-architecture, evals" in out
         assert "- thread walk-up found the repo link" in out
 
     def test_minimal_receipt_is_one_line(self):
         out = render("ingest-receipt", {"item": "2026-08-18-note-a1b2c3"})
-        assert out == "ingested 2026-08-18-note-a1b2c3\n"
+        assert out == "## Ingested 2026-08-18-note-a1b2c3\n"
 
     def test_item_is_required(self):
         with pytest.raises(PayloadError, match="item"):
@@ -598,7 +698,147 @@ class TestIngestReceipt:
 
     def test_bad_signal_is_loud(self):
         with pytest.raises(PayloadError, match="signal"):
-            render(
-                "ingest-receipt",
-                {"item": "2026-08-18-note-a1b2c3", "signal": "shrug"},
-            )
+            render("ingest-receipt", {"item": "2026-08-18-note-a1b2c3", "signal": "shrug"})
+
+
+class TestIdentityIsNeverTruncated:
+    """The rule the whole rewrite exists to enforce, on every surface.
+
+    The old layout middle-elided any cell too wide for its column, and
+    measured against real data that collapsed distinct URLs onto identical
+    rows. These assert the opposite property directly.
+    """
+
+    def test_enrich_report_over_a_real_parked_ledger(self):
+        parked = [
+            {
+                "item": f"2026-08-{(i % 28) + 1:02d}-a-long-corpus-item-slug-that-runs-on-{i:06x}",
+                "url": LONG_URL if i == 0 else f"https://example.test/page/{i}",
+                "status": "blocked" if i % 2 else "manual",
+                "reason": "403 challenge from the edge",
+            }
+            for i in range(82)
+        ]
+        out = render(
+            "enrich-report",
+            {
+                "counts": {"done": 40, "blocked": 41, "manual": 41},
+                "items": [{"id": p["item"], "reason": "1 new enrichment file"} for p in parked],
+                "parked": parked,
+                "cognitive": [
+                    {"item": p["item"], "url": p["url"], "need": "extract"} for p in parked[:10]
+                ],
+            },
+        )
+        assert_whole(out, LONG_URL, *[str(p["item"]) for p in parked])
+
+    def test_no_two_parked_entries_can_render_the_same(self):
+        # 106 of 2452 real URLs used to collapse onto another URL's
+        # rendering, four of them inside the same item.
+        base = "https://example.test/a-very-long-path-segment-that-forces-the-old-elision/"
+        urls = [base + f"{n:04d}" + "?utm_campaign=" + "x" * 200 for n in range(40)]
+        parked = [
+            {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"}
+            for url in urls
+        ]
+        out = render("enrich-report", {"counts": {}, "items": [], "parked": parked})
+        rendered = [line for line in out.splitlines() if line.strip().startswith("↳ https")]
+        assert len(rendered) == len(urls)
+        assert len(set(rendered)) == len(urls)
+
+    @pytest.mark.parametrize(
+        ("surface", "payload"),
+        [
+            (
+                "status",
+                {"counts": {"done": 400}, "orphans": [LONG_ID, LONG_ID[:-6] + "ffffff"]},
+            ),
+            (
+                "item-status",
+                {
+                    "item": LONG_ID,
+                    "units": [
+                        {"url": LONG_URL, "status": "done", "path": f"enrichment/{LONG_ID}/web.md"}
+                    ],
+                },
+            ),
+            ("ingest-receipt", {"item": LONG_ID, "title": LONG_URL, "fetched": 1}),
+            (
+                "health-report",
+                {
+                    "summary": {"corpus_items": 1, "pages": 1, "cited": 1},
+                    "orphans": [LONG_ID],
+                    "capped": [{"item": LONG_ID, "url": LONG_URL, "reason": "depth cap"}],
+                    "cognitive": [{"item": LONG_ID, "url": LONG_URL, "need": "ocr"}],
+                    "digest_orphans": [LONG_ID],
+                },
+            ),
+            (
+                "sync-report",
+                {
+                    "migrations": [{"number": 1, "intent": LONG_URL, "actions": [LONG_ID]}],
+                    "machinery_changes": 0,
+                    "pin": "v1",
+                },
+            ),
+            (
+                "capability-report",
+                {
+                    "capabilities": [
+                        {"name": "ocr", "providers": [{"name": LONG_ID, "state": "active"}]}
+                    ]
+                },
+            ),
+        ],
+    )
+    def test_every_surface_emits_long_identity_whole(self, surface, payload):
+        out = render(surface, payload)
+        for value in (LONG_ID, LONG_URL):
+            if value in repr(payload):
+                assert_whole(out, value)
+
+    def test_a_cjk_title_is_not_measured_wrapped_or_cut(self):
+        title = "駆動型インジェストパイプラインの設計と実装についての詳細な記録" * 3
+        out = render("ingest-receipt", {"item": LONG_ID, "title": title, "fetched": 3})
+        assert_whole(out, title, LONG_ID)
+
+
+SURFACE_PAYLOADS = {
+    "enrich-report": ENRICH_PAYLOAD,
+    "status": {"counts": {"done": 4}, "waiting": {"ocr": 1}, "orphans": [LONG_ID]},
+    "item-status": {"item": LONG_ID, "units": [{"url": LONG_URL, "status": "done"}]},
+    "capability-report": {
+        "capabilities": [
+            {"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}
+        ]
+    },
+    "sync-report": {"pin": "v1", "migrations": [], "machinery_changes": 2},
+    "ingest-receipt": {"item": LONG_ID, "fetched": 2},
+    "health-report": HEALTH_PAYLOAD,
+}
+
+
+class TestNoSurfaceRendersATable:
+    """Markdown, headings and bullets — no tables, and no hard wrapping."""
+
+
+    def test_every_surface_has_a_payload_here(self):
+        assert set(SURFACE_PAYLOADS) == set(SURFACES)
+
+    @pytest.mark.parametrize("surface", sorted(SURFACE_PAYLOADS))
+    def test_no_pipe_table_and_no_column_padding(self, surface):
+        out = render(surface, SURFACE_PAYLOADS[surface])
+        assert "|" not in out
+        assert "─" not in out
+        # Two or more spaces mid-line is column padding; markdown indents
+        # are leading whitespace only.
+        for line in out.splitlines():
+            assert not re.search(r"\S {2,}\S", line), f"{surface}: padded columns in {line!r}"
+
+    @pytest.mark.parametrize("surface", sorted(SURFACE_PAYLOADS))
+    def test_output_is_markdown_and_newline_terminated(self, surface):
+        out = render(surface, SURFACE_PAYLOADS[surface])
+        assert out.startswith("## ")
+        assert out.endswith("\n")
+        assert not out.endswith("\n\n")
+        assert_no_trailing_whitespace(out)
