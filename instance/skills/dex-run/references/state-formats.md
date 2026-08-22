@@ -21,8 +21,8 @@ topics: [agent-architecture]      # canonical taxonomy names once taxonomy exist
 entities: [claude-code]           #   otherwise 2–5 kebab-case candidates
 media: [media/<id>/photo.jpg]     # only when the item has media
 ---
-- 3–15 standalone fact bullets with concrete specifics, each readable without
-  the source in front of you.
+- one standalone fact bullet per fact the source actually yields, with
+  concrete specifics, each readable without the source in front of you.
 ```
 
 No verb writes digests — `signal` and `topics` are the judgment — so
@@ -31,9 +31,11 @@ different things. The frontmatter is a **hard failure**: a digest with no
 complete fence, missing `id`/`date`/`signal`/`topics`, a `signal` outside
 high|medium|low, empty `topics`, or an `id` that disagrees with its
 filename exits 1, exactly like a malformed ledger line — the wiki layer
-reads these files. The bullet count is **reported, never failed**: 3–15 is
-the shape of a well-written digest, and a digest outside it is repaired by
-rewriting it with judgment, which no exit code can hurry.
+reads these files, and a digest that states no facts at all fails with
+them — an empty body is the one thing the file exists not to be. How many
+facts beyond that is **never checked**: the count measures the source, not
+the digest, and no honest digest makes three facts out of a two-line
+tweet.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 

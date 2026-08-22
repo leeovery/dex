@@ -372,7 +372,6 @@ HEALTH_PAYLOAD = {
          "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone"}
     ],
     "digest_errors": [{"item": "2026-01-09-broken-777777", "why": "frontmatter missing topics"}],
-    "digest_bullets": [{"item": "2026-01-10-thin-666666", "bullets": 1}],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
@@ -484,12 +483,10 @@ class TestHealthReport:
             "enrichment/2026-01-08-thread-888888/x-abc123.md — parent fetch failed after 3"
         ) in out
 
-    def test_digest_findings_split_shape_from_bullet_count(self):
+    def test_malformed_digests_render_loud(self):
         out = render("health-report", HEALTH_PAYLOAD)
         assert "MALFORMED DIGESTS (the wiki layer reads these) — 1" in out
         assert "2026-01-09-broken-777777: frontmatter missing topics" in out
-        assert "digests outside the documented 3-15 fact bullets — 1" in out
-        assert "2026-01-10-thin-666666: 1 bullet(s)" in out
 
     def test_clean_instance_reads_clean(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})

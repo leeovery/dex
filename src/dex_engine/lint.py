@@ -27,8 +27,8 @@ Checks:
   could otherwise cite as whole).
 
   digests — the shape ``state/digests/<id>.md`` promises: frontmatter with
-  ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, plus
-  3-15 fact bullets. No verb writes digests, so lint is the only thing
+  ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
+  least one fact bullet. No verb writes digests, so lint is the only thing
   that verifies them.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
@@ -81,9 +81,6 @@ ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
 
-# The digest contract from state-formats.md: 3-15 standalone fact bullets.
-DIGEST_MIN_BULLETS = 3
-DIGEST_MAX_BULLETS = 15
 _DIGEST_SIGNALS = ("high", "medium", "low")
 _DIGEST_REQUIRED = ("id", "date", "signal", "topics")
 
@@ -184,9 +181,8 @@ def run_lint(
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
     ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids)
-    digest_errors, digest_bullets = _digest_checks(instance)
+    digest_errors = _digest_checks(instance)
     payload["digest_errors"] = digest_errors
-    payload["digest_bullets"] = digest_bullets
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
@@ -738,18 +734,16 @@ def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def _digest_checks(instance: Instance) -> tuple[list[dict[str, str]], list[dict[str, object]]]:
-    """Malformed digests (hard failures) and bullet counts off the range.
+def _digest_checks(instance: Instance) -> list[dict[str, str]]:
+    """The digests that do not conform, and how each one breaks.
 
-    Split because they are different kinds of wrong. A digest missing its
-    frontmatter, or carrying a signal outside high|medium|low, is a state
-    file that does not conform — the same class as a malformed ledger
-    line, and the wiki layer reads these. A bullet count outside 3-15 is a
-    reading on how the digest was written: real, worth showing, repairable
-    only by rewriting the digest with judgment.
+    Shape only. How MANY facts a digest states is the source's business —
+    two lines of tweet yield two facts and no honest digest can invent a
+    third — so there is no target count and no count finding. Stating
+    none at all is different in kind: the file is empty of the one thing
+    it exists to hold.
     """
     errors: list[dict[str, str]] = []
-    bullets: list[dict[str, object]] = []
     for path in sorted(instance.digests_dir.glob("*.md")):
         item = path.stem or path.name
         try:
@@ -761,14 +755,17 @@ def _digest_checks(instance: Instance) -> tuple[list[dict[str, str]], list[dict[
         if fields is None:
             errors.append({"item": item, "why": "no complete frontmatter fence"})
             continue
-        why = _digest_frontmatter_fault(item, fields)
+        why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
         if why is not None:
             errors.append({"item": item, "why": why})
-            continue
-        count = sum(1 for line in body.split("\n") if line.startswith("- "))
-        if not DIGEST_MIN_BULLETS <= count <= DIGEST_MAX_BULLETS:
-            bullets.append({"item": item, "bullets": count})
-    return errors, bullets
+    return errors
+
+
+def _digest_body_fault(body: str) -> str | None:
+    """The body fault: no fact bullets at all, or None."""
+    if any(line.startswith("- ") for line in body.split("\n")):
+        return None
+    return "states no facts — the digest body has no bullets"
 
 
 def _digest_parts(text: str) -> tuple[dict[str, str] | None, str]:

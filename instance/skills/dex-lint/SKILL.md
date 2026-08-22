@@ -75,10 +75,6 @@ step 4.
      then make the gap explicit wherever the item is used: a digest bullet
      saying what is missing, and no page sentence that reads the stored
      chain as the whole thread.
-   - **Digests outside the documented 3–15 fact bullets** — a reading, not
-     a fault. A one-bullet digest of a one-line share is fine; a
-     twenty-bullet digest usually wants splitting or tightening. Rewrite
-     the ones that are genuinely thin or bloated and leave the rest.
    - **Re-entry cap fires** — a tuning signal about the depth-4 / 12-URL
      bounds. Read the refused URLs: primary artifacts of the item's
      subject being turned away means the bounds are too tight for this

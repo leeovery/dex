@@ -743,7 +743,7 @@ def digest_text(
     item: str = ITEM,
     signal: str = "high",
     topics: str = "[brewing]",
-    bullets: int = 3,
+    bullets: int = 1,
     omit: str = "",
 ) -> str:
     fields = {"id": item, "date": "2026-08-19", "signal": signal, "topics": topics}
@@ -759,13 +759,15 @@ class TestDigestShape:
         write_taxonomy(instance)
         write_index(instance, "")
 
-    def test_a_conforming_digest_passes(self, instance):
+    @pytest.mark.parametrize("bullets", [1, 2, 3, 40])
+    def test_any_number_of_facts_conforms(self, instance, bullets):
+        # The count measures the source, not the digest: two lines of
+        # tweet yield two facts and a paper yields forty.
         self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text())
+        write_digest(instance, ITEM, digest_text(bullets=bullets))
         outcome = lint(instance)
         assert outcome.exit_code == 0
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
-        assert "digests outside the documented 3-15 fact bullets — none" in outcome.report
 
     def test_no_frontmatter_fence_fails(self, instance):
         self._bare_wiki(instance)
@@ -810,33 +812,29 @@ class TestDigestShape:
         assert outcome.exit_code == 1
         assert f"id is '2026-08-19-elsewhere-999999' but the file is {ITEM}.md" in outcome.report
 
-    @pytest.mark.parametrize("count", [0, 2, 16])
-    def test_bullet_counts_off_the_range_are_reported(self, instance, count):
+    def test_a_digest_stating_no_facts_fails(self, instance):
+        # Empty is different in kind from brief: the file holds none of
+        # the one thing it exists for.
         self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text(bullets=count))
+        write_digest(instance, ITEM, digest_text(bullets=0))
         outcome = lint(instance)
-        assert "digests outside the documented 3-15 fact bullets — 1" in outcome.report
-        assert f"{ITEM}: {count} bullet(s)" in outcome.report
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: states no facts" in outcome.report
 
-    def test_bullet_drift_is_reported_without_failing(self, instance):
-        # 3-15 is the shape of a well-written digest, not a shape code can
-        # repair: the fix is rewriting it with judgment.
+    def test_prose_without_bullets_still_states_no_facts(self, instance):
         self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text(bullets=1))
-        assert lint(instance).exit_code == 0
-
-    @pytest.mark.parametrize("count", [3, 15])
-    def test_the_range_is_inclusive(self, instance, count):
-        self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text(bullets=count))
-        assert "digests outside the documented 3-15 fact bullets — none" in lint(instance).report
-
-    def test_a_malformed_digest_is_not_also_counted_as_thin(self, instance):
-        # One digest, one finding: the shape failure is the thing to fix.
-        self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text(signal="urgent", bullets=1))
+        write_digest(instance, ITEM, digest_text(bullets=0) + "some loose prose\n")
         outcome = lint(instance)
-        assert "digests outside the documented 3-15 fact bullets — none" in outcome.report
+        assert outcome.exit_code == 1
+        assert "states no facts" in outcome.report
+
+    def test_the_frontmatter_fault_is_reported_before_the_body(self, instance):
+        # One digest, one finding — and the frontmatter is what to fix first.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal="urgent", bullets=0))
+        outcome = lint(instance)
+        assert "signal must be one of" in outcome.report
+        assert "states no facts" not in outcome.report
 
     def test_no_digests_directory_is_clean(self, instance):
         self._bare_wiki(instance)
