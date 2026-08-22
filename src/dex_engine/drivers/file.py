@@ -8,7 +8,8 @@ sniffed — authoritative over whatever a server claimed — and handed to
 the first available mechanical extractor for the format.
 
 No provider for the format → ``waiting`` + ``needs: extract`` with the
-registry's stated reason. A scanned/image-only document → ``waiting`` +
+registry's stated reason — and so does a provider that reported available
+and then failed at call time. A scanned/image-only document → ``waiting`` +
 ``needs: ocr``. Embedded assets ride the Result for the run layer to write
 under the media caps, ledgered ``via: extract-asset`` — this driver, like
 every driver, never touches the ledger or the disk outputs.
@@ -26,11 +27,12 @@ from urllib.parse import unquote, urlsplit
 
 from dex_engine.capabilities import Capabilities
 from dex_engine.pipeline.classify import (
+    ProviderUnavailableError,
     ScannedDocumentError,
     classify_connection,
     classify_http,
 )
-from dex_engine.pipeline.detect import sniff_format
+from dex_engine.pipeline.detect import looks_like_html, sniff_format
 from dex_engine.pipeline.types import (
     Format,
     Kind,
@@ -47,13 +49,6 @@ from .transport import Transport, urllib_transport
 __all__ = ["FileDriver"]
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs"
-
-_HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
-
-
-def _looks_like_html(data: bytes) -> bool:
-    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
-    return lead.startswith(_HTML_LEADS)
 
 
 class FileDriver:
@@ -115,7 +110,7 @@ class FileDriver:
         if (
             not unit.url.startswith("file:")
             and sniff_format(data) is None
-            and _looks_like_html(data)
+            and looks_like_html(data)
         ):
             return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.WEB))
         fmt = sniff_format(data, name=name) or unit.format
@@ -185,6 +180,13 @@ class FileDriver:
             extraction = extractor.extract(data, fmt)
         except ScannedDocumentError as e:
             return Result(status=Status.WAITING, meta={}, needs=Need.OCR, reason=str(e))
+        except ProviderUnavailableError as e:
+            # A provider that reported available() and then failed at call
+            # time: the capability is, in truth, not available. The same
+            # re-park the transcribe drain gives it — waiting has no
+            # escalation clock — never error + a filed issue about the
+            # world's weather.
+            return Result(status=Status.WAITING, meta={}, needs=Need.EXTRACT, reason=str(e))
         meta: dict[str, str | int | None] = {
             "title": name,
             "format": fmt.value,

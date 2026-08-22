@@ -1,7 +1,10 @@
 """Tests for the extract providers: real anydoc over fixtures, csv-builtin, floors."""
 
+import csv
+
 import pytest
 
+from dex_engine.capabilities.extract import csv_builtin
 from dex_engine.capabilities.extract.anydoc import AnydocExtractor
 from dex_engine.capabilities.extract.cognitive import CognitiveExtractor
 from dex_engine.capabilities.extract.csv_builtin import CsvBuiltinExtractor
@@ -84,6 +87,29 @@ class TestCsvBuiltin:
     def test_non_csv_work_is_refused(self):
         with pytest.raises(ProviderInputError, match="csv-builtin"):
             CsvBuiltinExtractor().extract(b"%PDF-1.4", Format.PDF)
+
+    def test_a_field_over_the_stdlib_default_extracts(self):
+        # An embedded JSON blob past the 128KB default is a big cell in a
+        # fine file — extraction, not a stated failure and not a crash.
+        blob = "x" * (256 * 1024)
+        data = f'a,b\n1,"{blob}"\n'.encode()
+        markdown = CsvBuiltinExtractor().extract(data, Format.CSV).markdown
+        assert blob in markdown
+
+    def test_a_field_past_the_bound_is_bad_input(self, monkeypatch):
+        # csv.Error escapes from the reader's ITERATION; unhandled it was
+        # an engine bug with an issue filed over a routine wide file.
+        monkeypatch.setattr(csv_builtin, "_MAX_FIELD_CHARS", 64)
+        data = b'a,b\n1,"' + b"x" * 512 + b'"\n'
+        with pytest.raises(ProviderInputError, match="could not be read"):
+            CsvBuiltinExtractor().extract(data, Format.CSV)
+
+    def test_the_process_wide_field_limit_is_restored(self, monkeypatch):
+        monkeypatch.setattr(csv_builtin, "_MAX_FIELD_CHARS", 64)
+        before = csv.field_size_limit()
+        with pytest.raises(ProviderInputError):
+            CsvBuiltinExtractor().extract(b'a\n"' + b"x" * 512 + b'"\n', Format.CSV)
+        assert csv.field_size_limit() == before
 
 
 class TestCognitiveFloors:

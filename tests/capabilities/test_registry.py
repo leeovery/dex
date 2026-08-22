@@ -39,6 +39,12 @@ class TestBuild:
         with pytest.raises(ValueError, match="unknown provider"):
             Capabilities.build(Config(providers={"extract": ["textract"]}))
 
+    def test_duplicate_provider_names_are_loud(self):
+        # A repeat probes the provider twice and prints it twice on the
+        # report; a config typo fails like any other, not quietly.
+        with pytest.raises(ValueError, match="duplicate provider"):
+            Capabilities.build(Config(providers={"transcribe": ["whisper-api", "whisper-api"]}))
+
     def test_cognitive_is_not_configurable(self):
         # The floor is ALWAYS last in resolution order — config cannot
         # move it, so naming it is refused rather than silently reordered.
@@ -155,6 +161,23 @@ class TestReport:
                 "note": "the ingest session reads scanned pages with eyes",
             }
         ]
+
+    def test_an_ok_with_caveat_note_survives_to_the_report(self):
+        # "model not cached — the first transcription downloads it" is
+        # precisely what the report exists to explain; being available is
+        # no reason to drop it.
+        caveat = "model 'medium' is not cached yet — the first transcription downloads it"
+        c = caps(
+            transcribers=(
+                FakeTranscriber("whisper-local", reason=caveat),
+                FakeTranscriber("whisper-api", reason="keyless local server"),
+            )
+        )
+        rows = provider_rows(c.report_payload())["transcribe"]
+        assert rows[0] == {"name": "whisper-local", "state": "active", "note": caveat}
+        assert rows[1]["note"] == "keyless local server"
+        flat = " ".join(surfaces.render("capability-report", c.report_payload()).split())
+        assert f"whisper-local (active) — {caveat}" in flat
 
     def test_payload_renders_on_the_surface(self):
         # The designed example line, verbatim shape: active first, the

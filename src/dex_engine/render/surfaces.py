@@ -459,9 +459,10 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
              "providers": [
                {"name": str,
                 "state": "active" | "available" | "unavailable",
-                "note": str}]}                  # note optional; what a dormant
-          ]                                     #   provider would need
-        }
+                "note": str}]}                  # note optional, on ANY state:
+          ]                                     #   what a dormant provider
+        }                                       #   would need, or an active
+                                                #   one's caveat
     """
     surface = "capability-report"
     _check_keys(surface, payload, required=frozenset({"capabilities"}))
@@ -494,7 +495,7 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
                 _fail(surface, f"{pwhere}state must be one of {options}, got {state!r}")
             note = _str_at(surface, provider, "note", pwhere) if "note" in provider else ""
             if state == "active":
-                parts.append(f"{pname} (active)")
+                parts.append(f"{pname} (active) — {note}" if note else f"{pname} (active)")
             elif note:
                 parts.append(f"{pname} {state} — {note}")
             else:

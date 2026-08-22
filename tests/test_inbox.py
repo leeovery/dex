@@ -8,6 +8,8 @@ import pytest
 
 from dex_engine.inbox import (
     GithubSeams,
+    _api_request,
+    _download_asset,
     _rewrite_pointer,
     _run_git,
     build_parser,
@@ -17,6 +19,7 @@ from dex_engine.inbox import (
     reconcile,
 )
 from tests.capabilities.conftest import fixture_bytes
+from tests.drivers.conftest import truncating_server
 
 REPO = "owner/instance"
 ASSET_URL = "https://api.github.com/repos/owner/instance/releases/assets/123"
@@ -372,6 +375,35 @@ class TestRunGit:
         code, staged = _run_git(["cat-file", "-p", ":blob.bin"])
         assert code == 0
         assert not staged.startswith("version https://git-lfs")
+
+
+class TestRealHttpSeams:
+    """The two live urllib sites, against a real socket that hangs up mid-body.
+
+    ``main`` reports ``OSError``/``ValueError``/``RuntimeError`` as a stated
+    failure; ``http.client``'s protocol errors are none of those, so an
+    unnormalized truncated read reaches the operator as a traceback.
+    """
+
+    def test_a_truncated_api_read_arrives_as_a_reportable_error(self):
+        with truncating_server() as url, pytest.raises(OSError) as caught:  # noqa: PT011 — the OSError shape IS the assertion
+            _api_request(url, "token")
+        assert "truncated response body" in str(caught.value)
+
+    def test_a_truncated_asset_download_arrives_as_a_reportable_error(self):
+        with truncating_server() as url, pytest.raises(OSError) as caught:  # noqa: PT011 — the OSError shape IS the assertion
+            _download_asset(url, "token")
+        assert "truncated response body" in str(caught.value)
+
+    def test_a_truncated_read_after_the_redirect_arrives_the_same_way(self):
+        # The asset path's own 302 follow — a second urlopen, and the one
+        # that carries the large download.
+        with (
+            truncating_server(redirect_first=True) as url,
+            pytest.raises(OSError) as caught,  # noqa: PT011 — the OSError shape IS the assertion
+        ):
+            _download_asset(url, "token")
+        assert "truncated response body" in str(caught.value)
 
 
 class TestParser:
