@@ -16,6 +16,8 @@ from dex_engine.pipeline.classify import (
 )
 from dex_engine.pipeline.types import Status
 
+RAW = "/Users/owner/dex-notes/raw"  # the instance's raw/ tree, under a home dir
+
 
 class TestClassifyHttp:
     def test_403_is_blocked_never_dead(self):
@@ -150,6 +152,52 @@ class TestScrub:
         assert "Podcast" not in out
         assert "Big" not in out
         assert "Notes" not in out
+
+    @pytest.mark.parametrize(
+        ("message", "leak"),
+        [
+            # Real filename shapes from the owner's instance: gspace exports
+            # number their duplicates, discord attachments carry percent
+            # escapes and both, and screenshots carry spaces.
+            (
+                f"[Errno 13] Permission denied: {RAW}/gspace/hybrid-ai/File-image(14).png",
+                "(14).png",
+            ),
+            (
+                f"[Errno 13] Permission denied: '{RAW}/gspace/hybrid-ai/File-image(14).png'",
+                "(14).png",
+            ),
+            (
+                f"open {RAW}/discord/ai-apps/698e42db_image%20(5)-a0e039ed.png failed",
+                "(5)-a0e039ed.png",
+            ),
+            (
+                f"[Errno 2] No such file: {RAW}/gspace/File-Don't Panic.pdf",
+                "t Panic.pdf",
+            ),
+            (
+                f'[Errno 2] No such file: "{RAW}/gspace/File-Don\'t Panic.pdf"',
+                "t Panic.pdf",
+            ),
+            (
+                f"open {RAW}/gspace/hybrid-ai/File-Screenshot 2024-06-09 at 14.02.02.png failed",
+                "14.02.02.png",
+            ),
+        ],
+    )
+    def test_a_bracket_inside_the_filename_does_not_truncate_the_redaction(self, message, leak):
+        # A delimiter INSIDE the name is name, not bound — ending the
+        # redaction at it leaks the owner-chosen tail past "<home>".
+        out = scrub(message)
+        assert "owner" not in out
+        assert leak not in out
+
+    def test_prose_after_an_unbracketed_path_survives(self):
+        # The mirror image of the same bound: a delimiter later in the
+        # message must not swallow the sentence between it and the path.
+        assert scrub("open /home/owner/x — invalid JSON at line 3 (col 5)") == (
+            "open <home> — invalid JSON at line 3 (col 5)"
+        )
 
     def test_the_redaction_stops_at_the_path_and_keeps_the_prose(self):
         # Over-redaction hides the failure: everything past the filename is
