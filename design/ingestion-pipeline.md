@@ -432,7 +432,11 @@ independently is seven chances to reintroduce it):
   escape the drain or be charged to another unit's line.
   Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
-  keep their cause. The scrubber feeds the ledger `error` field; issue
+  keep their cause. Migrations have the one counterpart outside the
+  pipeline, on the same reasoning: canonicalizing one stored URL runs a
+  driver's arbitrary code over owner data, and a migration that dies
+  part-way leaves state half-moved — so the per-entry canonicalization is
+  broad-caught and skipped-with-why (§12). The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
   section).
 
