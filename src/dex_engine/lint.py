@@ -26,6 +26,11 @@ Checks:
   (``thread_cap_hit`` / ``chain_incomplete``: a stored thread a digest
   could otherwise cite as whole).
 
+  digests — the shape ``state/digests/<id>.md`` promises: frontmatter with
+  ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, plus
+  3-15 fact bullets. No verb writes digests, so lint is the only thing
+  that verifies them.
+
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
 but carries no ``generated:`` date gains one (today) so staleness has a
@@ -34,7 +39,8 @@ staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
 Output renders through the ``health-report`` surface. Exit 1 on hard
-failures: broken wikilinks, bad citations, or a ledger schema error.
+failures: broken wikilinks, bad citations, a ledger schema error, or a
+malformed digest.
 """
 
 import argparse
@@ -74,6 +80,12 @@ ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 # than the floor are boilerplate-prone; the ratio is SequenceMatcher's.
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
+
+# The digest contract from state-formats.md: 3-15 standalone fact bullets.
+DIGEST_MIN_BULLETS = 3
+DIGEST_MAX_BULLETS = 15
+_DIGEST_SIGNALS = ("high", "medium", "low")
+_DIGEST_REQUIRED = ("id", "date", "signal", "topics")
 
 # Thread-completeness markers the x driver stamps into enrichment
 # frontmatter when a walk-up stops short of the root.
@@ -172,13 +184,20 @@ def run_lint(
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
     ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids)
+    digest_errors, digest_bullets = _digest_checks(instance)
+    payload["digest_errors"] = digest_errors
+    payload["digest_bullets"] = digest_bullets
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error
+        scan.broken_links
+        or scan.bad_citations
+        or ledger_error
+        or taxonomy_error
+        or digest_errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -701,6 +720,76 @@ def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Digest shape. No verb writes digests — `signal` and `topics` are the
+# judgment — so this is the only thing that checks what the session wrote.
+# ---------------------------------------------------------------------------
+
+
+def _digest_checks(instance: Instance) -> tuple[list[dict[str, str]], list[dict[str, object]]]:
+    """Malformed digests (hard failures) and bullet counts off the range.
+
+    Split because they are different kinds of wrong. A digest missing its
+    frontmatter, or carrying a signal outside high|medium|low, is a state
+    file that does not conform — the same class as a malformed ledger
+    line, and the wiki layer reads these. A bullet count outside 3-15 is a
+    reading on how the digest was written: real, worth showing, repairable
+    only by rewriting the digest with judgment.
+    """
+    errors: list[dict[str, str]] = []
+    bullets: list[dict[str, object]] = []
+    for path in sorted(instance.digests_dir.glob("*.md")):
+        item = path.stem or path.name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            errors.append({"item": item, "why": f"unreadable ({e.__class__.__name__})"})
+            continue
+        fields, body = _digest_parts(text)
+        if fields is None:
+            errors.append({"item": item, "why": "no complete frontmatter fence"})
+            continue
+        why = _digest_frontmatter_fault(item, fields)
+        if why is not None:
+            errors.append({"item": item, "why": why})
+            continue
+        count = sum(1 for line in body.split("\n") if line.startswith("- "))
+        if not DIGEST_MIN_BULLETS <= count <= DIGEST_MAX_BULLETS:
+            bullets.append({"item": item, "bullets": count})
+    return errors, bullets
+
+
+def _digest_parts(text: str) -> tuple[dict[str, str] | None, str]:
+    """A digest's frontmatter fields and body; fields None without a fence."""
+    if not text.startswith("---\n"):
+        return None, text
+    head, sep, body = text[4:].partition("\n---\n")
+    if not sep:
+        return None, text
+    fields: dict[str, str] = {}
+    for line in head.split("\n"):
+        key, colon, value = line.partition(":")
+        if colon:
+            fields[key.strip()] = value.strip()
+    return fields, body
+
+
+def _digest_frontmatter_fault(item: str, fields: dict[str, str]) -> str | None:
+    """The first way this digest's frontmatter breaks the contract, or None."""
+    missing = [key for key in _DIGEST_REQUIRED if not fields.get(key)]
+    if missing:
+        return f"frontmatter missing {', '.join(missing)}"
+    if fields["signal"] not in _DIGEST_SIGNALS:
+        return f"signal must be one of {', '.join(_DIGEST_SIGNALS)}, got {fields['signal']!r}"
+    if fields["topics"] in ("[]", "[ ]"):
+        return "topics is empty — every item is placed, uncategorized-shares included"
+    if fields["id"] != item:
+        # The id keys the corpus, the taxonomy, and every citation; a digest
+        # filed under one id claiming another is unresolvable either way.
+        return f"id is {fields['id']!r} but the file is {item}.md"
+    return None
 
 
 # ---------------------------------------------------------------------------

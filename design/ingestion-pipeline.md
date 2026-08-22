@@ -1288,7 +1288,7 @@ src/dex_engine/
                  with its entry count; done outputs missing on disk),
                  waiting cohorts, pass records, the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
-                 markers off enrichment frontmatter)
+                 markers off enrichment frontmatter), and digest shape
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 

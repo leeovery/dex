@@ -771,6 +771,8 @@ _HEALTH_OPTIONAL = frozenset(
         "stale_passes",
         "capped",
         "incomplete_threads",
+        "digest_errors",
+        "digest_bullets",
         "digest_orphans",
         "reconciled",
         "notes",
@@ -813,6 +815,9 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           # judgment drift — recorded for this surface, shown on no other
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
           "incomplete_threads": [{"path": str, "why": str}],      # short thread walk-ups
+          # digests
+          "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
+          "digest_bullets": [{"item": str, "bullets": int}],  # off the documented 3-15
           "digest_orphans": [str],
           # --write outcomes and free notes
           "reconciled": [str],
@@ -915,6 +920,19 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     lines.extend(_health_pairs(surface, payload, "incomplete_threads",
                                "stored threads recorded incomplete (never cite one as whole)",
                                ("path", "why"), lambda p, w: f"{p} — {w}"))
+
+    lines.append("")
+    lines.append("digests")
+    lines.extend(_health_pairs(surface, payload, "digest_errors",
+                               "MALFORMED DIGESTS (the wiki layer reads these)",
+                               ("item", "why"), lambda i, w: f"{i}: {w}"))
+    off_range = _health_rows(surface, payload, "digest_bullets", ("item",),
+                             int_keys=("bullets",))
+    lines.append(_health_count(
+        "digests outside the documented 3-15 fact bullets", len(off_range)
+    ))
+    lines.extend(f"  {row['item']}: {row['bullets']} bullet(s)"
+                 for row in off_range[:_HEALTH_LIST_CAP])
     lines.extend(_health_names(surface, payload, "digest_orphans",
                                "enrichment newer than digest (interrupted session — digest these)"))
 

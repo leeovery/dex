@@ -25,6 +25,16 @@ media: [media/<id>/photo.jpg]     # only when the item has media
   the source in front of you.
 ```
 
+No verb writes digests — `signal` and `topics` are the judgment — so
+`bin/dex lint` is the only thing that checks them, and it checks two
+different things. The frontmatter is a **hard failure**: a digest with no
+complete fence, missing `id`/`date`/`signal`/`topics`, a `signal` outside
+high|medium|low, empty `topics`, or an `id` that disagrees with its
+filename exits 1, exactly like a malformed ledger line — the wiki layer
+reads these files. The bullet count is **reported, never failed**: 3–15 is
+the shape of a well-written digest, and a digest outside it is repaired by
+rewriting it with judgment, which no exit code can hurry.
+
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a

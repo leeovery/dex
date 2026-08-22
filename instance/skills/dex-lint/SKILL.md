@@ -28,6 +28,11 @@ step 4.
    - **Ledger schema failure** — repair before anything else touches
      state; the message names the file, line, and likely missing migration
      (usually: run `bin/dex sync`).
+   - **Malformed digests** — the message names what broke (no frontmatter
+     fence, a missing or bogus field, an `id` disagreeing with its
+     filename). Repair against `.claude/skills/dex-run/references/state-formats.md`;
+     the wiki layer reads these files, so nothing downstream is trustworthy
+     until they conform.
    - **Broken wikilinks** — typo → correct it; genuinely missing target →
      create the page if its members justify one, otherwise de-link.
    - **Bad citations** (id not in corpus) — find the right id or remove
@@ -59,6 +64,10 @@ step 4.
      then make the gap explicit wherever the item is used: a digest bullet
      saying what is missing, and no page sentence that reads the stored
      chain as the whole thread.
+   - **Digests outside the documented 3–15 fact bullets** — a reading, not
+     a fault. A one-bullet digest of a one-line share is fine; a
+     twenty-bullet digest usually wants splitting or tightening. Rewrite
+     the ones that are genuinely thin or bloated and leave the rest.
    - **Re-entry cap fires** — a tuning signal about the depth-4 / 12-URL
      bounds. Read the refused URLs: primary artifacts of the item's
      subject being turned away means the bounds are too tight for this

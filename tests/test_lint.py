@@ -733,6 +733,118 @@ class TestThreadCompleteness:
         assert lint(instance).exit_code == 0
 
 
+def write_digest(instance: Instance, item: str, text: str) -> None:
+    instance.digests_dir.mkdir(parents=True, exist_ok=True)
+    (instance.digests_dir / f"{item}.md").write_text(text)
+
+
+def digest_text(
+    *,
+    item: str = ITEM,
+    signal: str = "high",
+    topics: str = "[brewing]",
+    bullets: int = 3,
+    omit: str = "",
+) -> str:
+    fields = {"id": item, "date": "2026-08-19", "signal": signal, "topics": topics}
+    fm = ["---", *(f"{key}: {value}" for key, value in fields.items() if key != omit), "---"]
+    body = "\n".join(f"- fact number {i} with concrete specifics." for i in range(bullets))
+    return "\n".join(fm) + "\n" + body + "\n"
+
+
+class TestDigestShape:
+    """No verb writes digests — lint is the only thing that verifies them."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_a_conforming_digest_passes(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text())
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+        assert "digests outside the documented 3-15 fact bullets — none" in outcome.report
+
+    def test_no_frontmatter_fence_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, "- a bare bullet list, no frontmatter\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: no complete frontmatter fence" in outcome.report
+
+    def test_unclosed_fence_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, f"---\nid: {ITEM}\nsignal: high\n- a fact\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "no complete frontmatter fence" in outcome.report
+
+    @pytest.mark.parametrize("field", ["id", "date", "signal", "topics"])
+    def test_missing_required_field_fails(self, instance, field):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(omit=field))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: frontmatter missing {field}" in outcome.report
+
+    def test_bogus_signal_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal="urgent"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "signal must be one of high, medium, low, got 'urgent'" in outcome.report
+
+    def test_empty_topics_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(topics="[]"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "topics is empty" in outcome.report
+
+    def test_id_must_match_the_filename(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(item="2026-08-19-elsewhere-999999"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"id is '2026-08-19-elsewhere-999999' but the file is {ITEM}.md" in outcome.report
+
+    @pytest.mark.parametrize("count", [0, 2, 16])
+    def test_bullet_counts_off_the_range_are_reported(self, instance, count):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=count))
+        outcome = lint(instance)
+        assert "digests outside the documented 3-15 fact bullets — 1" in outcome.report
+        assert f"{ITEM}: {count} bullet(s)" in outcome.report
+
+    def test_bullet_drift_is_reported_without_failing(self, instance):
+        # 3-15 is the shape of a well-written digest, not a shape code can
+        # repair: the fix is rewriting it with judgment.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=1))
+        assert lint(instance).exit_code == 0
+
+    @pytest.mark.parametrize("count", [3, 15])
+    def test_the_range_is_inclusive(self, instance, count):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=count))
+        assert "digests outside the documented 3-15 fact bullets — none" in lint(instance).report
+
+    def test_a_malformed_digest_is_not_also_counted_as_thin(self, instance):
+        # One digest, one finding: the shape failure is the thing to fix.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal="urgent", bullets=1))
+        outcome = lint(instance)
+        assert "digests outside the documented 3-15 fact bullets — none" in outcome.report
+
+    def test_no_digests_directory_is_clean(self, instance):
+        self._bare_wiki(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+
 class TestCli:
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True
