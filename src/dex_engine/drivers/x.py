@@ -7,7 +7,7 @@ one id-keyed form, so one post is one work unit however it was shared.
 
 The chain above a captured post is context, not new first-class sources:
 one enrichment file, one ledger entry. The walk follows fxtwitter parent
-pointers bottom-to-top (cap 20 hops); storage is reading order — root
+pointers bottom-to-top (bounded at 100 hops); storage is reading order — root
 first, captured post last, each post attributed. Quoted posts stay inline
 as blockquotes; promoting a quote is a harvest judgment. Chain media is
 pooled, the captured post's first.
@@ -47,8 +47,13 @@ _HOSTS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
 # with or without a /photo/1-style tail.
 _STATUS_PATH_RE = re.compile(r"/status(?:es)?/(\d+)")
 
-# Thread walk-up cap: 20 parent hops above the captured post.
-MAX_HOPS = 20
+# Thread walk-up bound: 100 parent hops above the captured post. A thread
+# is ONE piece of content — one work unit, one enrichment file — and the
+# walk is a linear chain of cheap calls with no fan-out, so this is a
+# sanity bound against a cycle or a self-referencing parent, not an
+# editorial one: 30-post threads are ordinary, and half an argument stored
+# as though it were whole is the failure worth avoiding.
+MAX_HOPS = 100
 
 # A body that is nothing but x's own t.co shortlink is a pointer to
 # content, never the content itself.

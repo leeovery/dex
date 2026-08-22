@@ -119,7 +119,7 @@ class TestThreadWalkUp:
         assert "@alice" not in body
         assert body.index("@bob") < body.index("@carol")
 
-    def test_walk_stops_at_the_20_hop_cap_and_notes_it_in_meta(self):
+    def test_walk_stops_at_the_hop_bound_and_notes_it_in_meta(self):
         base = 1000
         responses = {}
         for i in range(base, base + MAX_HOPS + 5):
@@ -138,7 +138,27 @@ class TestThreadWalkUp:
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert result.status is Status.DONE
         assert result.meta["thread_cap_hit"] == "true"
-        assert result.meta["thread_length"] == MAX_HOPS + 1  # captured + 20 hops
+        assert result.meta["thread_length"] == MAX_HOPS + 1  # the captured post + the bound
+
+    def test_a_self_referencing_parent_terminates_at_the_bound(self):
+        # What the bound is actually for: a post naming itself as its own
+        # parent (or any cycle) would otherwise walk forever.
+        tweet = {
+            "id": "500",
+            "text": "a post replying to itself",
+            "created_at": "Thu Aug 20 10:00:00 +0000 2026",
+            "author": {"name": "Loop", "screen_name": "loop"},
+            "replying_to": "loop",
+            "replying_to_status": "500",
+        }
+        response = json_response({"tweet": tweet})
+        responses = {API + "status/500": response, API + "loop/status/500": response}
+        result = driver_for(responses).fetch(
+            make_unit("https://x.com/loop/status/500", Kind.X)
+        )
+        assert result.status is Status.DONE
+        assert result.meta["thread_cap_hit"] == "true"
+        assert result.meta["thread_length"] == MAX_HOPS + 1
 
 
 class TestShareShapeFetches:

@@ -688,8 +688,13 @@ a download beyond the cap and beside a description of something else.
   post — the terminal-mislabel class this design exists to kill.
 - **Thread walk-up inside the driver**, not via children: the chain is
   context for the captured post, not new first-class sources. One enrichment
-  file, one ledger entry. fxtwitter parent pointers, **cap 20 hops**, all
-  authors included, cap-hit noted in the ledger only.
+  file, one ledger entry. fxtwitter parent pointers, all authors
+  included, cap-hit noted in enrichment frontmatter (below). The walk is
+  **bounded at 100 hops** — a sanity bound against a cycle or a self-referencing
+  parent, not an editorial one: the chain is one piece of content and the
+  walk is linear with no fan-out, unlike the 12-URL harvest cap, which
+  bounds how much one item drags in. A thread that exceeds even 100 is
+  still recorded honestly rather than silently truncated.
 - Fetch order is bottom-to-top (parent pointers); **storage is reading
   order** — root first, captured post last, each post attributed
   (`@who — date`); frontmatter records which post was captured. A
