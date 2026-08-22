@@ -139,6 +139,11 @@ root-namespace checks, wayback, the whisper model download — runs in a
 runner differently from a laptop and a false alarm every morning trains you to
 ignore the real one. Read that job when a driver misbehaves in the field.
 
+One trap: GitHub disables a scheduled workflow after 60 days without a commit
+to the repo, and only emails to say so. A quiet quarter therefore stops the
+drift watch silently — re-enable it from the Actions tab, or fire it once by
+hand with `workflow_dispatch`.
+
 **The release gate** (`.mint.toml`, `[release.hooks] preflight`). The three
 gates run before Mint does anything else — before the AI notes, before the
 review, and long before the tag. A failure aborts with no bookkeeping commit
