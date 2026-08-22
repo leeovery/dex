@@ -242,7 +242,7 @@ class PodcastDriver:
         return _Episode(
             title=_og_title(page),
             show=None,
-            enclosure=enclosure,
+            enclosure=enclosure.url,
             published=None,
             notes="",
         )

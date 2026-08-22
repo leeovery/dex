@@ -15,6 +15,7 @@ from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import urllib_transport
+from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
 from dex_engine.pipeline.types import Format, Kind, Need, Status
 from tests.drivers.conftest import body_of, make_unit
@@ -124,6 +125,18 @@ class TestYouTubeRootNamespace:
 
     def test_an_unclaimed_bare_name_is_a_404_not_a_product_page(self):
         assert not urllib_transport("https://www.youtube.com/zzqqxxnotachannel1234").ok
+
+
+class TestPageAudioIsNotAnEpisode:
+    def test_an_encyclopedia_article_with_embedded_audio_still_extracts(self):
+        # en.wikipedia.org/wiki/Podcast embeds media samples in a 60k-char
+        # article — the live shape the over-broad <audio> signal discarded.
+        # Real markup, because this is exactly what a fixture cannot pin.
+        driver = WebDriver(transport=urllib_transport)
+        result = driver.fetch(make_unit("https://en.wikipedia.org/wiki/Podcast", Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+        assert len(body_of(result)) > 10_000
 
 
 class TestWaybackShape:

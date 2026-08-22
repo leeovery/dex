@@ -130,11 +130,11 @@ digits, so two units under one item do collide (a real `web-6968e3.md` /
 the neighbour's enrichment while its ledger line still read `done`. Nothing
 is dropped for a replacement that is not itself on disk. Works in both
 directions (web→file, file→web), and carries two further discoveries that
-only a fetched body can make: an indie podcast episode page the catch-all
-fetched → `podcast` (§9), and a GitHub blob whose bytes are a document →
-`file` (§3). Loop guard is per-run state: one correction per hash per run,
-then `manual` "re-detection loop"; across runs a unit may redetect again —
-the world changes.
+only a fetched body can make: a page whose audio is its subject, fetched
+by the catch-all → `podcast` (§9), and a GitHub blob whose bytes are a
+document → `file` (§3). Loop guard is per-run state: one correction per
+hash per run, then `manual` "re-detection loop"; across runs a unit may
+redetect again — the world changes.
 
 The run report also derives a listing for **no-source items** (text-only
 and image-only captures — no URLs, no work units): they surface as
@@ -758,11 +758,23 @@ underneath; the audio lives in the feed's `<enclosure>`:
   suffixes are blog vocabulary and an RSS `<link rel>` in a head says only
   "this site has a feed". Registry order does the work instead: nothing
   claims an indie episode page, so the catch-all fetches it, and a page
-  advertising **its own audio** — an `og:audio` pointer or an `<audio>`
-  element holding the file — re-detects to `podcast` (§1's mid-fetch
-  discovery, `web → podcast`). A bare link to an mp3 is deliberately not
-  that signal: a post linking one is still a post, and stealing it from
-  `web` would cost its extraction.
+  whose **audio is its subject** re-detects to `podcast` (§1's mid-fetch
+  discovery, `web → podcast`). Two markups say that, and only two: an
+  `og:audio` pointer — the publisher naming the audio as the page's own
+  object — or an `<audio>` element **on a page with no substantial body**,
+  where the player is all there is. An `<audio>` element beside a real
+  article is not the signal: mainstream publishers ship read-aloud
+  text-to-speech widgets and encyclopedias embed media samples, and the
+  catch-all rule handed those articles to `podcast`, which resolved the
+  widget as the enclosure and parked `waiting: transcribe` with an **empty
+  body** — the article never extracted, its links never harvested (~1 in
+  145 real web URLs). The asymmetry decides every tie: a false positive
+  costs the whole article, a false negative costs a podcast page keeping
+  its show notes instead of a transcript. A bare link to an mp3 is not the
+  signal either: a post linking one is still a post. The signal itself is
+  `drivers/audio.py`, a shared seam beside `transport.py` and `gh.py` —
+  both drivers read it (web to route, podcast to resolve) and neither
+  imports the other.
 
 Then: audio → `cache/audio/<hash>` → `needs: transcribe` → whisper drains
 (primed with title + show notes). Show notes from the **feed** (richer than
