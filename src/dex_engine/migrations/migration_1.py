@@ -112,7 +112,6 @@ _TOLERATED_KEYS = frozenset(
         "status",
         "needs",
         "attempts",
-        "capped",  # pre-typing cap fires; migration 5's rule types them here
         "cap",
         "engine",
         "date",
@@ -511,7 +510,7 @@ def _translate_record(
             status=status,
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
-            cap=_translate_cap(raw, unit_hash=unit_hash, notes=notes),
+            cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             # Carried, never re-stamped: this run's instant would claim the
@@ -743,40 +742,6 @@ def _translate_title(
 # schema shipping WITH it", so the copy cannot drift out from under it.
 _CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
 _CURRENT_VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
-
-
-# Migration 5's rule, copied for the same reason the via vocabulary above is
-# copied: a migration's behavior is frozen at its release, and a shared
-# reader would let a later edit to migration 5 silently change what this one
-# does. A pre-typing line said a cap fired but not which bound; the bound was
-# only ever in the stated reason, from the engine's own closed wording.
-_CAP_DEPTH = "depth cap ("
-_CAP_URL = "url cap ("
-_CAP_REQUESTED_TAIL = "--force"
-
-
-def _translate_cap(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> Cap | None:
-    """The typed bound: current-schema lines carry it, pre-typing ones name it.
-
-    An untypeable fire loses the marker rather than inventing a bound: the
-    line survives, the loss is stated, and lint's cap reading is a tuning
-    signal that one unclassifiable refusal does not distort.
-    """
-    if "cap" in raw:
-        return Cap(_expect_str(raw, "cap"))
-    if not raw.get("capped"):
-        return None
-    reason = str(raw.get("reason") or "")
-    if reason.startswith(_CAP_DEPTH):
-        return Cap.DEPTH
-    if reason.startswith(_CAP_URL):
-        return Cap.URL_REQUESTED if _CAP_REQUESTED_TAIL in reason else Cap.URL
-    notes.append(
-        f"ledger {unit_hash}: cap marker dropped — its stated reason ({reason!r}) "
-        "names no bound this migration knows, and a guessed bound would be a "
-        "reading nobody wrote"
-    )
-    return None
 
 
 def _translate_via(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> str | None:

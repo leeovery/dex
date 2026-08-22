@@ -61,18 +61,10 @@ class LedgerSchemaError(ValueError):
 # to name that migration in the error; never silently accepted (no aliases).
 _RENAMED_KINDS = {"tweet": "x", "blog": "web"}
 _RETIRED_STATUSES = {"nocaptions", "toolong"}
-# Pre-typing vocabulary: a boolean `capped` said a cap fired but not which
-# bound, so the health check read the free-text reason to tell them apart.
-# Translated by migration 5. Recognized here only to name that migration.
-_UNTYPED_CAP = "capped"
 
 _MIGRATION_HINT = (
     "migration 1 (renames + status vocabulary) has likely not been applied — run `bin/dex sync`"
 )
-_CAP_MIGRATION_HINT = (
-    "migration 5 (typed cap fires) has likely not been applied — run `bin/dex sync`"
-)
-
 _REQUIRED_KEYS = ("hash", "url", "item", "kind", "status", "engine", "date")
 _ALL_KEYS = frozenset(
     (
@@ -125,11 +117,6 @@ def from_line(line: str) -> LedgerEntry:
         raise LedgerSchemaError(
             f"status {status!r} is retired vocabulary (now 'waiting' + needs: 'transcribe'); "
             f"{_MIGRATION_HINT}"
-        )
-    if _UNTYPED_CAP in raw:
-        raise LedgerSchemaError(
-            f"field {_UNTYPED_CAP!r} is pre-typing vocabulary (now 'cap', naming the "
-            f"bound); {_CAP_MIGRATION_HINT}: {line!r}"
         )
     missing = [key for key in _REQUIRED_KEYS if key not in raw]
     if missing:

@@ -135,14 +135,6 @@ class TestFromLine:
         assert json.loads(ledger.to_line(marker))["cap"] == "url"
         assert ledger.from_line(ledger.to_line(marker)) == marker
 
-    def test_a_pre_typing_capped_line_names_migration_5(self):
-        # The bound was in the prose then; a line that still says `capped`
-        # must stop the reader loudly, not be read as an ordinary skip.
-        line = json.loads(ledger.to_line(entry(status=Status.SKIPPED, reason="url cap reached")))
-        line["capped"] = True
-        with pytest.raises(ledger.LedgerSchemaError, match="migration 5"):
-            ledger.from_line(json.dumps(line))
-
     def test_parked_reason_round_trips(self):
         assert ledger.from_line(ledger.to_line(PARKED_ENTRY)) == PARKED_ENTRY
         assert json.loads(ledger.to_line(PARKED_ENTRY))["reason"] == "thin-extraction"
