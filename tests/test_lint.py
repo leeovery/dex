@@ -804,6 +804,32 @@ class TestThreadCompleteness:
         # digest-orphan listing, so the path is what this asserts on)
         assert f"enrichment/{older[0]}/x-abc123.md" not in report
 
+    def test_a_marker_set_to_false_is_not_a_marker(self, instance):
+        # The driver stamps the string "true"; the field's presence says
+        # nothing on its own, and a walk that completed can say so.
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", 'thread_cap_hit: "false"\nchain_incomplete: ""\n'
+        )
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_a_body_that_is_not_utf8_never_hides_the_frontmatter(self, instance):
+        # The scan stops at the closing fence, so a transcript full of bytes
+        # no decoder accepts costs nothing and hides nothing. Slurping the
+        # file would lose the marker to a decode error instead.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(
+            b'---\nchain_incomplete: "true"\n---\n\n' + b"pad\n" * 40000 + b"\xff\xfe\n"
+        )
+        outcome = lint(instance)
+        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
+        assert "unreadable" not in outcome.report
+
     def test_an_unreadable_enrichment_file_is_reported(self, instance):
         # Nothing else in lint reads enrichment files, so a file this scan
         # cannot decode is invisible everywhere unless it says so here.

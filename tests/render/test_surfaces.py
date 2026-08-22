@@ -360,12 +360,14 @@ HEALTH_PAYLOAD = {
     ],
     "stale_passes": [{"item": "2026-01-04-old-dddddd", "rules": 0}],
     "capped": [
+        # lint sends the bound, one canonical label per bound — never the
+        # ledger line's stated reason.
         {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/deep",
-         "reason": "depth cap (4) reached"},
+         "reason": "depth cap (4)"},
         {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/wide",
-         "reason": "url cap (12 per item) reached"},
+         "reason": "url cap (12 per item)"},
         {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
-         "reason": "url cap (12 per item) reached"},
+         "reason": "url cap (12 per item)"},
     ],
     "incomplete_threads": [
         {"path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
@@ -468,9 +470,27 @@ class TestHealthReport:
         # many, over how many items, under which bound.
         out = render("health-report", HEALTH_PAYLOAD)
         assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in out
-        assert "depth cap (4) reached: 1 · url cap (12 per item) reached: 2" in out
+        assert "depth cap (4): 1 · url cap (12 per item): 2" in out
         assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 1" in out
         assert "2026-01-06-deep-ffffff -> https://example.test/deep" in out
+
+    def test_offenders_tied_on_count_are_named_in_id_order(self):
+        # Rows arrive in whatever order the check produced; two items with
+        # the same number of fires read in id order, not in arrival order,
+        # so the same ledger always renders the same line.
+        payload = dict(HEALTH_PAYLOAD)
+        payload["capped"] = [
+            {"item": "2026-01-07-wide-999999", "url": "https://example.test/a",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/b",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-07-wide-999999", "url": "https://example.test/c",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/d",
+             "reason": "url cap (12 per item)"},
+        ]
+        out = render("health-report", payload)
+        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 2" in out
 
     def test_no_cap_fires_reads_as_none(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
