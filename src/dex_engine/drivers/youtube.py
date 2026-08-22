@@ -8,6 +8,11 @@ is its list id — the playlist page and the ``/embed/videoseries?list=``
 embed alike; playlist units park ``manual`` (a playlist is a collection,
 and which entries deserve capture is judgment).
 
+Channel addresses (``/@handle`` and its tabs, ``/user/…``, ``/c/…``,
+``/channel/…``) and search-result pages are collections too, and park the
+same way — BEFORE the probe runs, because yt-dlp answers those URLs by
+enumerating every video the channel holds.
+
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
@@ -43,6 +48,14 @@ _VIDEO_PREFIXES = frozenset({"live", "shorts", "embed", "v"})
 # The standard playlist-embed shape: /embed/videoseries?list=<id> — a
 # playlist, not a video called "videoseries".
 _PLAYLIST_EMBED_SEGMENTS = ["embed", "videoseries"]
+
+# Channel address shapes: the @handle form and the legacy /user, /c and
+# /channel prefixes, each with or without a tab segment (/videos, /shorts,
+# /streams, /playlists, …). The one channel-scoped path that addresses a
+# single video is /live — the channel's current livestream.
+_CHANNEL_PREFIXES = frozenset({"user", "c", "channel"})
+_CHANNEL_LIVE_TAB = "live"
+_SEARCH_SEGMENT = "results"
 
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
@@ -130,6 +143,13 @@ class YouTubeDriver:
                 meta={},
                 reason="playlist link — capture the videos worth keeping individually",
             )
+        collection = _collection_reason(unit.url)
+        if collection is not None:
+            # Guarded BEFORE the probe: yt-dlp enumerates a whole channel
+            # from these URLs (minutes of work, every video's metadata),
+            # and the transcribe drain would then pull every one of those
+            # audio files over a single filename.
+            return Result(status=Status.MANUAL, meta={}, reason=collection)
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
@@ -192,6 +212,32 @@ def _video_id(url: str) -> str | None:
     if host in _HOSTS and len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
         return segments[1]
     return None
+
+
+def _collection_reason(url: str) -> str | None:
+    """Why a channel/tab/search URL parks, or None when it addresses a video."""
+    if host_of(url) != "youtube.com":
+        return None
+    segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    if not segments:
+        return None
+    if segments[0] == _SEARCH_SEGMENT:
+        return (
+            "search-results link — a result page is a collection: capture the videos "
+            "worth keeping individually"
+        )
+    if segments[0].startswith("@"):
+        tail = segments[1:]
+    elif segments[0] in _CHANNEL_PREFIXES and len(segments) >= 2:  # noqa: PLR2004 — /channel/<id> pair
+        tail = segments[2:]
+    else:
+        return None
+    if tail == [_CHANNEL_LIVE_TAB]:
+        return None
+    return (
+        "channel link — a channel is a collection: capture the videos worth "
+        "keeping individually"
+    )
 
 
 def _playlist_id(url: str) -> str | None:

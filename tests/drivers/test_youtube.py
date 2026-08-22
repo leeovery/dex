@@ -11,7 +11,7 @@ from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, clean_vtt
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Kind, Need, Status
-from dex_engine.pipeline.urls import work_hash
+from dex_engine.pipeline.urls import base_canonical, work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
 
 URL = "https://youtube.com/watch?v=dQw4w9WgXcA"
@@ -177,6 +177,63 @@ class TestPlaylists:
         assert driver.canonical("https://youtu.be/embed/videoseries?list=PLabc") == (
             "https://youtu.be/embed/videoseries?list=PLabc"
         )
+
+
+CHANNEL_SHAPES = [
+    "https://youtube.com/@systemsfieldnotes",
+    "https://www.youtube.com/@systemsfieldnotes/videos",
+    "https://youtube.com/@systemsfieldnotes/shorts",
+    "https://m.youtube.com/@systemsfieldnotes/streams",
+    "https://youtube.com/@systemsfieldnotes/playlists",
+    "https://youtube.com/user/systemsfieldnotes",
+    "https://youtube.com/user/systemsfieldnotes/videos",
+    "https://youtube.com/c/SystemsFieldNotes",
+    "https://youtube.com/channel/UCabc123def456ghi789jkl",
+    "https://youtube.com/channel/UCabc123def456ghi789jkl/videos",
+]
+SEARCH_URL = "https://www.youtube.com/results?search_query=ledgers+as+work+queues"
+
+
+class TestChannelsAndSearch:
+    """Collections park before the probe: yt-dlp enumerates whole channels."""
+
+    @pytest.mark.parametrize("url", CHANNEL_SHAPES)
+    def test_channel_shapes_park_manual_and_never_probe(self, url):
+        # The probe raises: a channel URL driven as a video enumerated 63
+        # videos in 87 seconds, and the transcribe drain would then pull
+        # all 63 audio files over one filename.
+        driver = driver_for(AssertionError("the probe must not run for a channel"))
+        result = driver.fetch(make_unit(url, Kind.YOUTUBE))
+        assert result.status is Status.MANUAL
+        assert "a channel is a collection" in reason_of(result)
+
+    def test_search_results_park_manual_and_never_probe(self):
+        driver = driver_for(AssertionError("the probe must not run for a search page"))
+        result = driver.fetch(make_unit(SEARCH_URL, Kind.YOUTUBE))
+        assert result.status is Status.MANUAL
+        assert "a result page is a collection" in reason_of(result)
+
+    @pytest.mark.parametrize("url", [*CHANNEL_SHAPES, SEARCH_URL])
+    def test_collection_urls_keep_the_generic_canonical(self, url):
+        assert driver_for({}).canonical(url) == base_canonical(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://youtube.com/@systemsfieldnotes/live",
+            "https://youtube.com/channel/UCabc123def456ghi789jkl/live",
+        ],
+    )
+    def test_a_channels_live_path_is_one_video_and_still_probes(self, url):
+        driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
+        assert driver.fetch(make_unit(url, Kind.YOUTUBE)).status is Status.DONE
+
+    def test_a_video_whose_id_looks_like_a_channel_prefix_still_probes(self):
+        # /c/<name> is a channel but /v/<id> is a video: the pair shapes
+        # must not bleed into each other.
+        driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
+        url = "https://youtube.com/v/dQw4w9WgXcA"
+        assert driver.fetch(make_unit(url, Kind.YOUTUBE)).status is Status.DONE
 
 
 class TestCaptions:
