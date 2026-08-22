@@ -1,0 +1,82 @@
+name: ci
+
+# The suite, ruff and ty on every push and pull request. Formatting is NOT
+# checked: `ruff format` disagrees with ~50 files in this repo and reformatting
+# them would bury the history that makes this code readable, so it is a tool
+# here and never a gate.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest ${{ matrix.os }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux carries the version sweep: `requires-python = ">=3.11"` is a
+        # promise the maintainer's single 3.13 install cannot keep, and Linux
+        # is where instances actually run.
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12", "3.13"]
+        include:
+          # One clean macOS box on the release Python: it catches the things a
+          # long-lived dev machine hides (a brew binary assumed on PATH, a
+          # primed cache), without paying for the whole grid twice.
+          - os: macos-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the shells tests/test_shim.py names
+        if: runner.os == 'Linux'
+        # Ubuntu's /bin/sh already IS dash — that is the point of running here
+        # at all, since macOS's is bash and hid a shim bug behind bashisms.
+        # ksh is not on the image, so install it rather than let the run skip.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ksh
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+
+      # --locked doubles as the lockfile-drift check: a pyproject edit that
+      # was never re-locked fails here instead of at release time.
+      - run: uv sync --locked
+
+      - name: pytest (default suite)
+        env:
+          # Names the shells this runner guarantees, so a future image that
+          # drops one fails loudly instead of silently testing under sh alone.
+          DEX_SHIM_SHELLS: ${{ runner.os == 'Linux' && 'sh dash ksh' || 'sh' }}
+        run: uv run --no-sync pytest -m "not live"
+
+  lint:
+    name: ruff + ty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          # ruff targets py311 and ty pins python-version = "3.11" in
+          # pyproject, so both answer the same on every interpreter. Once.
+          python-version: "3.13"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - run: uv run --no-sync ruff check
+
+      - run: uv run --no-sync ty check
