@@ -16,7 +16,7 @@ surface and the key — never a half-rendered report.
 """
 
 from collections.abc import Callable, Mapping
-from typing import NoReturn
+from typing import NoReturn, TypeVar
 
 from dex_engine.pipeline.types import Need, Status
 
@@ -1188,6 +1188,9 @@ def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
     return lines
 
 
+_T = TypeVar("_T")
+
+
 def _health_count(label: str, count: int) -> str:
     return kernel.bullet(f"{label} — {kernel.bold(str(count)) if count else 'none'}")
 
@@ -1199,21 +1202,17 @@ def _health_elided(total: int) -> list[str]:
     return [kernel.bullet(f"… and {total - _HEALTH_LIST_CAP} more, not listed", depth=1)]
 
 
-def _health_listing(
-    label: str, rows: list[dict[str, object]], shape: Callable[[dict[str, object]], str]
-) -> list[str]:
-    lines = [_health_count(label, len(rows))]
-    lines += [kernel.bullet(shape(row), depth=1) for row in rows[:_HEALTH_LIST_CAP]]
-    lines += _health_elided(len(rows))
+def _health_listing(label: str, entries: list[_T], shape: Callable[[_T], str]) -> list[str]:
+    """One check: its count, its first rows, and what the cap withheld."""
+    lines = [_health_count(label, len(entries))]
+    lines += [kernel.bullet(shape(entry), depth=1) for entry in entries[:_HEALTH_LIST_CAP]]
+    lines += _health_elided(len(entries))
     return lines
 
 
 def _health_names(surface: str, payload: Mapping[str, object], key: str, label: str) -> list[str]:
     names = _str_list_at(surface, payload, key)
-    lines = [_health_count(label, len(names))]
-    lines += [kernel.bullet(kernel.bold(name), depth=1) for name in names[:_HEALTH_LIST_CAP]]
-    lines += _health_elided(len(names))
-    return lines
+    return _health_listing(label, names, lambda name: kernel.bold(str(name)))
 
 
 def _health_rows(
@@ -1243,13 +1242,9 @@ def _health_pairs(  # noqa: PLR0913, PLR0917 — a formatting helper: surface, p
     shape: Callable[[str, str], str],
 ) -> list[str]:
     rows = _health_rows(surface, payload, key, fields)
-    lines = [_health_count(label, len(rows))]
-    lines += [
-        kernel.bullet(shape(str(row[fields[0]]), str(row[fields[1]])), depth=1)
-        for row in rows[:_HEALTH_LIST_CAP]
-    ]
-    lines += _health_elided(len(rows))
-    return lines
+    return _health_listing(
+        label, rows, lambda row: shape(str(row[fields[0]]), str(row[fields[1]]))
+    )
 
 
 # The typed registry literal is the conformance point: every renderer is
