@@ -511,7 +511,7 @@ def _translate_record(
             status=status,
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
-            cap=_translate_cap(raw),
+            cap=_translate_cap(raw, unit_hash=unit_hash, notes=notes),
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             # Carried, never re-stamped: this run's instant would claim the
@@ -755,12 +755,12 @@ _CAP_URL = "url cap ("
 _CAP_REQUESTED_TAIL = "--force"
 
 
-def _translate_cap(raw: dict[str, object]) -> Cap | None:
+def _translate_cap(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> Cap | None:
     """The typed bound: current-schema lines carry it, pre-typing ones name it.
 
-    An untypeable fire loses the marker rather than inventing a bound — the
-    line survives, and lint's cap reading is a tuning signal that a single
-    unclassifiable refusal does not distort.
+    An untypeable fire loses the marker rather than inventing a bound: the
+    line survives, the loss is stated, and lint's cap reading is a tuning
+    signal that one unclassifiable refusal does not distort.
     """
     if "cap" in raw:
         return Cap(_expect_str(raw, "cap"))
@@ -771,6 +771,11 @@ def _translate_cap(raw: dict[str, object]) -> Cap | None:
         return Cap.DEPTH
     if reason.startswith(_CAP_URL):
         return Cap.URL_REQUESTED if _CAP_REQUESTED_TAIL in reason else Cap.URL
+    notes.append(
+        f"ledger {unit_hash}: cap marker dropped — its stated reason ({reason!r}) "
+        "names no bound this migration knows, and a guessed bound would be a "
+        "reading nobody wrote"
+    )
     return None
 
 

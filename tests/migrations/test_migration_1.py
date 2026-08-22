@@ -800,6 +800,30 @@ class TestLedgerTranslation:
         migration.apply(tmp_path)
         assert path.read_text() == original
 
+    def test_a_cap_fire_naming_no_known_bound_loses_the_marker_and_says_so(
+        self, tmp_path, migration
+    ):
+        # The bound was only ever in the prose; a wording this code cannot
+        # place is not typed with a guess, and the loss is stated.
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "1234567890",
+                    "url": "https://a.test/w",
+                    "kind": "blog",
+                    "status": "skipped",
+                    "date": "2026-05-01",
+                    "capped": True,
+                    "reason": "twelve fetches is plenty for one item",
+                    "path": "enrichment/2026-05-01-item-a1b2c3/blog-123456.md",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)["1234567890"].cap is None
+        assert any("names no bound" in action for action in report.actions)
+
     def test_current_schema_cap_fire_survives_a_re_apply(self, tmp_path, migration):
         # The applied-migrations log can be lost (union-merge race, un-pulled
         # repo), so migration 1 re-runs over lines the rewritten engine wrote.
