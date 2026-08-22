@@ -723,7 +723,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           # state checks
           "ledger_entries": int,
           "ledger_error": str,          # schema failure — renders loud
-          "ghost_items": [{"item": str, "why": str}],      # item has no corpus file
+          # one row per (item, finding), never per entry — "entries" is the multiplicity
+          "ghost_items": [{"item": str, "why": str, "entries": int}],  # item has no corpus file
           "missing_outputs": [{"item": str, "path": str}], # done output gone from disk
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
@@ -800,9 +801,14 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     else:
         entries = _int_at(surface, payload, "ledger_entries", default=0)
         lines.append(f"  ledger — {_plural(entries, 'entry', 'entries')}, schema valid")
-    lines.extend(_health_pairs(surface, payload, "ghost_items",
-                               "ledger entries naming items with no corpus file",
-                               ("item", "why"), lambda i, w: f"{i} ({w})"))
+    ghost = _health_rows(surface, payload, "ghost_items", ("item", "why"),
+                         int_keys=("entries",))
+    lines.append(_health_count("ledger items with no corpus file", len(ghost)))
+    lines.extend(
+        f"  {row['item']} — {row['entries']} "
+        f"{'entry' if row['entries'] == 1 else 'entries'} ({row['why']})"
+        for row in ghost[:_HEALTH_LIST_CAP]
+    )
     lines.extend(_health_pairs(surface, payload, "missing_outputs",
                                "done entries whose output file is gone from disk",
                                ("item", "path"), lambda i, p: f"{i} -> {p}"))

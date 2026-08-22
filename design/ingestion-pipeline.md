@@ -1002,7 +1002,9 @@ src/dex_engine/
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential
                  integrity (items with no corpus file — excluded-on-record
-                 told apart from vanished; done outputs missing on disk),
+                 told apart from renamed, whose URLs a live item still
+                 lists, and from unclaimed; one row per item and finding
+                 with its entry count; done outputs missing on disk),
                  waiting cohorts, pass records
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
