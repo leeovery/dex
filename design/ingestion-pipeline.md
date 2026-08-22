@@ -950,18 +950,23 @@ Authoring rules:
   are repaired with judgment — code declines what it can't do safely
   (hand-healed files with nonconforming names, frontmatter that doesn't
   parse) and says so, rather than guessing.
-- **Untranslatable ledger lines are QUARANTINED, never left in place**
-  (amended at phase-4 review): a line a migration cannot provably
-  translate moves verbatim to `state/enrichment-ledger.unmigrated.jsonl`,
-  named in the report with the concrete repair procedure: cross-check each
-  line against `state/exclusions.tsv` FIRST — a line referencing an
-  excluded item is a confirmed loss, closed out and never re-added; only
-  then review the remainder (re-add via
-  `enrich mark <url> <status> --reason …`, or accept the loss). The
-  main ledger must load clean after every migration — a skipped line that
+- **Untranslatable ledger lines are DROPPED, never left in place and never
+  parked for a human** (owner ruling): a migration is fully automated and
+  leaves no residue. A line a migration cannot translate is first attributed
+  as hard as the state allows — its own `item`, its recorded output path,
+  the enrichment tree on disk (outputs are `enrichment/<item>/<kind>-<hash
+  [:6]>.md`, so the file a unit produced names its owner), then the corpus
+  URLs — and only what survives all four is dropped, with a count and a
+  short capped list in the report naming what went and why. That is safe
+  because of what the ledger IS: the corpus is the source of truth and the
+  ledger is derived work state, so seeding re-raises anything that still
+  matters through the front door on the next run; and the pre-migration
+  ledger is committed in git history, so nothing is ever truly destroyed.
+  The main ledger must load clean after every migration — a line that
   poisons `ledger.load` also bricks `enrich mark`, the sanctioned repair
-  verb, leaving judgment with no working tool. Lint flags a non-empty
-  quarantine file at every health check.
+  verb, leaving judgment with no working tool. And parking these lines for
+  a human was never a real repair: `enrich mark` heals a unit, and a line
+  with no attributable item is exactly the unit it cannot create.
 
 Shipping migrations for this rewrite:
 1. **Renames + status vocabulary** — `tweet→x`, `blog→web` in corpus

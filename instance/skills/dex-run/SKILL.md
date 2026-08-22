@@ -65,10 +65,9 @@ Then do a run now, whatever the host.
    - **Review the sync report.** Any migration `skipped`/`anomalies` are
      repaired with judgment now, before other work builds on them — the
      code declined what it could not do safely and said so; do not ignore
-     it. If quarantined ledger lines exist
-     (`state/enrichment-ledger.unmigrated.jsonl`), run the quarantine
-     review procedure in `references/state-formats.md` (exclusions
-     cross-check first, `enrich mark` for keepers, then empty the file).
+     it. Dropped ledger lines are not repair work: a migration drops only
+     lines nothing on disk or in the corpus can own, the report names them,
+     and git history holds the pre-migration ledger.
    - **Commit the refreshed files and the pin** — this skill owns that
      commit step; sync itself never commits. Message: `sync: engine <tag>`
      (or `sync: machinery refresh` when unpinned).

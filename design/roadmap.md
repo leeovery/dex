@@ -55,8 +55,7 @@ state formats). This file holds what's *next*, not what is.
   spellings of Classification→Result); one enrichment-frontmatter module
   owning render+parse (writer in run.py, reader in transcribe.py); hoist
   the yt-dlp seam out of drivers.youtube so pipeline.transcribe stops
-  importing a driver; the quarantine filename constant spelled three
-  times; ledger.py's per-word legacy-vocabulary hint tables; registry's
+  importing a driver; ledger.py's per-word legacy-vocabulary hint tables; registry's
   module-level DRIVERS vs the zero-import-time-state rule; streaming
   transport reads (unbounded `response.read()` buffers whole enclosures —
   enforce the media cap in-stream); a per-item fetched-count cache

@@ -143,17 +143,6 @@ a malformed record impossible:
   the exact stored key for units recorded verbatim (bad seeds and every
   `via: media` line), so pass the URL as the ledger shows it and the heal
   lands on that entry.
-- `state/enrichment-ledger.unmigrated.jsonl` — the migration quarantine
-  (normally ABSENT/empty): ledger lines a migration could not provably
-  translate. Lint flags it non-empty. **The quarantine review procedure**
-  (the one home — the skills point here):
-  1. Cross-check each orphaned line against `state/exclusions.tsv` first —
-     a line referencing an excluded item is a confirmed loss: close it
-     out, never re-add it.
-  2. Review what remains with judgment; re-add what should live via
-     `bin/dex enrich mark <url> <status> --reason ...` (the sanctioned
-     correction verb — never hand-append JSONL).
-  3. Accept the rest as losses, then empty the file.
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never
   ran"; `rules` versions the harvest rules). Written by

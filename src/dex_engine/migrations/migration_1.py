@@ -16,8 +16,10 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   vocabulary by design. The old engine used ``error`` as an informal
   reason field on non-error statuses and once a ``note`` field; those
   values are ported into ``reason``, never destroyed. Old lines carry no
-  ``item``/``engine``: the item is recovered from the output path or by
-  hashing corpus URLs with the old engine's own canonicalization, and the
+  ``item``/``engine``: the item is recovered from the output path, from the
+  enrichment tree on disk (outputs are named ``<kind>-<hash[:6]>.md`` under
+  ``enrichment/<item>/``, so the file the unit produced names its owner), or
+  by hashing corpus URLs with the old engine's own canonicalization; the
   engine is stamped ``0.0.1`` — the only version the pre-rewrite engine
   ever shipped as, which is exactly what gives old ``error`` entries their
   retry-on-new-engine semantics;
@@ -25,15 +27,23 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   ``name_map`` key on the way — never applied by any engine version, and
   source-specific to the Discord/Space backfill.
 
-Everything not provably safe is skipped-with-why for the session to repair.
-An untranslatable ledger line is **quarantined**: moved verbatim to
-``state/enrichment-ledger.unmigrated.jsonl`` (nothing destroyed) and named
-in the report with the repair procedure — review each line, re-add it with
-``enrich mark <url> <status> --reason …`` (the sanctioned correction verb),
-or accept the loss. The main ledger then loads clean, so every verb —
-including the repair verb itself — keeps working. Re-running is safe at
-any point: renames and translations are no-ops on already-migrated state,
-the ledger rewrite is atomic, and quarantine appends dedupe verbatim.
+Files this migration cannot judge (a hand-healed corpus file, a config that
+does not fit the new schema) are skipped-with-why for the session to repair.
+A ledger line that still cannot be translated after all three attributions
+is **dropped**, counted and named in the report. Dropping is safe because of
+what the ledger is: the corpus is the source of truth and the ledger is
+derived work state — seeding builds work units from corpus items' URLs, so
+anything that still matters re-enters through the front door on the next
+run. And the pre-migration ledger is committed in git history, so nothing is
+destroyed either way. Leaving these lines somewhere for a human would be
+worse than useless: the sanctioned correction verb (``enrich mark``) needs a
+unit to heal, and a line with no attributable item is exactly the line it
+cannot create.
+
+The main ledger loads clean after this, so every verb keeps working.
+Re-running is safe at any point: renames and translations are no-ops on
+already-migrated state, the ledger rewrite is atomic, and a second apply
+finds nothing left to drop.
 """
 
 import contextlib
@@ -136,7 +146,7 @@ class RenamesAndVocabulary:
         skipped: list[Skipped] = []
         collisions = _rename_enrichment_files(root, actions, skipped)
         _rewrite_corpus(root, actions, skipped, collisions=collisions)
-        _rewrite_ledger(root, actions, skipped, collisions=collisions)
+        _rewrite_ledger(root, actions, collisions=collisions)
         _rename_config(root, actions, skipped)
         return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
 
@@ -300,18 +310,51 @@ def _corpus_owners(root: Path) -> dict[str, str]:
     return owners
 
 
+_OUTPUT_NAME = re.compile(r"^[a-z-]+-([0-9a-f]{6})\.md$")
+
+
+def _output_owners(root: Path) -> dict[str, str]:
+    """Map a unit hash's first six hex digits -> the item whose tree holds its output.
+
+    Enrichment outputs are named ``<kind>-<hash[:6]>.md`` under
+    ``enrichment/<item>/``, so a line that produced a file has its owner on
+    disk even when the line itself never recorded one. Called after the
+    ``tweet-*``/``blog-*`` rename, whose prefixes do not touch the hash.
+
+    A prefix landing under two items is dropped rather than guessed: six hex
+    digits collide eventually, and attributing a unit to the wrong item
+    writes the next rerun's output into the wrong tree.
+    """
+    owners: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    enrichment = root / "enrichment"
+    if not enrichment.is_dir():
+        return owners
+    for path in sorted(enrichment.glob("*/*.md")):
+        match = _OUTPUT_NAME.match(path.name)
+        if match is None:
+            continue
+        key = match.group(1)
+        if owners.setdefault(key, path.parent.name) != path.parent.name:
+            ambiguous.add(key)
+    for key in ambiguous:
+        del owners[key]
+    return owners
+
+
 # ---------------------------------------------------------------------------
 # Ledger translation
 # ---------------------------------------------------------------------------
 
 
-QUARANTINE_NAME = "enrichment-ledger.unmigrated.jsonl"
+# How many dropped lines the report names individually before it summarizes
+# the rest: enough to see what kind of thing went, short enough to read.
+_DROP_REPORT_CAP = 5
 
 
 def _rewrite_ledger(
     root: Path,
     actions: list[str],
-    skipped: list[Skipped],
     *,
     collisions: set[tuple[str, str]],
 ) -> None:
@@ -319,9 +362,10 @@ def _rewrite_ledger(
     if not path.exists():
         return
     owners = _corpus_owners(root)
+    outputs = _output_owners(root)
     original = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
-    quarantined: list[str] = []
+    dropped: list[str] = []
     # Note dedupe: superseded lines of one hash repeat the same translation
     # verbatim (a stray title survives every audit line), so identical notes
     # collapse to one, the multiplicity kept as a count — collapsed, never
@@ -337,19 +381,15 @@ def _rewrite_ledger(
         try:
             new_line = to_line(
                 _translate_record(
-                    _load_record(line), owners=owners, notes=line_notes, collisions=collisions
+                    _load_record(line),
+                    owners=owners,
+                    outputs=outputs,
+                    notes=line_notes,
+                    collisions=collisions,
                 )
             )
         except _UntranslatableError as e:
-            quarantined.append(line)
-            skipped.append(
-                Skipped(
-                    what=f"ledger line {lineno}",
-                    why=f"{e} — moved verbatim to state/{QUARANTINE_NAME}; review each "
-                    "line there and re-add it with `enrich mark <url> <status> "
-                    "--reason …`, or accept the loss",
-                )
-            )
+            dropped.append(f"line {lineno} {_identify(line)}: {e}")
             continue
         for note in line_notes:
             note_counts[note] = note_counts.get(note, 0) + 1
@@ -359,34 +399,43 @@ def _rewrite_ledger(
     actions.extend(
         note if count == 1 else f"{note} (x{count})" for note, count in note_counts.items()
     )
-    # Quarantine BEFORE the main rewrite: an interruption between the two
-    # writes must never lose a line. Worst case a line exists in both files;
-    # the re-run's verbatim dedupe keeps the quarantine stable while the
-    # atomic rewrite removes it from the main ledger.
-    _append_quarantine(path.with_name(QUARANTINE_NAME), quarantined)
     new_text = "".join(out_line + "\n" for out_line in out_lines)
     if new_text != original:
         atomic.write_text(path, new_text)
     if translated:
         actions.append(f"ledger: {translated} line(s) translated to the current schema")
-    if quarantined:
+    _report_dropped(dropped, actions)
+
+
+def _report_dropped(dropped: list[str], actions: list[str]) -> None:
+    """State what went and why — dropping silently is what makes it look like loss."""
+    if not dropped:
+        return
+    actions.append(
+        f"ledger: {len(dropped)} untranslatable line(s) dropped — corpus seeding "
+        "re-raises anything that still matters, and the pre-migration ledger "
+        "stays in git history"
+    )
+    actions.extend(f"ledger dropped {entry}" for entry in dropped[:_DROP_REPORT_CAP])
+    if len(dropped) > _DROP_REPORT_CAP:
         actions.append(
-            f"ledger: {len(quarantined)} line(s) quarantined to state/{QUARANTINE_NAME} — "
-            "the main ledger loads clean; repair from the skipped list"
+            f"ledger: … and {len(dropped) - _DROP_REPORT_CAP} further dropped line(s), "
+            "same treatment — read them in git history"
         )
 
 
-def _append_quarantine(path: Path, lines: list[str]) -> None:
-    """Append untranslatable lines verbatim, deduped against what is already there."""
-    if not lines:
-        return
-    existing = set(path.read_text(encoding="utf-8").split("\n")) if path.exists() else set()
-    fresh = [line for line in lines if line not in existing]
-    if not fresh:
-        return
-    with path.open("a", encoding="utf-8") as f:
-        for line in fresh:
-            f.write(line + "\n")
+def _identify(line: str) -> str:
+    """Name a dropped line the way a reader can find it again: hash and URL."""
+    try:
+        raw = json.loads(line)
+    except json.JSONDecodeError:
+        return repr(line[:120])
+    if not isinstance(raw, dict):
+        return repr(line[:120])
+    unit_hash = raw.get("hash")
+    url = raw.get("url")
+    named = " ".join(str(part) for part in (unit_hash, url) if isinstance(part, str))
+    return named or repr(line[:120])
 
 
 def _load_record(line: str) -> dict[str, object]:
@@ -408,6 +457,7 @@ def _translate_record(
     raw: dict[str, object],
     *,
     owners: dict[str, str],
+    outputs: dict[str, str],
     notes: list[str],
     collisions: set[tuple[str, str]],
 ) -> LedgerEntry:
@@ -427,7 +477,9 @@ def _translate_record(
         return LedgerEntry(
             hash=unit_hash,
             url=_expect_str(raw, "url"),
-            item=_translate_item(raw, raw_path=raw_path, unit_hash=unit_hash, owners=owners),
+            item=_translate_item(
+                raw, raw_path=raw_path, unit_hash=unit_hash, owners=owners, outputs=outputs
+            ),
             kind=_translate_kind(raw),
             format=None if "format" not in raw else _as_format(_expect_str(raw, "format")),
             status=status,
@@ -523,7 +575,12 @@ def _translate_path(
 
 
 def _translate_item(
-    raw: dict[str, object], *, raw_path: str | None, unit_hash: str, owners: dict[str, str]
+    raw: dict[str, object],
+    *,
+    raw_path: str | None,
+    unit_hash: str,
+    owners: dict[str, str],
+    outputs: dict[str, str],
 ) -> str:
     # The raw path attributes the item even when the path field itself is
     # dropped (outputs are done-only) — where the file landed is still
@@ -534,11 +591,13 @@ def _translate_item(
         parts = raw_path.split("/")
         if len(parts) >= 3 and parts[0] == "enrichment" and parts[1]:  # noqa: PLR2004 — enrichment/<item>/<file>
             return parts[1]
-    owner = owners.get(unit_hash)
+    # Same provenance, read off the tree instead of the line: an old line
+    # that recorded no path may still have left its output on disk.
+    owner = outputs.get(unit_hash[:6]) or owners.get(unit_hash)
     if owner is None:
         raise _UntranslatableError(
-            "no item attribution: the line has no item, no output path, and no corpus "
-            "item's URLs hash to it"
+            "no item attribution: the line has no item, no output path, no enrichment "
+            "file on disk carries its hash, and no corpus item's URLs hash to it"
         )
     return owner
 

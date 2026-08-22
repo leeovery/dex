@@ -189,9 +189,9 @@ def append_applied(
 
     The append is not atomic: a crash mid-write can tear the record. That
     window is accepted — a torn line fails :func:`read_applied` loudly with
-    the file and line named, and the repair is the same session-judgment
-    path as quarantined ledger lines: fix or delete the torn line,
-    re-run sync; idempotent migrations make a lost record harmless.
+    the file and line named, and the repair is one line of session judgment:
+    fix or delete the torn line, re-run sync; idempotent migrations make a
+    lost record harmless.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"number": number, "engine": engine, "date": date.isoformat()}
