@@ -45,10 +45,16 @@ HtmlExtract = Callable[[str], str | None]
 
 _WAYBACK_AVAILABLE = "https://archive.org/wayback/available?url="
 
-# The capture group stops at a line break as well as the quote: a wrapped
-# content attribute would otherwise yield a multi-line "URL".
+# The captured value runs from the opening quote to the closing one and may
+# not cross a line break: a wrapped content attribute has no og:image this
+# driver will vouch for. Capturing up to the break instead yielded the
+# truncated head of the URL ("https://cdn.example.test/"), which is a
+# perfectly well-formed request for a resource that does not exist — a
+# guaranteed junk fetch ledgered as a real media unit.
 _OG_IMAGE_RES = (
-    re.compile(r"<meta[^>]+(?:property|name)=[\"']og:image[\"'][^>]+content=[\"']([^\"'\r\n]+)"),
+    re.compile(
+        r"<meta[^>]+(?:property|name)=[\"']og:image[\"'][^>]+content=[\"']([^\"'\r\n]+)[\"']"
+    ),
     re.compile(
         r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:image[\"']"
     ),

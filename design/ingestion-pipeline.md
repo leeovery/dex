@@ -571,7 +571,12 @@ what a driver hands it verbatim, so a value that could never be a request —
 a non-http(s) scheme, no host, whitespace or control characters (a
 page-relative `og:image` was the wild case) — parks `manual` as its own
 media unit with the refusal stated, and never enters the queue. Drivers
-absolutize and screen the URLs they emit; the stage assumes nothing.
+absolutize and screen the URLs they emit; the stage assumes nothing. A
+driver that cannot read a media URL **whole** emits nothing for it rather
+than a repaired guess: a line-wrapped `og:image` content attribute yields
+no media at all, because the truncated head of it (`https://cdn.example.test/`)
+is a well-formed request for a resource that does not exist — a guaranteed
+junk fetch ledgered as a real media unit.
 Downloads run through the same per-unit protection as every other unit
 (§5): a media failure is charged to the media unit, never to the page whose
 markup named it. **The `N` in `media-N.ext` is the unit's position among the

@@ -133,14 +133,18 @@ class TestSuccessfulFetch:
     def test_non_http_og_image_is_not_media(self):
         assert self.og_image_media("data:image/png;base64,iVBOR") == []
 
-    def test_wrapped_content_attribute_never_yields_a_multi_line_url(self):
+    def test_a_wrapped_content_attribute_yields_no_media_at_all(self):
+        # Truncating at the line break left "https://cdn.example.test/" — a
+        # well-formed request for a resource that does not exist, ledgered
+        # as a media unit and fetched for nothing. A URL this driver cannot
+        # read whole is not a URL it hands on.
         html = (
             '<html><head><meta property="og:image" content="https://cdn.example.test/\n'
             'hero.png"></head><body>body</body></html>'
         )
-        media = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB)).media
-        assert media == ["https://cdn.example.test/"]
-        assert all("\n" not in url for url in media)
+        result = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
+        assert result.status is Status.DONE  # the page still enriches
+        assert result.media == []
 
     def test_200_but_thin_is_manual_never_dead(self):
         # Learned from the 2026-08-20 overnight runs: JS shells were ledgered
