@@ -290,7 +290,9 @@ class TestSeedAndDone:
         run_mod.run(ctx)
         content = (instance.root / entry_for(ctx).path).read_text()
         assert 'title: "Ledgers: a Field Report"' in content
-        assert content.startswith(f"---\nurl: {URL}\nfetched: 2026-08-20\n")
+        # The url line is a value like any other — a work key can carry a
+        # colon-space (`file:media/plan: v2.pdf`) and unparse the block.
+        assert content.startswith(f'---\nurl: "{URL}"\nfetched: 2026-08-20\n')
 
 
 class TestFrontmatterRefresh:
@@ -1123,17 +1125,23 @@ class TestVerbs:
         assert entry.depth == 1
         assert "1 unit processed" in report
 
-    def test_fetch_urls_refuses_to_steal_another_items_unit(self, instance):
+    def test_fetch_urls_reports_a_cross_item_url_and_the_batch_continues(self, instance):
+        # One URL enriches under one item — but raising aborted the batch
+        # mid-flight, losing the report for URLs already ledgered.
         write_item(instance, "2026-08-19-first-aaaaaa", urls=[URL])
         write_item(instance, "2026-08-19-second-bbbbbb", urls=["https://example.test/other"])
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
-        with pytest.raises(ValueError, match="2026-08-19-first-aaaaaa"):
-            run_mod.fetch_urls(ctx, "2026-08-19-second-bbbbbb", [URL])
+        good = "https://example.test/docs"
+        report = run_mod.fetch_urls(ctx, "2026-08-19-second-bbbbbb", [URL, good])
+        flat = " ".join(report.split())
+        assert "already enriches under item 2026-08-19-first-aaaaaa" in flat
         # The unit stayed with its owner, provenance intact:
-        entry = ledger.load(instance.ledger_path)[work_hash(URL)]
-        assert entry.item == "2026-08-19-first-aaaaaa"
-        assert entry.status is Status.DONE
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].item == "2026-08-19-first-aaaaaa"
+        assert entries[work_hash(URL)].status is Status.DONE
+        assert entries[work_hash(good)].item == "2026-08-19-second-bbbbbb"
+        assert entries[work_hash(good)].status is Status.DONE  # the batch continued
 
     def test_fetch_urls_on_the_items_own_unit_is_a_rerun_in_place(self, instance):
         write_item(instance)
@@ -1198,6 +1206,31 @@ class TestVerbs:
         # The cap fire stayed in the audit trail:
         lines = instance.ledger_path.read_text().split("\n")
         assert any("exceeded by --force" in line for line in lines)
+
+    def test_a_capped_fetch_refusal_is_surfaced_with_its_force_route(self, instance):
+        # An owner-requested refusal IS surfaced — a bare "skipped 1" leaves
+        # the --force affordance unreachable.
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        extra = "https://example.test/extra"
+        report = run_mod.fetch_urls(ctx, ITEM, [extra])
+        flat = " ".join(report.split())
+        assert extra in flat
+        assert "url cap (12 per item) reached — rerun with --force to exceed" in flat
+
+    def test_repeat_capped_refusals_do_not_append_identical_lines(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        extra = "https://example.test/extra"
+        run_mod.fetch_urls(ctx, ITEM, [extra])
+        before = instance.ledger_path.read_text()
+        report = run_mod.fetch_urls(ctx, ITEM, [extra])  # refused again
+        assert instance.ledger_path.read_text() == before  # nothing new to say
+        assert "--force" in " ".join(report.split())  # still answered
 
     def test_cap_markers_are_recognized_by_the_flag_not_the_wording(self, instance):
         urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
@@ -1978,6 +2011,25 @@ class TestYamlValue:
 
     def test_ints_are_emitted_bare(self):
         assert _yaml_value(42) == "42"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "file:media/plan: v2.pdf",  # wild filenames are space-rich
+            "file:media/2026-08-21/notes: draft.docx",
+            "https://example.test/post",
+        ],
+    )
+    def test_the_url_line_is_a_value_like_any_other(self, url, tmp_path):
+        # A work key carrying a colon-space made the whole block unparseable
+        # — and the url line is the one field that used to bypass quoting.
+        text = _render_enrichment(url, TODAY, {"title": "t"}, "body")
+        record = tmp_path / "file-abc123.md"
+        record.write_text(text)
+        head = text[4:].partition("\n---\n")[0]
+        assert yaml.safe_load(head)["url"] == url
+        fields, _ = read_enrichment(record)
+        assert fields["url"] == url  # and the engine's own reader round-trips it
 
     def test_tabbed_value_leaves_the_block_parseable_by_a_real_yaml_reader(self, tmp_path):
         value = "col1\tcol2"

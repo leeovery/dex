@@ -657,7 +657,13 @@ URLs into an existing item, ledgered as child entries. Semantics: `parent`
 defaults to the item's primary work unit (override with `--parent <hash>`),
 `depth` = parent's depth + 1, and fetches count against the item's 12-URL
 cap; `--force` may exceed the cap for an owner-requested deepen (the cap
-fire is still recorded). This is also how Claude deepens any item on
+fire is still recorded). **One bad URL never aborts the batch**: an
+uncanonicalizable URL parks as a bad seed, a URL already enriching under
+another item is reported (one URL enriches under one item — the batch
+continues without it), and a capped refusal is reported with the `--force`
+route it names — the owner asked, so every refusal comes back as an answer
+on the report, and the rest of the batch still fetches. This is also how
+Claude deepens any item on
 request, and it absorbs the former "site driver" idea: a thin landing page
 whose substance is on /pricing and /docs is the subject rule applied to the
 site's own pages.
@@ -925,7 +931,10 @@ src/dex_engine/
                  capture, body = the note verbatim. Corpus-item creation
                  was always mechanical work — the only judgment is the
                  scope check before it. Handles both id paths: url-hash
-                 and materialized-media directory)
+                 and materialized-media directory; a capture still
+                 carrying `asset:`/`name:` frontmatter is refused loudly —
+                 `dex inbox` has not run, and creating a text item would
+                 drop the binary's provenance silently)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, waiting cohorts, pass records

@@ -138,6 +138,7 @@ def _unfetchable_media(url: str) -> str | None:
         return "the URL contains whitespace or control characters"
     return None
 
+
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
@@ -1491,10 +1492,14 @@ def _admit_fetch(
     existing = drain.entries.get(unit_hash)
     if existing is not None:
         if existing.item != item_id:
-            raise ValueError(
-                f"{canonical} already enriches under item {existing.item!r} — one URL "
-                f"enriches under one item; it cannot be fetched into {item_id!r}"
+            # One URL enriches under one item — but refusing the BATCH would
+            # abort the URLs already ledgered ahead of this one and swallow
+            # the report with them. The refusal is reported; the rest fetch.
+            drain.notes.append(
+                f"{canonical} already enriches under item {existing.item} — one URL "
+                f"enriches under one item; not fetched into {item_id}"
             )
+            return None
         if _is_cap_refusal(existing):
             # A cap-refusal marker is not an admitted unit: it falls through
             # to the cap logic below, so a repeat fetch without --force is
@@ -1512,24 +1517,31 @@ def _admit_fetch(
             if force
             else f"url cap ({MAX_URLS_PER_ITEM} per item) reached — rerun with --force to exceed"
         )
-        drain.record(
-            LedgerEntry(
-                hash=unit_hash,
-                url=canonical,
-                item=item_id,
-                kind=detect_kind(url, drain.ctx.drivers),
-                status=Status.SKIPPED,
-                capped=True,
-                engine="seed",
-                date=datetime.date.min,
-                via="harvest",
-                parent=parent.hash,
-                depth=depth,
-                reason=reason,
-            ),
-            count=not force,
-        )
+        repeat = existing is not None and _is_cap_refusal(existing) and existing.reason == reason
+        if not repeat:
+            # A refusal that says byte-for-byte what the last one said adds
+            # nothing to the audit trail.
+            drain.record(
+                LedgerEntry(
+                    hash=unit_hash,
+                    url=canonical,
+                    item=item_id,
+                    kind=detect_kind(url, drain.ctx.drivers),
+                    status=Status.SKIPPED,
+                    capped=True,
+                    engine="seed",
+                    date=datetime.date.min,
+                    via="harvest",
+                    parent=parent.hash,
+                    depth=depth,
+                    reason=reason,
+                ),
+                count=not force,
+            )
         if not force:
+            # An owner-requested refusal IS surfaced: the owner asked, and a
+            # bare "skipped 1" leaves the --force route unreachable.
+            drain.notes.append(f"not fetched — {canonical}: {reason}")
             return None
     try:
         detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
@@ -1804,7 +1816,7 @@ _YAML_TIMESTAMP_RE = re.compile(
 def _render_enrichment(
     url: str, fetched: datetime.date, meta: dict[str, str | int | None], body: str
 ) -> str:
-    lines = ["---", f"url: {url}", f"fetched: {fetched.isoformat()}"]
+    lines = ["---", f"url: {_yaml_value(url)}", f"fetched: {fetched.isoformat()}"]
     for key, value in meta.items():
         if value is None or value == "":
             continue

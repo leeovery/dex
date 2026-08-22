@@ -111,9 +111,10 @@ this file — they propose changes in the run report.
 
 ## `.env` — local secrets, gitignored
 
-`KEY=VALUE` lines at the instance root (`#` comments skipped). The enrich
-CLI folds it into the environment on every command, real environment
-variables winning — so `OPENAI_API_KEY=…` here is how whisper-api gets its
+`KEY=VALUE` lines at the instance root (`#` comments skipped; one layer of
+surrounding quotes stripped, so `KEY="sk-…"` and `KEY=sk-…` mean the same
+thing). The enrich CLI folds it into the environment on every command, real
+environment variables winning — so `OPENAI_API_KEY=…` here is how whisper-api gets its
 key on this machine without the secret ever being committed. Config stays
 for non-secrets (base_url, model names).
 
