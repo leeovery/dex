@@ -1,13 +1,14 @@
 """Tests for drivers/github.py: URL-shape routing and classified gh failures."""
 
+import base64
+import json
 from collections.abc import Sequence
 
 import pytest
 
 from dex_engine.drivers.github import GhResult, GitHubDriver
-from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.types import Kind, Status
-from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
+from tests.drivers.conftest import body_of, fixture_text, make_unit, reason_of
 
 
 class FakeGh:
@@ -33,8 +34,15 @@ def fail(stderr: str) -> GhResult:
     return GhResult(returncode=1, stdout="", stderr=stderr)
 
 
-def driver_for(gh_responses: dict | None = None, transport: dict | None = None) -> GitHubDriver:
-    return GitHubDriver(gh=FakeGh(gh_responses or {}), transport=FakeTransport(transport or {}))
+def driver_for(gh_responses: dict | None = None) -> GitHubDriver:
+    return GitHubDriver(gh=FakeGh(gh_responses or {}))
+
+
+def contents(data: bytes) -> GhResult:
+    """The contents-API payload shape: base64 `content` plus its encoding."""
+    return ok(
+        json.dumps({"encoding": "base64", "content": base64.b64encode(data).decode("ascii")})
+    )
 
 
 README_ARGS = (
@@ -200,28 +208,45 @@ class TestIssue:
         gh = FakeGh(
             {("api", "repos/acme/pipeline-kit/issues/7"): ok(fixture_text("github", "issue.json"))}
         )
-        driver = GitHubDriver(gh=gh, transport=FakeTransport({}))
+        driver = GitHubDriver(gh=gh)
         url = "https://github.com/acme/pipeline-kit/pull/7"
         assert driver.fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
 
 
 class TestBlob:
-    RAW = "https://raw.githubusercontent.com/acme/pipeline-kit/main/src/detect.py"
+    URL = "https://github.com/acme/pipeline-kit/blob/main/src/detect.py"
+    CONTENTS = ("api", "repos/acme/pipeline-kit/contents/src/detect.py?ref=main")
 
-    def test_blob_fetches_raw_and_fences(self):
-        content = HttpResponse(status=200, content_type="text/plain", body=b"def detect(): ...")
-        driver = driver_for(transport={self.RAW: content})
-        url = "https://github.com/acme/pipeline-kit/blob/main/src/detect.py"
-        result = driver.fetch(make_unit(url, Kind.GITHUB))
+    def test_blob_fetches_through_the_authenticated_gh_seam_and_fences(self):
+        # raw.githubusercontent.com is unauthenticated: it 404s for every
+        # private-repo blob however the machine is signed in, and that 404
+        # classified live content as dead. gh carries the auth.
+        driver = driver_for({self.CONTENTS: contents(b"def detect(): ...")})
+        result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
         assert result.status is Status.DONE
         assert result.meta["file"] == "src/detect.py"
         assert body_of(result) == "```\ndef detect(): ...\n```"
 
-    def test_blob_404_is_dead(self):
-        gone = HttpResponse(status=404, content_type="text/plain", body=b"")
-        driver = driver_for(transport={self.RAW: gone})
-        url = "https://github.com/acme/pipeline-kit/blob/main/src/detect.py"
-        assert driver.fetch(make_unit(url, Kind.GITHUB)).status is Status.DEAD
+    @pytest.mark.parametrize("spelling", ["a b.md", "a%20b.md"])
+    def test_blob_path_reaches_the_api_encoded_exactly_once(self, spelling):
+        args = ("api", "repos/acme/pipeline-kit/contents/docs/a%20b.md?ref=main")
+        gh = FakeGh({args: contents(b"hello")})
+        url = f"https://github.com/acme/pipeline-kit/blob/main/docs/{spelling}"
+        assert GitHubDriver(gh=gh).fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+
+    def test_missing_path_is_dead_through_the_gh_404(self):
+        driver = driver_for({self.CONTENTS: fail("gh: Not Found (HTTP 404)")})
+        assert driver.fetch(make_unit(self.URL, Kind.GITHUB)).status is Status.DEAD
+
+    def test_oversize_blob_parks_manual_never_dead(self):
+        # Over 1MB the contents API answers `encoding: "none"` with an empty
+        # body — the file is there, just not inline.
+        driver = driver_for(
+            {self.CONTENTS: ok(json.dumps({"encoding": "none", "content": "", "size": 4645520}))}
+        )
+        result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
+        assert result.status is Status.MANUAL
+        assert "larger than the contents API serves inline" in reason_of(result)
 
 
 class TestEdges:

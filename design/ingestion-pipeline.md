@@ -249,7 +249,7 @@ vocabulary only and never become work units:
 |---|---|---|
 | `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
-| `github` | ✓ | repos / profiles / gists / issues / blobs |
+| `github` | ✓ | repos / profiles / gists / issues / blobs. Every route goes through the authenticated `gh` CLI, blobs included — `raw.githubusercontent.com` is unauthenticated, so it 404s every private-repo blob however the machine is signed in, and that 404 classified live content `dead`. A blob too large for the contents API to serve inline parks `manual`, never `dead` |
 | `paper` | ✓ | arxiv / openreview / hf-papers |
 | `podcast` | ✓ | new — Apple/Spotify/RSS episode links (§9) |
 | `web` | ✓ | renamed from `blog`; registry catch-all, always last |

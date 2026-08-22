@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import urllib_transport
 from dex_engine.drivers.x import XDriver
@@ -36,6 +37,20 @@ class TestArxivShape:
         assert result.status is Status.DONE
         assert "Attention" in str(result.meta["title"])
         assert "## Abstract" in body_of(result)
+
+
+class TestGitHubContentsShape:
+    BLOB = "https://github.com/octocat/Hello-World/blob/master/"
+
+    def test_a_public_blob_still_arrives_base64_through_gh(self):
+        # octocat/Hello-World's README, stable since 2011.
+        result = GitHubDriver().fetch(make_unit(self.BLOB + "README", Kind.GITHUB))
+        assert result.status is Status.DONE
+        assert "Hello World!" in body_of(result)
+
+    def test_a_path_that_does_not_exist_is_still_a_gh_404(self):
+        result = GitHubDriver().fetch(make_unit(self.BLOB + "no-such-file.txt", Kind.GITHUB))
+        assert result.status is Status.DEAD
 
 
 class TestWaybackShape:

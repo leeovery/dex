@@ -8,6 +8,8 @@ through the central classifier; anything without a visible code is
 ``blocked``, never silently terminal.
 """
 
+import base64
+import binascii
 import json
 import re
 import subprocess
@@ -17,19 +19,15 @@ from dataclasses import dataclass
 
 from dex_engine.pipeline.classify import (
     Classification,
-    classify_connection,
     classify_http,
     scrub,
 )
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
-from .transport import Transport, urllib_transport
-
 __all__ = ["GhResult", "GitHubDriver", "run_gh"]
 
 _HOSTS = frozenset({"github.com", "gist.github.com"})
-_RAW_HOST = "https://raw.githubusercontent.com"
 
 _GH_HTTP_RE = re.compile(r"HTTP (\d{3})")
 _GH_TIMEOUT = 120.0
@@ -85,20 +83,13 @@ class GitHubDriver:
     kind: Kind = Kind.GITHUB
     sleep: float = 0.3
 
-    def __init__(
-        self,
-        *,
-        gh: Callable[[Sequence[str]], GhResult] = run_gh,
-        transport: Transport = urllib_transport,
-    ) -> None:
-        """Wire the gh-CLI and raw-file HTTP seams.
+    def __init__(self, *, gh: Callable[[Sequence[str]], GhResult] = run_gh) -> None:
+        """Wire the gh-CLI seam.
 
         Args:
             gh: Runs a ``gh`` invocation; injected so tests are hermetic.
-            transport: The HTTP seam for raw blob fetches.
         """
         self._gh = gh
-        self._transport = transport
 
     def matches(self, url: str) -> bool:
         """True for github.com and gist.github.com."""
@@ -162,16 +153,28 @@ class GitHubDriver:
         return Result(status=Status.DONE, meta=meta, body=body)
 
     def _fetch_blob(self, owner: str, repo: str, tail: list[str]) -> Result:
-        file_path = "/".join(tail[1:])  # tail[0] is the ref
-        raw_url = f"{_RAW_HOST}/{owner}/{repo}/{'/'.join(tail)}"
-        try:
-            response = self._transport(raw_url)
-        except OSError as e:
-            return _classified(classify_connection(e))
-        if not response.ok:
-            return _classified(classify_http(response.status))
-        body = f"```\n{response.text()[:_MAX_BLOB_CHARS]}\n```"
-        return Result(status=Status.DONE, meta={"file": file_path}, body=body)
+        ref, file_path = tail[0], "/".join(tail[1:])
+        payload = self._api(
+            f"repos/{owner}/{repo}/contents/{_requote(file_path, safe='/')}"
+            f"?ref={_requote(ref, safe='')}"
+        )
+        if isinstance(payload, Classification):
+            return _classified(payload)
+        data = _blob_bytes(payload)
+        meta: dict[str, str | int | None] = {"file": file_path}
+        if data is None:
+            # Over 1MB the contents API serves `encoding: "none"` and an
+            # empty body — the file exists, we just cannot read it here.
+            return Result(
+                status=Status.MANUAL,
+                meta=meta,
+                reason=(
+                    f"{file_path} is larger than the contents API serves inline — "
+                    "read it from a clone"
+                ),
+            )
+        body = f"```\n{data.decode('utf-8', 'replace')[:_MAX_BLOB_CHARS]}\n```"
+        return Result(status=Status.DONE, meta=meta, body=body)
 
     def _fetch_issue(self, owner: str, repo: str, number: str) -> Result:
         payload = self._api(f"repos/{owner}/{repo}/issues/{number}")
@@ -232,6 +235,21 @@ class GitHubDriver:
         except json.JSONDecodeError:
             return []
         return payload if isinstance(payload, list) else []
+
+
+def _requote(value: str, *, safe: str) -> str:
+    """Encode a URL piece for the API endpoint without double-encoding it."""
+    return urllib.parse.quote(urllib.parse.unquote(value), safe=safe)
+
+
+def _blob_bytes(payload: dict) -> bytes | None:
+    """The blob's bytes, or None when the API served no inline content."""
+    if payload.get("encoding") != "base64":
+        return None
+    try:
+        return base64.b64decode(payload.get("content") or "", validate=False)
+    except (binascii.Error, ValueError):
+        return None
 
 
 def _gist_id(segments: list[str]) -> str | None:
