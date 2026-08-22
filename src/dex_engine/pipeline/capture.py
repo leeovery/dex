@@ -128,7 +128,8 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient
         A one-line confirmation naming the created file.
 
     Raises:
-        ValueError: The capture is unreadable, its media pointer is not a
+        ValueError: The capture is unreadable, still carries a staged
+            asset (``dex inbox`` has not run), its media pointer is not a
             ``dex inbox`` path, or the item already exists.
         OSError: The capture file cannot be read.
     """
@@ -137,6 +138,15 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient
     # are the same URL and must land in the frontmatter once.
     urls = list(dict.fromkeys(url.rstrip(".,") for url in _URL_RE.findall(body)))
     media = frontmatter.get("media")
+    staged = [key for key in ("asset", "name") if key in frontmatter]
+    if media is None and staged:
+        # The binary is still on the staging release: creating a text item
+        # here would drop the reference silently and lose the provenance.
+        raise ValueError(
+            f"{capture_path.name}: capture still carries a staged asset "
+            f"({', '.join(staged)}) — run `dex inbox` first (it downloads the "
+            "asset, files it under media/<id>/<name>, and rewrites the pointer)"
+        )
     kinds: list[str]
     media_list: list[str] = []
     if media is not None:

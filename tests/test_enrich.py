@@ -176,3 +176,33 @@ class TestLoadEnv:
     def test_missing_dotenv_is_a_noop(self, instance: Instance):
         _load_env(instance.root)
         assert "OPENAI_API_KEY" not in os.environ
+
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_surrounding_quotes_are_stripped(self, instance: Instance, quote: str):
+        # A shell-shaped .env is the wild shape; a literal quote in the key
+        # 401s every call with a baffling waiting reason.
+        (instance.root / ".env").write_text(f"OPENAI_API_KEY={quote}sk-quoted{quote}\n")
+        _load_env(instance.root)
+        assert os.environ["OPENAI_API_KEY"] == "sk-quoted"
+        api = WhisperApi(which=lambda _name: "/usr/bin/ffmpeg")
+        assert api.available().ok
+
+    def test_an_unreadable_dotenv_exits_with_a_stated_line(
+        self, instance: Instance, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(instance.root)
+        (instance.root / ".env").write_bytes(b"OPENAI_API_KEY=\xff\xfe\n")
+        with pytest.raises(SystemExit) as excinfo:
+            main(["status"])
+        assert str(excinfo.value).startswith("dex-enrich:")
+        capsys.readouterr()
+
+    def test_a_dotenv_directory_exits_with_a_stated_line(
+        self, instance: Instance, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(instance.root)
+        (instance.root / ".env").mkdir()
+        with pytest.raises(SystemExit) as excinfo:
+            main(["status"])
+        assert str(excinfo.value).startswith("dex-enrich:")
+        capsys.readouterr()

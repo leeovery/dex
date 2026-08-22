@@ -111,9 +111,25 @@ detection module — bytes decide, never content-type alone) and returns
 `Result(status: queued, redetect: Redetection(kind, format))`, identity
 only, the one sanctioned queued-from-a-driver shape. The run layer appends
 a **superseding line for the same hash** — corrected kind, `via: "sniff"`
-— last-per-hash relabels the unit in place, requeues it in-run, and any
-prior kind's output file is unlinked (the correction supersedes disk; the
-ledger keeps the history). Works in both directions (web→file,
+— last-per-hash relabels the unit in place and requeues it in-run. Any
+prior kind's output file is unlinked **when the corrected unit lands one of
+its own**, never at correction time: a corrected fetch that parks must
+leave the item exactly as enriched as it found it (unlinking first stripped
+an item back to `raw` with its digest orphaned and nothing left to
+re-derive from). The ledger keeps the history either way. **A hand-written
+output closed with `enrich mark <url> done --path …` counts as one of the
+unit's own** and drops the superseded file exactly as a drained one does —
+that is the prescribed route out of a correction whose corrected fetch
+parks (a scanned PDF, no extractor), and without it the stale
+pre-correction view of the item was served to the digest and query layers
+permanently. **The file dropped is named, never pattern-matched**: a
+candidate is `<kind>-<hash6>.md` for one of the closed set of kinds, and it
+must record this unit's `url:` to be dropped at all. `hash6` is six hex
+digits, so two units under one item do collide (a real `web-6968e3.md` /
+`file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
+the neighbour's enrichment while its ledger line still read `done`. Nothing
+is dropped for a replacement that is not itself on disk. Works in both
+directions (web→file,
 file→web). Loop guard is per-run state: one correction per hash per run,
 then `manual` "re-detection loop"; across runs a unit may redetect again —
 the world changes.
@@ -410,7 +426,11 @@ independently is seven chances to reintroduce it):
   audio, unparseable file); the run loop maps it → `manual`, anything
   uncaught → `error`. Classification judgment lives in one place.
 - Exactly **one** `except Exception` in the whole pipeline: the per-unit
-  loop in `run.py` (→ `error` + issue filing). Drivers and providers never
+  loop in `run.py` (→ `error` + issue filing). **Every** dispatch route runs
+  inside it — driver fetch, transcribe drain, and media download alike,
+  the media stage's own first download included — so no unit's failure can
+  escape the drain or be charged to another unit's line.
+  Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
   keep their cause. The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
@@ -546,6 +566,34 @@ rules), oversize `skipped` with reason. Media downloads do **not** count
 toward the item's 12-URL cap (that cap bounds fetched pages). The old
 silent `except: pass` dies here.
 
+**Media URLs are validated before they are ledgered.** The stage fetches
+what a driver hands it verbatim, so a value that could never be a request —
+a non-http(s) scheme, no host, whitespace or control characters (a
+page-relative `og:image` was the wild case) — parks `manual` as its own
+media unit with the refusal stated, and never enters the queue. Drivers
+absolutize and screen the URLs they emit; the stage assumes nothing. A
+driver that cannot read a media URL **whole** emits nothing for it rather
+than a repaired guess: a line-wrapped `og:image` content attribute yields
+no media at all, because the truncated head of it (`https://cdn.example.test/`)
+is a well-formed request for a resource that does not exist — a guaranteed
+junk fetch ledgered as a real media unit.
+Downloads run through the same per-unit protection as every other unit
+(§5): a media failure is charged to the media unit, never to the page whose
+markup named it. **The `N` in `media-N.ext` is the unit's position among the
+item's media units in ledger order**, not the next free index on disk — a
+crash between the file write and the outcome line is overwritten by the
+redrain, never duplicated beside. **`N` names the file; it never decides
+the cap.** The cap counts media-family files that exist, so a unit's
+parked, dead or skipped siblings spend none of it and an `N` past the cap
+is ordinary: a thread pooling six photos whose first two 404 still lands
+four files, at `media-2` through `media-5`. Counting positions instead
+recorded a terminal `skipped — media cap (4 files) reached` on units no
+file had displaced, losing them permanently under a reason that was false.
+**`media-N.md` is not a media file**: it is the session's written
+description of a media capture, counted by neither the cap nor
+the "this slot already holds my own file" check — reading it as either put
+a download beyond the cap and beside a description of something else.
+
 ## 8. X driver (renamed from tweet)
 
 - **A post's identity is its status id.** Every share shape — the username
@@ -636,7 +684,13 @@ URLs into an existing item, ledgered as child entries. Semantics: `parent`
 defaults to the item's primary work unit (override with `--parent <hash>`),
 `depth` = parent's depth + 1, and fetches count against the item's 12-URL
 cap; `--force` may exceed the cap for an owner-requested deepen (the cap
-fire is still recorded). This is also how Claude deepens any item on
+fire is still recorded). **One bad URL never aborts the batch**: an
+uncanonicalizable URL parks as a bad seed, a URL already enriching under
+another item is reported (one URL enriches under one item — the batch
+continues without it), and a capped refusal is reported with the `--force`
+route it names — the owner asked, so every refusal comes back as an answer
+on the report, and the rest of the batch still fetches. This is also how
+Claude deepens any item on
 request, and it absorbs the former "site driver" idea: a thin landing page
 whose substance is on /pricing and /docs is the subject rule applied to the
 site's own pages.
@@ -904,7 +958,10 @@ src/dex_engine/
                  capture, body = the note verbatim. Corpus-item creation
                  was always mechanical work — the only judgment is the
                  scope check before it. Handles both id paths: url-hash
-                 and materialized-media directory)
+                 and materialized-media directory; a capture still
+                 carrying `asset:`/`name:` frontmatter is refused loudly —
+                 `dex inbox` has not run, and creating a text item would
+                 drop the binary's provenance silently)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, waiting cohorts, pass records

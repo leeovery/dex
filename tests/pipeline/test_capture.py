@@ -166,6 +166,26 @@ class TestMediaPath:
         with pytest.raises(ValueError, match="dex inbox"):
             new(instance, path)
 
+    def test_a_still_staged_asset_is_refused_never_silently_dropped(self, instance):
+        # asset:/name: frontmatter means `dex inbox` has not run yet.
+        # Creating a text item here loses the binary's provenance at exit 0.
+        path = write_capture(
+            instance,
+            "20260818-101530.md",
+            "---\nasset: https://api.github.com/repos/o/r/releases/assets/123\n"
+            "name: 20260818-101530.jpg\n---\n\nnote\n",
+        )
+        with pytest.raises(ValueError, match="staged asset"):
+            new(instance, path)
+        assert not list(instance.corpus_dir.glob("*/*.md"))
+
+    def test_a_name_only_pointer_is_refused_too(self, instance):
+        path = write_capture(
+            instance, "20260818-101530.md", "---\nname: 20260818-101530.jpg\n---\n\nnote\n"
+        )
+        with pytest.raises(ValueError, match="dex inbox"):
+            new(instance, path)
+
 
 class TestGuards:
     def test_existing_item_is_refused(self, instance):

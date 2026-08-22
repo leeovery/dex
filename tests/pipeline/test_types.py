@@ -342,6 +342,13 @@ class TestLedgerEntryInvariants:
         with pytest.raises(ValueError, match="item"):
             entry(item="")
 
+    @pytest.mark.parametrize("bad", ["https://example.test/a\nb", "https://example.test/a\rb"])
+    def test_url_must_be_a_single_line(self, bad):
+        # A multi-line work key would brick the single-line item-status
+        # surface; every legitimate writer produces one line.
+        with pytest.raises(ValueError, match="single line"):
+            entry(url=bad)
+
     def test_attempts_must_not_be_a_boolean(self):
         # attempts=True would serialize as JSON `true` — a line the boundary
         # itself refuses to re-parse.
