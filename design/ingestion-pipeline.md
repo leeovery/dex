@@ -116,8 +116,20 @@ prior kind's output file is unlinked **when the corrected unit lands one of
 its own**, never at correction time: a corrected fetch that parks must
 leave the item exactly as enriched as it found it (unlinking first stripped
 an item back to `raw` with its digest orphaned and nothing left to
-re-derive from). The ledger keeps the history either
-way. Works in both directions (web→file,
+re-derive from). The ledger keeps the history either way. **A hand-written
+output closed with `enrich mark <url> done --path …` counts as one of the
+unit's own** and drops the superseded file exactly as a drained one does —
+that is the prescribed route out of a correction whose corrected fetch
+parks (a scanned PDF, no extractor), and without it the stale
+pre-correction view of the item was served to the digest and query layers
+permanently. **The file dropped is named, never pattern-matched**: a
+candidate is `<kind>-<hash6>.md` for one of the closed set of kinds, and it
+must record this unit's `url:` to be dropped at all. `hash6` is six hex
+digits, so two units under one item do collide (a real `web-6968e3.md` /
+`file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
+the neighbour's enrichment while its ledger line still read `done`. Nothing
+is dropped for a replacement that is not itself on disk. Works in both
+directions (web→file,
 file→web). Loop guard is per-run state: one correction per hash per run,
 then `manual` "re-detection loop"; across runs a unit may redetect again —
 the world changes.

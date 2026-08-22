@@ -1891,6 +1891,86 @@ class TestRedetection:
         assert not web_out.exists()
         assert corpus.read_item(item_path).enrichment == [f"file-{done.hash[:6]}.md"]
 
+    # These two URLs share a sha1[:6] (6f0d01) and detect as different
+    # kinds, so under one item they want output names that differ only by
+    # the kind prefix — the shape a name-pattern drop cannot tell apart.
+    COLLIDING_WEB = "https://example.test/post-26969"
+    COLLIDING_PDF = "https://example.test/doc-2.pdf"
+
+    def test_a_hash6_collision_never_drops_the_neighbours_output(self, instance):
+        assert work_hash(self.COLLIDING_WEB)[:6] == work_hash(self.COLLIDING_PDF)[:6]
+        article = fixture_text("web", "article.html")
+        transport = FakeTransport(
+            {
+                self.COLLIDING_WEB: HttpResponse(
+                    status=200, content_type="text/html", body=article.encode()
+                ),
+                self.COLLIDING_PDF: HttpResponse(
+                    status=200, content_type="application/pdf", body=fixture_bytes("paper.pdf")
+                ),
+            }
+        )
+        item_path = write_item(instance, urls=[self.COLLIDING_WEB, self.COLLIDING_PDF])
+        quiet = Config(media_fetch=MediaFetch.NONE)
+        ctx = make_ctx(
+            instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+        )
+        run_mod.run(ctx)
+        entries = [entry_for(ctx, self.COLLIDING_WEB), entry_for(ctx, self.COLLIDING_PDF)]
+        assert [e.status for e in entries] == [Status.DONE, Status.DONE]
+        # A done line pointing at nothing is the failure this pins.
+        for entry in entries:
+            assert entry.path is not None
+            assert (instance.root / entry.path).is_file()
+        shared = work_hash(self.COLLIDING_WEB)[:6]
+        assert corpus.read_item(item_path).enrichment == [
+            f"file-{shared}.md",
+            f"web-{shared}.md",
+        ]
+
+    def test_a_mark_landed_output_drops_the_superseded_one(self, instance):
+        # The prescribed recovery for a web→file correction whose corrected
+        # fetch parks: the session writes the enrichment by hand and closes
+        # it with `enrich mark ... done --path`. The stale web view of the
+        # PDF must leave with it — the drain's route is not the only one.
+        item_path = write_item(instance)
+        mode = {"redetect": False}
+
+        def web_fetch(_unit):
+            if mode["redetect"]:
+                return Result(
+                    status=Status.QUEUED,
+                    meta={},
+                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+                )
+            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+
+        def file_fetch(_unit):
+            return Result(status=Status.MANUAL, meta={}, reason="scanned pdf — no extractor")
+
+        web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
+        files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
+        ctx = make_ctx(instance, web, drivers=[web, files])
+        run_mod.run(ctx)
+        web_out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        assert web_out.exists()
+
+        mode["redetect"] = True
+        self._requeue(ctx, URL)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        assert entry_for(ctx).status is Status.MANUAL
+        assert web_out.exists()  # the park leaves the item as enriched as it found it
+
+        # The session reads the PDF with its eyes and closes the unit.
+        hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"
+        hand_written.write_text(
+            _render_enrichment(URL, TODAY, {"title": "t"}, "read by hand " * 40),
+            encoding="utf-8",
+        )
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{hand_written.name}")
+        assert not web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [hand_written.name]
+
     def test_redetected_rerun_spends_one_cohort_slot(self, instance):
         url = self.PDF_URL
         transport = FakeTransport(

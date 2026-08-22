@@ -46,6 +46,7 @@ from .transcribe import (
     acquire_podcast_audio,
     acquire_youtube_audio,
     podcast_body,
+    read_enrichment,
     youtube_body,
     yt_dlp_audio,
 )
@@ -719,7 +720,7 @@ class _Drain:
         path = None
         if result.body is not None:
             path = self._write_output(entry, result)
-            self._drop_superseded_outputs(entry, path)
+            _drop_superseded_outputs(self.ctx.instance, entry, path)
         title = result.meta.get("title")
         self.record_outcome(
             entry,
@@ -748,7 +749,7 @@ class _Drain:
         genuinely changes, and ``via`` is provenance history, not a lock.
 
         The previous kind's output stays on disk until the corrected unit
-        lands one of its own (:meth:`_drop_superseded_outputs`). Unlinking
+        lands one of its own (:func:`_drop_superseded_outputs`). Unlinking
         it here would strip an item of the enrichment it already had the
         moment a corrected fetch parked — status back to raw, digest
         orphaned, nothing left to re-derive from.
@@ -829,21 +830,6 @@ class _Drain:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(content, encoding="utf-8")
         return str(out.relative_to(self.ctx.instance.root))
-
-    def _drop_superseded_outputs(self, entry: LedgerEntry, path: str) -> None:
-        """Drop an earlier kind's output — once the corrected one exists.
-
-        A redetection relabels a unit, so its output file is renamed by
-        kind. The stale file leaves the disk here, on the success that
-        replaces it, and never earlier: a corrected fetch that parks must
-        leave the item exactly as enriched as it found it. The ledger's
-        audit trail keeps the history either way.
-        """
-        item_dir = self.ctx.instance.enrichment_dir / entry.item
-        current = Path(path).name
-        for stale in item_dir.glob(f"*-{entry.hash[:6]}.md"):
-            if stale.name != current:
-                stale.unlink()
 
     # -- extraction assets ----------------------------------------
 
@@ -1280,6 +1266,37 @@ class _Drain:
             and entry.needs is not None
             and capabilities.is_cognitive(entry.needs, entry.format)
         ]
+
+
+def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
+    """Drop the unit's earlier-kind output — once ``path`` replaces it.
+
+    A redetection relabels a unit, so its output file is renamed by kind.
+    The stale file leaves the disk here, on the success that replaces it,
+    and never earlier: a corrected fetch that parks must leave the item
+    exactly as enriched as it found it. The ledger's audit trail keeps the
+    history either way. Both routes to a unit's own output come through
+    here — the drain's write, and a hand-written file closed by ``mark``.
+
+    Candidate names are the closed ``<kind>-<hash6>.md`` set, and each
+    candidate must PROVE it belongs to this unit by the URL it records:
+    ``hash6`` is six hex digits, so two units under one item share one often
+    enough that a real pair was found by hand, and matching on the name
+    alone unlinked the neighbour's enrichment while its ledger line still
+    read ``done``. Nothing is dropped for a replacement that is not on disk
+    — a mistyped ``mark --path`` must not cost the item its enrichment.
+    """
+    if not (instance.root / path).is_file():
+        return
+    item_dir = instance.enrichment_dir / entry.item
+    current = Path(path).name
+    for kind in Kind:
+        stale = item_dir / f"{kind.value}-{entry.hash[:6]}.md"
+        if stale.name == current or not stale.is_file():
+            continue
+        fields, _body = read_enrichment(stale)
+        if fields.get("url") == entry.url:
+            stale.unlink()
 
 
 def _refresh_item_frontmatter(
@@ -1734,6 +1751,14 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         reason=reason,
     )
     drain.record(healed)
+    if status is Status.DONE and effective_path is not None:
+        # A hand-written enrichment closed by mark is one of the unit's own
+        # outputs, so it supersedes an earlier kind's exactly as a drained
+        # one does. This is the prescribed route out of a redetection whose
+        # corrected fetch parks (a scanned PDF, no extractor); without the
+        # drop the item keeps two files for one unit and serves the stale
+        # pre-correction view to the digest and query layers forever.
+        _drop_superseded_outputs(ctx.instance, healed, effective_path)
     _refresh_item_frontmatter(ctx.instance, prior.item)
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 

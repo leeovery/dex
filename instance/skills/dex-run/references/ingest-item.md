@@ -71,6 +71,11 @@ the hash — grep `state/enrichment-ledger.jsonl`), then close the loop:
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>
 ```
 
+Closing the loop is what retires the unit's earlier output: where the kind
+was corrected mid-fetch (a page that turned out to be a PDF), `mark` drops
+the superseded `<old-kind>-<hash6>.md` once the file you named is on disk,
+so the item is left holding one enrichment for the unit, not two.
+
 ## 5. Harvest — the subject rule (judgment, engine-bounded)
 
 Goal: the item's enrichment holds the primary artifacts of its subject.
