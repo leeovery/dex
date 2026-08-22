@@ -306,8 +306,8 @@ def compact(path: Path) -> int:
     return len(lines) - len(entries)
 
 
-def drop_items(path: Path, items: Collection[str]) -> int:
-    """Remove every line naming one of ``items``; return how many went.
+def drop_items(path: Path, items: Collection[str], *, claimed: Collection[str]) -> tuple[int, int]:
+    """Purge the work units ``items`` leave behind; return (lines removed, units kept).
 
     For purges only. ``bin/dex exclude`` deletes a corpus item and its
     enrichment permanently and on the record, so the item's ledger lines
@@ -315,39 +315,92 @@ def drop_items(path: Path, items: Collection[str]) -> int:
     forever, and a ledger entry naming a nonexistent item is an anomaly,
     not a designed steady state. Git history keeps what this removes.
 
+    **The unit is the hash, and a claimed hash is never purged.** A work
+    unit is keyed by URL, not by item: where two corpus items list one URL
+    they share one entry, and that entry names only one of them. Purging on
+    the stored name alone deletes a history the other item still claims —
+    on real state 80 hashes are claimed by more than one live item. So the
+    hash is judged on the line ``load`` resolves to, and ``claimed`` — the
+    work every surviving corpus item still lists — vetoes the removal. What
+    goes is a hash whose live line names a purged item and which no live
+    item claims; its superseded lines, the audit trail, go with it.
+
     Unparseable lines are kept, not purged: a line this layer cannot read
     is not provably one of these items', and a purge must never become
-    incidental data loss. (:func:`from_line` is deliberately not used — one
+    incidental data loss. (:func:`load` is deliberately not used — one
     hand-tampered line would abort the whole purge, and the next command's
     ``load`` names that line loudly anyway.)
 
     Args:
         path: The ledger file; a missing file is a no-op.
         items: The purged corpus item ids.
+        claimed: The work hashes live corpus items still list — computed
+            after the purge deletes their files, so a purged item cannot
+            claim its own work.
 
     Returns:
-        The number of lines removed.
+        The number of lines removed, and the number of work units kept
+        because a live corpus item still claims them.
     """
     if not items or not path.exists():
-        return 0
+        return 0, 0
+    text = path.read_text(encoding="utf-8")
+    purged = [
+        unit_hash for unit_hash, entry in _latest_readable(text).items() if entry.item in items
+    ]
+    orphaned = {unit_hash for unit_hash in purged if unit_hash not in claimed}
+    kept_units = len(purged) - len(orphaned)
+    if not orphaned:
+        return 0, kept_units
     kept: list[str] = []
     removed = 0
-    for line in path.read_text(encoding="utf-8").split("\n"):
+    for line in text.split("\n"):
         if not line.strip():
             continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            kept.append(line)
-            continue
-        if isinstance(raw, dict) and raw.get("item") in items:
+        if _names_hash(line, orphaned):
             removed += 1
             continue
         kept.append(line)
-    if removed:
-        # Atomic: a crash mid-write must never lose the ledger.
-        atomic.write_text(path, "".join(line + "\n" for line in kept))
-    return removed
+    # Atomic: a crash mid-write must never lose the ledger.
+    atomic.write_text(path, "".join(line + "\n" for line in kept))
+    return removed, kept_units
+
+
+def _latest_readable(text: str) -> dict[str, LedgerEntry]:
+    """The latest entry per hash over the lines that parse, as ``load`` resolves them.
+
+    Not ``load`` itself: one hand-tampered line would abort the purge, and a
+    line this code cannot read names no item it can judge.
+    """
+    latest: dict[str, LedgerEntry] = {}
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        if not line.strip():
+            continue
+        try:
+            entry = from_line(line)
+        except LedgerSchemaError:
+            continue
+        key = resolution_key(entry, lineno)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        latest[entry.hash] = entry
+        winning[entry.hash] = key
+    return latest
+
+
+def _names_hash(line: str, hashes: Collection[str]) -> bool:
+    """True when this line belongs to one of ``hashes``.
+
+    Read raw rather than through ``from_line``: the lines going include the
+    hash's older audit lines, which need no validation to identify, and an
+    unreadable line must survive (it names no hash this code trusts).
+    """
+    try:
+        raw = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(raw, dict) and raw.get("hash") in hashes
 
 
 def stamp(

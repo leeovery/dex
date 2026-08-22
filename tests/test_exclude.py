@@ -8,30 +8,48 @@ import pytest
 from dex_engine.exclude import main, run_exclude
 from dex_engine.normalize import load_exclusions
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline.ownership import work_identity
+from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Status
 
 ITEM = "2026-08-19-example-55ad7b"
 OTHER = "2026-08-19-other-11ff22"
+SHARED_URL = "https://example.test/shared-by-two"
 
 
-def write_item_stub(instance: Instance, item_id: str = ITEM) -> None:
+def write_item_stub(instance: Instance, item_id: str = ITEM, *, urls: tuple[str, ...] = ()) -> None:
     path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("stub")
+    url_lines = "".join(f"  - {url}\n" for url in urls)
+    path.write_text(
+        "---\n"
+        f"id: {item_id}\n"
+        "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-08-19\n"
+        + (f"urls:\n{url_lines}" if url_lines else "")
+        + "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
+        encoding="utf-8",
+    )
 
 
-def ledger_entry(instance: Instance, unit_hash: str, item_id: str) -> None:
+def ledger_entry(
+    instance: Instance,
+    unit_hash: str,
+    item_id: str,
+    *,
+    url: str | None = None,
+    at: datetime.datetime = datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
+) -> None:
     ledger.append(
         instance.ledger_path,
         LedgerEntry(
             hash=unit_hash,
-            url=f"https://example.test/{unit_hash}",
+            url=url or f"https://example.test/{unit_hash}",
             item=item_id,
             kind=Kind.WEB,
             status=Status.QUEUED,
             engine="0.2.1",
             date=datetime.date(2026, 8, 20),
-            at=datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
+            at=at,
         ),
     )
 
@@ -43,7 +61,10 @@ class TestRunExclude:
         enrichment.mkdir(parents=True)
         (enrichment / "web-abc123.md").write_text("fetched")
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
-        assert summary == "excluded 1: removed 1 items (0 already gone), 0 ledger entries dropped"
+        assert summary == (
+            "excluded 1: removed 1 items (0 already gone), 0 ledger entries dropped, "
+            "0 kept (work another live corpus item still claims)"
+        )
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
         assert not enrichment.exists()
         recorded = (instance.state_dir / "exclusions.tsv").read_text()
@@ -56,7 +77,10 @@ class TestRunExclude:
 
     def test_already_gone_items_counted_not_fatal(self, instance):
         summary = run_exclude(instance, [{"id": ITEM}])
-        assert summary == "excluded 1: removed 0 items (1 already gone), 0 ledger entries dropped"
+        assert summary == (
+            "excluded 1: removed 0 items (1 already gone), 0 ledger entries dropped, "
+            "0 kept (work another live corpus item still claims)"
+        )
 
     def test_re_excluding_never_duplicates_the_record(self, instance):
         write_item_stub(instance)
@@ -121,6 +145,74 @@ class TestLedgerPurge:
         write_item_stub(instance)
         assert "0 ledger entries dropped" in run_exclude(instance, [{"id": ITEM}])
         assert not instance.ledger_path.exists()
+
+    def test_work_another_live_item_still_claims_survives(self, instance):
+        # A work unit is keyed by URL hash, not by item: two corpus items
+        # listing one URL share one entry, and it names only one of them.
+        # Purging on the name deletes the other item's history too.
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert set(ledger.load(instance.ledger_path)) == {shared}
+        assert "0 ledger entries dropped" in summary
+        assert "1 kept" in summary
+
+    def test_the_purged_item_cannot_claim_its_own_work(self, instance):
+        # The corpus is scanned after the deletions: reading it first would
+        # find the item about to go still listing the URL, and the purge
+        # would veto itself.
+        url = "https://example.test/only-this-item"
+        write_item_stub(instance, ITEM, urls=(url,))
+        ledger_entry(instance, work_identity(url, DRIVERS), ITEM, url=url)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert ledger.load(instance.ledger_path) == {}
+        assert "1 ledger entries dropped, 0 kept" in summary
+
+    def test_a_superseded_line_naming_another_item_goes_with_its_hash(self, instance):
+        # The unit going is the hash, audit trail included — leaving an older
+        # line behind keeps the ghost visible to every raw grep of the file.
+        write_item_stub(instance, OTHER)
+        ledger_entry(instance, "aaaaaaaaaa", OTHER)
+        ledger_entry(
+            instance,
+            "aaaaaaaaaa",
+            ITEM,
+            at=datetime.datetime(2026, 8, 20, 10, 0, tzinfo=datetime.UTC),
+        )
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert instance.ledger_path.read_text() == ""
+
+    def test_the_whole_hashs_history_goes_when_nothing_claims_it(self, instance):
+        # The audit trail belongs to the hash: leaving superseded lines keeps
+        # the ghost visible to every raw grep of the file.
+        write_item_stub(instance)
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        ledger_entry(
+            instance,
+            "aaaaaaaaaa",
+            ITEM,
+            at=datetime.datetime(2026, 8, 20, 10, 0, tzinfo=datetime.UTC),
+        )
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert instance.ledger_path.read_text() == ""
+
+    def test_a_hash_re_parented_to_a_live_item_is_kept_whole(self, instance):
+        # The live line decides, as migration 4's sweep decides: an older line
+        # naming the excluded item is a re-parenting's history.
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        ledger_entry(
+            instance,
+            "aaaaaaaaaa",
+            OTHER,
+            at=datetime.datetime(2026, 8, 20, 10, 0, tzinfo=datetime.UTC),
+        )
+        before = instance.ledger_path.read_text()
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert instance.ledger_path.read_text() == before
 
     def test_an_unreadable_line_is_kept_never_purged_by_accident(self, instance):
         # A purge must not become incidental data loss: a line this code

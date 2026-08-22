@@ -1039,12 +1039,22 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item, its enrichment **and its ledger
-   entries**, so a seed keyed to a purged item would re-fetch content ruled
-   out of scope and put an owner ruling back in the queue. (Purges made
+   `dex exclude` deletes the item, its enrichment **and the ledger entries
+   for work no surviving item claims**, so a seed keyed to a purged item
+   would re-fetch content ruled out of scope and put an owner ruling back in
+   the queue. (Purges made
    before `exclude` swept the ledger left their entries on file — that is
    exactly the state this migration meets, and migration 4 sweeps them
    afterwards.)
+   **`exclude` purges work units, not item names** (amended at phase-4
+   review, on real state): a unit is keyed by URL, so two corpus items
+   listing one URL share one entry that names only one of them — 80 hashes
+   in dex-engineering are claimed by more than one live item. The hash is
+   judged on the line `load` resolves to, and a hash any surviving corpus
+   item still claims is kept whole; the corpus is scanned after the
+   deletions, so a purged item cannot claim its own work. The summary line
+   states both counts — dropped and kept — because `exclude` runs in bulk
+   from the scope-filter pass and that line is the owner's only signal.
    The claim is asked of the corpus, never of the entry's stored `item`
    string alone (amended at phase-4 review, on real state): an item RENAMED
    since its line was written — same shortid, new slug — has a live file
@@ -1151,7 +1161,9 @@ src/dex_engine/
                  (its urls:/media: hashed exactly as seeding does), the one
                  answer to "is this entry's item still there?"; lint and
                  migration 2 share it so a renamed item cannot read as a
-                 purge in one place and a rename in the other
+                 purge in one place and a rename in the other; `exclude`
+                 and migration 4 ask it before deleting work history, for
+                 the same reason
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py

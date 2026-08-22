@@ -554,15 +554,15 @@ def _referential_integrity(
     """The ledger's two pointers into the tree: item ids, and output paths.
 
     Schema validity says nothing about whether a line points at anything
-    that exists. An entry naming an id with no corpus file is usually the
-    residue of ``dex exclude`` (which deletes the item and its enrichment
-    but leaves the ledger history standing, deliberately) — worth seeing,
-    and worth telling apart from an item RENAMED since the line was
-    written, whose work a live item under a new id still claims, and from
-    one nothing claims at all. A ``done`` entry whose output file is gone
-    is the enrichment claiming work whose product no longer exists. The two
-    are asked independently — an item purged by ``dex exclude`` answers
-    both, and each finding is still true.
+    that exists. An entry naming an id with no corpus file is residue: a
+    purge made before ``dex exclude`` swept the ledger, an item removed by
+    hand, or work another live item still claims and ``exclude`` therefore
+    kept. Worth seeing, and worth telling apart — an item RENAMED since the
+    line was written has a live item under a new id claiming its work,
+    which reads nothing like an item nothing claims at all. A ``done``
+    entry whose output file is gone is the enrichment claiming work whose
+    product no longer exists. The two are asked independently — an item
+    purged by ``dex exclude`` answers both, and each finding is still true.
 
     Ghost rows are one per (item, finding): an item named by ten entries
     for one reason is one row carrying the count, not ten rows a reader

@@ -8,6 +8,13 @@ Each exclusion appends to ``state/exclusions.tsv`` (consulted by
 ``corpus/<year>/<id>.md``, removes ``enrichment/<id>/``, and removes the
 item's ledger entries — the item is gone, so seeding will never raise
 that work again and the lines would otherwise linger forever.
+
+Except the work another live corpus item still claims. A work unit is
+keyed by URL, not by item, so two items listing one URL share one ledger
+entry that names only one of them; purging on the name alone would delete
+a history the survivor still owns. The summary states both counts — this
+runs in bulk from the scope-filter pass, so that line is the owner's only
+signal.
 """
 
 import argparse
@@ -17,6 +24,8 @@ import sys
 from pathlib import Path
 
 from .pipeline import ledger
+from .pipeline.ownership import corpus_owners
+from .pipeline.registry import DRIVERS
 from .pipeline.types import Instance
 
 __all__ = ["build_parser", "main", "run_exclude"]
@@ -70,10 +79,14 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
     # One rewrite for the whole batch, after the TSV record lands: an
     # interruption before it leaves the entries in place, and the re-run
     # (which the TSV makes idempotent) purges them.
-    entries_dropped = ledger.drop_items(instance.ledger_path, purged)
+    # Scanned after the deletions above, so a purged item cannot claim its
+    # own work — what remains is what the surviving corpus still lists.
+    claimed = corpus_owners(instance.root, DRIVERS) if instance.ledger_path.exists() else {}
+    dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
     return (
         f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
-        f"{entries_dropped} ledger entries dropped"
+        f"{dropped} ledger entries dropped, {kept} kept (work another live corpus item "
+        "still claims)"
     )
 
 
