@@ -112,6 +112,12 @@ syncs with `uv sync --locked`, which also fails on a `pyproject.toml` edit that
 was never re-locked. Windows is not covered and will not be: the shim is POSIX
 sh and instances require git, gh and uv.
 
+`actions/checkout` is pinned to its major, which moves on its own.
+`astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
+`v7`, so `@v10` does not resolve and the pin is an exact release. It needs
+bumping by hand, and nothing will tell you — check it when a runner image
+deprecation bites, or once a year.
+
 **The shim is tested under three shells.** "POSIX sh" is not one interpreter —
 macOS's `/bin/sh` is bash in POSIX mode, a Linux instance's is dash — so
 `tests/test_shim.py` parametrizes over `sh`, `dash` and `ksh`, skipping any

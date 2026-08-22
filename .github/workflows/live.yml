@@ -30,7 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # Pinned to an exact release, not a major: astral-sh publishes moving
+      # major tags only up to v7, so `@v10` does not resolve. Bump by hand.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
           enable-cache: true
@@ -49,16 +51,17 @@ jobs:
     name: drift (best effort, never fails the run)
     runs-on: ubuntu-latest
     # These endpoints treat a datacenter IP differently from a laptop, so a red
-    # result here is ambiguous by construction. It stays visible on the run page
-    # and in the job summary; it does not mail anyone, because an alarm that
-    # cries wolf every morning is worse than no alarm. Each test says in a
-    # comment why it is here. Read this job when a driver misbehaves in the
-    # field, not before.
+    # result here is ambiguous by construction. It stays visible on the run
+    # page; it does not mail anyone, because an alarm that cries wolf every
+    # morning is worse than no alarm. Each test says in a comment why it is
+    # here. Read this job when a driver misbehaves in the field, not before.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # Pinned to an exact release, not a major: astral-sh publishes moving
+      # major tags only up to v7, so `@v10` does not resolve. Bump by hand.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
           enable-cache: true

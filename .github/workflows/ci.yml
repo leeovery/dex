@@ -46,7 +46,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ksh
 
-      - uses: astral-sh/setup-uv@v10
+      # Pinned to an exact release, not a major: astral-sh publishes moving
+      # major tags only up to v7, so `@v10` does not resolve. Bump by hand.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
@@ -68,7 +70,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # Pinned to an exact release, not a major: astral-sh publishes moving
+      # major tags only up to v7, so `@v10` does not resolve. Bump by hand.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           # ruff targets py311 and ty pins python-version = "3.11" in
           # pyproject, so both answer the same on every interpreter. Once.
