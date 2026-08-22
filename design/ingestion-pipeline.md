@@ -701,11 +701,21 @@ a download beyond the cap and beside a description of something else.
   context for the captured post, not new first-class sources. One enrichment
   file, one ledger entry. fxtwitter parent pointers, all authors
   included, cap-hit noted in enrichment frontmatter (below). The walk is
-  **bounded at 100 hops** — a sanity bound against a cycle or a self-referencing
-  parent, not an editorial one: the chain is one piece of content and the
+  **bounded at 100 hops** — a sanity bound against a chain that never ends,
+  not an editorial one: the chain is one piece of content and the
   walk is linear with no fan-out, unlike the 12-URL harvest cap, which
   bounds how much one item drags in. A thread that exceeds even 100 is
   still recorded honestly rather than silently truncated.
+- **Cycles end the walk where they repeat, and hops are paced.** A post
+  naming itself (or an ancestor) as its parent is not a long thread: the
+  ids already walked are remembered, so the repeat stops the walk at once
+  and is recorded like any short chain (`chain_incomplete` + a note saying
+  where it looped). Without that, one self-referencing parent spent the
+  whole 100-hop bound as 100 back-to-back requests to a free community API
+  for a single unit. The walk also **sleeps 1s between parent fetches**:
+  the driver's 4s politeness is spent between units, and a 30-post thread
+  is 30 requests inside one — a second a hop keeps an ordinary thread
+  under a minute while making the walk a paced sequence, not a burst.
 - Fetch order is bottom-to-top (parent pointers); **storage is reading
   order** — root first, captured post last, each post attributed
   (`@who — date`); frontmatter records which post was captured. A

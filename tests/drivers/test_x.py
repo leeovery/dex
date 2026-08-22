@@ -2,7 +2,7 @@
 
 import json
 
-from dex_engine.drivers.x import MAX_HOPS, XDriver
+from dex_engine.drivers.x import HOP_SLEEP, MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Kind, Status
 from dex_engine.pipeline.urls import work_hash
@@ -25,7 +25,7 @@ def api_fixture(name: str):
 
 
 def driver_for(responses: dict) -> XDriver:
-    return XDriver(transport=FakeTransport(responses))
+    return XDriver(transport=FakeTransport(responses), pace=lambda _seconds: None)
 
 
 def full_chain() -> dict:
@@ -140,25 +140,67 @@ class TestThreadWalkUp:
         assert result.meta["thread_cap_hit"] == "true"
         assert result.meta["thread_length"] == MAX_HOPS + 1  # the captured post + the bound
 
-    def test_a_self_referencing_parent_terminates_at_the_bound(self):
-        # What the bound is actually for: a post naming itself as its own
-        # parent (or any cycle) would otherwise walk forever.
-        tweet = {
-            "id": "500",
-            "text": "a post replying to itself",
+    def _looping_post(self, status_id: str, parent_id: str) -> dict:
+        return {
+            "id": status_id,
+            "text": f"post {status_id}",
             "created_at": "Thu Aug 20 10:00:00 +0000 2026",
-            "author": {"name": "Loop", "screen_name": "loop"},
-            "replying_to": "loop",
-            "replying_to_status": "500",
+            "author": {"name": f"User {status_id}", "screen_name": f"user{status_id}"},
+            "replying_to": f"user{parent_id}",
+            "replying_to_status": parent_id,
         }
-        response = json_response({"tweet": tweet})
-        responses = {API + "status/500": response, API + "loop/status/500": response}
-        result = driver_for(responses).fetch(
+
+    def test_a_self_referencing_parent_stops_at_the_first_repeat(self):
+        # A post naming itself as its own parent used to walk the full
+        # bound: 100 back-to-back requests to a free community API for one
+        # unit. Seeing the id already walked ends it at zero further calls.
+        transport = FakeTransport({API + "status/500": json_response(
+            {"tweet": self._looping_post("500", "500")}
+        )})
+        result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
             make_unit("https://x.com/loop/status/500", Kind.X)
         )
         assert result.status is Status.DONE
-        assert result.meta["thread_cap_hit"] == "true"
-        assert result.meta["thread_length"] == MAX_HOPS + 1
+        assert transport.calls == [("GET", API + "status/500")]  # the captured post, and stop
+        assert "thread_cap_hit" not in result.meta
+        assert result.meta["chain_incomplete"] == "true"
+        assert "loops back" in str(result.meta["chain_note"])
+
+    def test_a_cycle_further_up_the_chain_stops_there(self):
+        # A -> B -> A: the repeat is two hops up, not at the captured post.
+        transport = FakeTransport(
+            {
+                API + "status/700": json_response({"tweet": self._looping_post("700", "800")}),
+                API + "user800/status/800": json_response(
+                    {"tweet": self._looping_post("800", "700")}
+                ),
+            }
+        )
+        result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
+            make_unit("https://x.com/user700/status/700", Kind.X)
+        )
+        assert result.status is Status.DONE
+        assert result.meta["thread_length"] == 2  # both real posts kept
+        assert len(transport.calls) == 2  # and no third request
+        assert result.meta["chain_incomplete"] == "true"
+
+    def test_the_walk_paces_itself_between_hops(self):
+        # A thread is one unit, and the driver's 4s politeness is spent
+        # between units — without pacing here a 30-post thread is 30
+        # unpaced requests to a free API in one burst.
+        slept: list[float] = []
+        driver = XDriver(transport=FakeTransport(full_chain()), pace=slept.append)
+        driver.fetch(make_unit(CAPTURED_URL, Kind.X))
+        assert slept == [HOP_SLEEP, HOP_SLEEP]  # one per parent fetched, none for the captured
+
+    def test_a_post_with_no_parent_never_sleeps(self):
+        responses = full_chain()
+        responses[API + "status/300"] = api_fixture("root-100.json")
+        slept: list[float] = []
+        XDriver(transport=FakeTransport(responses), pace=slept.append).fetch(
+            make_unit(CAPTURED_URL, Kind.X)
+        )
+        assert slept == []
 
 
 class TestShareShapeFetches:
@@ -166,7 +208,7 @@ class TestShareShapeFetches:
         # The app's standard share form: fxtwitter 404s on /i/web/… — sent
         # verbatim it would mark a live post terminally dead.
         transport = FakeTransport(full_chain())
-        driver = XDriver(transport=transport)
+        driver = XDriver(transport=transport, pace=lambda _seconds: None)
         result = driver.fetch(make_unit("https://x.com/i/web/status/300", Kind.X))
         assert result.status is Status.DONE
         assert ("GET", API + "status/300") in transport.calls
@@ -174,7 +216,9 @@ class TestShareShapeFetches:
 
     def test_username_form_fetches_by_the_bare_status_path_too(self):
         transport = FakeTransport(full_chain())
-        result = XDriver(transport=transport).fetch(make_unit(CAPTURED_URL, Kind.X))
+        result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
+            make_unit(CAPTURED_URL, Kind.X)
+        )
         assert result.status is Status.DONE
         assert transport.calls[0] == ("GET", API + "status/300")
 
