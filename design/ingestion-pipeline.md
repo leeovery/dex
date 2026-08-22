@@ -868,13 +868,22 @@ Shipping migrations for this rewrite:
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
-   only entries whose item **still exists** (`corpus/<yyyy>/<id>.md`):
+   only entries whose work a **live corpus item still claims**:
    `dex exclude` deletes the item and its enrichment while its ledger
    history stays on file, so a seed keyed to a purged item would re-fetch
    content ruled out of scope and put an owner ruling back in the queue.
-   Those entries are skipped-with-why, naming the `state/exclusions.tsv`
-   record where there is one ("excluded — never reseeded") and flagging the
-   item as removed-by-hand where there is not.
+   The claim is asked of the corpus, never of the entry's stored `item`
+   string alone (amended at phase-4 review, on real state): an item RENAMED
+   since its line was written — same shortid, new slug — has a live file
+   under a new id, and a stored-string check reads that as a purge and
+   refuses a rerun the owner never ruled out. So the entry's own item
+   answers first where its file exists; otherwise the entry whose URL a
+   live item still lists belongs to THAT item and is seeded **re-attributed
+   to it**, the report counting the re-attributions. Only an entry no live
+   item claims is skipped-with-why, naming the `state/exclusions.tsv`
+   record where there is one ("excluded — never reseeded") and otherwise
+   stating what was checked — the missing file, the absent exclusions row,
+   the unclaimed URL — instead of asserting a cause it has not established.
    The re-key pass already ran, so a qualifying entry's hash and URL are
    the current identity: the seed appends under them directly, corpus
    seeding dedupes against it, and the drain fetches once.
@@ -951,6 +960,11 @@ involvement: the engine owner only.
 ```
 src/dex_engine/
   pipeline/    types.py  ledger.py  detect.py  registry.py  run.py
+               ownership.py — which live corpus item claims a work unit
+                 (its urls:/media: hashed exactly as seeding does), the one
+                 answer to "is this entry's item still there?"; lint and
+                 migration 2 share it so a renamed item cannot read as a
+                 purge in one place and a rename in the other
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py

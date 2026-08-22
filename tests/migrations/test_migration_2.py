@@ -88,14 +88,16 @@ def write_entries(root, entries, *, items=True):
     return path
 
 
-def write_corpus_item(root, item_id):
+def write_corpus_item(root, item_id, urls=()):
     path = root / "corpus" / item_id[:4] / f"{item_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
+    listing = "".join(f"  - {url}\n" for url in urls)
     path.write_text(
         "---\n"
         f"id: {item_id}\n"
         "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-05-01\n"
-        "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
+        + (f"urls:\n{listing}" if listing else "")
+        + "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
         encoding="utf-8",
     )
     return path
@@ -253,6 +255,15 @@ class TestPurgedItemsAreNeverReseeded:
         (skip,) = report.skipped
         assert "no state/exclusions.tsv record names the item" in skip.why
 
+    def test_the_skip_states_what_was_checked_and_guesses_no_cause(self, tmp_path, migration):
+        # Both checks are named, and nothing is asserted about how the item
+        # went away — the migration never established that.
+        write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        (skip,) = migration.apply(tmp_path).skipped
+        assert "no live corpus item lists https://a.test/post-web" in skip.why
+        assert "removed by hand" not in skip.why
+        assert "purge was interrupted" not in skip.why
+
     def test_a_live_item_still_seeds(self, tmp_path, migration):
         path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)])
         report = migration.apply(tmp_path)
@@ -272,6 +283,78 @@ class TestPurgedItemsAreNeverReseeded:
         )
         report = migration.apply(tmp_path)
         assert report.skipped == []
+
+
+class TestRenamedItemsAreReAttributed:
+    """A rename keeps the shortid and takes a new slug — the work is live."""
+
+    RENAMED = "2026-05-01-renamed-a1b2c3"
+
+    def test_a_renamed_item_seeds_under_its_live_id(self, tmp_path, migration):
+        one = entry("post-x", kind=Kind.X)
+        path = write_entries(tmp_path, [one], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        report = migration.apply(tmp_path)
+        seed = ledger.load(path)[one.hash]
+        assert seed.status is Status.QUEUED
+        assert seed.rerun is True
+        assert seed.item == self.RENAMED
+        assert report.skipped == []
+        assert any("1 re-attributed" in action for action in report.actions)
+
+    def test_the_stale_done_line_keeps_its_own_attribution(self, tmp_path, migration):
+        # History is what it was: only the seed names the live item.
+        one = entry("post-x", kind=Kind.X)
+        path = write_entries(tmp_path, [one], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        migration.apply(tmp_path)
+        lines = [json.loads(line) for line in path.read_text().split("\n") if line.strip()]
+        assert lines[0]["item"] == "2026-05-01-item-a1b2c3"
+        assert lines[0]["status"] == "done"
+        assert lines[-1]["item"] == self.RENAMED
+
+    def test_a_second_apply_re_attributes_nothing_more(self, tmp_path, migration):
+        write_entries(tmp_path, [entry("post-x", kind=Kind.X)], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        migration.apply(tmp_path)
+        first = path.read_text()
+        second = migration.apply(tmp_path)
+        assert path.read_text() == first
+        assert second.actions == []
+        assert second.skipped == []
+
+    def test_the_url_is_matched_on_current_identity_not_spelling(self, tmp_path, migration):
+        # The corpus lists the pre-rewrite spelling; the re-keyed entry
+        # carries the id-keyed one. Same unit, so the claim holds.
+        path = write_entries(tmp_path, [stored(OLD_X_URL, kind=Kind.X)], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[OLD_X_URL])
+        migration.apply(tmp_path)
+        seed = ledger.load(path)[work_hash(NEW_X_URL)]
+        assert seed.status is Status.QUEUED
+        assert seed.item == self.RENAMED
+
+    def test_a_claim_by_a_live_item_outranks_a_stale_exclusions_row(self, tmp_path, migration):
+        # The exclusions row names an id with no file; a live item listing
+        # the URL is the owner's later word on the same work.
+        one = entry("post-web", kind=Kind.WEB)
+        path = write_entries(tmp_path, [one], items=False)
+        write_exclusions(tmp_path, [("2026-05-01-item-a1b2c3", "excluded 2026-06-01")])
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-web")])
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[one.hash].item == self.RENAMED
+        assert report.skipped == []
+
+    def test_an_excluded_item_no_live_url_claims_is_still_refused(self, tmp_path, migration):
+        # The other corpus item is live but lists a different URL — the
+        # exclusion stands, refused exactly as before.
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(tmp_path, [("2026-05-01-item-a1b2c3", "out of scope")])
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("other")])
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "excluded, never reseeded" in skip.why
 
 
 class TestIdempotency:

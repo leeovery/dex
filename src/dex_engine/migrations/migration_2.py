@@ -43,15 +43,24 @@ stored enrichments deficient:
 - **x**: thread walk-up did not exist; a stored single post may have been a
   thread, and the rerun walks up and re-harvests.
 
-Membership is every pre-rewrite ``done`` web/x entry **whose item still
-exists**: this migration runs directly after migration 1, and the old
-engine had *neither* fix. The item check is not bookkeeping — an entry
-whose ``corpus/<id[:4]>/<id>.md`` is gone names work the owner purged
+Membership is every pre-rewrite ``done`` web/x entry **whose work a live
+corpus item still claims**: this migration runs directly after migration 1,
+and the old engine had *neither* fix. That check is not bookkeeping —
+seeding work no item claims would re-fetch content the owner purged
 (``dex exclude`` deletes the item and its enrichment, on the record in
-``state/exclusions.tsv``), and seeding it would re-fetch content ruled out
-of scope, re-mint an enrichment directory under a dead item, and put an
-owner ruling back in the queue. Those entries are skipped-with-why, naming
-the exclusion where one is on record.
+``state/exclusions.tsv``), re-mint an enrichment directory under a dead
+item, and put an owner ruling back in the queue.
+
+The claim is asked of the corpus, never of the entry's stored ``item``
+string alone. An item RENAMED since the line was written — same shortid,
+new slug — has a live corpus file under a new id, and its old id names
+nothing; a stored-string check reads that as a purge and refuses a rerun
+the owner never ruled out. So: an entry whose stored item still has a
+corpus file belongs to it; otherwise, an entry whose URL is still listed
+by a live corpus item belongs to THAT item and is seeded re-attributed to
+it (the report counts the re-attributions). Only an entry no live item
+claims is skipped-with-why — naming the exclusion where one is on record,
+and otherwise stating what was checked rather than guessing a cause.
 
 Pre-rewrite is precise, not fuzzy:
 migration 1 stamps un-versioned old lines ``engine: 0.0.1``, the only
@@ -82,6 +91,7 @@ from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
 from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, to_line
+from dex_engine.pipeline.ownership import corpus_owners
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import (
     Kind,
@@ -162,16 +172,29 @@ class IdentityRekeyAndRerunSeed:
         for entry in entries:
             latest[entry.hash] = entry
         exclusions = _exclusions(root)
+        cohort = [entry for entry in latest.values() if _in_cohort(entry, skipped=skipped)]
+        # The corpus scan answers one question — which live item claims this
+        # work — and only entries whose stored item is already gone need to
+        # ask it, so a run with nothing missing never pays for it.
+        owners = (
+            corpus_owners(root, DRIVERS)
+            if any(not (root / _item_path(entry.item)).exists() for entry in cohort)
+            else {}
+        )
         counts = {Kind.X: 0, Kind.WEB: 0}
-        for entry in latest.values():
-            if not _qualifies(entry, root=root, exclusions=exclusions, skipped=skipped):
+        reattributed = 0
+        for entry in cohort:
+            item = _live_item(
+                entry, root=root, owners=owners, exclusions=exclusions, skipped=skipped
+            )
+            if item is None:
                 continue
             append(
                 path,
                 LedgerEntry(
                     hash=entry.hash,
                     url=entry.url,
-                    item=entry.item,
+                    item=item,
                     kind=entry.kind,
                     status=Status.QUEUED,
                     engine=self._engine_version,
@@ -181,12 +204,20 @@ class IdentityRekeyAndRerunSeed:
                 ),
             )
             counts[entry.kind] += 1
+            if item != entry.item:
+                reattributed += 1
         seeded = counts[Kind.X] + counts[Kind.WEB]
         if seeded:
-            actions.append(
+            action = (
                 f"seeded {seeded} rerun(s): {counts[Kind.X]} x (thread walk-up), "
                 f"{counts[Kind.WEB]} web (link keeping)"
             )
+            if reattributed:
+                action += (
+                    f"; {reattributed} re-attributed to the renamed item whose urls: "
+                    "still lists them"
+                )
+            actions.append(action)
         return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
 
 
@@ -335,14 +366,20 @@ def _exclusions(root: Path) -> dict[str, str]:
     return reasons
 
 
-def _qualifies(
-    entry: LedgerEntry, *, root: Path, exclusions: dict[str, str], skipped: list[Skipped]
-) -> bool:
+def _item_path(item: str) -> str:
+    return f"corpus/{item[:4]}/{item}.md"
+
+
+def _in_cohort(entry: LedgerEntry, *, skipped: list[Skipped]) -> bool:
+    """Is this entry deficient work the rewrite fixed — done, web/x, pre-rewrite?
+
+    Membership by vintage alone; which live item the work belongs to is
+    :func:`_live_item`'s question.
+    """
     if entry.status is not Status.DONE or entry.kind not in _SEEDED_KINDS:
         return False
     try:
-        if parse_version(entry.engine) != _PRE_REWRITE:
-            return False
+        return parse_version(entry.engine) == _PRE_REWRITE
     except ValueError:
         skipped.append(
             Skipped(
@@ -353,9 +390,28 @@ def _qualifies(
             )
         )
         return False
-    item_path = f"corpus/{entry.item[:4]}/{entry.item}.md"
-    if (root / item_path).exists():
-        return True
+
+
+def _live_item(
+    entry: LedgerEntry,
+    *,
+    root: Path,
+    owners: dict[str, str],
+    exclusions: dict[str, str],
+    skipped: list[Skipped],
+) -> str | None:
+    """The live corpus item the rerun's output belongs to, or None to refuse it.
+
+    The stored ``item`` answers first, then the corpus's own claim on the
+    work — an item renamed since the line was written still lists this URL
+    under its new id, and that is a re-attribution, not a purge.
+    """
+    if (root / _item_path(entry.item)).exists():
+        return entry.item
+    owner = owners.get(entry.hash)
+    if owner is not None:
+        return owner
+    item_path = _item_path(entry.item)
     if entry.item in exclusions:
         reason = exclusions[entry.item] or "no reason recorded"
         why = (
@@ -364,9 +420,11 @@ def _qualifies(
         )
     else:
         why = (
-            f"{item_path} does not exist and no state/exclusions.tsv record names the "
-            "item — it was removed by hand or a purge was interrupted; not reseeded, "
-            "because there is no item for the rerun's output to belong to"
+            f"{item_path} does not exist, no state/exclusions.tsv record names the item, "
+            f"and no live corpus item lists {entry.url} — nothing claims this work, so "
+            "the rerun would have no item to write under; not reseeded. If the item was "
+            "renamed and its urls: no longer carries this URL, requeue by hand with "
+            "`enrich mark`"
         )
     skipped.append(Skipped(what=f"rerun seed for {entry.item}", why=why))
-    return False
+    return None
