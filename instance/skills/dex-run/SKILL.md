@@ -111,8 +111,9 @@ Then do a run now, whatever the host.
    digestible; one still owing a unit is `raw` and never appears there,
    however long it stays parked.
 
-9. **Health check.** If `wiki/log.md` shows no health check (a `| lint`
-   entry) in the past 7 days, run the dex-lint skill
+9. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
+   health check reads `## [<date>] lint | …`. If `wiki/log.md` holds no such
+   line dated within the past 7 days, run the dex-lint skill
    (`.claude/skills/dex-lint`) — including when the inbox was empty.
 
 10. **Verify.** Working tree clean, everything committed and pushed.

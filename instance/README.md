@@ -22,4 +22,17 @@ Anything not listed is out of scope — Claude will ask rather than guess about
 borderline finds. Want more topics covered? Just say so: scope changes update
 both this README and [`CLAUDE.md`](./CLAUDE.md).
 
+## Run it on another machine
+
+New laptop, or a second person joining? Open Claude Code in the
+[Claude desktop app](https://claude.com/download), point the chat at where you
+keep your code, and paste:
+
+```
+Fetch and follow the instructions at https://raw.githubusercontent.com/leeovery/dex/main/docs/start.md — this is an existing dex at <owner>/<repo>.
+```
+
+It clones this repo, checks the dependencies, arms the schedule, and sets up
+phone capture. Everything else is already in the repo.
+
 The machinery lives in the shared engine and never needs touching.

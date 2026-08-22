@@ -1,12 +1,15 @@
 """Tests for new.py: instance scaffolding from the bundled template."""
 
+import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
-from dex_engine.new import SEEDS, TREE, build_parser, main, scaffold
+from dex_engine.new import EPHEMERAL, SEEDS, TREE, build_parser, main, scaffold
 from dex_engine.pipeline.types import Config
+from dex_engine.render.cli import main as render_main
 
 # The repo's template tree — what the wheel bundles as dex_engine/instance.
 TEMPLATE = Path(__file__).resolve().parent.parent / "instance"
@@ -27,6 +30,8 @@ class TestScaffold:
         lines = scaffold(root, run=run, template=TEMPLATE)
         for directory in TREE:
             assert (root / directory / ".gitkeep").exists()
+        for directory in EPHEMERAL:
+            assert (root / directory).is_dir()
         for rel in SEEDS:
             assert (root / rel).exists()
         # Machinery arrives via the same template sync every instance runs.
@@ -54,6 +59,30 @@ class TestScaffold:
         root = tmp_path / "dex-cooking"
         scaffold(root, run=RecordingRun(), template=TEMPLATE)
         assert "cache/" in (root / ".gitignore").read_text()
+
+    def test_cache_exists_but_is_never_tracked(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        assert (root / "cache").is_dir()
+        # No .gitkeep: the dir is gitignored, so a keeper file would be a
+        # tracked file inside an ignored directory.
+        assert not (root / "cache" / ".gitkeep").exists()
+
+    def test_a_fresh_instance_can_render_the_documented_receipt(self, tmp_path, monkeypatch):
+        # The per-item procedure's last step writes cache/receipt.json and
+        # runs `bin/dex render --file cache/receipt.json`.
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        payload = {
+            "surface": "ingest-receipt",
+            "payload": {"item": "2026-08-18-note-a1b2c3", "signal": "high"},
+        }
+        (root / "cache" / "receipt.json").write_text(json.dumps(payload))
+        monkeypatch.chdir(root)
+        out = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", out)
+        render_main(["--file", "cache/receipt.json"])
+        assert "ingested 2026-08-18-note-a1b2c3" in out.getvalue()
 
     def test_nonempty_target_is_loud(self, tmp_path):
         root = tmp_path / "dex-cooking"

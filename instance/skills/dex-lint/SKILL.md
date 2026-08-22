@@ -103,5 +103,7 @@ step 4.
    is just a sharper topic.
 9. Re-apply `wiki/pins.md` (the owner's hand-corrections) after any regeneration —
    pins always win.
-10. Append a `wiki/log.md` line; commit and push. Report findings and fixes to
-    the owner in plain words — no jargon.
+10. Append a `wiki/log.md` line — `## [YYYY-MM-DD] lint | <what the check
+    found>`. The op word is `lint` exactly: dex-run reads this line to decide
+    whether a health check is due. Commit and push. Report findings and fixes
+    to the owner in plain words — no jargon.

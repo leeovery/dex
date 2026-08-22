@@ -3,8 +3,12 @@
 #   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass|item] | lint [--write] | exclude <file.json> | inbox [ensure] | sync | render --file <payload> | new <name>
 # Runs the release pinned in .dex-engine-pin (one line, written by sync);
 # falls back to tracking main until the first tag-aware sync pins one.
-cmd=$1; shift 2>/dev/null
+# The usage check comes BEFORE the shift: shift is a POSIX special builtin,
+# and with no positional parameters dash exits the script on the spot, so a
+# usage message after it is unreachable there.
+cmd=${1-}
 [ -n "$cmd" ] || { echo "usage: bin/dex <normalize|enrich|lint|exclude|inbox|sync|render|new> [args]"; exit 1; }
+shift
 ref=main
 if [ -f .dex-engine-pin ]; then
   # Field-split on space/CR/tab so hand-edited pins (CRLF, stray blanks)

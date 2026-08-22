@@ -5,12 +5,18 @@ choosing the ref and exec'ing, so the stub just echoes the argv it got.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 SHIM = Path(__file__).resolve().parent.parent / "instance" / "dex"
+
+# `sh` is bash on macOS and dash on Debian/Ubuntu, and the two disagree about
+# what a script may do with no positional parameters — so the no-argument
+# path is exercised against every /bin/sh an instance is likely to meet.
+SHELLS = ["sh", "bash", "dash", "ksh"]
 
 
 @pytest.fixture
@@ -23,10 +29,12 @@ def fake_uvx(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def run_shim(cwd: Path, fake_bin: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def run_shim(
+    cwd: Path, fake_bin: Path, *args: str, shell: str = "sh"
+) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
     return subprocess.run(  # noqa: S603 — test-built args, no shell
-        ["sh", str(SHIM), *args],  # noqa: S607 — sh resolves via PATH; the shim IS POSIX sh
+        [shell, str(SHIM), *args],  # the shell name resolves via PATH; the shim IS POSIX sh
         cwd=cwd,
         env=env,
         capture_output=True,
@@ -73,7 +81,23 @@ class TestShim:
         result = run_shim(tmp_path, fake_uvx, "enrich")
         assert "@main dex-enrich" in result.stdout
 
-    def test_no_command_prints_usage_and_fails(self, tmp_path, fake_uvx):
-        result = run_shim(tmp_path, fake_uvx)
+    @pytest.mark.parametrize("shell", SHELLS)
+    def test_no_command_prints_usage_and_fails_in_every_shell(self, tmp_path, fake_uvx, shell):
+        # `shift` is a POSIX special builtin: with no positional parameters a
+        # non-interactive dash exits the script immediately, which made the
+        # usage message unreachable there while bash printed it fine.
+        if shutil.which(shell) is None:
+            pytest.skip(f"{shell} is not installed on this machine")
+        result = run_shim(tmp_path, fake_uvx, shell=shell)
         assert result.returncode == 1
         assert "usage: bin/dex" in result.stdout
+
+    @pytest.mark.parametrize("shell", SHELLS)
+    def test_dispatch_works_in_every_shell(self, tmp_path, fake_uvx, shell):
+        if shutil.which(shell) is None:
+            pytest.skip(f"{shell} is not installed on this machine")
+        result = run_shim(tmp_path, fake_uvx, "enrich", "run", shell=shell)
+        assert result.returncode == 0
+        assert result.stdout.strip() == (
+            "--from git+https://github.com/leeovery/dex@main dex-enrich run"
+        )
