@@ -260,6 +260,26 @@ class TestSeedAndDone:
         assert poisoned.kind is Kind.FILE
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
 
+    def test_unreadable_media_file_is_noted_and_seeding_continues(self, instance, monkeypatch):
+        # Seeding's one file read: an unreadable media file (permissions, a
+        # vanished LFS object) is judgment work, never fatal to the run.
+        media = instance.root / "media" / "aaaaaa" / "paper.pdf"
+        media.parent.mkdir(parents=True)
+        media.write_bytes(b"%PDF-1.4 fine on disk")
+        write_item(instance, media=["media/aaaaaa/paper.pdf"])
+
+        def unreadable(_path):
+            raise PermissionError("Operation not permitted")
+
+        monkeypatch.setattr(run_mod, "_sniff_bytes", unreadable)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert "media file media/aaaaaa/paper.pdf could not be read" in flat
+        assert "Operation not permitted" in flat
+        entries = ledger.load(instance.ledger_path)
+        assert work_hash("file:media/aaaaaa/paper.pdf") not in entries  # nothing guessed
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731
@@ -819,6 +839,100 @@ class TestMediaStage:
         assert "Content-Length" in (entry.reason or "")
         media_calls = [call for call in transport.calls if call[1] == self.IMG1]
         assert media_calls == [("HEAD", self.IMG1)]  # the body was never fetched
+
+    def og_image_page(self, content: str) -> bytes:
+        return (
+            f'<html><head><meta property="og:image" content="{content}">'
+            "</head><body>page</body></html>"
+        ).encode()
+
+    def web_ctx(self, instance, transport):
+        web = WebDriver(transport=transport, extract=lambda _html: "extracted body " * 40)
+        return make_ctx(instance, FakeDriver(), drivers=[web], transport=transport)
+
+    def test_relative_og_image_resolves_and_downloads(self, instance):
+        # The media stage fetches verbatim, so a page-relative og:image used
+        # to reach the transport as an unfetchable URL and take the run down.
+        hero = "https://example.test/img/hero.png"
+        transport = FakeTransport(
+            {
+                URL: HttpResponse(
+                    status=200, content_type="text/html", body=self.og_image_page("/img/hero.png")
+                ),
+                hero: HttpResponse(status=200, content_type="image/png", body=b"png"),
+            }
+        )
+        write_item(instance)
+        ctx = self.web_ctx(instance, transport)
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DONE
+        assert entries[work_hash(hero)].path == f"enrichment/{ITEM}/media-0.png"
+
+    def test_protocol_relative_og_image_takes_the_page_scheme(self, instance):
+        hero = "https://cdn.example.test/hero.png"
+        transport = FakeTransport(
+            {
+                URL: HttpResponse(
+                    status=200,
+                    content_type="text/html",
+                    body=self.og_image_page("//cdn.example.test/hero.png"),
+                ),
+                hero: HttpResponse(status=200, content_type="image/png", body=b"png"),
+            }
+        )
+        write_item(instance)
+        run_mod.run(self.web_ctx(instance, transport))
+        assert ledger.load(instance.ledger_path)[work_hash(hero)].status is Status.DONE
+
+    def test_unfetchable_media_url_is_charged_to_the_media_unit(self, instance):
+        # A host with a space: the transport refuses it as a ValueError, so
+        # the old inline download superseded the PARENT's done line with an
+        # error and killed every later run. It never reaches a fetch now.
+        bad = "https://exa mple.test/a.png"
+        write_item(instance)
+        transport = FakeTransport({})
+        driver = FakeDriver(fetch_fn=self.media_fetch([bad]))
+        ctx = make_ctx(instance, driver, transport=transport)
+        report = run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DONE  # the parent stands
+        media = entries[work_hash(bad)]
+        assert media.status is Status.MANUAL
+        assert media.via == "media"
+        assert media.parent == work_hash(URL)
+        assert "unfetchable media URL" in (media.reason or "")
+        assert all(call[1] != bad for call in transport.calls)  # never fetched
+        assert bad in report
+
+        # And the next run is clean: the park is terminal, nothing retries.
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        assert ledger.load(instance.ledger_path)[work_hash(bad)].status is Status.MANUAL
+
+    def test_crash_window_redrain_overwrites_its_own_media_file(self, instance):
+        # Birth line, file written, crash before the outcome line. The
+        # redrain must overwrite media-0 — never write media-1 beside the
+        # orphan a disk scan would take for someone else's slot.
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        lines = [
+            line for line in instance.ledger_path.read_text().split("\n") if line.strip()
+        ]
+        assert json.loads(lines[-1])["hash"] == work_hash(self.IMG1)
+        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")  # the crash
+        assert (instance.enrichment_dir / ITEM / "media-0.png").exists()
+
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
+            "media-0.png"
+        ]
 
     def test_media_does_not_count_toward_the_url_cap(self, instance):
         write_item(instance)

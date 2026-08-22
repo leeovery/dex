@@ -114,6 +114,30 @@ HARVEST_RULES_VERSION = 1
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
+# Whitespace and control characters anywhere in a URL make the HTTP client
+# refuse the request outright (as a ValueError, outside the
+# connection-failure lifecycle every other fetch failure travels).
+_UNFETCHABLE_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
+
+
+def _unfetchable_media(url: str) -> str | None:
+    """Why the transport could never fetch ``url``, or None when it can.
+
+    Media URLs are fetched verbatim — they are checked before they are
+    ledgered, so a URL that cannot be a request never enters the queue.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "the URL cannot be parsed"
+    if parts.scheme not in ("http", "https"):
+        return "the scheme is not http(s)"
+    if not parts.netloc:
+        return "the URL names no host"
+    if _UNFETCHABLE_CHARS.search(url):
+        return "the URL contains whitespace or control characters"
+    return None
+
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
@@ -342,7 +366,17 @@ class _Drain:
                 count=True,
             )
             return
-        fmt = sniff_format(_sniff_bytes(file_path), name=repo_path.rsplit("/", 1)[-1])
+        try:
+            data = _sniff_bytes(file_path)
+        except OSError as e:
+            # Seeding's one file read: an unreadable media file (permissions,
+            # a vanished LFS object) is named on the report, never fatal.
+            detail = " ".join(str(e).split())
+            self.notes.append(
+                f"media file {repo_path} could not be read — {detail} — skipped this run"
+            )
+            return
+        fmt = sniff_format(data, name=repo_path.rsplit("/", 1)[-1])
         if fmt is None:
             return
         self.record(
@@ -451,20 +485,20 @@ class _Drain:
 
     def _process(self, entry: LedgerEntry) -> bool:
         """Process one unit; False means a cap-deferred no-op (nothing spent)."""
-        if entry.via == "media":
-            # The ONE via-routed dispatch: the media stage gives blocked downloads
-            # normal retry rules, and via is the only mark they carry.
-            self._download_media(entry, prior=entry)
-            return True
-        transcribe_job = _is_transcribe_job(entry)
+        # The ONE via-routed dispatch: the media stage gives blocked downloads
+        # normal retry rules, and via is the only mark they carry.
+        media_job = entry.via == "media"
+        transcribe_job = not media_job and _is_transcribe_job(entry)
         if transcribe_job and not self._transcribe_slot():
             return False  # stays waiting untouched; the deferral is noted once
         try:
             # The try spans ALL per-unit processing:
-            # fetch/transcribe, output write, media stage, children
+            # fetch/transcribe/download, output write, media stage, children
             # admission. An engine bug anywhere in it ledgers `error` — the
             # outcome line supersedes any partial one — never aborts the run.
-            if transcribe_job:
+            if media_job:
+                self._download_media(entry)
+            elif transcribe_job:
                 self._transcribe_unit(entry)
             else:
                 self._drive_unit(entry)
@@ -881,6 +915,10 @@ class _Drain:
 
     def _media_stage(self, parent: LedgerEntry, urls: list[str]) -> None:
         for url in urls:
+            refusal = _unfetchable_media(url)
+            if refusal is not None:
+                self._park_unfetchable_media(parent, url, refusal)
+                continue
             unit_hash = work_hash(url)
             existing = self.entries.get(unit_hash)
             if existing is not None:
@@ -900,15 +938,53 @@ class _Drain:
             )
             # The birth line lands BEFORE the download (entries exist from
             # birth) — a crash mid-download leaves a queued via:media entry
-            # the next run's redrain path picks up.
+            # the next run's redrain path picks up. The download itself goes
+            # through _process, so a failure of any class is charged to the
+            # media unit rather than to the page that pointed at it.
             self.record(child)
-            self._download_media(self.entries[unit_hash], prior=None)
+            self._process(self.entries[unit_hash])
 
-    def _download_media(self, entry: LedgerEntry, *, prior: LedgerEntry | None) -> None:
+    def _park_unfetchable_media(self, parent: LedgerEntry, url: str, why: str) -> None:
+        """Park a media URL nothing could fetch — as its own unit, manual.
+
+        The bad-seed pattern, one layer in: garbage never enters the queue,
+        and the refusal is charged to the media unit, never to the page
+        whose markup merely named it. Keyed on the raw URL like every other
+        media line, so ``enrich mark`` can heal it.
+        """
+        if not url or "\n" in url or "\r" in url:
+            # A multi-line value cannot be a ledger identity at all (the
+            # schema is single-line) — the report is the only place it fits.
+            self.notes.append(
+                f"item {parent.item}: a media URL found on {parent.url} spans "
+                "multiple lines and was dropped — it cannot become a work unit"
+            )
+            return
+        unit_hash = work_hash(url)
+        if unit_hash in self.entries:
+            return
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=url,
+                item=parent.item,
+                kind=parent.kind,
+                status=Status.MANUAL,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                via="media",
+                parent=parent.hash,
+                depth=(parent.depth or 0) + 1,
+                reason=f"unfetchable media URL — {why}",
+            ),
+            count=True,
+        )
+
+    def _download_media(self, entry: LedgerEntry) -> None:
         # Cap and oversize skips below land in the report's unit counts —
         # deliberately: they are unit outcomes, unlike the re-entry cap
         # fires, which never surface.
-        slot = self._media_slot(entry.item)
+        slot = self._media_slot(entry)
         if slot is None:
             # Capacity checked BEFORE any fetch — no bandwidth spent on a
             # file the cap would refuse. Downloads are synchronous, so
@@ -928,11 +1004,11 @@ class _Drain:
             response = self.ctx.transport(entry.url)
         except OSError as e:
             failure = classify_connection(e)
-            self._media_failure(entry, prior, failure.status, failure.reason)
+            self._media_failure(entry, failure.status, failure.reason)
             return
         if not response.ok:
             failure = classify_http(response.status)
-            self._media_failure(entry, prior, failure.status, failure.reason)
+            self._media_failure(entry, failure.status, failure.reason)
             return
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
@@ -954,13 +1030,12 @@ class _Drain:
             return False  # inconclusive — the GET will surface the truth
         return probe.ok and (probe.content_length or 0) > MEDIA_MAX_BYTES
 
-    def _media_failure(
-        self, entry: LedgerEntry, prior: LedgerEntry | None, status: Status, reason: str
-    ) -> None:
+    def _media_failure(self, entry: LedgerEntry, status: Status, reason: str) -> None:
         match status:
             case Status.BLOCKED:
-                base = dataclasses.replace(entry, attempts=(prior.attempts if prior else None))
-                self._apply_blocked(base, reason)
+                # The entry IS the prior line — a birth line carries no
+                # attempts, a redrained one carries what it has earned.
+                self._apply_blocked(entry, reason)
             case Status.MANUAL | Status.DEAD:
                 self.record_outcome(entry, status=status, reason=reason)
             case _:
@@ -968,24 +1043,43 @@ class _Drain:
                 # else is an engine bug, not a quiet default.
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
-    def _media_slot(self, item_id: str) -> int | None:
-        """The next free media index for the item, or None at the cap.
+    def _media_slot(self, entry: LedgerEntry) -> int | None:
+        """This unit's media index — stable across runs — or None at the cap.
+
+        The index is the unit's position among the item's media units in
+        ledger order, NOT the next free index on disk: a crash between the
+        file write and the outcome line leaves an orphaned file, and a
+        next-free scan would then write a second copy beside it. Reruns
+        overwrite, never duplicate.
 
         The cap is shared with extraction assets — 4 media-family files per
-        item total, whichever route wrote them.
+        item total, whichever route wrote them; a slot already on disk is
+        this unit's own file and spends nothing new.
         """
-        if self._media_file_count(item_id) >= MEDIA_MAX_FILES:
+        slot = self._media_position(entry)
+        if slot >= MEDIA_MAX_FILES:
             return None
-        item_dir = self.ctx.instance.enrichment_dir / item_id
-        taken = {
-            int(path.stem.split("-")[1])
-            for path in item_dir.glob("media-*.*")
-            if path.stem.split("-")[1].isdigit()
-        }
-        for slot in range(MEDIA_MAX_FILES):
-            if slot not in taken:
-                return slot
-        return None
+        item_dir = self.ctx.instance.enrichment_dir / entry.item
+        if next(item_dir.glob(f"media-{slot}.*"), None) is not None:
+            return slot
+        if self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
+            return None
+        return slot
+
+    def _media_position(self, entry: LedgerEntry) -> int:
+        """How many of the item's media units were ledgered before this one.
+
+        Counted regardless of status: the position is an identity, so a
+        parked or skipped sibling still holds its place — a position that
+        moved as statuses changed would rename files under the item.
+        """
+        seen = 0
+        for unit_hash, other in self.entries.items():
+            if unit_hash == entry.hash:
+                break
+            if other.item == entry.item and other.via == "media":
+                seen += 1
+        return seen
 
     # -- children -----------------------------------------------
 

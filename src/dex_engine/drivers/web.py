@@ -45,9 +45,13 @@ HtmlExtract = Callable[[str], str | None]
 
 _WAYBACK_AVAILABLE = "https://archive.org/wayback/available?url="
 
+# The capture group stops at a line break as well as the quote: a wrapped
+# content attribute would otherwise yield a multi-line "URL".
 _OG_IMAGE_RES = (
-    re.compile(r"<meta[^>]+(?:property|name)=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)"),
-    re.compile(r"<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:property|name)=[\"']og:image[\"']"),
+    re.compile(r"<meta[^>]+(?:property|name)=[\"']og:image[\"'][^>]+content=[\"']([^\"'\r\n]+)"),
+    re.compile(
+        r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:image[\"']"
+    ),
 )
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _MAX_TITLE_CHARS = 200
@@ -117,7 +121,7 @@ class WebDriver:
                     meta={},
                     redetect=Redetection(kind=Kind.FILE, format=fmt),
                 )
-            return self._extracted(page.html, allow_media=True) or Result(
+            return self._extracted(page.html, base_url=unit.url, allow_media=True) or Result(
                 status=Status.MANUAL,
                 meta=_title_meta(page.html),
                 reason=THIN_EXTRACTION_REASON,
@@ -135,12 +139,12 @@ class WebDriver:
             )
         return classify_http(response.status)
 
-    def _extracted(self, html: str, *, allow_media: bool) -> Result | None:
+    def _extracted(self, html: str, *, base_url: str, allow_media: bool) -> Result | None:
         """A done Result when extraction is substantial, else None."""
         body = self._extract(html)
         if body is None or len(body) < MIN_SUBSTANTIAL_CHARS:
             return None
-        media = [image] if allow_media and (image := _og_image(html)) else []
+        media = [image] if allow_media and (image := _og_image(html, base_url)) else []
         return Result(status=Status.DONE, meta=_title_meta(html), body=body, media=media)
 
     def _wayback_fallback(self, url: str, failure: Classification) -> Result:
@@ -150,7 +154,7 @@ class WebDriver:
             page = self._fetch_page(snapshot_url)
             if isinstance(page, _Page):
                 # Snapshot og:images point at web.archive.org — skip media.
-                rescued = self._extracted(page.html, allow_media=False)
+                rescued = self._extracted(page.html, base_url=snapshot_url, allow_media=False)
                 if rescued is not None:
                     meta = dict(rescued.meta)
                     meta["via"] = "wayback"
@@ -198,11 +202,22 @@ def _document_format(page: _Page) -> Format | None:
     return CONTENT_TYPE_FORMATS.get(page.content_type)
 
 
-def _og_image(html: str) -> str | None:
+def _og_image(html: str, base_url: str) -> str | None:
+    """The page's og:image as an absolute http(s) URL, or None.
+
+    The media stage fetches what it is handed verbatim, so a media URL must
+    be fetchable by construction: relative and protocol-relative values
+    resolve against the page they were found on, entities unescape, and
+    anything that is not http(s) afterwards (``data:``, ``javascript:``, a
+    template placeholder) is not a media URL at all.
+    """
     for pattern in _OG_IMAGE_RES:
         match = pattern.search(html)
-        if match:
-            return match.group(1)
+        if match is None:
+            continue
+        candidate = urllib.parse.urljoin(base_url, html_lib.unescape(match.group(1)).strip())
+        if candidate.startswith(("http://", "https://")):
+            return candidate
     return None
 
 

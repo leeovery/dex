@@ -107,6 +107,41 @@ class TestSuccessfulFetch:
         assert result.meta["title"] == "Designing Resilient Ingestion Pipelines & Ledgers"
         assert result.media == ["https://cdn.example.test/img/pipeline-hero.png"]
 
+    def og_image_media(self, content: str) -> list[str]:
+        html = (
+            f'<html><head><meta property="og:image" content="{content}">'
+            "</head><body>body</body></html>"
+        )
+        result = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
+        return result.media
+
+    def test_relative_og_image_resolves_against_the_page(self):
+        # The media stage fetches verbatim: a relative value that reached it
+        # was a URL nothing could fetch.
+        assert self.og_image_media("/img/hero.png") == ["https://example.test/img/hero.png"]
+
+    def test_protocol_relative_og_image_takes_the_page_scheme(self):
+        assert self.og_image_media("//cdn.example.test/hero.png") == [
+            "https://cdn.example.test/hero.png"
+        ]
+
+    def test_og_image_entities_are_unescaped(self):
+        assert self.og_image_media("https://cdn.example.test/h.png?a=1&amp;b=2") == [
+            "https://cdn.example.test/h.png?a=1&b=2"
+        ]
+
+    def test_non_http_og_image_is_not_media(self):
+        assert self.og_image_media("data:image/png;base64,iVBOR") == []
+
+    def test_wrapped_content_attribute_never_yields_a_multi_line_url(self):
+        html = (
+            '<html><head><meta property="og:image" content="https://cdn.example.test/\n'
+            'hero.png"></head><body>body</body></html>'
+        )
+        media = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB)).media
+        assert media == ["https://cdn.example.test/"]
+        assert all("\n" not in url for url in media)
+
     def test_200_but_thin_is_manual_never_dead(self):
         # Learned from the 2026-08-20 overnight runs: JS shells were ledgered
         # dead and their items stranded at raw.

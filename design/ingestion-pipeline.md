@@ -410,7 +410,11 @@ independently is seven chances to reintroduce it):
   audio, unparseable file); the run loop maps it → `manual`, anything
   uncaught → `error`. Classification judgment lives in one place.
 - Exactly **one** `except Exception` in the whole pipeline: the per-unit
-  loop in `run.py` (→ `error` + issue filing). Drivers and providers never
+  loop in `run.py` (→ `error` + issue filing). **Every** dispatch route runs
+  inside it — driver fetch, transcribe drain, and media download alike,
+  the media stage's own first download included — so no unit's failure can
+  escape the drain or be charged to another unit's line.
+  Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
   keep their cause. The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
@@ -545,6 +549,19 @@ parent's kind) — success `done`, transient failure `blocked` (normal retry
 rules), oversize `skipped` with reason. Media downloads do **not** count
 toward the item's 12-URL cap (that cap bounds fetched pages). The old
 silent `except: pass` dies here.
+
+**Media URLs are validated before they are ledgered.** The stage fetches
+what a driver hands it verbatim, so a value that could never be a request —
+a non-http(s) scheme, no host, whitespace or control characters (a
+page-relative `og:image` was the wild case) — parks `manual` as its own
+media unit with the refusal stated, and never enters the queue. Drivers
+absolutize and screen the URLs they emit; the stage assumes nothing.
+Downloads run through the same per-unit protection as every other unit
+(§5): a media failure is charged to the media unit, never to the page whose
+markup named it. **The `N` in `media-N.ext` is the unit's position among the
+item's media units in ledger order**, not the next free index on disk — a
+crash between the file write and the outcome line is overwritten by the
+redrain, never duplicated beside.
 
 ## 8. X driver (renamed from tweet)
 
