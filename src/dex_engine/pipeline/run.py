@@ -718,6 +718,7 @@ class _Drain:
         path = None
         if result.body is not None:
             path = self._write_output(entry, result)
+            self._drop_superseded_outputs(entry, path)
         title = result.meta.get("title")
         self.record_outcome(
             entry,
@@ -745,10 +746,11 @@ class _Drain:
         ping-pong. Across runs a unit may correct again: the world
         genuinely changes, and ``via`` is provenance history, not a lock.
 
-        The previous kind's output is unlinked: the correction supersedes
-        it, and leaving it beside the new output would hand the digest
-        layer superseded content. The ledger's audit trail preserves the
-        history; the disk does not.
+        The previous kind's output stays on disk until the corrected unit
+        lands one of its own (:meth:`_drop_superseded_outputs`). Unlinking
+        it here would strip an item of the enrichment it already had the
+        moment a corrected fetch parked — status back to raw, digest
+        orphaned, nothing left to re-derive from.
         """
         if entry.hash in self.redetected_hashes:
             self.record_outcome(
@@ -761,13 +763,6 @@ class _Drain:
             )
             return
         self.redetected_hashes.add(entry.hash)
-        stale = (
-            self.ctx.instance.enrichment_dir
-            / entry.item
-            / f"{entry.kind.value}-{entry.hash[:6]}.md"
-        )
-        if entry.kind is not redetect.kind and stale.exists():
-            stale.unlink()
         self.record(
             LedgerEntry(
                 hash=entry.hash,
@@ -833,6 +828,21 @@ class _Drain:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(content, encoding="utf-8")
         return str(out.relative_to(self.ctx.instance.root))
+
+    def _drop_superseded_outputs(self, entry: LedgerEntry, path: str) -> None:
+        """Drop an earlier kind's output — once the corrected one exists.
+
+        A redetection relabels a unit, so its output file is renamed by
+        kind. The stale file leaves the disk here, on the success that
+        replaces it, and never earlier: a corrected fetch that parks must
+        leave the item exactly as enriched as it found it. The ledger's
+        audit trail keeps the history either way.
+        """
+        item_dir = self.ctx.instance.enrichment_dir / entry.item
+        current = Path(path).name
+        for stale in item_dir.glob(f"*-{entry.hash[:6]}.md"):
+            if stale.name != current:
+                stale.unlink()
 
     # -- extraction assets ----------------------------------------
 
@@ -1289,7 +1299,10 @@ def _refresh_item_frontmatter(
         path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     try:
         item = corpus.read_item(path)
-    except (OSError, corpus.CorpusSchemaError):
+    except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+        # UnicodeDecodeError is a ValueError, not an OSError: without it a
+        # single non-UTF-8 item made mark and pass exit 1 AFTER their write
+        # had landed, and the retry duplicated the record.
         return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
     try:
@@ -1642,9 +1655,15 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     The owning item's derived frontmatter is refreshed in the same call, so
     a hand-written enrichment file is listed the moment its heal lands.
 
+    A unit is found by its canonical identity, or — failing that — by the
+    exact key it was stored under: bad seeds and every ``via: media`` line
+    are keyed on the URL verbatim (canonicalization failed, or never ran),
+    so a canonical-only lookup could never reach them, and the contract
+    forbids healing them by hand.
+
     Args:
         ctx: The run context.
-        url: The unit's URL (canonicalized here).
+        url: The unit's URL — canonicalized first, then matched verbatim.
         status: The corrected status.
         reason: The stated reason (required for manual/skipped).
         path: Output path, for done heals that wrote a file.
@@ -1667,8 +1686,15 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # scrubber does for engine-produced reasons.
         reason = " ".join(reason.split()) or None
     drain = _Drain(ctx=ctx)
-    canonical, unit_hash = drain.identify(url)
-    prior = drain.entries.get(unit_hash)
+    try:
+        canonical, _ = drain.identify(url)
+    except ValueError:
+        # The URL a bad seed was parked for cannot be canonicalized — that
+        # is why it parked. The verbatim key is the only one it ever had.
+        canonical = url
+    prior = drain.entries.get(work_hash(canonical))
+    if prior is None:
+        prior = drain.entries.get(work_hash(url))
     if prior is None:
         raise ValueError(f"no ledger entry for {canonical!r} — mark heals existing state")
     effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
@@ -1697,7 +1723,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     )
     drain.record(healed)
     _refresh_item_frontmatter(ctx.instance, prior.item)
-    return f"marked {canonical} ({unit_hash}) {status.value}"
+    return f"marked {prior.url} ({prior.hash}) {status.value}"
 
 
 def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:

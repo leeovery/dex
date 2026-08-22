@@ -111,9 +111,13 @@ detection module — bytes decide, never content-type alone) and returns
 `Result(status: queued, redetect: Redetection(kind, format))`, identity
 only, the one sanctioned queued-from-a-driver shape. The run layer appends
 a **superseding line for the same hash** — corrected kind, `via: "sniff"`
-— last-per-hash relabels the unit in place, requeues it in-run, and any
-prior kind's output file is unlinked (the correction supersedes disk; the
-ledger keeps the history). Works in both directions (web→file,
+— last-per-hash relabels the unit in place and requeues it in-run. Any
+prior kind's output file is unlinked **when the corrected unit lands one of
+its own**, never at correction time: a corrected fetch that parks must
+leave the item exactly as enriched as it found it (unlinking first stripped
+an item back to `raw` with its digest orphaned and nothing left to
+re-derive from). The ledger keeps the history either
+way. Works in both directions (web→file,
 file→web). Loop guard is per-run state: one correction per hash per run,
 then `manual` "re-detection loop"; across runs a unit may redetect again —
 the world changes.

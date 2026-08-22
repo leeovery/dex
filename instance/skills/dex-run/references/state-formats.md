@@ -133,7 +133,10 @@ a malformed record impossible:
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `capped` marks a skip that records
   cap-refused work, not an admitted unit. Heals and manual resolutions:
-  `bin/dex enrich mark`.
+  `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
+  the exact stored key for units recorded verbatim (bad seeds and every
+  `via: media` line), so pass the URL as the ledger shows it and the heal
+  lands on that entry.
 - `state/enrichment-ledger.unmigrated.jsonl` — the migration quarantine
   (normally ABSENT/empty): ledger lines a migration could not provably
   translate. Lint flags it non-empty. **The quarantine review procedure**

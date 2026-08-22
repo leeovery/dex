@@ -45,6 +45,7 @@ from dex_engine.pipeline.types import (
     LedgerEntry,
     MediaFetch,
     Need,
+    Redetection,
     Result,
     Status,
 )
@@ -1303,6 +1304,69 @@ class TestVerbs:
         with pytest.raises(ValueError, match="reason"):
             run_mod.mark(ctx, URL, Status.MANUAL, reason=" \n\t ")
 
+    def test_mark_heals_a_bad_seed_parked_on_its_raw_url(self, instance):
+        # A bad seed is keyed on the URL exactly as captured — canonicalizing
+        # it is what failed — so a canonical-only lookup never reaches it and
+        # the whole class would be unhealable.
+        bad_url = "https://[bad-ipv6"
+        write_item(instance, urls=[bad_url])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(bad_url)].status is Status.MANUAL
+        confirmation = run_mod.mark(ctx, bad_url, Status.DEAD, reason="the host never existed")
+        healed = ledger.load(instance.ledger_path)[work_hash(bad_url)]
+        assert healed.status is Status.DEAD
+        assert healed.url == bad_url  # the entry keeps its own key
+        assert work_hash(bad_url) in confirmation
+
+    def test_mark_heals_a_via_media_entry_by_its_verbatim_url(self, instance):
+        # Media URLs are ledgered verbatim — signed params ARE the resource —
+        # so the canonical hash of one can never meet its stored key.
+        signed = "https://cdn.example.test/hero.png?si=abc123"
+        write_item(instance)
+        fetch = lambda _unit: Result(  # noqa: E731
+            status=Status.DONE, meta={}, body="b" * 400, media=[signed]
+        )
+        outage = HttpResponse(status=503, content_type="image/png", body=b"")
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({signed: outage})
+        )
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(signed)].status is Status.BLOCKED
+        run_mod.mark(ctx, signed, Status.SKIPPED, reason="the signed link expired")
+        healed = ledger.load(instance.ledger_path)[work_hash(signed)]
+        assert healed.status is Status.SKIPPED
+        assert healed.via == "media"  # provenance carried forward
+
+    def test_mark_prefers_the_canonical_match_when_both_keys_exist(self, instance):
+        raw = f"{URL}?si=abc123"  # canonicalizes to URL; ledgered verbatim as media
+        write_item(instance)
+        fetch = lambda _unit: Result(  # noqa: E731
+            status=Status.DONE, meta={}, body="b" * 400, media=[raw]
+        )
+        image = HttpResponse(status=200, content_type="image/png", body=b"png")
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image})
+        )
+        run_mod.run(ctx)
+        run_mod.mark(ctx, raw, Status.DEAD, reason="the page is gone")
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DEAD  # canonical wins
+        assert entries[work_hash(raw)].status is Status.DONE  # the media line untouched
+
+    def test_verbs_survive_a_non_utf8_corpus_item(self, instance):
+        # The derived-frontmatter refresh follows the write: a
+        # UnicodeDecodeError there used to exit 1 AFTER the ledger (or
+        # passes) line had landed, and the retry duplicated the record.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").write_bytes(b"---\nid: x\n---\n\xff\xfe")
+        run_mod.mark(ctx, URL, Status.DEAD, reason="the source is gone")
+        assert entry_for(ctx).status is Status.DEAD
+        assert run_mod.record_pass(ctx, ITEM, "digest").startswith("recorded")
+        assert instance.passes_path.read_text().count("\n") == 1  # one record, no retry
+
     def test_mark_error_is_refused(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="engine outcomes"):
@@ -1745,6 +1809,54 @@ class TestRedetection:
         assert entry.status is Status.DONE
         assert "re-detection loop" not in report
         assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
+
+    def test_a_parked_correction_keeps_the_old_output_until_one_replaces_it(self, instance):
+        # The wild rerun path: an item enriched as web re-detects to file,
+        # and the corrected fetch parks. Unlinking the web output at
+        # redetect time left the item at `raw` with an orphaned digest and
+        # nothing on disk to re-derive from.
+        item_path = write_item(instance)
+        mode = {"redetect": False, "extract": False}
+
+        def web_fetch(_unit):
+            if mode["redetect"]:
+                return Result(
+                    status=Status.QUEUED,
+                    meta={},
+                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+                )
+            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+
+        def file_fetch(_unit):
+            if mode["extract"]:
+                return Result(status=Status.DONE, meta={"title": "t"}, body="extracted " * 40)
+            return Result(status=Status.MANUAL, meta={}, reason="no extractor for pdf here")
+
+        web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
+        files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
+        ctx = make_ctx(instance, web, drivers=[web, files])
+        run_mod.run(ctx)
+        web_out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        assert web_out.exists()
+
+        mode["redetect"] = True
+        self._requeue(ctx, URL)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        parked = entry_for(ctx)
+        assert parked.kind is Kind.FILE
+        assert parked.status is Status.MANUAL
+        assert web_out.exists()  # the enrichment the item already had stands
+        assert corpus.read_item(item_path).enrichment == [web_out.name]
+        assert corpus.read_item(item_path).status == "enriched"
+
+        # The success that replaces it is what drops it.
+        mode["extract"] = True
+        self._requeue(ctx, URL, reason=None)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        done = entry_for(ctx)
+        assert done.status is Status.DONE
+        assert not web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [f"file-{done.hash[:6]}.md"]
 
     def test_redetected_rerun_spends_one_cohort_slot(self, instance):
         url = self.PDF_URL
