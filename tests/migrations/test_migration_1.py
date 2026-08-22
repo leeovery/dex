@@ -72,10 +72,22 @@ class TestCorpusRenames:
         )
         report = migration.apply(tmp_path)
         item = read_item(path)
-        assert item.kinds == ["x", "web", "youtube"]
+        assert item.kinds == ["web", "x", "youtube"]  # normalize's order
         assert item.enrichment == ["x-abc123.md", "web-def456.md", "youtube-aaa111.md"]
         assert item.body == body
         assert any("corpus: 1 item(s) rewritten" in action for action in report.actions)
+
+    def test_kinds_land_in_the_order_normalize_derives_them(self, tmp_path, migration):
+        # normalize regenerates kinds as sorted({kind_of(url) …}); leaving
+        # them in file order here means the first regeneration after the
+        # migration rewrites the item again for ordering alone.
+        path = tmp_path / "corpus" / "2026" / "2026-05-01-item-a1b2c3.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            corpus_text("2026-05-01-item-a1b2c3", kinds=("youtube", "tweet", "blog", "tweet"))
+        )
+        migration.apply(tmp_path)
+        assert read_item(path).kinds == ["web", "x", "youtube"]  # sorted, deduped
 
     def test_already_migrated_item_untouched(self, tmp_path, migration):
         path = tmp_path / "corpus" / "2026" / "2026-05-01-item-a1b2c3.md"

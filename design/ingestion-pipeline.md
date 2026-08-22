@@ -1118,7 +1118,11 @@ Skill changes shipping with this:
   engine-owned frontmatter fields — migration 1 rewrites `kinds:`). Note
   for migration 1's author: `normalize` regeneration re-derives kinds via
   the shared detect module, so rewritten frontmatter converges with
-  regeneration rather than fighting it. Per the repo's anti-drift rules:
+  regeneration rather than fighting it — including its ORDER. Normalize
+  emits `sorted({kind_of(url) …})`, so the migration emits kinds sorted
+  and deduped too; anything else and the first regeneration after the
+  migration rewrites those items again for ordering alone (82 real corpus
+  files), burying the migration's own commit in noise. Per the repo's anti-drift rules:
   pyproject entry points, the shim usage line, the README command table,
   and `docs/capture.md` + `docs/start.md` (dex-capture changes the capture
   story) all move together.
