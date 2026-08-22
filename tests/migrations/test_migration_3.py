@@ -67,7 +67,7 @@ class TestApply:
 class TestFramework:
     def test_discovered_as_number_three(self):
         migrations = discover(today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")
-        assert [m.number for m in migrations] == [1, 2, 3, 4]
+        assert [m.number for m in migrations] == [1, 2, 3]
 
     def test_runs_via_the_pending_path_and_logs(self, tmp_path):
         applied = run_pending(

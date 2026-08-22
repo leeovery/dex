@@ -199,8 +199,9 @@ class TestLedgerPurge:
         assert instance.ledger_path.read_text() == ""
 
     def test_a_hash_re_parented_to_a_live_item_is_kept_whole(self, instance):
-        # The live line decides, as migration 4's sweep decides: an older line
-        # naming the excluded item is a re-parenting's history.
+        # The live line decides: an older line naming the excluded item is a
+        # re-parenting's history, and it retires at `compact` like any
+        # superseded line.
         write_item_stub(instance)
         write_item_stub(instance, OTHER)
         ledger_entry(instance, "aaaaaaaaaa", ITEM)

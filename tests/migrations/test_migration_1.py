@@ -617,7 +617,7 @@ class TestLedgerTranslation:
         # The item was renamed after the line was written — same shortid, new
         # slug — so the recorded path names a directory that is gone while the
         # output it produced sits under the new id. Attributing to the string
-        # hands migration 4 an item with no corpus file, which reads as a purge.
+        # would name an id no corpus file answers to.
         live_id = "2026-05-01-renamed-a1b2c3"
         enrich_dir = tmp_path / "enrichment" / live_id
         enrich_dir.mkdir(parents=True)

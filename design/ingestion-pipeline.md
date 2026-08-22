@@ -961,8 +961,8 @@ Authoring rules:
   before the recorded path** (amended at phase-4 review, on real state): an
   item RENAMED since the line was written leaves that path naming a
   directory that is gone while the output sits under the new id, so trusting
-  the string hands the ghost-item sweep an item with no corpus file and the
-  work reads as a purge. Where the tree answers and the recorded path
+  the string attributes a live item's finished work to an id no corpus file
+  answers to. Where the tree answers and the recorded path
   disagrees, the path moves onto the attributed item too — but only where
   the file is demonstrably there, never as a guess. That is safe
   because of what the ledger IS: the corpus is the source of truth and the
@@ -1042,10 +1042,10 @@ Shipping migrations for this rewrite:
    `dex exclude` deletes the item, its enrichment **and the ledger entries
    for work no surviving item claims**, so a seed keyed to a purged item
    would re-fetch content ruled out of scope and put an owner ruling back in
-   the queue. (Purges made
-   before `exclude` swept the ledger left their entries on file — that is
-   exactly the state this migration meets, and migration 4 sweeps them
-   afterwards.)
+   the queue. (Purges made before `exclude` swept the ledger left their
+   entries on file — but migration 1 runs first and drops a line it can
+   attribute only to a dead item, so by the time this migration reads the
+   ledger every entry names a live item.)
    **`exclude` purges work units, not item names** (amended at phase-4
    review, on real state): a unit is keyed by URL, so two corpus items
    listing one URL share one entry that names only one of them — 80 hashes
@@ -1089,20 +1089,23 @@ Shipping migrations for this rewrite:
    the instance `.gitignore` when absent (append-only, idempotent, reported
    as an action on an instance-owned file). Without it, in-flight audio
    shows as dirt to the dirty-tree guard.
-4. **Ghost-item sweep** — removes every ledger entry whose corpus item no
-   longer exists: work state for content purged by `dex exclude` before it
-   swept the ledger itself, plus items removed by hand. Same disposal
-   argument as migration 1's dropped lines — the corpus is the source of
-   truth, seeding can never raise this work again, and git history holds
-   the entries — with the same reporting shape: a count and a capped named
-   list, telling excluded-on-record apart from removed-by-hand. **The item
-   is the test, never the output file**: an entry whose `path` is missing
-   from disk is a different finding with a different repair (the item still
-   exists, so the fix is to re-fetch, not to forget). The unit swept is the
-   hash, decided on the line `load` resolves to, and its audit trail goes
-   with it; a hash whose live line names a real item is kept whole. Runs
-   after migration 2 so the reseed guard has already explained, entry by
-   entry, what it declined to seed.
+
+That is the whole shipping set: 1, 2, 3.
+
+**A ghost-item sweep was drafted as migration 4 and deleted** (owner ruling
+at phase-4 review): permanent machinery, shipped to every instance forever,
+to tidy a handful of lines in one instance. Its predicate — infer "purged"
+from "the corpus file is missing" — is ambiguous by construction: a rename,
+a partial checkout and a hand deletion look identical to it, and every guard
+bolted on afterwards was a patch over that first guess. It cost a real
+17-minute transcription before it was caught. The residue it existed to
+clean is created by migration 1 attributing a line to a dead item, so the
+fix belongs there and nowhere else: migration 1 attributes to a **live**
+corpus item or drops the line (below).
+
+**No new migration without explicit approval** — the same ruling. A
+migration is code every instance carries forever; a one-off tidy is a
+one-off tidy.
 
 Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
 every user surface; an owner-requested `enrich fetch` refusal IS surfaced
@@ -1162,8 +1165,7 @@ src/dex_engine/
                  answer to "is this entry's item still there?"; lint and
                  migration 2 share it so a renamed item cannot read as a
                  purge in one place and a rename in the other; `exclude`
-                 and migration 4 ask it before deleting work history, for
-                 the same reason
+                 asks it before deleting work history, for the same reason
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
