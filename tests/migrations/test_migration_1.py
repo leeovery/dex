@@ -613,6 +613,54 @@ class TestLedgerTranslation:
         assert any("untranslatable line(s) dropped" in action for action in report.actions)
         assert path.read_text() == ""  # sole line dropped; ledger empty but clean
 
+    def test_the_enrichment_tree_outranks_a_stale_recorded_path(self, tmp_path, migration):
+        # The item was renamed after the line was written — same shortid, new
+        # slug — so the recorded path names a directory that is gone while the
+        # output it produced sits under the new id. Attributing to the string
+        # hands migration 4 an item with no corpus file, which reads as a purge.
+        live_id = "2026-05-01-renamed-a1b2c3"
+        enrich_dir = tmp_path / "enrichment" / live_id
+        enrich_dir.mkdir(parents=True)
+        (enrich_dir / "youtube-555555.md").write_text("transcript\n")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "5555550000",
+                    "url": "https://a.test/renamed",
+                    "kind": "youtube",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-a1b2c3/youtube-555555.md",
+                }
+            ],
+        )
+        migration.apply(tmp_path)
+        entry = ledger.load(path)["5555550000"]
+        assert entry.item == live_id
+        assert entry.path == f"enrichment/{live_id}/youtube-555555.md"
+
+    def test_a_stale_path_survives_where_disk_cannot_answer(self, tmp_path, migration):
+        # Nothing on disk carries the hash, so the recorded path is the only
+        # provenance there is — repointing it would be a guess.
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "6666660000",
+                    "url": "https://a.test/gone",
+                    "kind": "youtube",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-a1b2c3/youtube-666666.md",
+                }
+            ],
+        )
+        migration.apply(tmp_path)
+        entry = ledger.load(path)["6666660000"]
+        assert entry.item == "2026-05-01-old-slug-a1b2c3"
+        assert entry.path == "enrichment/2026-05-01-old-slug-a1b2c3/youtube-666666.md"
+
     def test_malformed_corpus_url_never_aborts_the_migration(self, tmp_path, migration):
         # urlsplit raises ValueError on an invalid IPv6 literal; one
         # hand-healed URL must not take down the whole owners scan.

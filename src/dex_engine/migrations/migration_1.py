@@ -352,6 +352,15 @@ def _output_owners(root: Path) -> dict[str, str]:
 _DROP_REPORT_CAP = 5
 
 
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class _Tree:
+    """What the instance on disk says, scanned once for the whole rewrite."""
+
+    root: Path
+    outputs: dict[str, str]  # unit hash[:6] -> the item whose tree holds its output
+    owners: dict[str, str]  # legacy URL hash -> the corpus item listing that URL
+
+
 def _rewrite_ledger(
     root: Path,
     actions: list[str],
@@ -361,8 +370,7 @@ def _rewrite_ledger(
     path = root / "state" / "enrichment-ledger.jsonl"
     if not path.exists():
         return
-    owners = _corpus_owners(root)
-    outputs = _output_owners(root)
+    tree = _Tree(root=root, outputs=_output_owners(root), owners=_corpus_owners(root))
     original = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
     dropped: list[str] = []
@@ -382,8 +390,7 @@ def _rewrite_ledger(
             new_line = to_line(
                 _translate_record(
                     _load_record(line),
-                    owners=owners,
-                    outputs=outputs,
+                    tree=tree,
                     notes=line_notes,
                     collisions=collisions,
                 )
@@ -456,16 +463,20 @@ def _load_record(line: str) -> dict[str, object]:
 def _translate_record(
     raw: dict[str, object],
     *,
-    owners: dict[str, str],
-    outputs: dict[str, str],
+    tree: _Tree,
     notes: list[str],
     collisions: set[tuple[str, str]],
 ) -> LedgerEntry:
     unit_hash = _expect_str(raw, "hash")
     status, needs = _translate_status(raw)
     raw_path = None if "path" not in raw else _expect_str(raw, "path")
-    path_text = _translate_path(
-        raw_path, status=status, unit_hash=unit_hash, notes=notes, collisions=collisions
+    item = _translate_item(raw, raw_path=raw_path, unit_hash=unit_hash, tree=tree)
+    path_text = _repoint(
+        _translate_path(
+            raw_path, status=status, unit_hash=unit_hash, notes=notes, collisions=collisions
+        ),
+        item=item,
+        root=tree.root,
     )
     error, reason = _translate_error_and_reason(
         raw, status=status, unit_hash=unit_hash, notes=notes
@@ -477,9 +488,7 @@ def _translate_record(
         return LedgerEntry(
             hash=unit_hash,
             url=_expect_str(raw, "url"),
-            item=_translate_item(
-                raw, raw_path=raw_path, unit_hash=unit_hash, owners=owners, outputs=outputs
-            ),
+            item=item,
             kind=_translate_kind(raw),
             format=None if "format" not in raw else _as_format(_expect_str(raw, "format")),
             status=status,
@@ -593,31 +602,48 @@ def _translate_path(
 
 
 def _translate_item(
-    raw: dict[str, object],
-    *,
-    raw_path: str | None,
-    unit_hash: str,
-    owners: dict[str, str],
-    outputs: dict[str, str],
+    raw: dict[str, object], *, raw_path: str | None, unit_hash: str, tree: _Tree
 ) -> str:
+    if "item" in raw:
+        return _expect_str(raw, "item")
+    # The tree before the line: an item renamed since the line was written —
+    # same shortid, new slug — leaves the recorded path naming a directory
+    # that is gone while the output it produced sits under the new id, so a
+    # stale string would win over where the file demonstrably is.
+    owner = tree.outputs.get(unit_hash[:6])
+    if owner is not None:
+        return owner
     # The raw path attributes the item even when the path field itself is
     # dropped (outputs are done-only) — where the file landed is still
     # true provenance.
-    if "item" in raw:
-        return _expect_str(raw, "item")
     if raw_path is not None:
         parts = raw_path.split("/")
         if len(parts) >= 3 and parts[0] == "enrichment" and parts[1]:  # noqa: PLR2004 — enrichment/<item>/<file>
             return parts[1]
-    # Same provenance, read off the tree instead of the line: an old line
-    # that recorded no path may still have left its output on disk.
-    owner = outputs.get(unit_hash[:6]) or owners.get(unit_hash)
+    owner = tree.owners.get(unit_hash)
     if owner is None:
         raise _UntranslatableError(
             "no item attribution: the line has no item, no output path, no enrichment "
             "file on disk carries its hash, and no corpus item's URLs hash to it"
         )
     return owner
+
+
+def _repoint(path_text: str | None, *, item: str, root: Path) -> str | None:
+    """Move the path onto the item it is attributed to, where the file is there.
+
+    A renamed item leaves the recorded path under a directory that is gone
+    while the output sits under the new id; leaving the two disagreeing
+    would write a line naming one item and pointing into another's tree.
+    Only where the file is demonstrably under the new id — never a guess.
+    """
+    if path_text is None:
+        return None
+    parts = path_text.split("/")
+    if len(parts) < 3 or parts[0] != "enrichment" or parts[1] == item:  # noqa: PLR2004 — enrichment/<item>/<file>
+        return path_text
+    moved = "/".join(["enrichment", item, *parts[2:]])
+    return moved if (root / moved).exists() else path_text
 
 
 def _translate_error_and_reason(

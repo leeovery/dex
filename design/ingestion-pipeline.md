@@ -953,11 +953,18 @@ Authoring rules:
 - **Untranslatable ledger lines are DROPPED, never left in place and never
   parked for a human** (owner ruling): a migration is fully automated and
   leaves no residue. A line a migration cannot translate is first attributed
-  as hard as the state allows — its own `item`, its recorded output path,
-  the enrichment tree on disk (outputs are `enrichment/<item>/<kind>-<hash
-  [:6]>.md`, so the file a unit produced names its owner), then the corpus
-  URLs — and only what survives all four is dropped, with a count and a
-  short capped list in the report naming what went and why. That is safe
+  as hard as the state allows — its own `item`, the enrichment tree on disk
+  (outputs are `enrichment/<item>/<kind>-<hash[:6]>.md`, so the file a unit
+  produced names its owner), its recorded output path, then the corpus URLs
+  — and only what survives all four is dropped, with a count and a short
+  capped list in the report naming what went and why. **The tree is asked
+  before the recorded path** (amended at phase-4 review, on real state): an
+  item RENAMED since the line was written leaves that path naming a
+  directory that is gone while the output sits under the new id, so trusting
+  the string hands the ghost-item sweep an item with no corpus file and the
+  work reads as a purge. Where the tree answers and the recorded path
+  disagrees, the path moves onto the attributed item too — but only where
+  the file is demonstrably there, never as a guess. That is safe
   because of what the ledger IS: the corpus is the source of truth and the
   ledger is derived work state, so seeding re-raises anything that still
   matters through the front door on the next run; and the pre-migration
