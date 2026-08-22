@@ -81,9 +81,14 @@ provenance.
 Caps on re-entry (mechanical backstops, not targets): **max depth 4** (the
 shared URL is depth 0), **max 12 fetched URLs per item**. A fired cap is
 recorded in the ledger (`capped: true` on the skipped line) and internal
-logs — it is a judgment-drift signal for the health check, never shown on
-the run report or any other user-facing surface. The health check is where
-it belongs and where it is read: lint reports the fires as a tuning
+logs. Who the fire answers to decides where it shows (§12): a
+**harvest-time** fire — the walk promoting a link past a bound — is a
+judgment-drift signal for the health check and reaches no user-facing
+surface, run report included; an **owner-requested** refusal, `enrich
+fetch` naming a URL past the URL cap, is answered where it was asked, on
+that run report, with the `--force` route it needs to be actionable. The
+health check is where the drift reading belongs and where it is read: lint
+reports the harvest-time fires as a tuning
 signal — how many, spread over how many items, under which bound, worst
 offenders first — so the owner can tell a corpus the bounds are too tight
 for from harvest judgment promoting links the subject rule would not.
