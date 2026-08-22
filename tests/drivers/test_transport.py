@@ -10,10 +10,10 @@ import http.client
 import pytest
 
 from dex_engine.capabilities import Capabilities
-from dex_engine.capabilities.transcribe.whisper_api import urllib_multipart_post
+from dex_engine.capabilities.transcribe.whisper_api import WhisperApi, urllib_multipart_post
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import normalize_httplib_errors, urllib_transport
-from dex_engine.pipeline.classify import classify_connection
+from dex_engine.pipeline.classify import ProviderInputError, classify_connection, classify_http
 from dex_engine.pipeline.types import Kind, Status
 from tests.drivers.conftest import make_unit, truncating_server
 
@@ -32,6 +32,16 @@ class TestHttplibNormalization:
         with pytest.raises(OSError, match="BadStatusLine"), normalize_httplib_errors():
             raise http.client.BadStatusLine("garbage")
 
+    def test_a_truncated_error_body_still_classifies_by_its_status(self):
+        # The other half: the body of a 4xx is only detail, and losing the
+        # read must not lose the STATUS. Without the guard the truncated
+        # read escapes as a connection failure and a 404's `dead` — the
+        # item is gone — arrives as `blocked`, retried forever.
+        with truncating_server(status=b"404 Not Found") as url:
+            response = urllib_transport(url)
+        assert response.status == 404
+        assert classify_http(response.status).status is Status.DEAD
+
     def test_an_oserror_passes_through_untouched(self):
         # RemoteDisconnected already IS a ConnectionResetError; the guard
         # must not re-wrap what classify_connection already reads.
@@ -49,6 +59,25 @@ class TestThroughTheWhisperApiPost:
         with truncating_server() as url, pytest.raises(OSError) as caught:  # noqa: PT011 — the OSError shape IS the assertion
             urllib_multipart_post(url, api_key=None, fields={}, filename="a.mp3", file_bytes=b"x")
         assert "truncated response body" in str(caught.value)
+
+    def test_a_truncated_error_body_keeps_its_status(self):
+        with truncating_server(status=b"400 Bad Request", body=b"unsupported forma") as url:
+            status, body = urllib_multipart_post(
+                url, api_key=None, fields={}, filename="a.mp3", file_bytes=b"x"
+            )
+        assert status == 400
+        assert body == b""  # the detail goes, as at the transport seam; the status stays
+
+    def test_a_truncated_400_still_parks_the_episode_manual(self, tmp_path):
+        # The verdict the status carries: 400 is the AUDIO's fault — manual,
+        # under the escalation clock. A read failure escaping instead reads
+        # as the endpoint being down: waiting, retried forever, no clock.
+        chunk = tmp_path / "chunk-000.mp3"
+        chunk.write_bytes(b"audio")
+        with truncating_server(status=b"400 Bad Request", body=b"unsupported forma") as url:
+            provider = WhisperApi(base_url=url, api_key="k", post=urllib_multipart_post)
+            with pytest.raises(ProviderInputError, match="rejected the audio"):
+                provider._transcribe_chunk(chunk, "")  # noqa: SLF001 — the seam under test
 
 
 class TestThroughADriverFetch:

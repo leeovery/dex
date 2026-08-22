@@ -106,31 +106,51 @@ def _drain_request(conn: socket.socket) -> None:
 
 @contextlib.contextmanager
 def truncating_server(
-    *, body: bytes = b"ID3\x04\x00\x00\x00partial audio", declared: int = 5_000_000
+    *,
+    body: bytes = b"ID3\x04\x00\x00\x00partial audio",
+    declared: int = 5_000_000,
+    status: bytes = b"200 OK",
+    redirect_first: bool = False,
 ) -> Iterator[str]:
-    """Serve one 200 whose Content-Length far exceeds the bytes sent, then hang up.
+    """Serve one response whose Content-Length far exceeds the bytes sent, then hang up.
 
     A real socket, deliberately: the truncated-body failure lives inside
     ``http.client``'s read path, and only a genuine short read raises the
     ``IncompleteRead`` the transport has to normalize. Yields the URL.
+
+    ``status`` truncates an ERROR body instead — the case where the read
+    failure must not cost the status code. ``redirect_first`` answers the
+    first connection with a 302 to the same server, for the download paths
+    that follow one by hand.
     """
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(8)
     host, port = listener.getsockname()
+    served = 0
 
     def serve() -> None:
+        nonlocal served
         while True:
             try:
                 conn, _ = listener.accept()
             except OSError:
                 return  # the listener closed: the context manager is done
+            served += 1
             with conn, contextlib.suppress(OSError):
                 _drain_request(conn)
-                conn.sendall(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n"
-                    b"Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (declared, body)
-                )
+                if redirect_first and served == 1:
+                    conn.sendall(
+                        b"HTTP/1.1 302 Found\r\nLocation: http://%s:%d/signed\r\n"
+                        b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+                        % (host.encode(), port)
+                    )
+                else:
+                    conn.sendall(
+                        b"HTTP/1.1 %s\r\nContent-Type: audio/mpeg\r\n"
+                        b"Content-Length: %d\r\nConnection: close\r\n\r\n%s"
+                        % (status, declared, body)
+                    )
                 conn.shutdown(socket.SHUT_WR)
 
     thread = threading.Thread(target=serve, daemon=True)

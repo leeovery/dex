@@ -17,6 +17,8 @@ concatenated. Audio at or under one chunk simply yields a single segment —
 one uniform path.
 """
 
+import contextlib
+import http.client
 import json
 import os
 import shutil
@@ -132,7 +134,19 @@ def urllib_multipart_post(
             with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return response.status, response.read()
         except urllib.error.HTTPError as e:
-            return e.code, e.read()
+            detail = b""
+            # As at the transport seam: the status is the whole finding and
+            # the body is only detail, so a body that stops short of its
+            # Content-Length must not cost the code. Losing it here inverts
+            # the provider's verdict — 400 says the AUDIO is bad (manual,
+            # with an escalation clock), while the read failure escaping as
+            # a connection error says the ENDPOINT is down (waiting, with
+            # none). ``HTTPException`` is named because it is not an
+            # ``OSError``: an ``IncompleteRead`` would otherwise leave here
+            # through ``normalize_httplib_errors`` as exactly that.
+            with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
+                detail = e.read()
+            return e.code, detail
 
 
 def run_ffmpeg(args: list[str]) -> None:

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from email.message import Message as HTTPMessage
 
 from . import atomic
+from .drivers.transport import normalize_httplib_errors
 from .pipeline.capture import parse_capture
 from .pipeline.detect import sniff_format
 from .pipeline.types import Instance
@@ -151,12 +152,17 @@ def _api_request(
     if body:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=body, method=method, headers=headers)  # noqa: S310 — https-only API root
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
-            raw = response.read()
-            return response.status, (json.loads(raw) if raw else None)
-    except urllib.error.HTTPError as e:
-        return e.code, None
+    # The same seam guard the drivers' transport uses: `http.client`'s
+    # protocol failures are not OSErrors, and main()'s wrapper catches
+    # OSError — an unguarded IncompleteRead reaches the operator as a
+    # traceback instead of a `dex-inbox: ...` line.
+    with normalize_httplib_errors():
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+                raw = response.read()
+                return response.status, (json.loads(raw) if raw else None)
+        except urllib.error.HTTPError as e:
+            return e.code, None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -187,18 +193,22 @@ def _download_asset(asset_url: str, token: str) -> bytes:
         },
     )
     opener = urllib.request.build_opener(_NoRedirect)
-    try:
-        with opener.open(request, timeout=120) as response:
-            return response.read()
-    except urllib.error.HTTPError as e:
-        target = e.headers.get("Location")
-        if e.code in (301, 302, 303, 307, 308) and target:
-            location = urllib.request.Request(  # noqa: S310 — the API's signed redirect target
-                target, headers={"User-Agent": UA}
-            )
-            with urllib.request.urlopen(location, timeout=600) as response:  # noqa: S310
+    # An asset read is the large-download shape: the server hanging up
+    # mid-body raises IncompleteRead, which is not an OSError and so would
+    # escape main()'s wrapper as a traceback rather than a stated failure.
+    with normalize_httplib_errors():
+        try:
+            with opener.open(request, timeout=120) as response:
                 return response.read()
-        raise
+        except urllib.error.HTTPError as e:
+            target = e.headers.get("Location")
+            if e.code in (301, 302, 303, 307, 308) and target:
+                location = urllib.request.Request(  # noqa: S310 — the API's signed redirect target
+                    target, headers={"User-Agent": UA}
+                )
+                with urllib.request.urlopen(location, timeout=600) as response:  # noqa: S310
+                    return response.read()
+            raise
 
 
 def default_seams() -> GithubSeams:

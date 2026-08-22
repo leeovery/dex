@@ -419,6 +419,16 @@ independently is seven chances to reintroduce it):
   `HTTPException`, not an `OSError`, and would otherwise slip past every
   `except OSError` guard and land as `error` + a filed issue. A truncated
   read is a connection failure: **`blocked`, retried**, never an engine bug.
+  The same guard wraps `dex-inbox`'s two urllib sites — an asset download is
+  the same large-read shape — so a truncated read there is a stated
+  `dex-inbox:` failure, not a traceback.
+- **A truncated ERROR body never costs the status code.** The body of a
+  4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
+  transport, whisper-api's multipart POST) drop a failed error-body read and
+  return the status, because losing it inverts the verdict: a `404`'s `dead`
+  would arrive as `blocked`, and whisper-api's `400` — the audio is bad,
+  `manual` under the escalation clock — would arrive as an unreachable
+  endpoint, `waiting` with no clock at all.
 - **Media URLs are hashed un-canonicalized** — signed query params ARE the
   resource. Side effect, accepted: an expiring signed URL re-mints a fresh
   entry per parent rerun, and the stale one retires through normal blocked

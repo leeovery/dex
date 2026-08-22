@@ -137,6 +137,10 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
             body = b""
             # A truncated error page still classifies by its status: the
             # partial body is only detail, so the read failure is dropped.
+            # ``HTTPException`` is named because it is not an ``OSError`` —
+            # an ``IncompleteRead`` here would otherwise leave through
+            # ``normalize_httplib_errors`` as a connection failure, turning
+            # a 404's `dead` into `blocked`.
             with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
                 body = e.read()
             return HttpResponse(
