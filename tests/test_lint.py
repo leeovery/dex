@@ -12,6 +12,7 @@ from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 ITEM = "2026-08-19-example-55ad7b"
 
 
@@ -344,7 +345,9 @@ class TestWrite:
 
 
 def stamped(entry: LedgerEntry) -> LedgerEntry:
-    return ledger.stamp(entry, today=lambda: TODAY, engine_version="0.1.0")
+    return ledger.stamp(
+        entry, today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0"
+    )
 
 
 def waiting_entry(needs: Need, unit_hash: str = "73bd784849") -> LedgerEntry:

@@ -26,9 +26,13 @@ def fixed_today() -> datetime.date:
     return datetime.date(2026, 8, 20)
 
 
+def fixed_now() -> datetime.datetime:
+    return datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
+
+
 @pytest.fixture
 def migration():
-    return build(today=fixed_today, engine_version=ENGINE)
+    return build(today=fixed_today, now=fixed_now, engine_version=ENGINE)
 
 
 def corpus_text(item_id, *, urls=(), kinds=("web",), enrichment=(), body="**alex**: note\n"):
@@ -619,6 +623,28 @@ class TestLedgerTranslation:
         assert report.skipped == []
         assert not path.with_name("enrichment-ledger.unmigrated.jsonl").exists()
         assert ledger.load(path)["6666666666"].capped is True
+
+    def test_current_schema_write_timestamp_survives_a_re_apply(self, tmp_path, migration):
+        # Same re-apply exposure as `capped`: a key missing from the
+        # tolerated list drops every line the running engine wrote.
+        at = datetime.datetime(2026, 8, 20, 9, 0, 0, 125000, tzinfo=datetime.UTC)
+        entry = LedgerEntry(
+            hash="7777777777",
+            url="https://a.test/stamped",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.QUEUED,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            at=at,
+        )
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        ledger.append(path, entry)
+        original = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == original
+        assert report.skipped == []
+        assert ledger.load(path)["7777777777"].at == at
 
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
         # Un-pulled repos are a supported input.

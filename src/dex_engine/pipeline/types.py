@@ -475,6 +475,10 @@ class LedgerEntry:
     capped: bool = False
     engine: str
     date: datetime.date
+    # the write instant, UTC, sub-second — what resolves last-per-hash when
+    # git's union merge interleaves two machines' lines. Absent only on
+    # lines written before the field shipped.
+    at: datetime.datetime | None = None
     # provenance — children and reruns only
     via: str | None = None
     parent: str | None = None
@@ -497,6 +501,12 @@ class LedgerEntry:
         )
         if not self.engine:
             raise ValueError("every ledger entry records the engine version that wrote it")
+        if self.at is not None and self.at.utcoffset() is None:
+            raise ValueError(
+                f"write timestamp must be timezone-aware UTC, got naive {self.at!r} — "
+                "two machines' lines are ordered against each other, so a local "
+                "wall-clock reading orders nothing"
+            )
         _validate_entry_queue_fields(self)
         _validate_entry_outcome_fields(self)
         _validate_entry_provenance(self)

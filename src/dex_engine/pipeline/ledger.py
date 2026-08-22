@@ -1,12 +1,19 @@
 """Ledger persistence: the single serialization boundary for LedgerEntry.
 
 ``state/enrichment-ledger.jsonl`` is append-only, full-record lines,
-last-per-hash wins. Superseded lines are the audit trail until
-``compact`` rewrites the file keeping only the latest line per hash (which
-also settles git union merges).
+latest-per-hash wins. Superseded lines are the audit trail until
+``compact`` rewrites the file keeping only the latest line per hash.
 
-This layer never reads the ambient clock: today's date and the engine
-version are injected so date-stamping and retry-on-new-engine are
+"Latest" is decided by the ``at`` write timestamp, not by file position:
+git's union merge driver concatenates ours-then-theirs, so after two
+machines merge, the last line of a hash is whichever side git appended, not
+whichever machine wrote later. A line without ``at`` sorts oldest — every
+writer stamps one, so an unstamped line necessarily predates every stamped
+one — and lines that tie (both unstamped, or the same instant) fall back to
+file position.
+
+This layer never reads the ambient clock: today's date, the write instant,
+and the engine version are injected so stamping and retry-on-new-engine are
 testable.
 """
 
@@ -56,6 +63,7 @@ _ALL_KEYS = frozenset(
         "needs",
         "attempts",
         "capped",
+        "at",
         "via",
         "parent",
         "depth",
@@ -126,6 +134,7 @@ def from_line(line: str) -> LedgerEntry:
             capped=_expect_bool(raw, "capped") if "capped" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
+            at=None if "at" not in raw else _expect_datetime(raw, "at"),
             via=None if "via" not in raw else _expect_str(raw, "via"),
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
@@ -151,6 +160,14 @@ def _expect_int(raw: dict[str, object], key: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise LedgerSchemaError(f"field {key!r} must be an integer, got {type(value).__name__}")
     return value
+
+
+def _expect_datetime(raw: dict[str, object], key: str) -> datetime.datetime:
+    text = _expect_str(raw, key)
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError as e:
+        raise LedgerSchemaError(f"field {key!r} must be an ISO 8601 timestamp, got {text!r}") from e
 
 
 def _expect_bool(raw: dict[str, object], key: str) -> bool:
@@ -179,6 +196,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("capped", entry.capped or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
+        ("at", entry.at.isoformat() if entry.at is not None else None),
         ("via", entry.via),
         ("parent", entry.parent),
         ("depth", entry.depth),
@@ -192,8 +210,22 @@ def to_line(entry: LedgerEntry) -> str:
     return json.dumps(record, ensure_ascii=False)
 
 
+# An unstamped line predates every stamped one: every writer from the
+# release that added `at` stamps it, so a line without one was written
+# before that release shipped.
+_UNSTAMPED = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+
+
+def _resolution(entry: LedgerEntry, position: int) -> tuple[datetime.datetime, int]:
+    """The ordering key that decides which line of a hash is the latest."""
+    return (entry.at or _UNSTAMPED, position)
+
+
 def load(path: Path) -> dict[str, LedgerEntry]:
-    """Load the ledger; the last line per hash wins.
+    """Load the ledger; the latest line per hash wins.
+
+    Latest is by write timestamp, then by file position — see the module
+    docstring for why position alone is not enough.
 
     Args:
         path: The ledger file; a missing file is an empty ledger.
@@ -209,6 +241,7 @@ def load(path: Path) -> dict[str, LedgerEntry]:
     entries: dict[str, LedgerEntry] = {}
     if not path.exists():
         return entries
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
     # JSONL records are delimited by "\n" alone: str.splitlines() would also
     # split on unicode line separators (U+0085, U+2028, ...) INSIDE a JSON
     # string field and shear records apart (caught by the round-trip property).
@@ -219,7 +252,13 @@ def load(path: Path) -> dict[str, LedgerEntry]:
             entry = from_line(line)
         except LedgerSchemaError as e:
             raise LedgerSchemaError(f"{path}:{lineno}: {e}") from e
+        key = _resolution(entry, lineno)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        # Reassigning an existing key keeps its insertion position, so a
+        # loser landing after its winner does not reorder the ledger.
         entries[entry.hash] = entry
+        winning[entry.hash] = key
     return entries
 
 
@@ -233,8 +272,10 @@ def append(path: Path, entry: LedgerEntry) -> None:
 def compact(path: Path) -> int:
     """Rewrite the ledger keeping only the latest line per hash.
 
-    Also settles git union merges. Superseded lines — the audit trail —
-    are dropped.
+    Also settles git union merges — it keeps the line ``load`` resolves to,
+    so a merge whose newer line landed first is settled in the newer line's
+    favor rather than against it. Superseded lines — the audit trail — are
+    dropped.
 
     Args:
         path: The ledger file; a missing file is a no-op.
@@ -255,19 +296,23 @@ def stamp(
     entry: LedgerEntry,
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
 ) -> LedgerEntry:
-    """Return ``entry`` re-stamped with the injected clock and engine version.
+    """Return ``entry`` re-stamped with the injected clocks and engine version.
 
     Every entry the pipeline writes goes through this — it is the one place
-    ``date`` and ``engine`` are set, and neither comes from an ambient global.
+    ``date``, ``at`` and ``engine`` are set, and none comes from an ambient
+    global.
 
     Args:
         entry: The entry to stamp.
-        today: Injected clock — never ``datetime.date.today`` inline.
+        today: Injected date clock — never ``datetime.date.today`` inline.
+        now: Injected instant clock, UTC-aware — the write timestamp that
+            orders this line against another machine's after a union merge.
         engine_version: The running engine's version string.
 
     Returns:
-        A copy of the entry with ``date`` and ``engine`` set.
+        A copy of the entry with ``date``, ``at`` and ``engine`` set.
     """
-    return replace(entry, date=today(), engine=engine_version)
+    return replace(entry, date=today(), at=now(), engine=engine_version)

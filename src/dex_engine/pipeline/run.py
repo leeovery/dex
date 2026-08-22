@@ -8,7 +8,7 @@ renders its report through the ``enrich-report`` surface.
 
 Exactly ONE ``except Exception`` exists in the whole pipeline: the per-unit
 loop here. Every ledger write goes through ``ledger.stamp`` with the
-injected clock and engine version.
+injected clocks and engine version.
 """
 
 import dataclasses
@@ -188,6 +188,9 @@ class RunContext:
     config: Config
     drivers: Sequence[SourceDriver]
     today: Callable[[], datetime.date]
+    # the UTC write-instant clock — ledger lines carry it so two machines'
+    # writes for one hash order by write time, not by union-merge order
+    now: Callable[[], datetime.datetime]
     engine_version: str
     transport: Transport = urllib_transport
     provider_available: Callable[[Need, Format | None], Availability] = no_providers
@@ -1169,7 +1172,12 @@ class _Drain:
     # -- recording -------------------------------------------------------
 
     def record(self, entry: LedgerEntry, *, count: bool = False) -> None:
-        stamped = ledger.stamp(entry, today=self.ctx.today, engine_version=self.ctx.engine_version)
+        stamped = ledger.stamp(
+            entry,
+            today=self.ctx.today,
+            now=self.ctx.now,
+            engine_version=self.ctx.engine_version,
+        )
         ledger.append(self.ctx.instance.ledger_path, stamped)
         self.entries[stamped.hash] = stamped
         if count:

@@ -18,11 +18,16 @@ from dex_engine.migrations import (
 from dex_engine.pipeline.types import MigrationReport
 
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 ENGINE = "0.5.0"
 
 
 def fixed_today() -> datetime.date:
     return TODAY
+
+
+def fixed_now() -> datetime.datetime:
+    return NOW
 
 
 class FakeMigration:
@@ -41,12 +46,12 @@ class FakeMigration:
 
 class TestDiscover:
     def test_shipped_migrations_in_numeric_order(self):
-        migrations = discover(today=fixed_today, engine_version=ENGINE)
+        migrations = discover(today=fixed_today, now=fixed_now, engine_version=ENGINE)
         assert [m.number for m in migrations] == [1, 2, 3]
 
     def test_intents_are_single_line_and_stated(self):
         # The sync-report surface requires single-line intents.
-        for migration in discover(today=fixed_today, engine_version=ENGINE):
+        for migration in discover(today=fixed_today, now=fixed_now, engine_version=ENGINE):
             assert migration.intent
             assert "\n" not in migration.intent
 
@@ -56,7 +61,7 @@ class TestDiscover:
         (tmp_path / "migration_01.py").write_text("")
         monkeypatch.setattr("dex_engine.migrations.__path__", [str(tmp_path)])
         with pytest.raises(MigrationError, match="plain integer"):
-            discover(today=fixed_today, engine_version=ENGINE)
+            discover(today=fixed_today, now=fixed_now, engine_version=ENGINE)
 
 
 class TestAppliedLog:
@@ -110,7 +115,11 @@ class TestRunPending:
     def test_runs_in_order_and_logs_each(self, tmp_path):
         first, second = FakeMigration(1), FakeMigration(2)
         applied = run_pending(
-            tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[first, second]
+            tmp_path,
+            today=fixed_today,
+            now=fixed_now,
+            engine_version=ENGINE,
+            migrations=[first, second],
         )
         assert [a.number for a in applied] == [1, 2]
         assert isinstance(applied[0], AppliedMigration)
@@ -122,16 +131,30 @@ class TestRunPending:
         first, second = FakeMigration(1), FakeMigration(2)
         append_applied(log_path(tmp_path), number=1, engine="0.4.0", date=TODAY)
         applied = run_pending(
-            tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[first, second]
+            tmp_path,
+            today=fixed_today,
+            now=fixed_now,
+            engine_version=ENGINE,
+            migrations=[first, second],
         )
         assert [a.number for a in applied] == [2]
         assert (first.applied, second.applied) == (0, 1)
 
     def test_rerun_is_a_noop_via_the_log(self, tmp_path):
         migration = FakeMigration(1)
-        run_pending(tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[migration])
+        run_pending(
+            tmp_path,
+            today=fixed_today,
+            now=fixed_now,
+            engine_version=ENGINE,
+            migrations=[migration],
+        )
         applied = run_pending(
-            tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[migration]
+            tmp_path,
+            today=fixed_today,
+            now=fixed_now,
+            engine_version=ENGINE,
+            migrations=[migration],
         )
         assert applied == []
         assert migration.applied == 1
@@ -145,19 +168,27 @@ class TestRunPending:
         first, second = FakeMigration(1), FakeMigration(2, apply_fn=boom)
         with pytest.raises(RuntimeError, match="interrupted"):
             run_pending(
-                tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[first, second]
+                tmp_path,
+                today=fixed_today,
+                now=fixed_now,
+                engine_version=ENGINE,
+                migrations=[first, second],
             )
         assert read_applied(log_path(tmp_path)) == {1}
 
         recovered = FakeMigration(2)
         applied = run_pending(
-            tmp_path, today=fixed_today, engine_version=ENGINE, migrations=[first, recovered]
+            tmp_path,
+            today=fixed_today,
+            now=fixed_now,
+            engine_version=ENGINE,
+            migrations=[first, recovered],
         )
         assert [a.number for a in applied] == [2]
         assert first.applied == 1  # not re-run
         assert recovered.applied == 1
 
     def test_default_discovery_runs_shipped_migrations_on_a_fresh_instance(self, tmp_path):
-        applied = run_pending(tmp_path, today=fixed_today, engine_version=ENGINE)
+        applied = run_pending(tmp_path, today=fixed_today, now=fixed_now, engine_version=ENGINE)
         assert [a.number for a in applied] == [1, 2, 3]
         assert read_applied(log_path(tmp_path)) == {1, 2, 3}

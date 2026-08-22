@@ -350,9 +350,23 @@ Files:
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, `noise_prefixes`, and provider order as `providers: {<capability>: [<name>, …]}`; unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. |
 
-Ledger mechanics: append-only, full-record lines, **last-per-hash wins**.
+Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
 union merges). Superseded lines until then are the audit trail.
+
+**Latest is by write time, not by file position.** Git's union driver
+concatenates ours-then-theirs, so after two machines merge, the last line of a
+hash is whichever side git appended — not whichever machine wrote later. So
+every ledger line carries `at`, the UTC write instant with sub-second
+precision, stamped by the one writer seam (`ledger.stamp`) from an injected
+clock; `load` resolves each hash by `(at, file position)` and `compact` keeps
+the line `load` resolves to. Lines predating the field carry no `at` and sort
+oldest — every writer since stamps one, so an unstamped line necessarily
+predates every stamped one, and no backfill is needed (stamping old lines with
+a migration's own run time would be a lie, and they would all tie anyway).
+Without this, a scheduled run's 09:00 `blocked` could land after the owner's
+10:00 `manual` in the merged file, re-drain against the owner's decision, and
+`compact` would then delete the newer line permanently.
 
 ## 5. Ledger entry schema and status lifecycle
 
@@ -375,6 +389,11 @@ union merges). Superseded lines until then are the audit trail.
                                // admitted unit
   "engine": "0.2.1",           // engine version that wrote this line
   "date": "2026-08-19",
+  "at": "2026-08-19T09:00:00.123456+00:00",
+                               // UTC write instant, sub-second — what
+                               // resolves latest-per-hash across a union
+                               // merge (§4). Absent on lines written before
+                               // the field shipped; absent sorts oldest
   // provenance — children and reruns only
   "via": "harvest",
   "parent": "a1b2c3d4e5",

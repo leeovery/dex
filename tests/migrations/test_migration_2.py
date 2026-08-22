@@ -19,15 +19,20 @@ from tests.pipeline.test_run import ITEM, make_ctx, write_item
 
 ENGINE = "0.5.0"
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 
 
 def fixed_today() -> datetime.date:
     return TODAY
 
 
+def fixed_now() -> datetime.datetime:
+    return NOW
+
+
 @pytest.fixture
 def migration():
-    return build(today=fixed_today, engine_version=ENGINE)
+    return build(today=fixed_today, now=fixed_now, engine_version=ENGINE)
 
 
 class TestBuildGuard:
@@ -35,14 +40,14 @@ class TestBuildGuard:
         # Seeds stamped 0.0.1 would satisfy this migration's own membership
         # test — a mis-built engine must be refused loudly, never seeded.
         with pytest.raises(MigrationError, match="pre-rewrite marker"):
-            build(today=fixed_today, engine_version="0.0.1")
+            build(today=fixed_today, now=fixed_now, engine_version="0.0.1")
 
     def test_refuses_the_v_prefixed_marker_too(self):
         with pytest.raises(MigrationError, match="pre-rewrite marker"):
-            build(today=fixed_today, engine_version="v0.0.1")
+            build(today=fixed_today, now=fixed_now, engine_version="v0.0.1")
 
     def test_accepts_rewrite_versions(self):
-        assert build(today=fixed_today, engine_version="0.1.0").number == 2
+        assert build(today=fixed_today, now=fixed_now, engine_version="0.1.0").number == 2
 
 
 def url_of(tag):

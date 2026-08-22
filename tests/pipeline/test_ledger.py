@@ -3,6 +3,7 @@
 import dataclasses
 import datetime
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from dex_engine.pipeline.ledger import LedgerSchemaError
 from dex_engine.pipeline.types import Format, Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
+AT = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
 
 
 BASE_ENTRY = LedgerEntry(
@@ -35,6 +37,7 @@ FULL_ENTRY = entry(
     kind=Kind.FILE,
     format=Format.PDF,
     status=Status.DONE,
+    at=AT,
     via="migration-2",
     parent="a1b2c3d4e5",
     depth=2,
@@ -76,6 +79,7 @@ class TestToLine:
             "status",
             "engine",
             "date",
+            "at",
             "via",
             "parent",
             "depth",
@@ -83,6 +87,10 @@ class TestToLine:
             "path",
             "title",
         ]
+
+    def test_the_write_timestamp_is_present_only_when_set(self):
+        assert "at" not in json.loads(ledger.to_line(entry()))
+        assert json.loads(ledger.to_line(FULL_ENTRY))["at"] == "2026-08-20T09:30:15.250000+00:00"
 
     def test_reason_serializes_last_after_error_slot(self):
         blocked = entry(status=Status.BLOCKED, attempts=2, reason="403 challenge")
@@ -177,6 +185,106 @@ class TestFromLine:
             ledger.from_line(json.dumps(record))
 
 
+class TestWriteTimestampResolution:
+    """The union-merge fix: latest-per-hash is by write time, not file order."""
+
+    def scheduled(self) -> LedgerEntry:
+        # 09:00 on the scheduled machine: a retry exhausted, the unit blocked.
+        return entry(
+            status=Status.BLOCKED,
+            attempts=3,
+            at=datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
+        )
+
+    def owner(self) -> LedgerEntry:
+        # 10:00 on the owner's laptop: the owner parked it by hand.
+        return entry(
+            status=Status.MANUAL,
+            reason="owner ruled: read it myself",
+            at=datetime.datetime(2026, 8, 20, 10, 0, tzinfo=datetime.UTC),
+        )
+
+    def test_the_later_write_wins_when_it_is_written_first(self, instance: Instance):
+        ledger.append(instance.ledger_path, self.owner())
+        ledger.append(instance.ledger_path, self.scheduled())
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == self.owner()
+
+    def test_the_later_write_wins_when_it_is_written_last(self, instance: Instance):
+        ledger.append(instance.ledger_path, self.scheduled())
+        ledger.append(instance.ledger_path, self.owner())
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == self.owner()
+
+    def test_sub_second_writes_are_ordered(self, instance: Instance):
+        base = datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC)
+        later = entry(status=Status.DONE, path="p", at=base + datetime.timedelta(milliseconds=1))
+        ledger.append(instance.ledger_path, later)
+        ledger.append(instance.ledger_path, entry(status=Status.DEAD, at=base))
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == later
+
+    def test_a_stamped_line_beats_an_unstamped_one_written_after_it(self, instance: Instance):
+        # Every writer stamps, so an unstamped line predates every stamped
+        # one however git ordered them.
+        stamped = self.owner()
+        ledger.append(instance.ledger_path, stamped)
+        ledger.append(instance.ledger_path, entry(status=Status.DEAD))
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == stamped
+
+    def test_two_unstamped_lines_still_resolve_by_file_position(self, instance: Instance):
+        ledger.append(instance.ledger_path, entry())
+        last = entry(status=Status.DEAD)
+        ledger.append(instance.ledger_path, last)
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == last
+
+    def test_the_loser_does_not_reorder_the_ledger(self, instance: Instance):
+        other = entry(hash="ffff000000", url="https://other.test")
+        ledger.append(instance.ledger_path, self.owner())
+        ledger.append(instance.ledger_path, other)
+        ledger.append(instance.ledger_path, self.scheduled())
+        assert list(ledger.load(instance.ledger_path)) == [BASE_ENTRY.hash, other.hash]
+
+    def test_compact_keeps_the_line_load_resolves_to(self, instance: Instance):
+        ledger.append(instance.ledger_path, self.owner())
+        ledger.append(instance.ledger_path, self.scheduled())
+        assert ledger.compact(instance.ledger_path) == 1
+        assert instance.ledger_path.read_text().count("\n") == 1
+        assert ledger.load(instance.ledger_path) == {BASE_ENTRY.hash: self.owner()}
+
+    def test_a_union_merge_of_two_machines_resolves_to_the_later_write(
+        self, instance: Instance, tmp_path: Path
+    ):
+        # The real thing: `merge=union` is what .gitattributes sets on
+        # state/*.jsonl, and git's union driver concatenates ours-then-theirs
+        # — so the scheduled machine's OLDER line lands last in the file.
+        shared = tmp_path / "base.jsonl"
+        ours = tmp_path / "ours.jsonl"
+        theirs = tmp_path / "theirs.jsonl"
+        seed = ledger.to_line(entry(status=Status.QUEUED)) + "\n"
+        shared.write_text(seed)
+        ours.write_text(seed + ledger.to_line(self.owner()) + "\n")
+        theirs.write_text(seed + ledger.to_line(self.scheduled()) + "\n")
+        merged = subprocess.run(  # noqa: S603 — test-built args, no shell
+            ["git", "merge-file", "-p", "--union", str(ours), str(shared), str(theirs)],  # noqa: S607 — git resolves via PATH like every dev tool
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        instance.ledger_path.write_text(merged)
+        assert merged.strip().split("\n")[-1] == ledger.to_line(self.scheduled())
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash] == self.owner()
+
+    def test_a_naive_write_timestamp_is_refused(self):
+        record = json.loads(ledger.to_line(entry()))
+        record["at"] = "2026-08-20T09:00:00"
+        with pytest.raises(LedgerSchemaError, match="timezone-aware"):
+            ledger.from_line(json.dumps(record))
+
+    def test_an_unparseable_write_timestamp_is_refused(self):
+        record = json.loads(ledger.to_line(entry()))
+        record["at"] = "yesterday"
+        with pytest.raises(LedgerSchemaError, match="ISO 8601"):
+            ledger.from_line(json.dumps(record))
+
+
 class TestLoadAppendCompact:
     def test_missing_file_is_an_empty_ledger(self, instance: Instance):
         assert ledger.load(instance.ledger_path) == {}
@@ -234,18 +342,21 @@ class TestLoadAppendCompact:
 
 
 class TestStamp:
-    def test_stamp_uses_the_injected_clock_and_engine(self):
+    def test_stamp_uses_the_injected_clocks_and_engine(self):
         stamped = ledger.stamp(
             entry(),
             today=lambda: datetime.date(2027, 1, 2),
+            now=lambda: datetime.datetime(2027, 1, 2, 14, 30, 5, 125000, tzinfo=datetime.UTC),
             engine_version="0.3.0",
         )
         assert stamped.date == datetime.date(2027, 1, 2)
+        assert stamped.at == datetime.datetime(2027, 1, 2, 14, 30, 5, 125000, tzinfo=datetime.UTC)
         assert stamped.engine == "0.3.0"
 
     def test_layer_never_calls_the_ambient_clock(self):
         source = Path(ledger.__file__).read_text(encoding="utf-8")
         assert "date.today()" not in source
+        assert "datetime.now(" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +369,11 @@ _WORK_KINDS = [k for k in Kind if k not in (Kind.IMAGE, Kind.TEXT)]
 
 
 _REASON_OPTIONAL = (Status.WAITING, Status.BLOCKED, Status.DEAD)
+# A handful of instants, so sequences tie and interleave rather than always
+# arriving in a distinct order.
+_WRITE_INSTANTS = [
+    datetime.datetime(2026, 8, 20, hour, 0, tzinfo=datetime.UTC) for hour in (8, 9, 10)
+]
 
 
 @st.composite
@@ -295,6 +411,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         capped=draw(st.booleans()) if status is Status.SKIPPED else False,
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
+        at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),
         via=draw(st.sampled_from([None, "harvest", "thread", "media", "sniff", "migration-1"])),
         parent=parent,
         depth=depth,
@@ -312,15 +429,22 @@ def test_entries_round_trip_through_the_serialization_boundary(sequence: list[Le
         assert ledger.from_line(ledger.to_line(e)) == e
 
 
+_OLDEST = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+
+
 @given(sequence=st.lists(entries(), max_size=20))
-def test_compact_preserves_last_per_hash_and_round_trips(
+def test_compact_preserves_latest_per_hash_and_round_trips(
     sequence: list[LedgerEntry], tmp_path_factory: pytest.TempPathFactory
 ):
     path = tmp_path_factory.mktemp("ledger") / "enrichment-ledger.jsonl"
     expected: dict[str, LedgerEntry] = {}
-    for e in sequence:
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for position, e in enumerate(sequence):
         ledger.append(path, e)
-        expected[e.hash] = e
+        key = (e.at or _OLDEST, position)
+        if e.hash not in winning or key >= winning[e.hash]:
+            expected[e.hash] = e
+            winning[e.hash] = key
     assert ledger.load(path) == expected
     removed = ledger.compact(path)
     assert removed == len(sequence) - len(expected)

@@ -8,11 +8,12 @@ from dex_engine.migrations import discover, run_pending
 from dex_engine.migrations.migration_3 import build
 
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 
 
 @pytest.fixture
 def migration():
-    return build(today=lambda: TODAY, engine_version="0.1.0")
+    return build(today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")
 
 
 class TestApply:
@@ -65,15 +66,16 @@ class TestApply:
 
 class TestFramework:
     def test_discovered_as_number_three(self):
-        migrations = discover(today=lambda: TODAY, engine_version="0.1.0")
+        migrations = discover(today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")
         assert [m.number for m in migrations] == [1, 2, 3]
 
     def test_runs_via_the_pending_path_and_logs(self, tmp_path):
         applied = run_pending(
             tmp_path,
             today=lambda: TODAY,
+            now=lambda: NOW,
             engine_version="0.1.0",
-            migrations=[build(today=lambda: TODAY, engine_version="0.1.0")],
+            migrations=[build(today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")],
         )
         assert [one.number for one in applied] == [3]
         assert (tmp_path / ".gitignore").read_text() == "cache/\n"
@@ -81,7 +83,8 @@ class TestFramework:
         again = run_pending(
             tmp_path,
             today=lambda: TODAY,
+            now=lambda: NOW,
             engine_version="0.1.0",
-            migrations=[build(today=lambda: TODAY, engine_version="0.1.0")],
+            migrations=[build(today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")],
         )
         assert again == []

@@ -33,6 +33,7 @@ _CACHE_LINES = frozenset({"cache/", "cache", "/cache/", "/cache"})
 def build(
     *,
     today: Callable[[], datetime.date],  # noqa: ARG001 — the shared build signature; nothing here is dated
+    now: Callable[[], datetime.datetime],  # noqa: ARG001 — and nothing here is a ledger line
     engine_version: str,  # noqa: ARG001 — nothing here is version-stamped
 ) -> "CacheGitignore":
     """Build migration 3 (the shared build signature; no state is stamped)."""

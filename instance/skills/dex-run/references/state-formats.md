@@ -127,9 +127,14 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, capped?, engine, date, via?, parent?, depth?, rerun?, path?,
-  title?, error?, reason?}`. Last line per hash wins; `bin/dex enrich
-  compact` settles it. Statuses: queued · done · dead · skipped · manual ·
+  attempts?, capped?, engine, date, at?, via?, parent?, depth?, rerun?,
+  path?, title?, error?, reason?}`. The latest line per hash wins, and
+  latest means the newest `at` — the UTC write instant every line carries —
+  not the last line in the file, because a union merge between two machines
+  concatenates their lines in git's order, not in write order. Lines
+  written before `at` shipped carry none and count as oldest. `bin/dex
+  enrich compact` settles the file down to the winners.
+  Statuses: queued · done · dead · skipped · manual ·
   waiting · blocked · error. `reason` is the stated parking reason
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `capped` marks a skip that records

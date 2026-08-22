@@ -124,9 +124,10 @@ _ABSOLUTE_HTTP = ("http://", "https://")
 def build(
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
 ) -> "IdentityRekeyAndRerunSeed":
-    """Build migration 2 with the injected clock and running engine version.
+    """Build migration 2 with the injected clocks and running engine version.
 
     Raises:
         MigrationError: The running engine identifies as 0.0.1 — the
@@ -141,7 +142,7 @@ def build(
             "the pre-rewrite marker (migration 1's stamp) — seeds stamped with it "
             "would corrupt their own membership test; a rewrite engine is >= 0.1.0"
         )
-    return IdentityRekeyAndRerunSeed(today=today, engine_version=engine_version)
+    return IdentityRekeyAndRerunSeed(today=today, now=now, engine_version=engine_version)
 
 
 class IdentityRekeyAndRerunSeed:
@@ -150,9 +151,16 @@ class IdentityRekeyAndRerunSeed:
     number = NUMBER
     intent = INTENT
 
-    def __init__(self, *, today: Callable[[], datetime.date], engine_version: str) -> None:
-        """Seeds are stamped with the injected clock and running engine."""
+    def __init__(
+        self,
+        *,
+        today: Callable[[], datetime.date],
+        now: Callable[[], datetime.datetime],
+        engine_version: str,
+    ) -> None:
+        """Seeds are stamped with the injected clocks and running engine."""
         self._today = today
+        self._now = now
         self._engine_version = engine_version
 
     def apply(self, root: Path) -> MigrationReport:
@@ -199,6 +207,7 @@ class IdentityRekeyAndRerunSeed:
                     status=Status.QUEUED,
                     engine=self._engine_version,
                     date=self._today(),
+                    at=self._now(),
                     via="migration-2",
                     rerun=True,
                 ),

@@ -78,6 +78,8 @@ _RETIRED_STATUSES = frozenset({"nocaptions", "toolong"})
 
 # Keys a pre-migration OR current-schema line may carry (`note` is the one
 # wild extra). Anything else is a hand-healed shape this code cannot judge.
+# Every current-schema key belongs here: a re-apply reads lines the running
+# engine wrote, and a key missing from this list drops each of them.
 _TOLERATED_KEYS = frozenset(
     {
         "hash",
@@ -91,6 +93,7 @@ _TOLERATED_KEYS = frozenset(
         "capped",
         "engine",
         "date",
+        "at",
         "via",
         "parent",
         "depth",
@@ -107,6 +110,7 @@ _TOLERATED_KEYS = frozenset(
 def build(
     *,
     today: Callable[[], datetime.date],  # noqa: ARG001 — translated lines keep their own dates
+    now: Callable[[], datetime.datetime],  # noqa: ARG001 — and are never stamped with this run's instant
     engine_version: str,  # noqa: ARG001 — old lines are stamped PRE_REWRITE_ENGINE, deliberately
 ) -> "RenamesAndVocabulary":
     """Build migration 1 (uniform migration-module contract)."""
@@ -432,6 +436,10 @@ def _translate_record(
             capped=_expect_bool(raw, "capped") if "capped" in raw else False,
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
+            # Carried, never re-stamped: this run's instant would claim the
+            # line was written now, and an unstamped line is already ordered
+            # correctly (oldest) by the loader.
+            at=_translate_at(raw),
             via=_translate_via(raw, unit_hash=unit_hash, notes=notes),
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
@@ -476,6 +484,16 @@ def _translate_date(raw: dict[str, object]) -> datetime.date:
         return datetime.date.fromisoformat(text)
     except ValueError as e:
         raise _UntranslatableError(f"unparseable date {text!r}") from e
+
+
+def _translate_at(raw: dict[str, object]) -> datetime.datetime | None:
+    if "at" not in raw:
+        return None
+    text = _expect_str(raw, "at")
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError as e:
+        raise _UntranslatableError(f"unparseable write timestamp {text!r}") from e
 
 
 def _translate_path(
