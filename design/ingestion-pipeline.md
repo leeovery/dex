@@ -1032,11 +1032,12 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item, its enrichment and its ledger entries,
-   so a seed keyed to a purged item would re-fetch content ruled out of
-   scope and put an owner ruling back in the queue. (Purges predating that
-   last part left their ledger lines on file, which is exactly the state
-   this migration meets.)
+   `dex exclude` deletes the item, its enrichment **and its ledger
+   entries**, so a seed keyed to a purged item would re-fetch content ruled
+   out of scope and put an owner ruling back in the queue. (Purges made
+   before `exclude` swept the ledger left their entries on file — that is
+   exactly the state this migration meets, and migration 4 sweeps them
+   afterwards.)
    The claim is asked of the corpus, never of the entry's stored `item`
    string alone (amended at phase-4 review, on real state): an item RENAMED
    since its line was written — same shortid, new slug — has a live file
@@ -1071,6 +1072,20 @@ Shipping migrations for this rewrite:
    the instance `.gitignore` when absent (append-only, idempotent, reported
    as an action on an instance-owned file). Without it, in-flight audio
    shows as dirt to the dirty-tree guard.
+4. **Ghost-item sweep** — removes every ledger entry whose corpus item no
+   longer exists: work state for content purged by `dex exclude` before it
+   swept the ledger itself, plus items removed by hand. Same disposal
+   argument as migration 1's dropped lines — the corpus is the source of
+   truth, seeding can never raise this work again, and git history holds
+   the entries — with the same reporting shape: a count and a capped named
+   list, telling excluded-on-record apart from removed-by-hand. **The item
+   is the test, never the output file**: an entry whose `path` is missing
+   from disk is a different finding with a different repair (the item still
+   exists, so the fix is to re-fetch, not to forget). The unit swept is the
+   hash, decided on the line `load` resolves to, and its audit trail goes
+   with it; a hash whose live line names a real item is kept whole. Runs
+   after migration 2 so the reseed guard has already explained, entry by
+   entry, what it declined to seed.
 
 Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
 every user surface; an owner-requested `enrich fetch` refusal IS surfaced

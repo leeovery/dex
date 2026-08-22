@@ -34,6 +34,7 @@ __all__ = [
     "drop_items",
     "from_line",
     "load",
+    "resolution_key",
     "stamp",
     "to_line",
 ]
@@ -217,8 +218,20 @@ def to_line(entry: LedgerEntry) -> str:
 _UNSTAMPED = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 
 
-def _resolution(entry: LedgerEntry, position: int) -> tuple[datetime.datetime, int]:
-    """The ordering key that decides which line of a hash is the latest."""
+def resolution_key(entry: LedgerEntry, position: int) -> tuple[datetime.datetime, int]:
+    """The ordering key that decides which line of a hash is the latest.
+
+    Public so a migration reading the file tolerantly resolves hashes by the
+    same rule ``load`` does, rather than reimplementing it and drifting.
+
+    Args:
+        entry: The parsed entry.
+        position: Its position in the file (line number, or any monotonic
+            counter over the lines read).
+
+    Returns:
+        A sort key; the greatest key for a hash names its live line.
+    """
     return (entry.at or _UNSTAMPED, position)
 
 
@@ -253,7 +266,7 @@ def load(path: Path) -> dict[str, LedgerEntry]:
             entry = from_line(line)
         except LedgerSchemaError as e:
             raise LedgerSchemaError(f"{path}:{lineno}: {e}") from e
-        key = _resolution(entry, lineno)
+        key = resolution_key(entry, lineno)
         if entry.hash in winning and key < winning[entry.hash]:
             continue
         # Reassigning an existing key keeps its insertion position, so a
