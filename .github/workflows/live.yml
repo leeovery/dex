@@ -1,0 +1,69 @@
+name: live
+
+# The live checks watch third parties for drift. Third parties drift on their
+# own clock, not the release clock, so this runs on a schedule and never gates
+# a merge or a tag — a flaky network must not be able to block a release.
+#
+# Failure notice is GitHub's own: a scheduled workflow that fails mails the
+# last person to touch this file, which for a single-maintainer repo is exactly
+# the right inbox. Filing an issue instead was rejected — this repo's tracker
+# already receives real engine bugs from instances via the issue filer, and a
+# daily robot would have to be deduped, closed and eventually muted.
+
+on:
+  schedule:
+    # 06:17 UTC — off the hour, where the runner queue is shorter.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: drift (notifies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: pytest -m "live and not ci_hostile"
+        env:
+          # The github driver shells out to `gh`, which reads GITHUB_TOKEN
+          # from the environment; the workflow token authenticates it and
+          # buys the 5000/hour limit. Reading public repos needs nothing more.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run --no-sync pytest -m "live and not ci_hostile" -v
+
+  drift-best-effort:
+    name: drift (best effort, never fails the run)
+    runs-on: ubuntu-latest
+    # These endpoints treat a datacenter IP differently from a laptop, so a red
+    # result here is ambiguous by construction. It stays visible on the run page
+    # and in the job summary; it does not mail anyone, because an alarm that
+    # cries wolf every morning is worse than no alarm. Each test says in a
+    # comment why it is here. Read this job when a driver misbehaves in the
+    # field, not before.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: pytest -m "live and ci_hostile"
+        run: uv run --no-sync pytest -m "live and ci_hostile" -v

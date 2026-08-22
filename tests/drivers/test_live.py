@@ -4,6 +4,11 @@ These hit real endpoints with the real transport. CI and the default run
 never execute them (``-m "not live"`` in pyproject); they exist to catch
 the world moving under the drivers: fxtwitter's response shape, arxiv's
 Atom feed, the wayback availability API.
+
+A scheduled workflow runs them daily. The ones additionally marked
+``ci_hostile`` run there best-effort, because their endpoint answers a
+datacenter IP differently from a laptop and a red run every morning is a
+red run nobody reads; the rest are trusted to mean something.
 """
 
 import json
@@ -23,6 +28,8 @@ from tests.drivers.conftest import body_of, make_unit
 pytestmark = pytest.mark.live
 
 
+@pytest.mark.ci_hostile  # fxtwitter proxies Twitter's guest API and has gone
+# down for days at a stretch; from CI a failure cannot be told from an outage.
 class TestFxtwitterShape:
     def test_a_stable_public_post_still_parses(self):
         # x.com/jack/status/20 — "just setting up my twttr", stable since 2006.
@@ -111,6 +118,9 @@ class TestGitHubContentsShape:
         assert "Rust" in body_of(result)
 
 
+@pytest.mark.ci_hostile  # youtube.com serves datacenter IPs a consent or
+# bot-check interstitial instead of the channel page, so the assertions here
+# fail from a runner for reasons that say nothing about the driver.
 class TestYouTubeRootNamespace:
     """The bare-name guard rests on who owns youtube.com's root namespace."""
 
@@ -138,6 +148,8 @@ class TestPageAudioIsNotAnEpisode:
         assert len(body_of(result)) > 10_000
 
 
+@pytest.mark.ci_hostile  # archive.org's availability endpoint rate-limits and
+# has multi-day outages; its uptime is not a fact about this repo.
 class TestWaybackShape:
     def test_the_availability_api_shape_holds(self):
         lookup = "https://archive.org/wayback/available?url=example.com"

@@ -163,6 +163,9 @@ class TestTranscribe:
 
 
 @pytest.mark.live
+@pytest.mark.ci_hostile  # a cold runner pulls the whole ~75MB model from
+# HuggingFace, which throttles anonymous datacenter traffic; the outcome
+# reports HF's mood, not the provider's plumbing.
 class TestLive:
     def test_tiny_model_transcribes_a_generated_wav(self, tmp_path):
         # Downloads the `tiny` model on first run (~75MB, HF cache). A tone

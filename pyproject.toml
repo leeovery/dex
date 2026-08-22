@@ -88,6 +88,7 @@ testpaths = ["tests"]
 addopts = "--strict-markers -m 'not live'"
 markers = [
     "live: hits real network APIs — opt-in via `-m live` (CI runs hermetic only)",
+    "ci_hostile: a live check whose endpoint treats a datacenter IP differently from a laptop, or whose cost is a cold multi-megabyte download — the scheduled live workflow runs these best-effort so a blocked runner never mails a false alarm",
 ]
 
 [tool.ty.environment]
