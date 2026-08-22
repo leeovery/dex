@@ -437,12 +437,30 @@ class TestFrontmatterRefresh:
         assert confirmation.endswith("skipped")
         assert corpus.read_item(path).status == "raw"  # the video is still waiting
 
+    def _landed_video(self) -> Result:
+        return Result(status=Status.DONE, meta={"title": "v"}, body="the video body " * 30)
+
+    def test_a_capped_run_leaves_the_item_raw_with_work_still_queued(self, instance):
+        # --limit drains part of the cohort (as does a cap-deferred rerun):
+        # the undrained unit is QUEUED, not parked, and queued work is
+        # still owed — the item must not read as complete just because
+        # nothing failed.
+        path, ctx = self._mixed_item(instance, self._landed_video())
+        run_mod.run(ctx, limit=1)
+        assert corpus.read_item(path).status == "raw"
+        run_mod.run(ctx)  # the rest of the cohort
+        assert corpus.read_item(path).status == "enriched"
+
     def test_an_unreadable_ledger_leaves_the_derived_status_alone(self, instance):
-        path, ctx = self._mixed_item(instance, self._waiting_video())
+        # The item has to be ENRICHED before the ledger goes bad, or the
+        # assertion holds on a fixture that was already raw and says
+        # nothing about what "leaves it alone" means.
+        path, ctx = self._mixed_item(instance, self._landed_video())
         run_mod.run(ctx)
+        assert corpus.read_item(path).status == "enriched"
         instance.ledger_path.write_text("{not json at all\n", encoding="utf-8")
         assert run_mod.record_pass(ctx, ITEM, "digest").endswith(ITEM)  # the write stands
-        assert corpus.read_item(path).status == "raw"
+        assert corpus.read_item(path).status == "enriched"
 
     def test_mark_for_an_excluded_items_unit_still_heals(self, instance):
         path = write_item(instance)
@@ -1752,6 +1770,55 @@ class TestStatusReport:
             instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 18)
         )
         instance.ledger_path.write_text("{not json\n", encoding="utf-8")
+        assert run_mod.digest_orphans(instance) == []
+
+    SECOND_URL = "https://example.test/second"
+
+    def _second_done_unit(self, instance, on: datetime.date) -> None:
+        """Another landed unit on the same item, with its own date."""
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(self.SECOND_URL),
+                url=self.SECOND_URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=on,
+                path=f"enrichment/{ITEM}/web-def456.md",
+            ),
+        )
+
+    def test_the_newest_landing_decides_staleness_not_the_oldest(self, instance):
+        # Two units, one digest pass between them: the item was digested
+        # after the first landed and before the second, so it IS stale.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 18), digested=datetime.date(2026, 8, 19)
+        )
+        self._second_done_unit(instance, datetime.date(2026, 8, 20))
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_the_newest_digest_pass_decides_it_too_not_the_oldest(self, instance):
+        # Two digest passes, the enrichment between them: the item has
+        # been digested since it last changed, so it is NOT stale.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 19), digested=datetime.date(2026, 8, 18)
+        )
+        with instance.passes_path.open("a", encoding="utf-8") as passes:
+            passes.write(
+                json.dumps({"stage": "digest", "item": ITEM, "date": "2026-08-20"}) + "\n"
+            )
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_digest_predating_the_pass_record_is_not_stale(self, instance):
+        # The deliberate legacy exemption: a digest written before passes
+        # were recorded at all has no date to compare. No dates on either
+        # side is no claim — never a staleness finding by default.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 18)
+        )
+        instance.passes_path.write_text("", encoding="utf-8")
         assert run_mod.digest_orphans(instance) == []
 
     PARKED_URL = "https://example.test/parked"
