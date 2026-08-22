@@ -314,6 +314,16 @@ class TestCaptions:
         assert "## Transcript" in body
         assert "not receipts, they are the queue" in body
 
+    def test_a_captioned_video_with_no_description_still_labels_its_transcript(self):
+        # The transcript is its own labelled section, description or not:
+        # the drain splits a stored body on that heading, so a bare
+        # transcript comes back as "description" and duplicates itself.
+        info = {k: v for k, v in INFO_WITH.items() if k != "description"}
+        driver = driver_for(info, {TRACK_URL: vtt_response(VTT)})
+        body = body_of(driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert body.startswith("## Transcript\n\n")
+        assert "## Description" not in body
+
     def test_vtt_is_cleaned_tags_cues_and_duplicates_stripped(self):
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
         body = body_of(driver.fetch(make_unit(URL, Kind.YOUTUBE)))

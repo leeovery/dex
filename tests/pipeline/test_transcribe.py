@@ -62,8 +62,14 @@ VIDEO_URL = "https://youtube.com/watch?v=abc123"
 class FakeDownload:
     """A scriptable yt-dlp seam: writes fake audio into the cache."""
 
-    def __init__(self, *, raise_: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        raise_: Exception | None = None,
+        description: str = "A talk about anydoc, JSONL and dex.",
+    ) -> None:
         self.raise_ = raise_
+        self.description = description
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, url, cache_dir, stem) -> YoutubeAudio:
@@ -77,7 +83,7 @@ class FakeDownload:
             path=path,
             title="Ledgers at Scale",
             channel="Engineering Distilled",
-            description="A talk about anydoc, JSONL and dex.",
+            description=self.description,
             duration_min=42,
             upload_date="20260810",
         )
@@ -253,6 +259,32 @@ class TestYoutubeDrain:
         assert content.endswith("## Transcript\n\nSecond.\n")
         assert "First." not in content
         assert content.count("## Description") == 1
+
+    def test_a_transcript_with_no_description_is_still_its_own_section(self, instance):
+        # No description on either side — park or probe. The transcript
+        # keeps its heading anyway: without it a re-drain reads the stored
+        # transcript back as "description" and stacks itself under it.
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        ctx = transcribe_ctx(
+            instance,
+            transcriber=FakeTranscriber("whisper-local", text="First pass words."),
+            download=FakeDownload(description=""),
+        )
+        run_mod.run_transcribe(ctx)
+        park = instance.root / str(entry_for(ctx, VIDEO_URL).path)
+        _, body = read_enrichment(park)
+        assert body == "## Transcript\n\nFirst pass words."
+        self._requeue_for_a_re_drain(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(
+                instance,
+                transcriber=FakeTranscriber("whisper-local", text="Second pass words."),
+                download=FakeDownload(description=""),
+            )
+        )
+        _, body = read_enrichment(park)
+        assert body == "## Transcript\n\nSecond pass words."
 
     def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
         # One frontmatter shape per kind, whichever route produced the
@@ -600,9 +632,9 @@ class TestPodcastDrain:
         record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
         assert "https://engineering-distilled.test/ep42" in record.read_text()
         self.drain(instance)
-        _, body = read_enrichment(instance.root / str(ledger.load(instance.ledger_path)[
-            entry.hash
-        ].path))
+        _, body = read_enrichment(
+            instance.root / str(ledger.load(instance.ledger_path)[entry.hash].path)
+        )
         assert "https://engineering-distilled.test/ep42" in body
         assert body.endswith("## Transcript\n\nEpisode words.")
 
