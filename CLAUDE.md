@@ -164,9 +164,13 @@ A module takes a minute or two. Reading the result is the part that matters:
 - `timeout` — the mutant looped forever. Counts as killed.
 
 `mutants/` is a scratch copy of the tree; it is gitignored and safe to delete.
-Two tests in `tests/pipeline/test_issues.py` are deselected in
-`[tool.mutmut]`: mutmut instruments by renaming functions, so a test asserting
-a traceback frame's function name cannot pass under it.
+Two accommodations make a run possible at all, and both are commented where
+they live: two tests in `tests/pipeline/test_issues.py` are deselected in
+`[tool.mutmut]`, because mutmut instruments by renaming functions and those
+two assert a traceback frame's function name; and `tests/conftest.py` relaxes
+one hypothesis health check when `MUTANT_UNDER_TEST` is in the environment,
+because mutmut calls every property twice in one process and hypothesis reads
+that as two executors. Neither weakens an ordinary run.
 
 ## When you change things (anti-drift rules)
 
