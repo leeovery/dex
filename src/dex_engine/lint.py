@@ -19,6 +19,10 @@ Checks:
   enrichment-newer-than-digest orphan listing (the interrupted-session
   backstop, shared with ``enrich status``).
 
+  judgment drift — the signals the pipeline records for this check and no
+  other surface: re-entry cap fires (``capped`` ledger lines: are the
+  bounds too tight for this corpus, or is harvest over-promoting?).
+
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
 but carries no ``generated:`` date gains one (today) so staleness has a
@@ -532,6 +536,7 @@ def _state_checks(
         ghost, missing = _referential_integrity(instance, entries, corpus_ids)
         payload["ghost_items"] = ghost
         payload["missing_outputs"] = missing
+        payload["capped"] = _cap_fires(entries)
     payload["stale_passes"] = _stale_passes(instance)
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
@@ -627,6 +632,33 @@ def _stale_passes(instance: Instance) -> list[dict[str, object]]:
         for item, rules in sorted(latest.items())
         if rules < HARVEST_RULES_VERSION
     ]
+
+
+# ---------------------------------------------------------------------------
+# Judgment-drift signals. The pipeline records these for the health check
+# specifically — they reach no user-facing surface, and until now had no
+# reader.
+# ---------------------------------------------------------------------------
+
+
+def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
+    """The re-entry cap fires standing in the ledger, one row each.
+
+    A fire is a tuning reading, not a fault: it says either that the
+    depth/URL bounds are too tight for this corpus, or that harvest
+    judgment is promoting links the subject rule would not. Which one it
+    is takes the shape of the fires — how many, spread across how many
+    items, under which bound — so the row carries the item, the refused
+    URL, and the bound that refused it, and the surface aggregates.
+    """
+    return sorted(
+        (
+            {"item": entry.item, "url": entry.url, "reason": entry.reason or "cap fired"}
+            for entry in entries.values()
+            if entry.capped
+        ),
+        key=lambda row: (row["item"], row["url"]),
+    )
 
 
 # ---------------------------------------------------------------------------

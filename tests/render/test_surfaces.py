@@ -358,6 +358,14 @@ HEALTH_PAYLOAD = {
         {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
     ],
     "stale_passes": [{"item": "2026-01-04-old-dddddd", "rules": 0}],
+    "capped": [
+        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/deep",
+         "reason": "depth cap (4) reached"},
+        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/wide",
+         "reason": "url cap (12 per item) reached"},
+        {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
+         "reason": "url cap (12 per item) reached"},
+    ],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
@@ -448,6 +456,19 @@ class TestHealthReport:
         assert "enrichment newer than digest" in out
         assert "reconciled by --write:" in out
         assert "notes:" in out
+
+    def test_cap_fires_lead_with_the_shape_of_the_drift(self):
+        # The tuning question is never "is this one fire wrong" — it is how
+        # many, over how many items, under which bound.
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in out
+        assert "depth cap (4) reached: 1 · url cap (12 per item) reached: 2" in out
+        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 1" in out
+        assert "2026-01-06-deep-ffffff -> https://example.test/deep" in out
+
+    def test_no_cap_fires_reads_as_none(self):
+        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in out
 
     def test_clean_instance_reads_clean(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})

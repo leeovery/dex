@@ -769,6 +769,7 @@ _HEALTH_OPTIONAL = frozenset(
         "waiting",
         "cognitive",
         "stale_passes",
+        "capped",
         "digest_orphans",
         "reconciled",
         "notes",
@@ -808,6 +809,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
           "stale_passes": [{"item": str, "rules": int}],
+          # judgment drift — recorded for this surface, shown on no other
+          "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
           "digest_orphans": [str],
           # --write outcomes and free notes
           "reconciled": [str],
@@ -906,6 +909,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     lines.append(_health_count("harvest passes under old rules (re-judge)", len(stale_passes)))
     lines.extend(f"  {row['item']} (rules v{row['rules']})"
                  for row in stale_passes[:_HEALTH_LIST_CAP])
+    lines.extend(_health_cap_fires(surface, payload))
     lines.extend(_health_names(surface, payload, "digest_orphans",
                                "enrichment newer than digest (interrupted session — digest these)"))
 
@@ -920,6 +924,42 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
         lines.append("notes:")
         lines.extend(_bullets(notes))
     return "\n".join(lines) + "\n"
+
+
+# How many worst offenders the cap-fire line names before the listing.
+_HEALTH_OFFENDERS = 5
+
+
+def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The cap-fire block: a tuning reading on the depth-4 / 12-URL bounds.
+
+    Shaped as counts first — total, spread across items, per bound, worst
+    offenders — because the question a fire answers is never "is this one
+    wrong" but "are the bounds wrong for this corpus, or is harvest
+    over-promoting". The refused URLs follow so the answer is checkable.
+    """
+    rows = _health_rows(surface, payload, "capped", ("item", "url", "reason"))
+    label = "re-entry cap fires (tuning signal, not an alarm)"
+    if not rows:
+        return [_health_count(label, 0)]
+    per_item: dict[str, int] = {}
+    per_reason: dict[str, int] = {}
+    for row in rows:
+        per_item[str(row["item"])] = per_item.get(str(row["item"]), 0) + 1
+        per_reason[str(row["reason"])] = per_reason.get(str(row["reason"]), 0) + 1
+    lines = [
+        f"  {label} — {len(rows)} across {_plural(len(per_item), 'item')}",
+        "    " + " · ".join(
+            f"{reason}: {count}" for reason, count in sorted(per_reason.items())
+        ),
+    ]
+    offenders = sorted(per_item.items(), key=lambda pair: (-pair[1], pair[0]))
+    lines.append(
+        "    most often: "
+        + " · ".join(f"{item} {count}" for item, count in offenders[:_HEALTH_OFFENDERS])
+    )
+    lines.extend(f"  {row['item']} -> {row['url']}" for row in rows[:_HEALTH_LIST_CAP])
+    return lines
 
 
 def _health_count(label: str, count: int) -> str:

@@ -80,8 +80,15 @@ provenance.
 
 Caps on re-entry (mechanical backstops, not targets): **max depth 4** (the
 shared URL is depth 0), **max 12 fetched URLs per item**. A fired cap is
-recorded in the ledger and internal logs — it is a judgment-drift signal for
-the health check, never shown on user-facing surfaces.
+recorded in the ledger (`capped: true` on the skipped line) and internal
+logs — it is a judgment-drift signal for the health check, never shown on
+the run report or any other user-facing surface. The health check is where
+it belongs and where it is read: lint reports the fires as a tuning
+signal — how many, spread over how many items, under which bound, worst
+offenders first — so the owner can tell a corpus the bounds are too tight
+for from harvest judgment promoting links the subject rule would not.
+Counts and a listing, never an alarm: a fire is a reading, not a fault, so
+it never fails the check.
 
 Children and reruns are ledger entries from birth (`status: queued`). The
 drain picks up `queued`, `blocked` (attempts < 5), `waiting` (provider now

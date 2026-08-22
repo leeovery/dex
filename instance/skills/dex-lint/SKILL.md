@@ -54,6 +54,14 @@ step 4.
      reference (media described with eyes, `enrich mark` closing each).
    - **Enrichment newer than digest** — an interrupted session: finish
      digest → place → wiki for each listed item.
+   - **Re-entry cap fires** — a tuning signal about the depth-4 / 12-URL
+     bounds. Read the refused URLs: primary artifacts of the item's
+     subject being turned away means the bounds are too tight for this
+     corpus (raise it with the owner — the caps live in the engine);
+     blogrolls and footers being turned away means harvest is promoting
+     what the subject rule would not, and the fix is the judgment, not the
+     bound. Concentrated in one or two items is normal; spread across many
+     is the signal.
 6. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
 7. Coarse-topic check: when a topic has grown unwieldy or a coherent

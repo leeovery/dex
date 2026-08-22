@@ -584,6 +584,89 @@ class TestReferentialIntegrity:
         assert "done entries whose output file is gone from disk — none" in outcome.report
 
 
+def capped_entry(unit_hash: str, *, item: str = ITEM, reason: str, url: str) -> LedgerEntry:
+    return LedgerEntry(
+        hash=unit_hash,
+        url=url,
+        item=item,
+        kind=Kind.WEB,
+        status=Status.SKIPPED,
+        capped=True,
+        engine="0.1.0",
+        date=TODAY,
+        via="harvest",
+        parent="0000000000",
+        depth=5,
+        reason=reason,
+    )
+
+
+DEPTH_CAP = "depth cap (4) reached"
+URL_CAP = "url cap (12 per item) reached"
+
+
+class TestCapFires:
+    """The ledger records cap fires for this check and no other surface."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_no_cap_fires_reads_as_none(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
+
+    def test_fires_are_counted_by_bound_and_by_item(self, instance):
+        self._bare_wiki(instance)
+        other = "2026-08-19-other-bbbbbb"
+        for i, (item, reason) in enumerate(
+            [(ITEM, DEPTH_CAP), (ITEM, URL_CAP), (other, URL_CAP)]
+        ):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(
+                    f"{i:010x}", item=item, reason=reason, url=f"https://example.test/{i}"
+                ),
+            )
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in (
+            outcome.report
+        )
+        assert f"{DEPTH_CAP}: 1 · {URL_CAP}: 2" in outcome.report
+        assert f"most often: {ITEM} 2 · {other} 1" in outcome.report
+        assert f"{ITEM} -> https://example.test/0" in outcome.report
+
+    def test_a_tuning_signal_never_fails_the_check(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            capped_entry("73bd784849", reason=URL_CAP, url="https://example.test/refused"),
+        )
+        assert lint(instance).exit_code == 0
+
+    def test_an_ordinary_skip_is_not_a_cap_fire(self, instance):
+        # `capped` is the marker, not the status: a skipped entry parked for
+        # any other stated reason is not the cap firing.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash="73bd784849",
+                url="https://example.test/paywalled",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.SKIPPED,
+                engine="0.1.0",
+                date=TODAY,
+                reason="paywalled",
+            ),
+        )
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
+
+
 class TestCli:
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True
