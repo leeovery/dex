@@ -1450,7 +1450,10 @@ sync writes its *value*, it is not a synced-template file) and runs
 file pinned to that sync's own release. Mint
 cuts releases and changelogs — human-invoked, never the engine; the engine
 only consumes releases. A broken push to main reaches nobody until tagged;
-rollback is editing the pin line.
+rollback is editing the pin line. **The tag is gated**: `.mint.toml`'s
+`preflight` runs the suite, ruff and ty before Mint does anything else, and a
+failure aborts with no bookkeeping commit and no tag (§15). The live suite is
+excluded — a third party having a bad afternoon must not block a release.
 
 Sync flow (**step 0 of every dex-run session** — scheduled, "process now",
 or health check — per the ratified operating walkthrough; also on demand):
@@ -2122,8 +2125,32 @@ old monolith had no seams.
   URLs (canonicalization keys the ledger hash — a non-idempotent case IS a
   duplicate-entry bug).
 - **Render kernel tests**: the markdown composition primitives (§11).
-- **Live tests opt-in** (pytest marker) for real-API drift checks. CI runs
-  hermetic only (enforced by the default `-m "not live"`, §14).
+- **Shim tests across shells**: `instance/dex` is POSIX sh, and "POSIX sh"
+  differs by platform — macOS's `/bin/sh` is bash in POSIX mode and forgives
+  bashisms a Linux instance's dash kills the script over. The shim cases are
+  parametrized over `sh`, `bash`, `dash` and `ksh`; CI names the shells the
+  Linux runner guarantees in `DEX_SHIM_SHELLS`, so a missing interpreter
+  fails rather than skips.
+- **Live tests opt-in** (pytest marker) for real-API drift checks. CI's gating
+  run is hermetic only (enforced by the default `-m "not live"`, §14).
+
+**Gates and CI.** The suite, `ruff check` and `ty check` are the three gates.
+They run on every push and pull request (Linux × Python 3.11/3.12/3.13, plus
+one clean macOS box on 3.13; lint and types once, since both are pinned to
+py311 semantics), and again as `.mint.toml`'s release `preflight` so a tag
+cannot exist over a red tree — instances pin tags, and rollback is hand-editing
+pins. Formatting is not a gate: `ruff format` disagrees with ~50 pre-existing
+files, and rewriting them to settle that would cost more history than it buys.
+The live checks run on their own daily schedule, never as a gate, split into a
+notifying job and a `continue-on-error` job for the endpoints (`ci_hostile`
+marker) that answer a datacenter IP differently from a laptop.
+
+**Mutation testing** is tooling, not a gate: `mutmut`, in the `mutation`
+dependency group, pointed at one module at a time. It is the only instrument
+that catches a test which passes with the code it claims to protect reverted,
+and it has already found real gaps here. A survivor is a candidate, not a
+verdict — an equivalent mutant that rewrites a `reason` string changes no
+behaviour under contract.
 
 Suite structure: `tests/` mirrors `src/dex_engine/`
 (`tests/drivers/test_x.py`, `tests/pipeline/test_ledger.py`,

@@ -302,9 +302,10 @@ Capture inbox: every capture is one `.md` in `inbox/`, written via the GitHub
 contents API (the phone shortcut) or committed directly by the dex-capture
 skill. The body is the URL and/or note. A capture that carried a binary (image,
 PDF, any file) stages it as an asset on the repo's standing `inbox` release and
-references it in frontmatter. There is no server-side machinery at all: the PUT
-is the commit, and the next run moves staged binaries into `media/` where LFS
-applies. Suggestion is untrusted by design, so scope filtering happens at
+references it in frontmatter. Your knowledge base runs no server-side machinery
+at all — no Actions, no webhooks, nothing writing to it but you and your own
+sessions: the PUT is the commit, and the next run moves staged binaries into
+`media/` where LFS applies. Suggestion is untrusted by design, so scope filtering happens at
 processing time, inside the instance. Full protocol: `docs/capture.md`.
 
 Instance layout: `CLAUDE.md` (scope and operations contract) · `inbox/` (pending

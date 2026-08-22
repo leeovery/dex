@@ -51,6 +51,8 @@ the engine stays unaware of which ones exist.
   the in-force design for the ingestion machinery and the rendered
   surfaces, plus the work agreed and not yet built. `design/roadmap.md` —
   an index over the design files, post-release backlog, operational facts.
+- `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
+  `live.yml` (the daily third-party drift watch). See Development below.
 - `example/` — a toy instance showing the shapes.
 
 ## Design (current, in force)
@@ -66,8 +68,11 @@ the engine stays unaware of which ones exist.
   session's work list. Understanding — describing media, digesting,
   placing, writing wiki pages — is Claude's job, specified in the synced
   skills. Reports render through surfaces, never hand-drawn.
-- **No server-side machinery.** No Actions, no webhooks: the contents-API PUT
-  is the commit, and failures surface in sessions where someone can act.
+- **No server-side machinery in an instance.** An instance runs no Actions and
+  no webhooks: the contents-API PUT is the commit, and failures surface in
+  sessions where someone can act. This is a rule about the *data* path — no
+  robot writes to a knowledge base. The engine repo is a code repo and does run
+  Actions, but only to check itself (below); nothing in CI touches an instance.
 - **Auth is borrowed, never stored.** Commands resolve GITHUB_TOKEN, then
   `gh auth token`. Declared instance dependencies: git, git-lfs, uv, gh
   (authed). The only stored credential in the whole system is the PAT inside
@@ -77,6 +82,91 @@ the engine stays unaware of which ones exist.
   `bin/dex sync` (tag-pinned: `.dex-engine-pin` names the release; Mint
   cuts releases, sync bumps pins and runs migrations). Nothing is ever
   fixed by hand-editing a synced file in an instance.
+
+## Development
+
+**The gates.** Three commands, and they are the same three everywhere — on
+your machine, in CI, and in front of the release tag:
+
+```
+uv run pytest -m "not live"     # the default suite (`uv run pytest` is the same:
+                                #  -m 'not live' is in pyproject's addopts)
+uv run ruff check
+uv run ty check
+```
+
+**Formatting is deliberately NOT a gate.** `uv run ruff format --check` fails
+on roughly fifty pre-existing files and always has. Reformatting them would
+rewrite blame across the whole tree to settle a question nobody has asked, so
+`ruff format` stays a tool you may point at a file you are already editing, and
+never a check that can fail a build. Do not add it to CI or to `.mint.toml`,
+and do not mass-reformat.
+
+**CI** (`.github/workflows/ci.yml`, every push and pull request). The suite on
+Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"` is a
+promise, and a single local 3.13 cannot keep it — plus one clean macOS box on
+3.13. `ruff` and `ty` run once, on their own job: ruff targets py311 and ty
+pins `python-version = "3.11"`, so they answer identically on every
+interpreter and a matrix of them would be four copies of one answer. Every job
+syncs with `uv sync --locked`, which also fails on a `pyproject.toml` edit that
+was never re-locked. Windows is not covered and will not be: the shim is POSIX
+sh and instances require git, gh and uv.
+
+**The shim is tested under three shells.** "POSIX sh" is not one interpreter —
+macOS's `/bin/sh` is bash in POSIX mode, a Linux instance's is dash — so
+`tests/test_shim.py` parametrizes over `sh`, `dash` and `ksh`, skipping any
+the machine lacks. CI sets `DEX_SHIM_SHELLS="sh dash ksh"` on Linux, which
+turns a missing interpreter from a silent skip into a failure. Install `dash`
+and `ksh` locally if you touch `instance/dex`; bashisms in that file are
+invisible on a Mac and fatal in an instance.
+
+**Live checks** (`.github/workflows/live.yml`, daily plus manual dispatch,
+never a gate). `pytest -m live` watches third parties for drift, which happens
+on their clock and has nothing to do with release timing. The workflow splits
+in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
+lookup, the five GitHub contents/matching-refs checks through an authenticated
+`gh`, whisper's tokenizer) fail the run and mail the maintainer, which is
+GitHub's own default for a failed scheduled workflow and needs no robot in the
+issue tracker. Everything marked `ci_hostile` — fxtwitter, the two YouTube
+root-namespace checks, wayback, the whisper model download — runs in a
+`continue-on-error` job that never notifies, because those endpoints answer a
+runner differently from a laptop and a false alarm every morning trains you to
+ignore the real one. Read that job when a driver misbehaves in the field.
+
+**The release gate** (`.mint.toml`, `[release.hooks] preflight`). The three
+gates run before Mint does anything else — before the AI notes, before the
+review, and long before the tag. A failure aborts with no bookkeeping commit
+and no tag, which is the point: instances pin tags, so a broken tag reaches
+every instance at its next sync and the only rollback is hand-editing pins.
+`pre_tag` still builds the wheel. The live suite stays out.
+
+**Mutation testing** (`mutmut`, in the `mutation` dependency group). Not a
+gate, not in CI: a whole-repo run against 1300 tests takes hours and buries
+the answer. It is an audit you point at ONE module you suspect —
+
+```
+uv run --group mutation mutmut run "dex_engine.pipeline.classify.*"
+uv run --group mutation mutmut results | grep -v "not checked"
+uv run --group mutation mutmut show dex_engine.pipeline.classify.x_classify_http__mutmut_2
+```
+
+A module takes a minute or two. Reading the result is the part that matters:
+
+- `killed` (🎉) — a test failed when the line changed. That is the claim the
+  test makes, verified.
+- `survived` — every test still passed with the code altered. Look at the diff
+  before believing it. A survivor that flips a boundary (`< 300` → `<= 300`)
+  or drops a branch is a real hole: some test asserts it covers that line and
+  does not. A survivor that rewrites a `reason` string or a log message is an
+  **equivalent mutant** — the behaviour under contract did not change, and
+  writing a test to kill it would only pin prose. Not every survivor is a bug;
+  the tool finds candidates, you decide.
+- `timeout` — the mutant looped forever. Counts as killed.
+
+`mutants/` is a scratch copy of the tree; it is gitignored and safe to delete.
+Two tests in `tests/pipeline/test_issues.py` are deselected in
+`[tool.mutmut]`: mutmut instruments by renaming functions, so a test asserting
+a traceback frame's function name cannot pass under it.
 
 ## When you change things (anti-drift rules)
 
@@ -110,6 +200,18 @@ the engine stays unaware of which ones exist.
   migration when existing state must move.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
+- **The gates move together**: the three commands in Development are named in
+  three places — `.github/workflows/ci.yml`, `.mint.toml`'s `preflight`, and
+  the Development section itself. Change one and change all three, or CI and
+  the release stop agreeing about what "green" means. Never add
+  `ruff format --check` to either.
+- **A new live check picks a side**: mark it `ci_hostile` (with the reason in a
+  comment on the class) if a datacenter IP would be answered differently, or
+  leave it unmarked and accept that a failure mails the maintainer at 06:17
+  UTC. There is no third option, and an unmarked flaky check is how a daily
+  alarm becomes background noise.
+- **Adding a dependency**: re-lock in the same commit (`uv lock`) — CI syncs
+  with `--locked` and the release gate does too, so a stale lock fails both.
 - **Decisions**: record in the design file the work belongs to —
   `design/ingestion-pipeline.md` for anything in this release. The roadmap
   takes only what comes after it, in a line or two. Present tense, current
