@@ -180,7 +180,9 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
-    ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids)
+    ledger_error = _state_checks(
+        instance, payload, is_cognitive, corpus_ids, notes=scan.notes
+    )
     digest_errors = _digest_checks(instance)
     payload["digest_errors"] = digest_errors
     if scan.reconciled:
@@ -535,8 +537,14 @@ def _state_checks(
     payload: dict[str, object],
     is_cognitive: IsCognitive,
     corpus_ids: set[str],
+    *,
+    notes: list[str],
 ) -> bool:
-    """Fill the payload's state sections; True when the ledger failed to load."""
+    """Fill the payload's state sections; True when the ledger failed to load.
+
+    ``notes`` is the report's shared note list — the state checks append
+    what has no row of its own.
+    """
     try:
         entries = ledger.load(instance.ledger_path)
     except ledger.LedgerSchemaError as e:
@@ -561,7 +569,9 @@ def _state_checks(
         payload["missing_outputs"] = missing
         payload["capped"] = _cap_fires(entries)
     payload["stale_passes"] = _stale_passes(instance)
-    payload["incomplete_threads"] = _incomplete_threads(instance)
+    threads = _incomplete_threads(instance)
+    payload["incomplete_threads"] = threads.rows
+    notes += threads.notes
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
 
@@ -695,7 +705,15 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
     )
 
 
-def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
+@dataclass(slots=True, kw_only=True)
+class _ThreadScan:
+    """What the marker scan over the enrichment files found."""
+
+    rows: list[dict[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _incomplete_threads(instance: Instance) -> _ThreadScan:
     """Enrichment files whose stored thread stops short of the root.
 
     The x driver stamps ``thread_cap_hit`` / ``chain_incomplete`` into
@@ -706,28 +724,36 @@ def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
     place — ``drivers.x.MAX_HOPS`` — and restated here in no number.
 
     Only the frontmatter is read: enrichment bodies are whole transcripts.
+    A file this scan cannot read is reported as a note rather than skipped:
+    no other check in lint opens an enrichment file, so a dropped one is
+    invisible to every check, and the half-thread inside it is invisible
+    forever. It stays a note, never a failure — the markers are a caution
+    to the session, not a broken contract downstream.
     """
-    rows: list[dict[str, str]] = []
+    scan = _ThreadScan()
     for path in sorted(instance.enrichment_dir.glob("*/*.md")):
+        rel = str(path.relative_to(instance.root))
         try:
             fields = read_enrichment_fields(path)
-        except (OSError, UnicodeDecodeError):
-            # A file lint cannot read is the file-shape checks' business,
-            # not this scan's — a marker scan never fails a health check.
+        except (OSError, UnicodeDecodeError) as e:
+            scan.notes.append(
+                f"{rel}: unreadable ({e.__class__.__name__}) — thread completeness "
+                "unknown, and no other check reads enrichment files"
+            )
             continue
         markers = [marker for marker in THREAD_MARKERS if fields.get(marker) == "true"]
         if not markers:
             continue
         note = " ".join((fields.get("chain_note") or "").split())
-        rows.append(
+        scan.rows.append(
             {
-                "path": str(path.relative_to(instance.root)),
+                "path": rel,
                 # The driver's note says how far the walk got; without one
                 # the marker names itself. Both render on a single line.
                 "why": note or " + ".join(markers),
             }
         )
-    return rows
+    return scan
 
 
 # ---------------------------------------------------------------------------

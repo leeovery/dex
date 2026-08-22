@@ -753,6 +753,24 @@ class TestThreadCompleteness:
         write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n')
         assert lint(instance).exit_code == 0
 
+    def test_an_unreadable_enrichment_file_is_reported(self, instance):
+        # Nothing else in lint reads enrichment files, so a file this scan
+        # cannot decode is invisible everywhere unless it says so here.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"---\nchain_incomplete: \xff\xfe true\n---\n\nbody\n")
+        flat = " ".join(lint(instance).report.split())  # the surface wraps notes
+        assert f"enrichment/{ITEM}/x-abc123.md: unreadable (UnicodeDecodeError)" in flat
+        assert "thread completeness unknown" in flat
+
+    def test_an_unreadable_enrichment_file_never_fails_the_check(self, instance):
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"---\n\xff\xfe\n---\n")
+        assert lint(instance).exit_code == 0
+
 
 def write_digest(instance: Instance, item: str, text: str) -> None:
     instance.digests_dir.mkdir(parents=True, exist_ok=True)
