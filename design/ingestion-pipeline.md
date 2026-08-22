@@ -1286,7 +1286,9 @@ src/dex_engine/
                  told apart from renamed, whose URLs a live item still
                  lists, and from unclaimed; one row per item and finding
                  with its entry count; done outputs missing on disk),
-                 waiting cohorts, pass records
+                 waiting cohorts, pass records, the judgment-drift signals
+                 nothing else reads (cap fires off the ledger, thread
+                 markers off enrichment frontmatter)
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 

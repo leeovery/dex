@@ -667,6 +667,72 @@ class TestCapFires:
         assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
 
 
+def write_enrichment(instance: Instance, name: str, frontmatter: str, body: str = "body") -> None:
+    path = instance.enrichment_dir / ITEM / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\nurl: https://x.com/i/status/1\n{frontmatter}---\n\n{body}\n")
+
+
+class TestThreadCompleteness:
+    """A half-thread reads exactly like a whole one unless something says so."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_chain_incomplete_reports_the_drivers_note(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance,
+            "x-abc123.md",
+            'chain_incomplete: "true"\nchain_note: "parent fetch failed after 3 post(s): 404"\n',
+        )
+        outcome = lint(instance)
+        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
+        assert (
+            f"enrichment/{ITEM}/x-abc123.md — parent fetch failed after 3 post(s): 404"
+        ) in outcome.report
+
+    def test_thread_cap_hit_names_itself_without_a_note(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", 'thread_cap_hit: "true"\n')
+        outcome = lint(instance)
+        assert f"enrichment/{ITEM}/x-abc123.md — thread_cap_hit" in outcome.report
+
+    def test_both_markers_report_together(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", 'thread_cap_hit: "true"\nchain_incomplete: "true"\n'
+        )
+        outcome = lint(instance)
+        assert "thread_cap_hit + chain_incomplete" in outcome.report
+
+    def test_a_complete_thread_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", "author: someone (@someone)\n")
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_the_body_is_never_read(self, instance):
+        # Enrichment bodies are whole transcripts; a body line that looks
+        # like a marker is content, and the scan must not have seen it.
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", "author: someone\n", body="chain_incomplete: true"
+        )
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_incomplete_threads_never_fail_the_check(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n')
+        assert lint(instance).exit_code == 0
+
+
 class TestCli:
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True

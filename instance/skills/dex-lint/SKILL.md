@@ -54,6 +54,11 @@ step 4.
      reference (media described with eyes, `enrich mark` closing each).
    - **Enrichment newer than digest** — an interrupted session: finish
      digest → place → wiki for each listed item.
+   - **Stored threads recorded incomplete** — the walk-up stopped at the
+     20-hop cap or at a parent it could not fetch. Read the enrichment,
+     then make the gap explicit wherever the item is used: a digest bullet
+     saying what is missing, and no page sentence that reads the stored
+     chain as the whole thread.
    - **Re-entry cap fires** — a tuning signal about the depth-4 / 12-URL
      bounds. Read the refused URLs: primary artifacts of the item's
      subject being turned away means the bounds are too tight for this

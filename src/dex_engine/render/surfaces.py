@@ -770,6 +770,7 @@ _HEALTH_OPTIONAL = frozenset(
         "cognitive",
         "stale_passes",
         "capped",
+        "incomplete_threads",
         "digest_orphans",
         "reconciled",
         "notes",
@@ -811,6 +812,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           "stale_passes": [{"item": str, "rules": int}],
           # judgment drift — recorded for this surface, shown on no other
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
+          "incomplete_threads": [{"path": str, "why": str}],      # short thread walk-ups
           "digest_orphans": [str],
           # --write outcomes and free notes
           "reconciled": [str],
@@ -910,6 +912,9 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     lines.extend(f"  {row['item']} (rules v{row['rules']})"
                  for row in stale_passes[:_HEALTH_LIST_CAP])
     lines.extend(_health_cap_fires(surface, payload))
+    lines.extend(_health_pairs(surface, payload, "incomplete_threads",
+                               "stored threads recorded incomplete (never cite one as whole)",
+                               ("path", "why"), lambda p, w: f"{p} — {w}"))
     lines.extend(_health_names(surface, payload, "digest_orphans",
                                "enrichment newer than digest (interrupted session — digest these)"))
 

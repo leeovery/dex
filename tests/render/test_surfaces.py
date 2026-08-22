@@ -366,6 +366,10 @@ HEALTH_PAYLOAD = {
         {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
          "reason": "url cap (12 per item) reached"},
     ],
+    "incomplete_threads": [
+        {"path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
+         "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone"}
+    ],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
@@ -469,6 +473,13 @@ class TestHealthReport:
     def test_no_cap_fires_reads_as_none(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
         assert "re-entry cap fires (tuning signal, not an alarm) — none" in out
+
+    def test_incomplete_threads_name_the_file_and_the_gap(self):
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert "stored threads recorded incomplete" in out
+        assert (
+            "enrichment/2026-01-08-thread-888888/x-abc123.md — parent fetch failed after 3"
+        ) in out
 
     def test_clean_instance_reads_clean(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})

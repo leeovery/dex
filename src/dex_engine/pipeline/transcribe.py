@@ -43,6 +43,7 @@ __all__ = [
     "keep_last_tokens",
     "podcast_body",
     "read_enrichment",
+    "read_enrichment_fields",
     "youtube_body",
     "yt_dlp_audio",
 ]
@@ -505,9 +506,11 @@ def podcast_body(show_notes: str, transcript: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Enrichment reads. The inverse of run.py's renderer, for the two fields the
-# drain needs (frontmatter pointers, the pre-transcript body) — enrichment
-# files are machine-written, so the simple shape is guaranteed.
+# Enrichment reads. The inverse of run.py's renderer — enrichment files are
+# machine-written, so the simple shape is guaranteed. Two entry points over
+# one parser: the drain wants fields plus the pre-transcript body, lint's
+# marker scan wants fields alone and must not pull whole transcripts into
+# memory to get them.
 # ---------------------------------------------------------------------------
 
 
@@ -524,8 +527,36 @@ def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
     if not text.startswith("---\n"):
         return {}, text.strip()
     head, _sep, body = text[4:].partition("\n---\n")
+    return _frontmatter_fields(head.split("\n")), body.strip()
+
+
+def read_enrichment_fields(path: Path) -> dict[str, str]:
+    """Parse one enrichment file's frontmatter without reading its body.
+
+    Bodies run to whole transcripts; a scan that only wants the
+    frontmatter stops at the closing fence.
+
+    Args:
+        path: The enrichment markdown file.
+
+    Returns:
+        The fields (JSON-quoted values unquoted); empty for a file with no
+        complete frontmatter fence.
+    """
+    head: list[str] = []
+    with path.open(encoding="utf-8") as f:
+        if f.readline().rstrip("\n") != "---":
+            return {}
+        for line in f:
+            if line.rstrip("\n") == "---":
+                return _frontmatter_fields(head)
+            head.append(line.rstrip("\n"))
+    return {}
+
+
+def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
     fields: dict[str, str] = {}
-    for line in head.split("\n"):
+    for line in lines:
         if ":" not in line:
             continue
         key, _, raw = line.partition(":")
@@ -535,4 +566,4 @@ def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
             with contextlib.suppress(json.JSONDecodeError):
                 value = json.loads(value)
         fields[key.strip()] = value
-    return fields, body.strip()
+    return fields

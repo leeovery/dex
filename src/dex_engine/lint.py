@@ -21,7 +21,10 @@ Checks:
 
   judgment drift — the signals the pipeline records for this check and no
   other surface: re-entry cap fires (``capped`` ledger lines: are the
-  bounds too tight for this corpus, or is harvest over-promoting?).
+  bounds too tight for this corpus, or is harvest over-promoting?) and
+  thread-completeness markers in enrichment frontmatter
+  (``thread_cap_hit`` / ``chain_incomplete``: a stored thread a digest
+  could otherwise cite as whole).
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -49,6 +52,7 @@ from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
 from .pipeline.run import HARVEST_RULES_VERSION, digest_orphans
+from .pipeline.transcribe import read_enrichment_fields
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
@@ -70,6 +74,10 @@ ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 # than the floor are boilerplate-prone; the ratio is SequenceMatcher's.
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
+
+# Thread-completeness markers the x driver stamps into enrichment
+# frontmatter when a walk-up stops short of the root.
+THREAD_MARKERS = ("thread_cap_hit", "chain_incomplete")
 
 IsCognitive = Callable[[Need, Format | None], bool]
 
@@ -538,6 +546,7 @@ def _state_checks(
         payload["missing_outputs"] = missing
         payload["capped"] = _cap_fires(entries)
     payload["stale_passes"] = _stale_passes(instance)
+    payload["incomplete_threads"] = _incomplete_threads(instance)
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
 
@@ -659,6 +668,39 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
         ),
         key=lambda row: (row["item"], row["url"]),
     )
+
+
+def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
+    """Enrichment files whose stored thread stops short of the root.
+
+    The x driver stamps ``thread_cap_hit`` / ``chain_incomplete`` into
+    frontmatter when a walk-up hits the 20-hop cap or a parent it cannot
+    fetch. Unread, a half-thread reads exactly like a whole one, and the
+    digest cites it as though the root were there.
+
+    Only the frontmatter is read: enrichment bodies are whole transcripts.
+    """
+    rows: list[dict[str, str]] = []
+    for path in sorted(instance.enrichment_dir.glob("*/*.md")):
+        try:
+            fields = read_enrichment_fields(path)
+        except (OSError, UnicodeDecodeError):
+            # A file lint cannot read is the file-shape checks' business,
+            # not this scan's — a marker scan never fails a health check.
+            continue
+        markers = [marker for marker in THREAD_MARKERS if fields.get(marker) == "true"]
+        if not markers:
+            continue
+        note = " ".join((fields.get("chain_note") or "").split())
+        rows.append(
+            {
+                "path": str(path.relative_to(instance.root)),
+                # The driver's note says how far the walk got; without one
+                # the marker names itself. Both render on a single line.
+                "why": note or " + ".join(markers),
+            }
+        )
+    return rows
 
 
 # ---------------------------------------------------------------------------
