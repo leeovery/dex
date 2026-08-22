@@ -659,8 +659,8 @@ class TestCapFires:
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
             )
         flat = " ".join(lint(instance).report.split())
-        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in flat
-        assert "depth cap (4): 1 · url cap (12 per item): 2" in flat
+        assert "re-entry cap fires (tuning signal, not an alarm) — **3** across 2 items" in flat
+        assert "by bound: `depth cap (4)` 1 · `url cap (12 per item)` 2" in flat
         assert "--force" not in flat.split("stored threads")[0].split("re-entry cap fires")[1]
         assert "1 owner-requested fetch refusal standing at the url cap (12 per item)" in flat
         assert "https://example.test/3" not in flat  # the refused-on-request URL
@@ -839,7 +839,7 @@ class TestThreadCompleteness:
         for item in [*older, newest]:
             write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n', item=item)
         report = lint(instance).report
-        assert "stored threads recorded incomplete (never cite one as whole) — 26" in report
+        assert "stored threads recorded incomplete (never cite one as whole) — **26**" in report
         assert f"enrichment/{newest}/x-abc123.md" in report
         # the oldest is what the cap drops (bare ids also appear under the
         # digest-orphan listing, so the path is what this asserts on)
@@ -868,7 +868,9 @@ class TestThreadCompleteness:
             b'---\nchain_incomplete: "true"\n---\n\n' + b"pad\n" * 40000 + b"\xff\xfe\n"
         )
         outcome = lint(instance)
-        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — **1**"
+        ) in outcome.report
         assert "unreadable" not in outcome.report
 
     def test_an_unreadable_enrichment_file_is_reported(self, instance):

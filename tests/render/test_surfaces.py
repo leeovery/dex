@@ -572,7 +572,7 @@ class TestHealthReport:
              "reason": "url cap (12 per item)"},
         ]
         out = render("health-report", payload)
-        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 2" in out
+        assert "most often: **2026-01-06-deep-ffffff** 2 · **2026-01-07-wide-999999** 2" in out
 
     def test_no_cap_fires_reads_as_none(self):
         out = render("health-report", CLEAN_HEALTH)
