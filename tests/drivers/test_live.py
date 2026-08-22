@@ -88,6 +88,21 @@ class TestGitHubContentsShape:
         assert "Rust" in body_of(result)
 
 
+class TestYouTubeRootNamespace:
+    """The bare-name guard rests on who owns youtube.com's root namespace."""
+
+    def test_a_legacy_vanity_name_is_still_a_channel_address(self):
+        # /veritasium — a grandfathered vanity URL, no /@ and no /c/ prefix.
+        # If the root namespace ever stopped meaning "channel", the driver's
+        # functional-path allowlist would be inverted.
+        response = urllib_transport("https://www.youtube.com/veritasium")
+        assert response.ok
+        assert "/channel/UC" in response.text()
+
+    def test_an_unclaimed_bare_name_is_a_404_not_a_product_page(self):
+        assert not urllib_transport("https://www.youtube.com/zzqqxxnotachannel1234").ok
+
+
 class TestWaybackShape:
     def test_the_availability_api_shape_holds(self):
         lookup = "https://archive.org/wayback/available?url=example.com"
