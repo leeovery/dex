@@ -170,6 +170,59 @@ class TestQuotes:
         assert result.children == []  # promoting a quote is harvest judgment
 
 
+class TestArticles:
+    """Long-form articles keep their prose under `article`, not `text`."""
+
+    URL = "https://x.com/hana/status/700"
+
+    def article_result(self):
+        responses = {API + "status/700": api_fixture("article-700.json")}
+        return driver_for(responses).fetch(make_unit(self.URL, Kind.X))
+
+    def test_article_title_and_preview_become_the_body(self):
+        # `text` is empty on these and raw_text holds only the shortlink —
+        # falling back to raw_text ledgered them done on a ~74-char URL.
+        result = self.article_result()
+        assert result.status is Status.DONE
+        body = body_of(result)
+        assert "Blocked is not dead: a field guide to failure classification" in body
+        assert "retry-forever bucket" in body
+        assert "https://t.co/Zq8kR2mVw1" in body
+
+    def test_the_article_body_is_never_just_the_shortlink(self):
+        # The old fallback rendered ~74 characters: attribution plus a t.co.
+        assert len(body_of(self.article_result())) > 200
+
+    def test_a_post_that_is_only_a_shortlink_is_not_content(self):
+        tweet = {
+            "id": "701",
+            "text": "",
+            "raw_text": {"text": "https://t.co/Zq8kR2mVw1", "facets": []},
+            "created_at": "Fri Aug 21 09:20:00 +0000 2026",
+            "author": {"name": "Hana Iqbal", "screen_name": "hana"},
+            "replying_to": None,
+            "replying_to_status": None,
+        }
+        responses = {API + "status/701": json_response({"tweet": tweet})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/701", Kind.X))
+        assert result.status is Status.MANUAL
+        assert "no text or media" in reason_of(result)
+
+    def test_prose_that_merely_contains_a_shortlink_is_still_content(self):
+        tweet = {
+            "id": "702",
+            "text": "The failure-classification piece is finally up: https://t.co/Zq8kR2mVw1",
+            "created_at": "Fri Aug 21 09:25:00 +0000 2026",
+            "author": {"name": "Hana Iqbal", "screen_name": "hana"},
+            "replying_to": None,
+            "replying_to_status": None,
+        }
+        responses = {API + "status/702": json_response({"tweet": tweet})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
+        assert result.status is Status.DONE
+        assert "finally up" in body_of(result)
+
+
 class TestClassifiedFailures:
     def test_deleted_post_is_dead(self):
         responses = {API + "status/300": json_response({}, status=404)}

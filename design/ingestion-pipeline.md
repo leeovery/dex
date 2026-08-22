@@ -568,6 +568,13 @@ silent `except: pass` dies here.
   thread's *last* post rolls up the whole thread.
 - Quoted posts stay inline (blockquote); promoting a quote is a harvest
   judgment, not driver mechanics.
+- **Long-form articles render from `article`, not `text`.** fxtwitter
+  returns `text: ""` for them, the prose under `article.title` /
+  `article.preview_text`, and `raw_text.text` holding only the shortlink to
+  the article; the body is title + preview text + that link. A body that is
+  nothing but a shortlink is **not content** — the "no text or media"
+  `manual` park applies, because a post ledgered `done` on ~74 characters of
+  URL is thin garbage the digest layer cannot tell from real capture.
 - Chain media pooled, captured post's first, media-stage cap applies.
 - **Incomplete chains are recorded, never silently presented as complete**
   (learned from a 2026-08-20 production run — a thread's root promised
