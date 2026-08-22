@@ -1,8 +1,9 @@
 # Driver-based ingestion pipeline
 
-Status: **agreed design, pre-implementation** (discussed and signed off
-2026-08-19/20). This document is the reference for the rewrite of the
-engine's ingestion machinery. The roadmap items it resolves point here.
+Status: **in force, implemented** (designed and signed off 2026-08-19/20;
+the rewrite has landed). This document is the reference for the engine's
+ingestion machinery and describes what IS. The roadmap items it resolves
+point here.
 
 This document was verified line-by-line against the full design-session
 transcript, which is held locally by the owner and is not part of the repo;
@@ -100,6 +101,15 @@ that URL, so it says nothing about the bounds or about harvest — and
 stands as a note on the report instead. Counts and a listing, never an
 alarm: a fire is a reading, not a fault, so it never fails the check.
 
+**What the 12 counts is fetched pages, and only those.** The count is over
+the item's ledger entries, excluding `via: media` (downloads, not pages),
+`via: extract-asset` (bytes written out of a container, which never touched
+the network), and every `skipped` entry (cap-fire markers record refused
+work, so counting them would let one refusal ratchet the cap shut). A PDF
+carrying thirty embedded images therefore spends one of the item's twelve,
+not thirty-one — the budget bounds how much of the web an item pulls in,
+and the media caps (§7) bound the rest separately.
+
 Children and reruns are ledger entries from birth (`status: queued`). The
 drain picks up `queued`, `blocked` (attempts < 5), `waiting` (provider now
 available), and `error` (engine now newer).
@@ -167,6 +177,29 @@ that still owes work gets a line stating the shape of it — "3 of 4 units
 landed — 1 waiting on transcription" — so completeness is read, never
 inferred from a list of units. Items the run did not touch are the standing
 view's job (`enrich status`), not the run report's.
+
+**Enrichment file format.** Every fetched output is one markdown file,
+`enrichment/<id>/<kind>-<hash6>.md`, opening with a YAML frontmatter fence
+whose first two keys are always `url:` (the canonical URL the unit was
+keyed on) and `fetched:` (the run date), followed by the driver's `meta`
+verbatim, then the body. Empty and null meta values are dropped rather
+than written blank. Values are quoted defensively against **YAML 1.1
+retyping**, because a plain scalar that merely *looks* like something else
+comes back as that something else: `no`/`off`/`y` and friends read as
+booleans, a leading `-`, `?` or `,` or any of the YAML indicator
+characters changes the parse, a tab anywhere invalidates the block, and a
+date-shaped or number-shaped title reads back as a date or a float — so a
+scalar matching any of those shapes is emitted as a JSON string instead.
+The shape match on timestamps is deliberately on shape alone, never
+calendar validity: `2026-08-99` is what makes a YAML reader *raise*, so it
+must be quoted too.
+
+The `fetched:` stamp is **masked out of the rerun byte-compare** — it
+changes every run by definition, so comparing it would report every rerun
+as changed and rewrite every file. Only the frontmatter head is masked; a
+body line that happens to begin `fetched: ` is content and counts as
+change. Two documented mechanics rest on this: the rerun "changed" list on
+the run report (§12), and the enrichment-newer-than-digest backstop.
 
 ## 2. Interfaces
 
@@ -264,11 +297,18 @@ Typing discipline (binding for the implementation):
 - The typed registry literal (`DRIVERS: list[SourceDriver] = […]`) is the
   Protocol-conformance point — the type checker verifies every driver
   against the interface at that one assignment. Same for provider lists.
-- Every dispatch over `Status`/`Kind`/`Need` uses `match` +
+- Every **total** dispatch over `Status`/`Kind`/`Need` uses `match` +
   `assert_never` (exhaustiveness: adding an enum member becomes a type
   error at every unhandled site). The drain predicate is one total
   function, `is_drainable(entry, ctx) -> bool`, exhaustively matched — the
-  highest-value function in the system to make total.
+  highest-value function in the system to make total. A dispatch that is
+  deliberately **partial** — a Kind or Status that is a valid member but
+  not applicable at that site (transcript bodies and audio acquisition
+  cover youtube and podcast only; the acquisition-failure and classifier
+  arms take the three statuses their classifier can return) — closes with
+  a runtime `case _: raise` naming the mismatch instead. Four sites do
+  this, and each one is a loud engine bug when it fires, never a quiet
+  default.
 
 Capability resolution: **per format / per need, first available *mechanical*
 provider wins**, order set by instance config. The **cognitive provider** is
@@ -350,8 +390,8 @@ routing signal.
 machines (owner's desktop, other owners' laptops, scheduled sessions —
 environments lacking dex's declared dependencies, such as the Cowork VM
 class, are not dex environments at all, per §13). Git cannot merge a SQLite blob; JSONL merges as a union —
-`.gitattributes` (synced) sets `merge=union` on **all `state/*.jsonl` files**
-(all four are append-only). Diffability is
+`.gitattributes` (synced) sets `merge=union` on **all `state/*.jsonl` files**,
+every one of which is append-only. Diffability is
 load-bearing (audit-by-git-log is free); Claude greps state directly in
 sessions. If an instance ever outgrows this: SQLite as a derived, gitignored
 cache rebuilt from the JSONL — the ledger stays the source of truth.
@@ -367,8 +407,10 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, `noise_prefixes`, and provider order as `providers: {<capability>: [<name>, …]}`; unknown keys rejected loudly |
-| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. |
+| `state/digests/<id>.md` | per-item fact indexes, Claude-written; the one markdown corner of `state/` |
+| `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
+| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
+| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
 
 Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
@@ -584,6 +626,32 @@ unsupported format, `blocked`, `manual`), the corpus item was already
 created at ingest — provenance and the owner's note are captured
 immediately and never queued. The item stays `status: raw` with no
 digest/wiki work until its work units complete.
+
+**Bad-seed parking**: a URL that cannot even be canonicalized — a malformed
+IPv6 literal, a media path climbing out of the instance root, a scheme the
+transport refuses — never enters the queue as work. It parks as its own
+`manual` entry with the refusal stated (`unfetchable capture URL: …`), one
+per bad URL, and the rest of the item seeds and drains around it. The
+containment is the point: one garbage URL in a capture must not abort the
+seeding of everything beside it, and it must not disappear either, because
+a silently dropped URL is a capture the owner believes was ingested. The
+same pattern applies a layer in for media URLs a driver emits (§7) and for
+`enrich fetch` batches (§10).
+
+Bad seeds are **the one place a ledger key is minted from a non-canonical
+URL**. Everywhere else the key is `work_hash(canonical(url))`; here
+canonicalization is exactly what failed, so the key is `work_hash(url)` on
+the raw string. Two consequences, both deliberate:
+
+- `enrich mark` resolves a unit by canonical identity **first** and by the
+  exact stored key **second**. A canonical-only lookup could never reach a
+  bad seed — or a `via: media` line, keyed verbatim because signed query
+  params ARE the resource — and the contract forbids healing either by
+  hand-appending JSONL, which would leave judgment with no working tool at
+  all. So pass the URL as the ledger shows it and the heal lands.
+- A bad seed carries `kind: web` — the catch-all's kind — because nothing
+  about an uncanonicalizable string is pattern-detectable, and the entry
+  must still satisfy the schema.
 
 Heals write the ledger: when Claude repairs something by hand (the
 Cloudflare-403 incident above), the ingest skill's heal procedure ends by
@@ -932,8 +1000,9 @@ render/kernel.py     pure layout, zero dex vocabulary — wrap/width/column
                      math, tables, trees, kv blocks. Alignment bugs can
                      exist in exactly one place, and it has tests.
 render/surfaces.py   named surfaces, loud payload validation:
-                     enrich-report, status, capability-report,
-                     ingest-receipt, health-report, sync-report
+                     enrich-report, status, item-status,
+                     capability-report, sync-report, ingest-receipt,
+                     health-report
 ```
 
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
@@ -970,10 +1039,26 @@ or health check — per the ratified operating walkthrough; also on demand):
 5. render the sync report (one surface)
 ```
 
+**Sync deletes retired engine skills.** The `dex-` namespace under
+`.claude/skills/` is engine-owned, so a `dex-*` directory the template no
+longer ships is removed from the instance, and the removal is reported as a
+machinery change. Copying alone is not enough: a retired skill left on disk
+keeps loading its stale procedure into every session, describing verbs that
+no longer exist — which is worse than having no skill, because the session
+believes it. (`dex-ingest`, split into `dex-capture` + `dex-run`, is the
+case this exists for.) A symlinked skill directory is unlinked rather than
+recursed into, so whatever it pointed at is left alone. Nothing outside the
+`dex-` prefix is ever touched — an owner's own skills are instance-owned.
+
 Majors also auto-apply (the always-migratable commitment) but announce loudly
 in session and health report. Minors only for the foreseeable future.
 Transition bootstrap is automatic: sync rewrites its own shim, so existing
 instances move from main-tracking to tag-pinning on their next sync.
+
+**Version precondition on every release**: the package version stays ahead
+of every released tag. A running version equal to an existing release makes
+the pin bootstrap adopt that (old) tag and brick the instance on older code.
+The pre-rewrite marker `0.0.1` is never re-tagged or re-stamped.
 
 **Migrations** — `src/dex_engine/migrations/migration_<n>.py`, plain
 integers, runner sorts numerically (padding buys nothing; single author +
@@ -1070,7 +1155,12 @@ Shipping migrations for this rewrite:
    Old `error` entries adopt retry-on-new-engine semantics. The old ledger
    used `error` as an informal reason field on non-error statuses (28 wild
    lines: dead/nocaptions/done/skipped/manual, plus one `note` field) —
-   migration 1 **ports those values into `reason`**, never destroys them.
+   migration 1 **never destroys those values**: on a status that may carry
+   a reason they move into `reason`, on `error` they stay in `error`, and
+   on `done`/`queued` — where §5 forbids `reason` outright — the text is
+   preserved in the migration report and dropped from the line, which the
+   report says in as many words. A `manual`/`skipped` line the old engine
+   left with no reason at all gets one, since the schema requires it.
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
 2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
@@ -1255,6 +1345,13 @@ involvement: the engine owner only.
 ```
 src/dex_engine/
   pipeline/    types.py  ledger.py  detect.py  registry.py  run.py
+               classify.py   the ONE failure classifier (§5) + the scrubber
+               transcribe.py the transcribe drain: audio acquisition,
+                             prompt budgeting, chunking (§6, §9)
+               urls.py       canonicalization and the work-key hash — the
+                             one place a ledger identity is computed
+               capture.py    `enrich item new`: capture file → corpus item
+               issues.py     the issue filer (§13)
                ownership.py — which live corpus item claims a work unit
                  (its urls:/media: hashed exactly as seeding does), the one
                  answer to "is this entry's item still there?"; lint and
@@ -1262,6 +1359,7 @@ src/dex_engine/
                  purge in one place and a rename in the other; `exclude`
                  asks it before deleting work history, for the same reason
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
+               transport.py  the HTTP seam (§5's OSError normalization)
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
@@ -1517,56 +1615,6 @@ Suite structure: `tests/` mirrors `src/dex_engine/`
 `FlippableProvider` whose `available()` the waiting-cohort tests toggle.
 Driver/provider Protocol conformance is verified by the typed registry
 literal (§2) — no separate conformance tests needed.
-
-## 15a. Implementation order
-
-Sequencing constraints are real; build in this order, each phase leaving
-the tree green:
-
-1. **Foundations** — `pipeline/types.py` (enums, dataclasses, validation),
-   `pipeline/ledger.py` (from_line/to_line, compact, invariant tests),
-   `corpus.py` (CorpusItem parse/serialize, byte-exact body round-trip),
-   `render/kernel.py` + `surfaces.py` (everything downstream reports
-   through them), tooling (ruff, type checker, pytest config,
-   dependency-groups, uv.lock). Hypothesis properties land here.
-2. **Detection + drivers** — `detect.py`, `registry.py`, `run.py`; port
-   youtube/x/github/paper/web to the driver shape (x gains walk-up, web
-   keeps links + classified fetches); media stage; fixtures per driver;
-   `normalize.py` switched to shared detect; classification module with
-   the 403-regression pin.
-3. **Capabilities** — extract (anydoc, csv-builtin, cognitive), transcribe
-   (whisper-local, whisper-api with chunking), ocr (cognitive); waiting
-   queue semantics; `file` + `podcast` drivers (they depend on
-   capabilities); `enrich fetch` / `mark` / `pass` verbs; capability
-   report surface.
-4. **Releases + migrations** — `.dex-engine-pin`, sync flow (re-exec,
-   migration runner, sync report), Migration protocol + report review;
-   migrations 1 and 2 (in that order — renames before requeues).
-5. **Periphery + uniformity** — issue filer; skill rewrites (dex-capture,
-   dex-run restructure with ingest-item reference, lint additions);
-   **every remaining module brought to the day-zero standard with tests**
-   (inbox, normalize, lint, sync, exclude, new — behavior preserved,
-   expression rewritten; nothing ships legacy); dex-contract.md, README,
-   docs/ updates per the anti-drift obligations; instance rollout (sync
-   each instance, verify migration reports).
-
-Phases 1–3 are pure engine work with no instance impact; nothing ships to
-instances until phase 4 exists, because the first synced release must carry
-the migrations that make old state valid under the new code.
-
-**Version precondition** (phase-4 review, F1): the package version must be
-bumped past every released tag before the stack merges — a running version
-equal to an existing release makes the pin bootstrap adopt that (old) tag
-and brick the instance on pre-rewrite code. The pre-rewrite marker
-`0.0.1` must never be re-tagged or re-stamped.
-
-**MERGE GATE — binding on the stack**: instances track `main` HEAD today
-(the shim pins nothing until phase 4), so `impl/*` branches must NOT reach
-`main` before phase 4's migrations and the pin mechanism exist. Landing
-phase 2 early would make every instance's next `bin/dex` run fail loudly:
-`ledger.load` rejects pre-migration vocabulary by design, and the docs/
-skills still describe deleted verbs until phase 5. The stack merges to
-main as a whole, or at minimum from phase 4 downward, never bottom-first.
 
 ## 16. Deferred / out of scope (tracked on the roadmap)
 
