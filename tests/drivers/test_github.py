@@ -2,7 +2,7 @@
 
 The blob round trip itself — the ref/path boundary, the contents endpoint,
 the oversize park — belongs to the shared seam and is pinned in test_gh.py.
-What is here is the driver's own judgment: fence it, or park it.
+What is here is the driver's own judgment: fence it, re-detect it, or park.
 """
 
 import json
@@ -12,7 +12,7 @@ import pytest
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.pipeline.detect import detect_kind
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Format, Kind, Status
 from tests.drivers.conftest import (
     FakeGh,
     body_of,
@@ -265,13 +265,17 @@ class TestBlob:
         )
         assert driver.fetch(make_unit(self.URL, Kind.GITHUB)).status is Status.DEAD
 
-    def test_a_document_blob_parks_manual_naming_its_format(self):
+    def test_a_document_blob_redetects_to_file_work(self):
         # A real ledger PDF blob fenced 40k characters of
-        # replacement-character soup and went done.
+        # replacement-character soup and went done. It is not source — but
+        # it IS extractable, now that the file driver reads blob bytes
+        # through the same authenticated API.
         driver = driver_for({self.CONTENTS: gh_contents(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj")})
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "is a pdf document" in reason_of(result)
+        assert result.status is Status.QUEUED
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.FILE
+        assert result.redetect.format is Format.PDF
 
     def test_an_unrecognized_binary_blob_parks_manual_never_fenced(self):
         driver = driver_for({self.CONTENTS: gh_contents(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")})
@@ -286,10 +290,13 @@ class TestBlob:
         assert result.status is Status.DONE
         assert "naïve — résumé" in body_of(result)
 
-    def test_an_lfs_pointer_parks_manual_instead_of_fencing_its_stand_in_text(self):
+    def test_an_lfs_pointer_is_never_fenced_as_the_document_it_stands_for(self):
         # An unsmudged LFS pointer is honest UTF-8 with no signature, so an
         # unnamed sniff let 130 bytes of `oid sha256:…` fence and ledger
-        # `done` as though it were the document it points at.
+        # `done` as though it were the document it points at. Named, it is
+        # pdf work like any other committed pdf — and the file driver, which
+        # fetches these same bytes back, is where a pointer is finally
+        # parked, before an extractor is handed the stand-in text.
         pointer = (
             b"version https://git-lfs.github.com/spec/v1\n"
             b"oid sha256:08709a87567d8311d6fd29c4f4a5386801153e71450e628c4a5a5d7e85feda8b\n"
@@ -299,22 +306,25 @@ class TestBlob:
         driver = driver_for({args: gh_contents(pointer)})
         url = "https://github.com/acme/pipeline-kit/blob/main/docs/sicp.pdf"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "is a pdf document" in reason_of(result)
         assert result.body is None
+        assert result.redetect is not None
+        assert result.redetect.format is Format.PDF
 
-    def test_a_committed_csv_parks_for_the_extractor_rather_than_fencing(self):
-        # Judgment call: a CSV is text and would fence, but it has no
-        # signature either, so allowing it to fence is what lets an LFS
-        # pointer for a .csv through. One rule — an extractable document
-        # parks for capture — and csv-builtin then renders a real table
-        # instead of a fence truncated at 40k characters.
+    def test_a_committed_csv_goes_to_the_extractor_rather_than_fencing(self):
+        # A CSV has no signature either, so only the name catches it — and
+        # letting text-shaped documents fence is exactly what let an LFS
+        # pointer for a .csv through. It re-detects like every other
+        # document rather than parking: an extractor reads the committed
+        # bytes into a real table, where a fence would truncate at 40k
+        # characters and read as a wall of commas.
         args = ("api", "repos/acme/pipeline-kit/contents/data/runs.csv?ref=main")
         driver = driver_for({args: gh_contents(b"run,status\n1,done\n2,dead\n")})
         url = "https://github.com/acme/pipeline-kit/blob/main/data/runs.csv"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "is a csv document" in reason_of(result)
+        assert result.status is Status.QUEUED
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.FILE
+        assert result.redetect.format is Format.CSV
 
     @pytest.mark.parametrize("path", ["src/detect.py", "README.md", "Makefile", "docs/notes.txt"])
     def test_source_and_prose_extensions_still_fence(self, path):
@@ -330,8 +340,9 @@ class TestBlob:
     def test_oversize_blob_parks_manual_never_dead(self):
         # Over 1MB the contents API answers `encoding: "none"` with an empty
         # body — the file is there, just not inline.
-        payload = gh_ok(json.dumps({"encoding": "none", "content": "", "size": 4645520}))
-        driver = driver_for({self.CONTENTS: payload})
+        driver = driver_for(
+            {self.CONTENTS: gh_ok(json.dumps({"encoding": "none", "content": "", "size": 4645520}))}
+        )
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
         assert result.status is Status.MANUAL
         assert "larger than the contents API serves inline" in reason_of(result)

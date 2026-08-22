@@ -7,13 +7,14 @@ including where a blob URL's ref stops and its path starts; this driver
 owns only what a github URL's *shape* means and what to do with the bytes
 that come back.
 
-Blob bytes are sniffed *by name* before they are fenced: a document or any
-other binary committed to a repo parks ``manual`` naming what it is,
-because a GitHub blob URL serves an HTML viewer rather than the bytes, so
-no other driver can re-fetch it — the rescue is to capture the file
-itself. The name matters because two extractable shapes carry no
-signature: a CSV, and a Git-LFS pointer, whose 130 bytes of stand-in text
-would otherwise be fenced as though they were the document.
+Blob bytes are sniffed *by name* before they are fenced: a document
+committed to a repo re-detects to ``file`` work — the file driver reads the
+bytes back through the same seam, so extraction runs on the committed file
+itself. Any other binary parks ``manual`` naming what it is, never a code
+fence full of replacement characters. The name matters because two
+extractable shapes carry no byte signature: a CSV, and an unsmudged Git-LFS
+pointer, whose 130 bytes of stand-in text would otherwise be fenced as
+though they were the document they point at.
 """
 
 import re
@@ -21,7 +22,7 @@ import urllib.parse
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.detect import sniff_format
-from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
+from dex_engine.pipeline.types import Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .gh import BlobRef, Gh, blob_ref, fetch_blob, gh_api, gh_api_list, run_gh
@@ -192,13 +193,13 @@ class GitHubDriver:
         # document it stands for.
         fmt = sniff_format(blob.data, name=blob.path)
         if fmt is not None:
+            # A document committed to a repo IS extractable work: the file
+            # driver reaches these bytes back through the shared seam, so
+            # the refusal that used to park this manual ("no other driver
+            # can re-fetch a blob URL") no longer holds. An LFS pointer that
+            # sniffs by name is caught there, before any extractor sees it.
             return Result(
-                status=Status.MANUAL,
-                meta=meta,
-                reason=(
-                    f"{blob.path} is a {fmt.value} document, not source — capture the file "
-                    "itself so the extractors can read it"
-                ),
+                status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.FILE, format=fmt)
             )
         try:
             text = blob.data.decode("utf-8")

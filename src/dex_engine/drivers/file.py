@@ -1,11 +1,16 @@
 """The file driver: local repo files and URL-served binaries, routed by Format.
 
-Two work shapes, one driver: ``file:<repo-path>`` keys (materialized media
-captures) read from the instance tree; http(s) URLs (a PDF served from an
-arbitrary address, rerouted here by detection's HEAD sniff) fetch through
-the transport with classified failures. Bytes are then byte-signature
-sniffed — authoritative over whatever a server claimed — and handed to
-the first available mechanical extractor for the format.
+Three work shapes, one driver: ``file:<repo-path>`` keys (materialized
+media captures) read from the instance tree; http(s) URLs (a PDF served
+from an arbitrary address, rerouted here by detection's HEAD sniff) fetch
+through the transport with classified failures; and github blob URLs, whose
+bytes come from the shared authenticated seam in
+:mod:`dex_engine.drivers.gh` because the URL itself serves an HTML viewer
+page (and, on a private repo, 404s to an unauthenticated fetch) — the same
+seam the github driver reads them through, so a blob's ref resolves the one
+way for both. Bytes are then byte-signature sniffed —
+authoritative over whatever a server claimed — and handed to the first
+available mechanical extractor for the format.
 
 No provider for the format → ``waiting`` + ``needs: extract`` with the
 registry's stated reason — and so does a provider that reported available
@@ -27,6 +32,7 @@ from urllib.parse import unquote, urlsplit
 
 from dex_engine.capabilities import Capabilities
 from dex_engine.pipeline.classify import (
+    Classification,
     ProviderUnavailableError,
     ScannedDocumentError,
     classify_connection,
@@ -44,6 +50,7 @@ from dex_engine.pipeline.types import (
 )
 from dex_engine.pipeline.urls import base_canonical, resolve_repo_path
 
+from .gh import BlobRef, Gh, blob_ref, fetch_blob, run_gh
 from .transport import Transport, urllib_transport
 
 __all__ = ["FileDriver"]
@@ -63,8 +70,9 @@ class FileDriver:
         capabilities: Capabilities,
         root: Path | None = None,
         transport: Transport = urllib_transport,
+        gh: Gh = run_gh,
     ) -> None:
-        """Wire the extract registry, the instance root, and the HTTP seam.
+        """Wire the extract registry, the instance root, and the two fetch seams.
 
         Args:
             capabilities: The resolved capability registries.
@@ -72,10 +80,13 @@ class FileDriver:
                 only for registries that never fetch local files (pattern
                 matching, normalize).
             transport: The HTTP seam for URL-served binaries.
+            gh: The gh-CLI seam — a github blob URL's bytes come from the
+                authenticated contents API, never from the viewer page.
         """
         self._capabilities = capabilities
         self._root = root
         self._transport = transport
+        self._gh = gh
 
     def matches(self, url: str) -> bool:
         """True for local-file work keys; URLs reach this driver by sniff."""
@@ -107,11 +118,7 @@ class FileDriver:
         # header over signature-less bytes (a real CSV) must proceed to
         # extraction under its claimed format. Only for http(s) work: a
         # local captured file is not a page to fetch.
-        if (
-            not unit.url.startswith("file:")
-            and sniff_format(data) is None
-            and looks_like_html(data)
-        ):
+        if _rerouteable(unit.url) and sniff_format(data) is None and looks_like_html(data):
             return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.WEB))
         fmt = sniff_format(data, name=name) or unit.format
         if fmt is None:
@@ -128,7 +135,22 @@ class FileDriver:
     def _load(self, unit: WorkUnit) -> tuple[bytes, str | None] | Result:
         if unit.url.startswith("file:"):
             return self._read_local(unit.url.removeprefix("file:"))
+        ref = blob_ref(unit.url)
+        if ref is not None:
+            return self._read_blob(ref)
         return self._download(unit.url)
+
+    def _read_blob(self, ref: BlobRef) -> tuple[bytes, str | None] | Result:
+        """A repo-committed document's bytes, through the gh seam.
+
+        The plain transport cannot serve these: a blob URL answers with the
+        HTML viewer page, and on a private repo the unauthenticated fetch
+        404s — which classified live content ``dead``.
+        """
+        blob = fetch_blob(self._gh, ref)
+        if isinstance(blob, Classification):
+            return Result(status=blob.status, meta={}, reason=blob.reason)
+        return blob.data, blob.path.rsplit("/", 1)[-1] or None
 
     def _read_local(self, repo_path: str) -> tuple[bytes, str | None] | Result:
         if self._root is None:
@@ -195,3 +217,15 @@ class FileDriver:
         return Result(
             status=Status.DONE, meta=meta, body=extraction.markdown, assets=extraction.assets
         )
+
+
+def _rerouteable(url: str) -> bool:
+    """Whether HTML bytes at ``url`` mean "this was never file work".
+
+    Only for plain http(s) fetches. A captured local file is not a page to
+    fetch, and a github blob's bytes came from the contents API — HTML
+    there is an HTML file someone committed, not a viewer page, and
+    re-routing it to ``web`` would fetch that viewer and bounce straight
+    back (a loop park).
+    """
+    return not url.startswith("file:") and blob_ref(url) is None

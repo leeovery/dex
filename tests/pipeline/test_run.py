@@ -16,6 +16,7 @@ from hypothesis import strategies as st
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
+from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
@@ -53,7 +54,8 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.conftest import FakeDriver
-from tests.drivers.conftest import FakeTransport, fixture_text
+from tests.drivers.conftest import FakeGh as FakeGhApi
+from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
 from tests.pipeline.test_issues import FakeGh
 
 TODAY = datetime.date(2026, 8, 20)
@@ -2000,6 +2002,38 @@ class TestRedetection:
         assert '"https://cdn.pods.test/ed/ep42.mp3?sig=abc123"' in content  # the drain's pointer
         assert "Ada Guest" in content  # the feed's show notes, richer than the page
         assert f"re-detected: {self.EPISODE_URL} — web → podcast" in " ".join(report.split())
+
+    BLOB_URL = "https://github.com/acme/pipeline-kit/blob/main/docs/whitepaper.pdf"
+    BLOB_CONTENTS = ("api", "repos/acme/pipeline-kit/contents/docs/whitepaper.pdf?ref=main")
+
+    def test_a_github_blob_pdf_reroutes_to_file_and_extracts(self, instance):
+        # The blob URL serves an HTML viewer, so the file driver reads its
+        # bytes through the same gh seam the github driver uses — which is
+        # why the refusal that used to park this manual no longer holds.
+        gh = FakeGhApi({self.BLOB_CONTENTS: gh_contents(fixture_bytes("paper.pdf"))})
+        capabilities = Capabilities(
+            transcribers=(), extractors=(FakeExtractor(markdown="extracted pdf text " * 30),)
+        )
+        drivers = [
+            GitHubDriver(gh=gh),
+            FileDriver(capabilities=capabilities, root=instance.root, gh=gh),
+            WebDriver(transport=FakeTransport({})),  # the catch-all stays last
+        ]
+        write_item(instance, urls=[self.BLOB_URL])
+        ctx = make_ctx(instance, FakeDriver(), drivers=drivers)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.BLOB_URL)
+        assert entry.status is Status.DONE
+        assert entry.kind is Kind.FILE
+        assert entry.format is Format.PDF
+        assert entry.path is not None
+        assert (instance.root / entry.path).exists()
+        assert self._lineage(ctx, self.BLOB_URL) == [
+            ("github", "queued", None),  # seeded as detection said
+            ("file", "queued", "sniff"),  # the blob's bytes are a document
+            ("file", "done", "sniff"),  # extracted in the same run
+        ]
+        assert f"re-detected: {self.BLOB_URL} — github → file/pdf" in " ".join(report.split())
 
     def test_blocked_head_still_corrects_on_the_get(self, instance):
         pdf = HttpResponse(

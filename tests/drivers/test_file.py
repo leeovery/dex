@@ -1,5 +1,7 @@
 """Tests for the file driver: format routing, honest parking, asset passthrough."""
 
+import json
+
 import pytest
 
 from dex_engine.capabilities import Capabilities
@@ -8,7 +10,16 @@ from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
 from dex_engine.pipeline.types import Config, Format, Kind, Need, Status
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
-from tests.drivers.conftest import FakeTransport, make_unit, reason_of
+from tests.drivers.conftest import (
+    FakeGh,
+    FakeTransport,
+    gh_contents,
+    gh_fail,
+    gh_matching_refs,
+    gh_ok,
+    make_unit,
+    reason_of,
+)
 
 PDF_URL = "https://example.test/whitepaper"
 
@@ -165,6 +176,97 @@ class TestUrlServedBinaries:
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
         assert result.status is Status.DONE
         assert extractor.calls[0][1] is Format.DOCX
+
+
+class TestGithubBlobs:
+    """Repo-committed documents: bytes through gh, never the viewer page."""
+
+    URL = "https://github.com/acme/pipeline-kit/blob/main/docs/whitepaper.pdf"
+    CONTENTS = ("api", "repos/acme/pipeline-kit/contents/docs/whitepaper.pdf?ref=main")
+
+    def refuse_transport(self, url, *, method="GET"):
+        raise AssertionError(f"a blob URL must never be fetched over HTTP ({method} {url})")
+
+    def test_a_blob_pdf_extracts_through_the_gh_seam(self):
+        gh = FakeGh({self.CONTENTS: gh_contents(fixture_bytes("paper.pdf"))})
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.DONE
+        assert extractor.calls[0][1] is Format.PDF
+        assert result.meta["title"] == "whitepaper.pdf"
+
+    def test_a_private_repo_403_classifies_blocked_not_dead(self):
+        gh = FakeGh({self.CONTENTS: gh_fail("gh: API rate limit exceeded (HTTP 403)")})
+        d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.BLOCKED
+
+    def test_an_oversize_blob_is_manual_with_the_clone_route(self):
+        gh = FakeGh({self.CONTENTS: gh_ok(json.dumps({"encoding": "none", "content": ""}))})
+        d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.MANUAL
+        assert "read it from a clone" in reason_of(result)
+
+    def test_a_slashed_branch_resolves_on_the_way_back_in(self):
+        # The github driver hands this URL over verbatim after re-detection,
+        # so the file driver has to settle the same ref/path boundary. Split
+        # at the first segment it would 404 — and a 404 on contents is
+        # terminally dead, which is the whole blocker the shared seam fixes.
+        repo = "repos/rust-lang/rust"
+        url = "https://github.com/rust-lang/rust/blob/automation/bors/auto/paper.pdf"
+        gh = FakeGh(
+            {
+                ("api", f"{repo}/contents/bors/auto/paper.pdf?ref=automation"): gh_fail(
+                    "gh: Not Found (HTTP 404)"
+                ),
+                ("api", f"{repo}/git/matching-refs/heads/automation"): gh_matching_refs(
+                    "refs/heads/automation/bors/auto"
+                ),
+                (
+                    "api",
+                    f"{repo}/contents/paper.pdf?ref=automation%2Fbors%2Fauto",
+                ): gh_contents(fixture_bytes("paper.pdf")),
+            }
+        )
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(url, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.DONE
+        # The name comes from the resolved split, not the guessed one.
+        assert result.meta["title"] == "paper.pdf"
+
+    def test_an_lfs_pointer_blob_parks_rather_than_extracting_its_stand_in_text(self):
+        # The github driver re-detects a `.pdf` blob by name, pointer bytes
+        # or not — it cannot tell. This is where the 130 bytes of
+        # `oid sha256:…` stop, before any extractor is handed them.
+        pointer = (
+            b"version https://git-lfs.github.com/spec/v1\n"
+            b"oid sha256:08709a87567d8311d6fd29c4f4a5386801153e71450e628c4a5a5d7e85feda8b\n"
+            b"size 7416886\n"
+        )
+        gh = FakeGh({self.CONTENTS: gh_contents(pointer)})
+        extractor = FakeExtractor()
+        d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
+        assert result.status is Status.MANUAL
+        assert "git lfs pull" in reason_of(result)
+        assert extractor.calls == []
+
+    def test_html_committed_to_a_repo_never_bounces_back_to_web(self):
+        # These bytes came from the contents API, not from a viewer page:
+        # an HTML file in a repo is a file, and re-routing it to web would
+        # fetch the viewer and re-detect straight back — a loop park.
+        html = b"<!DOCTYPE html>\n<html><body>a committed page</body></html>"
+        url = "https://github.com/acme/pipeline-kit/blob/main/docs/index.html"
+        args = ("api", "repos/acme/pipeline-kit/contents/docs/index.html?ref=main")
+        gh = FakeGh({args: gh_contents(html)})
+        d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
+        result = d.fetch(make_unit(url, Kind.FILE))
+        assert result.redetect is None
+        assert result.status is Status.MANUAL
+        assert "unrecognized file format" in reason_of(result)
 
 
 class TestRedetection:
