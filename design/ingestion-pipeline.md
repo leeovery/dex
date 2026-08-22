@@ -967,6 +967,14 @@ Authoring rules:
   verb, leaving judgment with no working tool. And parking these lines for
   a human was never a real repair: `enrich mark` heals a unit, and a line
   with no attributable item is exactly the unit it cannot create.
+  **A malformed tie-breaker is never grounds for dropping a line**: where a
+  migration cannot read `at`, it drops the value, names it in the report,
+  and keeps the line — which then orders by file position, exactly as every
+  line did before the field existed. Load-bearing fields (`item`, `kind`,
+  `status`, `date`) keep their strictness, and `ledger.load` keeps its own:
+  a malformed field in a live ledger still refuses to load. This applies
+  only to a migration's disposal path, where the cost of strictness is a
+  deleted work history rather than a loud error.
 
 Shipping migrations for this rewrite:
 1. **Renames + status vocabulary** — `tweet→x`, `blog→web` in corpus

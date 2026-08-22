@@ -491,7 +491,7 @@ def _translate_record(
             # Carried, never re-stamped: this run's instant would claim the
             # line was written now, and an unstamped line is already ordered
             # correctly (oldest) by the loader.
-            at=_translate_at(raw),
+            at=_translate_at(raw, unit_hash=unit_hash, notes=notes),
             via=_translate_via(raw, unit_hash=unit_hash, notes=notes),
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
@@ -538,14 +538,32 @@ def _translate_date(raw: dict[str, object]) -> datetime.date:
         raise _UntranslatableError(f"unparseable date {text!r}") from e
 
 
-def _translate_at(raw: dict[str, object]) -> datetime.datetime | None:
+def _translate_at(
+    raw: dict[str, object], *, unit_hash: str, notes: list[str]
+) -> datetime.datetime | None:
+    """Carry the write timestamp; drop the VALUE, never the line, when it is junk.
+
+    ``at`` breaks ties between concurrent writes — it is not load-bearing
+    state like date/status/kind/item. Since an untranslatable line is now
+    dropped outright, refusing a line over a malformed tie-breaker would
+    destroy its whole work history to protect nothing. A dropped value
+    leaves the line sorting by file position, exactly as every line did
+    before the field existed.
+    """
     if "at" not in raw:
         return None
     text = _expect_str(raw, "at")
     try:
-        return datetime.datetime.fromisoformat(text)
-    except ValueError as e:
-        raise _UntranslatableError(f"unparseable write timestamp {text!r}") from e
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        parsed = None
+    if parsed is None or parsed.utcoffset() is None:
+        notes.append(
+            f"ledger {unit_hash}: unusable write timestamp {text!r} dropped — the line "
+            "is kept and orders by file position, as it did before the field existed"
+        )
+        return None
+    return parsed
 
 
 def _translate_path(

@@ -705,6 +705,45 @@ class TestLedgerTranslation:
         assert report.skipped == []
         assert ledger.load(path)["7777777777"].at == at
 
+    @pytest.mark.parametrize("junk", ["yesterday", "2026-08-20T09:00:00"])
+    def test_a_junk_write_timestamp_costs_the_value_not_the_line(
+        self, tmp_path, migration, junk
+    ):
+        # `at` breaks ties between concurrent writes; it is not load-bearing
+        # like date/status/kind/item. Dropping a line's whole work history
+        # over a malformed tie-breaker (unparseable, or naive and so
+        # uncomparable) would protect nothing.
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "8888888888",
+                    "url": "https://a.test/junk-at",
+                    "item": "2026-05-01-item-a1b2c3",
+                    "kind": "web",
+                    "status": "manual",
+                    "reason": "owner ruled",
+                    "engine": "0.4.0",
+                    "date": "2026-08-20",
+                    "at": junk,
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert not any("dropped" in a and "untranslatable" in a for a in report.actions)
+        assert any(
+            f"unusable write timestamp {junk!r} dropped" in action for action in report.actions
+        )
+        entry = ledger.load(path)["8888888888"]
+        assert entry.at is None
+        assert (entry.status, entry.reason, entry.item, entry.engine) == (
+            Status.MANUAL,
+            "owner ruled",
+            "2026-05-01-item-a1b2c3",
+            "0.4.0",
+        )
+        assert entry.date == datetime.date(2026, 8, 20)
+
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
         # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
