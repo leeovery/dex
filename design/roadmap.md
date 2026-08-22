@@ -46,6 +46,13 @@ state formats). This file holds what's *next*, not what is.
   providers (the cognitive floor is the only OCR path). The instagram
   driver and the hosted-transcription pick are their own entries below.
 
+- **Driver outcomes** — drivers stop deciding lifecycle status; they report
+  what they found and the orchestrator maps outcome to status in one total
+  match. Agreed and written up in `design/driver-outcomes.md`; it also
+  settles `Result` as a union, the `LedgerEntry`/`WorkUnit` disagreement
+  over `depth = 0`, and `via` carrying three jobs at once. Do this before
+  the cleanup round below: the cleanup touches the same seams.
+
 - **Code cleanup round (post-first-release)** — behavior-neutral debts in
   the engine, batched so they aren't lost: extract one shared
   fetch-and-classify helper (eight hand-rolled copies across
