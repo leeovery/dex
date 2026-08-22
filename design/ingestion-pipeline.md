@@ -1024,9 +1024,11 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item and its enrichment while its ledger
-   history stays on file, so a seed keyed to a purged item would re-fetch
-   content ruled out of scope and put an owner ruling back in the queue.
+   `dex exclude` deletes the item, its enrichment and its ledger entries,
+   so a seed keyed to a purged item would re-fetch content ruled out of
+   scope and put an owner ruling back in the queue. (Purges predating that
+   last part left their ledger lines on file, which is exactly the state
+   this migration meets.)
    The claim is asked of the corpus, never of the entry's stored `item`
    string alone (amended at phase-4 review, on real state): an item RENAMED
    since its line was written — same shortid, new slug — has a live file

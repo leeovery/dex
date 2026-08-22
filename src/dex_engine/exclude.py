@@ -5,7 +5,9 @@
 
 Each exclusion appends to ``state/exclusions.tsv`` (consulted by
 ``normalize.py`` so excluded clusters are never regenerated), removes
-``corpus/<year>/<id>.md``, and removes ``enrichment/<id>/``.
+``corpus/<year>/<id>.md``, removes ``enrichment/<id>/``, and removes the
+item's ledger entries — the item is gone, so seeding will never raise
+that work again and the lines would otherwise linger forever.
 """
 
 import argparse
@@ -14,6 +16,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .pipeline import ledger
 from .pipeline.types import Instance
 
 __all__ = ["build_parser", "main", "run_exclude"]
@@ -22,7 +25,7 @@ _DEFAULT_REASON = "out of scope"
 
 
 def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
-    """Exclude the given items: record why, delete item and enrichment.
+    """Exclude the given items: record why, delete item, enrichment and ledger entries.
 
     Args:
         instance: The instance.
@@ -43,12 +46,14 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
             if line.strip()
         }
     removed = missing = 0
+    purged: set[str] = set()
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
         for entry in entries:
             item_id = entry.get("id")
             if not item_id:
                 raise ValueError(f"exclusion entry has no id: {entry!r}")
+            purged.add(item_id)
             # The reason is LLM-authored free text: collapse every
             # whitespace run (tabs and newlines included) so the TSV stays
             # one record per line, tab-delimited, by construction.
@@ -62,7 +67,14 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
             else:
                 missing += 1
             shutil.rmtree(instance.enrichment_dir / item_id, ignore_errors=True)
-    return f"excluded {len(entries)}: removed {removed} items ({missing} already gone)"
+    # One rewrite for the whole batch, after the TSV record lands: an
+    # interruption before it leaves the entries in place, and the re-run
+    # (which the TSV makes idempotent) purges them.
+    entries_dropped = ledger.drop_items(instance.ledger_path, purged)
+    return (
+        f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
+        f"{entries_dropped} ledger entries dropped"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -153,7 +153,9 @@ a malformed record impossible:
   upstream `{fingerprint, action, engine, date, issue?}`. Written by the
   issue filer; the owner's visible record.
 - `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
-  stay excluded across re-normalization.
+  stay excluded across re-normalization. The verb purges the item
+  completely — corpus file, `enrichment/<id>/`, and the item's ledger
+  entries — and states the entry count it dropped; git history keeps them.
 
 ## `cache/` — ephemeral, gitignored
 

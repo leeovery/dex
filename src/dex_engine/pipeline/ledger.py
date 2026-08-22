@@ -19,7 +19,7 @@ testable.
 
 import datetime
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import replace
 from pathlib import Path
 
@@ -31,6 +31,7 @@ __all__ = [
     "LedgerSchemaError",
     "append",
     "compact",
+    "drop_items",
     "from_line",
     "load",
     "stamp",
@@ -290,6 +291,50 @@ def compact(path: Path) -> int:
     # Atomic: a crash mid-write must never lose the ledger.
     atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
     return len(lines) - len(entries)
+
+
+def drop_items(path: Path, items: Collection[str]) -> int:
+    """Remove every line naming one of ``items``; return how many went.
+
+    For purges only. ``bin/dex exclude`` deletes a corpus item and its
+    enrichment permanently and on the record, so the item's ledger lines
+    name work that seeding can never raise again — they would linger
+    forever, and a ledger entry naming a nonexistent item is an anomaly,
+    not a designed steady state. Git history keeps what this removes.
+
+    Unparseable lines are kept, not purged: a line this layer cannot read
+    is not provably one of these items', and a purge must never become
+    incidental data loss. (:func:`from_line` is deliberately not used — one
+    hand-tampered line would abort the whole purge, and the next command's
+    ``load`` names that line loudly anyway.)
+
+    Args:
+        path: The ledger file; a missing file is a no-op.
+        items: The purged corpus item ids.
+
+    Returns:
+        The number of lines removed.
+    """
+    if not items or not path.exists():
+        return 0
+    kept: list[str] = []
+    removed = 0
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            kept.append(line)
+            continue
+        if isinstance(raw, dict) and raw.get("item") in items:
+            removed += 1
+            continue
+        kept.append(line)
+    if removed:
+        # Atomic: a crash mid-write must never lose the ledger.
+        atomic.write_text(path, "".join(line + "\n" for line in kept))
+    return removed
 
 
 def stamp(
