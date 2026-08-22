@@ -15,6 +15,12 @@ pooled, the captured post's first.
 Incomplete chains are recorded, never silently presented as complete: a
 parent fetch failing mid-walk sets ``chain_incomplete`` in meta with how
 far the walk got. Walk-down is explicitly unsolved — backlog.
+
+Long-form articles carry their prose under ``article`` (``text`` is empty
+and ``raw_text`` holds only the shortlink), so they render from title and
+preview text. A body that is nothing but a shortlink is not content: the
+"no text or media" manual park applies rather than ledgering a post done
+on a URL.
 """
 
 import json
@@ -43,6 +49,10 @@ _STATUS_PATH_RE = re.compile(r"/status(?:es)?/(\d+)")
 
 # Thread walk-up cap: 20 parent hops above the captured post.
 MAX_HOPS = 20
+
+# A body that is nothing but x's own t.co shortlink is a pointer to
+# content, never the content itself.
+_SHORTLINK_ONLY_RE = re.compile(r"\s*https?://t\.co/\S+\s*")
 
 
 class XDriver:
@@ -180,9 +190,29 @@ def _render_post(post: dict) -> str:
 
 
 def _text_of(post: dict) -> str:
+    """The post's prose, or "" when the payload holds no prose at all.
+
+    Long-form articles carry theirs under ``article``, with ``text`` empty
+    and ``raw_text`` holding nothing but the shortlink to the article — a
+    body that is only a shortlink is a pointer, not content, and must not
+    ledger a post done on ~70 characters of URL.
+    """
+    text = post.get("text") or _article_text(post) or _raw_text(post)
+    return "" if _SHORTLINK_ONLY_RE.fullmatch(text) else text
+
+
+def _article_text(post: dict) -> str:
+    article = post.get("article")
+    if not isinstance(article, dict):
+        return ""
+    pieces = [str(article.get(field) or "").strip() for field in ("title", "preview_text")]
+    pieces.append(_raw_text(post).strip())
+    return "\n\n".join(piece for piece in pieces if piece)
+
+
+def _raw_text(post: dict) -> str:
     raw_text = post.get("raw_text")
-    fallback = raw_text.get("text", "") if isinstance(raw_text, dict) else ""
-    return post.get("text") or fallback or ""
+    return raw_text.get("text", "") if isinstance(raw_text, dict) else ""
 
 
 def _photo_urls(post: dict) -> list[str]:

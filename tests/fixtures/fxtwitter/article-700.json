@@ -1,0 +1,27 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "700",
+    "url": "https://x.com/hana/status/700",
+    "text": "",
+    "raw_text": {
+      "text": "https://t.co/Zq8kR2mVw1",
+      "display_text_range": [0, 23],
+      "facets": []
+    },
+    "created_at": "Fri Aug 21 09:15:00 +0000 2026",
+    "author": {"name": "Hana Iqbal", "screen_name": "hana"},
+    "replying_to": null,
+    "replying_to_status": null,
+    "article": {
+      "created_at": "2026-08-21T09:10:00.000Z",
+      "modified_at": "2026-08-21T09:12:00.000Z",
+      "id": "1900000000000000700",
+      "title": "Blocked is not dead: a field guide to failure classification",
+      "preview_text": "Every pipeline I have audited collapses transient trouble and terminal loss into one retry-forever bucket, then quietly stops retrying. Here is the vocabulary that fixed it, and the ledger shape that keeps it honest.",
+      "cover_media": {},
+      "content": {"blocks": [], "entityMap": []}
+    }
+  }
+}
