@@ -45,8 +45,10 @@ media:                                      # media captures: repo-relative path
   files the phone shortcut does), exporter name (e.g. `discord`) for
   backfills. Every source goes through the same pipeline and carries the
   same weight; nothing about a source implies age or importance.
-- `status` / `enrichment` — engine-owned, derived from disk: the pipeline
-  flips `status` to `enriched` and lists the files under `enrichment/<id>/`.
+- `status` / `enrichment` — engine-owned and derived, never hand-edited: the
+  listing from the files under `enrichment/<id>/`, the status from the
+  ledger — `enriched` only once every unit the item owns has landed (or is
+  confirmed gone or deliberately skipped), `raw` while any is still owed.
   After creation these are the ONLY two frontmatter fields that ever change.
 - `urls` is immutable capture provenance. Harvest-promoted URLs are ledger
   entries (`via: harvest`), never frontmatter edits.
