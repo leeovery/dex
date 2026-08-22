@@ -31,7 +31,11 @@ from typing import Protocol
 
 from dex_engine.drivers.transport import normalize_httplib_errors
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError, scrub
-from dex_engine.pipeline.transcribe import PROMPT_MAX_CHARS
+from dex_engine.pipeline.transcribe import (
+    PROMPT_MAX_TOKENS,
+    estimated_tokens,
+    keep_last_tokens,
+)
 from dex_engine.pipeline.types import Availability
 
 __all__ = [
@@ -51,10 +55,13 @@ DEFAULT_API_MODEL = "whisper-1"
 # cap at any sane audio bitrate.
 CHUNK_SECONDS = 1200
 
-# The continuity tail's share of PROMPT_MAX_CHARS: ~65 tokens of the
+# The continuity tail's share of PROMPT_MAX_TOKENS: 50 tokens of the
 # running transcript is ample for carrying word boundaries and style into
-# the next chunk, and it leaves two thirds of the window to the priming.
-_CONTINUITY_TAIL_CHARS = 200
+# the next chunk, and it leaves three quarters of the window to the priming.
+_CONTINUITY_TAIL_TOKENS = 50
+
+# The "\n" joining the two halves.
+_NEWLINE_TOKENS = 1
 
 _HTTP_OK_FLOOR, _HTTP_OK_CEILING = 200, 300
 _HTTP_BAD_REQUEST = 400
@@ -314,16 +321,19 @@ class WhisperApi:
 def _chunk_prompt(initial_prompt: str, previous: list[str]) -> str:
     """Vocabulary priming plus the running transcript's tail (chunk continuity).
 
-    Both halves live inside one ``PROMPT_MAX_CHARS`` budget, because
+    Both halves live inside one ``PROMPT_MAX_TOKENS`` budget, because
     whisper reads a prompt from its END: appending an unbudgeted tail
-    would push the priming's head — the title and show — out of the
-    window it exists to occupy. The tail comes off the transcript's end,
-    the priming off its own end, so the two names always survive.
+    would push the priming out of the window it exists to occupy. The
+    continuity tail comes off the transcript's end, and the priming is
+    trimmed from its FRONT — the title and show are the last thing in it
+    (:func:`_prompt`), so trimming the front spends show notes to keep
+    them.
     """
     if not previous:
         return initial_prompt
-    tail = " ".join(previous)[-_CONTINUITY_TAIL_CHARS:].strip()
+    tail = keep_last_tokens(" ".join(previous), _CONTINUITY_TAIL_TOKENS).strip()
     if not tail:
         return initial_prompt
-    head = initial_prompt[: max(PROMPT_MAX_CHARS - len(tail) - 1, 0)].rstrip()
-    return f"{head}\n{tail}".strip()
+    room = PROMPT_MAX_TOKENS - estimated_tokens(tail) - _NEWLINE_TOKENS
+    priming = keep_last_tokens(initial_prompt, max(room, 0)).lstrip()
+    return f"{priming}\n{tail}".strip()

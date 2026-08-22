@@ -507,14 +507,22 @@ mechanism, not a hack.
   `needs: transcribe` with the pointer.
 - Accuracy: **`initial_prompt` priming** with the item's known vocabulary
   (video title + description, episode title + show notes) — mechanical, free,
-  large win on names/jargon. **Whisper keeps a prompt's LAST ~224 tokens and
-  discards its front**, so the composed prompt is budgeted to ~200 tokens
-  (600 chars, at the 3 chars/token this jargon-dense text measures): the
-  title/show head always survives and the VOCABULARY is trimmed from its
-  tail. whisper-api's chunk-continuity tail shares that one budget rather
-  than adding to it — otherwise the continuity a later chunk gains would
-  cost it the two names priming exists to carry. Transcripts are stored
-  **raw**, stamped
+  large win on names/jargon. **Whisper keeps a prompt's LAST 223 tokens and
+  discards its front** (`previous_tokens[-(448 // 2 - 1):]`), so the
+  title/show is written at the END of the composed prompt and the trimmable
+  vocabulary in front of it: whatever overflows the window is show notes,
+  never the two names the priming exists to carry. The window is counted in
+  TOKENS, which is not a character count in any script but English — 600
+  characters is ~180 tokens of Cyrillic and ~690 of Chinese — so the budget
+  (~200 tokens) is spent through a per-script estimate of what whisper's BPE
+  will charge, measured against its tokenizer and rounded up per script
+  family. An estimate, not the tokenizer itself: loading it would put a
+  HuggingFace fetch in a step that primes remote providers needing no local
+  model, and placing the head last is what makes the names safe, so the
+  estimate only decides how much vocabulary rides along. whisper-api's
+  chunk-continuity tail shares that one budget rather than adding to it, and
+  trims the priming from its front for the same reason. Transcripts are
+  stored **raw**, stamped
   `via`/`model` in frontmatter; corrections live downstream in digest/wiki
   where judgment already operates — enrichment stays the mechanical record.
 

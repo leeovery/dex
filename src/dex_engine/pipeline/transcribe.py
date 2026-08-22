@@ -15,6 +15,7 @@ recorded enclosure URL is the re-fetch pointer.
 
 import contextlib
 import json
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,13 +30,17 @@ from .detect import looks_like_html
 from .types import LedgerEntry, Status
 
 __all__ = [
-    "PROMPT_MAX_CHARS",
+    "HEAD_MAX_TOKENS",
+    "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
     "DownloadAudio",
     "YoutubeAudio",
     "acquire_podcast_audio",
     "acquire_youtube_audio",
+    "estimated_tokens",
+    "keep_first_tokens",
+    "keep_last_tokens",
     "podcast_body",
     "read_enrichment",
     "youtube_body",
@@ -46,13 +51,19 @@ __all__ = [
 # never monopolize a machine. `enrich transcribe --limit` overrides.
 TRANSCRIBE_RUN_CAP = 10
 
-# Whisper's prompt window is ~224 tokens and it keeps the LAST of them:
-# an overlong prompt loses its FRONT, which is exactly the title/show the
-# priming exists to carry. So the whole composed prompt — vocabulary here
-# plus whisper-api's continuity tail — is budgeted to ~200 tokens. Jargon
-# tokenizes badly: 800 chars of this text measured ~270 tokens (≈2.96
-# chars/token), so 3 chars/token is the conservative rate and 600 the cap.
-PROMPT_MAX_CHARS = 600
+# Whisper's prompt window is 223 tokens (`previous_tokens[-(448 // 2 - 1):]`)
+# and it keeps the LAST of them, so anything overlong loses its FRONT. The
+# composed prompt therefore ends with the title/show and begins with the
+# trimmable vocabulary: whatever whisper drops, it drops from the show notes.
+# The budgets below decide how much vocabulary survives, never whether the
+# names do — which is why an estimated token count is enough and no
+# tokenizer is loaded here (see _token_cost). 200 leaves the window room
+# for whisper's own framing tokens.
+PROMPT_MAX_TOKENS = 200
+
+# The title/show anchor's own ceiling. A real one costs ~20 tokens; the cap
+# exists so a pathological title cannot eat the whole prompt.
+HEAD_MAX_TOKENS = 60
 
 _SEPARATOR = " — "
 _AUDIO_EXT_DEFAULT = "mp3"
@@ -312,13 +323,16 @@ def _audio_ext(url: str) -> str:
 
 
 def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
-    """Known-vocabulary priming, single-line, budgeted head-first.
+    """Known-vocabulary priming, single-line, with the names LAST.
 
-    The head (title, then channel/show) always survives: whisper reads a
-    prompt from its END, so the VOCABULARY is what gets truncated — from
-    its own tail — to fit :data:`PROMPT_MAX_CHARS`. Truncating the
-    composed string instead would keep 600 characters of show notes and
-    throw away the two names the priming was built for.
+    Whisper reads a prompt from its END and discards the front of anything
+    that overflows its 223-token window, so the head — title, then
+    channel/show — is written at the END, behind the vocabulary. Two things
+    then have to go wrong before the names are lost rather than one: the
+    prompt must overflow the window AND the overflow must reach past the
+    show notes. The vocabulary is trimmed from its own tail (show notes
+    open with the description and close with sponsor links), the head from
+    its own tail, both against a token estimate.
 
     Args:
         title: The episode/video title.
@@ -326,21 +340,104 @@ def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
         vocabulary: Show notes or description — the trimmable part.
 
     Returns:
-        The priming text, at most :data:`PROMPT_MAX_CHARS` characters.
+        The priming text, an estimated :data:`PROMPT_MAX_TOKENS` at most.
     """
-    head = _SEPARATOR.join(_flat(part) for part in (title, show) if part and part.strip())
+    parts = (_flat(part) for part in (title, show) if part and part.strip())
+    head = keep_first_tokens(_SEPARATOR.join(parts), HEAD_MAX_TOKENS).strip()
     vocab = _flat(vocabulary)
     if not head:
-        return vocab[:PROMPT_MAX_CHARS]
-    head = head[:PROMPT_MAX_CHARS]
-    room = PROMPT_MAX_CHARS - len(head) - len(_SEPARATOR)
-    if not vocab or room <= 0:
+        return keep_first_tokens(vocab, PROMPT_MAX_TOKENS).strip()
+    room = PROMPT_MAX_TOKENS - estimated_tokens(head) - estimated_tokens(_SEPARATOR)
+    vocab = keep_first_tokens(vocab, room).strip() if room > 0 else ""
+    if not vocab:
         return head
-    return f"{head}{_SEPARATOR}{vocab[:room]}"
+    return f"{vocab}{_SEPARATOR}{head}"
 
 
 def _flat(text: str) -> str:
     return " ".join(text.split())
+
+
+# ---------------------------------------------------------------------------
+# The token budget. Whisper counts its prompt window in TOKENS, so a
+# character cap is a different quantity in every script: 600 characters is
+# ~180 tokens of Cyrillic but ~690 of Chinese, and the overflow is taken off
+# the front. Costs below are whisper-BPE tokens per character, measured
+# against openai/whisper-tiny's tokenizer over natural-language samples
+# (English prose 0.22, English jargon 0.37, Cyrillic 0.29, Greek 0.41,
+# Hebrew 0.56, Arabic 0.57, Hangul 0.76, Thai 0.96, kana/Han 0.80-1.15,
+# Devanagari 1.12, emoji and mathematical symbols 1.7-2.2) and rounded up
+# per family.
+#
+# An estimate, not that tokenizer: loading it means a HuggingFace fetch of
+# whisper-tiny's tokenizer.json on first use, in a step that composes
+# prompts for remote providers that need no local model and may not be
+# running whisper's tokenizer at all. It buys exactness the placement of the
+# head has already made unnecessary — a mis-estimate here costs vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def _token_cost(char: str) -> float:
+    if char < "Ā":  # ASCII and Latin-1
+        return 0.4
+    if unicodedata.category(char)[0] == "S":  # emoji, mathematical, other symbols
+        return 2.5
+    if char < "֐":  # Latin extended, IPA, Greek, Cyrillic, Armenian
+        return 0.6
+    if char < "ࠀ":  # Hebrew, Arabic, Syriac, Thaana
+        return 0.8
+    return 1.5  # Indic, Thai, Hangul, kana, Han, and every other script
+
+
+def estimated_tokens(text: str) -> float:
+    """Estimate what whisper's tokenizer will make of ``text``.
+
+    Args:
+        text: Any prompt fragment.
+
+    Returns:
+        The estimated token count — deliberately generous per character.
+    """
+    return sum(_token_cost(char) for char in text)
+
+
+def keep_first_tokens(text: str, budget: float) -> str:
+    """The longest PREFIX of ``text`` estimated to fit ``budget`` tokens.
+
+    Args:
+        text: The text to trim.
+        budget: The token allowance.
+
+    Returns:
+        ``text`` itself when it already fits, else its trimmed front.
+    """
+    spent = 0.0
+    for index, char in enumerate(text):
+        spent += _token_cost(char)
+        if spent > budget:
+            return text[:index]
+    return text
+
+
+def keep_last_tokens(text: str, budget: float) -> str:
+    """The longest SUFFIX of ``text`` estimated to fit ``budget`` tokens.
+
+    The suffix is what survives whisper's own truncation, so this is the
+    trim that composes with it rather than against it.
+
+    Args:
+        text: The text to trim.
+        budget: The token allowance.
+
+    Returns:
+        ``text`` itself when it already fits, else its trimmed tail.
+    """
+    spent = 0.0
+    for index, char in enumerate(reversed(text)):
+        spent += _token_cost(char)
+        if spent > budget:
+            return text[len(text) - index :]
+    return text
 
 
 # ---------------------------------------------------------------------------

@@ -75,6 +75,7 @@ convention = "google"
     "ANN",     # type annotations not required on tests
     "PLR2004", # magic values are expected in assertions
     "INP001",  # pytest test dirs are not packages
+    "RUF001",  # non-Latin test data — what the prompt budget is about — is not a typo
 ]
 
 [tool.pytest.ini_options]

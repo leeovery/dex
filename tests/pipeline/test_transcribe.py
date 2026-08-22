@@ -22,7 +22,7 @@ from dex_engine.pipeline.classify import (
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
-    PROMPT_MAX_CHARS,
+    HEAD_MAX_TOKENS,
     TRANSCRIBE_RUN_CAP,
     Acquired,
     YoutubeAudio,
@@ -30,6 +30,8 @@ from dex_engine.pipeline.transcribe import (
     _download_enclosure,
     _prompt,
     acquire_youtube_audio,
+    estimated_tokens,
+    keep_last_tokens,
     read_enrichment,
 )
 from dex_engine.pipeline.types import (
@@ -912,33 +914,80 @@ class TestCachedAudio:
         assert _cached_audio(tmp_path / "audio", "abc") is None
 
 
+# Whisper's real prompt window: `previous_tokens[-(448 // 2 - 1):]` in
+# faster_whisper/transcribe.py, and the same model server-side. A literal,
+# deliberately — the budget is only honest if it is checked against the
+# window rather than against itself.
+WHISPER_WINDOW_TOKENS = 223
+
+# Enough of each script to blow any budget, so the trim is always exercised.
+CJK_NOTES = "这是一个关于软件工程的播客节目，今天我们讨论账本与工作队列的设计。" * 40
+CYRILLIC_NOTES = "Это подкаст о разработке программного обеспечения и практиках. " * 40
+
+
 class TestPromptBudget:
-    """Whisper reads a prompt from its END — the head must never be the casualty."""
+    """Whisper reads a prompt from its END, and counts the window in TOKENS."""
 
     TITLE = "Ledgers as Work Queues"
     SHOW = "Engineering Distilled"
     HEAD = f"{TITLE} — {SHOW}"
 
-    def test_the_head_survives_a_vocabulary_far_past_the_budget(self):
+    def test_the_names_are_the_last_thing_in_the_prompt(self):
+        # Not merely present: LAST. Whatever whisper drops for being over
+        # the window, it drops from the front, so the front is where the
+        # expendable vocabulary belongs.
         prompt = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
-        assert prompt.startswith(self.HEAD)
-        assert len(prompt) == PROMPT_MAX_CHARS
+        assert prompt.endswith(self.HEAD)
+        assert prompt.startswith("jargon")
 
     def test_the_vocabulary_is_trimmed_from_its_tail(self):
         prompt = _prompt(self.TITLE, self.SHOW, "anydoc CTranslate2 " + "x" * 2000)
-        assert prompt.startswith(f"{self.HEAD} — anydoc CTranslate2 ")
-        assert not prompt.endswith("x" * 2000)
+        assert prompt.startswith("anydoc CTranslate2 ")
+        assert prompt.endswith(self.HEAD)
+        assert "x" * 2000 not in prompt
 
     def test_a_short_prompt_is_untouched(self):
-        assert _prompt(self.TITLE, self.SHOW, "notes") == f"{self.HEAD} — notes"
+        assert _prompt(self.TITLE, self.SHOW, "notes") == f"notes — {self.HEAD}"
         assert _prompt(self.TITLE, None, "") == self.TITLE
 
-    def test_vocabulary_alone_is_still_bounded(self):
-        assert len(_prompt(None, None, "y " * 1000)) == PROMPT_MAX_CHARS
+    def test_a_latin_prompt_fits_whispers_window(self):
+        prompt = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        # And uses most of it: a budget that fits by being tiny is no budget.
+        assert estimated_tokens(prompt) > WHISPER_WINDOW_TOKENS * 0.7
 
-    def test_an_overlong_head_keeps_its_front_and_drops_the_vocabulary(self):
+    def test_a_non_latin_prompt_fits_whispers_window_too(self):
+        # The character cap this replaced was ~180 tokens of Cyrillic but
+        # ~690 of Chinese — three windows' worth, and whisper takes the
+        # overflow off the FRONT, where the title used to sit.
+        for notes in (CJK_NOTES, CYRILLIC_NOTES):
+            prompt = _prompt(self.TITLE, self.SHOW, notes)
+            assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+            assert prompt.endswith(self.HEAD)
+
+    def test_the_budget_is_tokens_not_characters(self):
+        latin = _prompt(self.TITLE, self.SHOW, "jargon " * 400).removesuffix(self.HEAD)
+        cjk = _prompt(self.TITLE, self.SHOW, CJK_NOTES).removesuffix(self.HEAD)
+        # Same token allowance spends very different numbers of characters —
+        # a character cap would make these two lengths equal.
+        assert len(latin) > 3 * len(cjk)
+        assert abs(estimated_tokens(latin) - estimated_tokens(cjk)) < 5
+
+    def test_emoji_dense_notes_are_charged_for_what_they_cost(self):
+        # A show-notes header of emoji tokenizes at ~2 tokens per character.
+        prompt = _prompt(self.TITLE, self.SHOW, "🚀🎧📚✨🔥" * 200)
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        assert prompt.endswith(self.HEAD)
+
+    def test_vocabulary_alone_is_still_bounded(self):
+        assert estimated_tokens(_prompt(None, None, "y " * 1000)) <= WHISPER_WINDOW_TOKENS
+        assert estimated_tokens(_prompt(None, None, CJK_NOTES)) <= WHISPER_WINDOW_TOKENS
+
+    def test_an_overlong_head_is_capped_rather_than_eating_the_prompt(self):
         prompt = _prompt("T" * 900, self.SHOW, "notes")
-        assert prompt == "T" * PROMPT_MAX_CHARS
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        assert prompt.startswith("notes — ")
+        assert estimated_tokens(prompt.removeprefix("notes — ")) <= HEAD_MAX_TOKENS
 
     def test_the_acquisition_path_composes_within_the_budget(self, instance, tmp_path):
         # The real composition site, not just the helper: a talkative
@@ -958,8 +1007,45 @@ class TestPromptBudget:
 
         acquired = acquire_youtube_audio(entry, tmp_path, download)
         assert isinstance(acquired, Acquired)
-        assert acquired.prompt.startswith("Ledgers at Scale — Engineering Distilled")
-        assert len(acquired.prompt) <= PROMPT_MAX_CHARS
+        assert acquired.prompt.endswith("Ledgers at Scale — Engineering Distilled")
+        assert estimated_tokens(acquired.prompt) <= WHISPER_WINDOW_TOKENS
+
+
+class TestTokenEstimate:
+    def test_keeping_the_tail_keeps_the_end(self):
+        assert keep_last_tokens("abcdefghij", 1) == "ij"
+        assert keep_last_tokens("abc", 100) == "abc"
+        assert keep_last_tokens("", 10) == ""
+
+    def test_non_latin_characters_cost_more_than_ascii(self):
+        assert estimated_tokens("这是一个") > estimated_tokens("abcd")
+        assert estimated_tokens("абвг") > estimated_tokens("abcd")
+
+    @pytest.mark.live
+    def test_the_estimate_covers_what_whispers_tokenizer_actually_does(self):
+        # Opt-in: needs openai/whisper-tiny's tokenizer.json from HuggingFace.
+        # Drift check on the cost table — a prompt this estimator passes must
+        # really fit whisper's window, in every script, or the head it puts
+        # last is the only thing that survives the overflow.
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415 — live-only dep
+        from tokenizers import Tokenizer  # noqa: PLC0415 — live-only dep
+
+        tokenizer = Tokenizer.from_file(hf_hub_download("openai/whisper-tiny", "tokenizer.json"))
+        samples = {
+            "english": "anydoc CTranslate2 ledger idempotent frontmatter yt-dlp " * 40,
+            "chinese": CJK_NOTES,
+            "cyrillic": CYRILLIC_NOTES,
+            "japanese": "これはソフトウェアエンジニアリングに関するポッドキャストです。" * 40,
+            "korean": "이것은 소프트웨어 엔지니어링에 관한 팟캐스트입니다 그리고 " * 40,
+            "hindi": "यह सॉफ्टवेयर इंजीनियरिंग के बारे में एक पॉडकास्ट है। " * 40,
+            "thai": "นี่คือพอดแคสต์เกี่ยวกับวิศวกรรมซอฟต์แวร์และแนวปฏิบัติ " * 40,
+            "arabic": "هذه حلقة بودكاست عن هندسة البرمجيات وممارسات الهندسة اليومية. " * 40,
+            "emoji": "🚀🎧📚✨🔥" * 200,
+        }
+        for script, notes in samples.items():
+            prompt = _prompt("Ledgers as Work Queues", "Engineering Distilled", notes)
+            real = len(tokenizer.encode(prompt, add_special_tokens=False).ids)
+            assert real <= WHISPER_WINDOW_TOKENS, f"{script}: {real} tokens"
 
 
 class TestReadEnrichment:
