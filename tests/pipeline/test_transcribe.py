@@ -198,6 +198,62 @@ class TestYoutubeDrain:
         assert "Second pass words." in content
         assert "First pass words." not in content  # superseded, not stacked
 
+    def _park_naming_the_transcript_heading(self, instance) -> Path:
+        """Park a video whose own description contains a ``## Transcript`` line."""
+        write_item(instance, urls=[VIDEO_URL])
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        info["description"] = (
+            "Chapters below.\n\n## Transcript\n\nauto-generated, see the pinned "
+            "comment\n\nNotes: https://example.test/ep-notes"
+        )
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        park = instance.enrichment_dir / ITEM / f"youtube-{work_hash(VIDEO_URL)[:6]}.md"
+        assert "https://example.test/ep-notes" in park.read_text()  # the park wrote it whole
+        return park
+
+    def _requeue_for_a_re_drain(self, instance) -> None:
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)],
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                path=None,
+                title=None,
+            ),
+        )
+
+    def test_a_description_naming_the_transcript_heading_survives_the_drain(self, instance):
+        # A description is arbitrary author text, headings included. Reading
+        # the park's description back by splitting on the heading truncated
+        # it at the author's own line, and the drain then wrote the
+        # truncation back — the tail gone from disk, unrecoverable.
+        park = self._park_naming_the_transcript_heading(instance)
+        transcriber = FakeTranscriber("whisper-local", text="The transcript text.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=transcriber))
+        content = park.read_text()
+        assert "https://example.test/ep-notes" in content  # and the drain kept it whole
+        assert "auto-generated, see the pinned comment" in content
+        assert "## Transcript\n\nThe transcript text." in content
+
+    def test_such_a_description_survives_a_re_drain_too(self, instance):
+        # Once the file HAS a transcript section, the heading is the split
+        # again — and the section the drain appended is the last one.
+        park = self._park_naming_the_transcript_heading(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(instance, transcriber=FakeTranscriber("whisper-local", text="First."))
+        )
+        self._requeue_for_a_re_drain(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(instance, transcriber=FakeTranscriber("whisper-local", text="Second."))
+        )
+        content = park.read_text()
+        assert "https://example.test/ep-notes" in content
+        assert content.endswith("## Transcript\n\nSecond.\n")
+        assert "First." not in content
+        assert content.count("## Description") == 1
+
     def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
         # One frontmatter shape per kind, whichever route produced the
         # transcript: the drain's meta keys are exactly
@@ -529,6 +585,26 @@ class TestPodcastDrain:
         _, body = read_enrichment(instance.root / str(final.path))
         assert body.count("## Transcript") == 1
         assert body.count("Episode words.") == 1
+
+    def test_show_notes_naming_the_transcript_heading_survive_the_drain(self, instance):
+        # Show notes are the publisher's prose, and one that publishes its
+        # own transcript writes exactly this heading.
+        feed = fixture_text("podcast", "feed.xml").replace(
+            "<p>We discuss append-only ledgers with "
+            '<a href="https://example.test/guest">Ada Guest</a>.</p>',
+            "<p>We discuss append-only ledgers.</p><p>## Transcript</p>"
+            "<p>Full text at https://engineering-distilled.test/ep42</p>",
+        )
+        self.park_via_driver(instance, feed=feed)
+        entry = self.entry(instance)
+        record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        assert "https://engineering-distilled.test/ep42" in record.read_text()
+        self.drain(instance)
+        _, body = read_enrichment(instance.root / str(ledger.load(instance.ledger_path)[
+            entry.hash
+        ].path))
+        assert "https://engineering-distilled.test/ep42" in body
+        assert body.endswith("## Transcript\n\nEpisode words.")
 
     def test_partial_download_is_deleted_and_refetched_never_reused(self, instance):
         # A crash mid-download leaves yt-dlp-style partials in the cache;

@@ -624,7 +624,14 @@ file rather than replacing it: a source that goes private during a
 transcription backlog would otherwise take the fetched content with it.
 One body shape per kind, whichever route produced it — the transcript is
 always its own `## Transcript` section, so the drain can split a stored
-body on that heading and compose onto what is already there.
+body on that heading and compose onto what is already there. **The
+frontmatter, not the heading, says whether a body holds a transcript at
+all**: the transcriber stamps `via`, neither park does, so a park's body is
+notes end to end — a description or show notes that name `## Transcript`
+themselves were otherwise truncated at the author's own line and the
+truncation written back to disk. Once a body does hold a transcript, the
+split takes the LAST such section, because that is the one the drain
+appended.
 
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —

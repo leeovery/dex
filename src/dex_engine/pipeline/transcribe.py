@@ -74,6 +74,11 @@ _AUDIO_EXT_DEFAULT = "mp3"
 _TRANSCRIPT_HEADING = "## Transcript"
 _DESCRIPTION_HEADING = "## Description"
 
+# The frontmatter key the transcriber stamps (run.py writes via/model onto
+# every transcript it composes). Neither park writes it, so it is the one
+# fact on disk that says whether a body already holds a transcript.
+_TRANSCRIBED_FIELD = "via"
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class YoutubeAudio:
@@ -193,8 +198,8 @@ def _stored_description(path: Path) -> str:
     """The description a youtube park already wrote, or "" when there is none."""
     if not path.exists():
         return ""
-    _fields, body = read_enrichment(path)
-    head = _pre_transcript(body)
+    fields, body = read_enrichment(path)
+    head = _pre_transcript(fields, body)
     if head.startswith(_DESCRIPTION_HEADING):
         return head[len(_DESCRIPTION_HEADING) :].strip()
     return head
@@ -238,7 +243,7 @@ def acquire_podcast_audio(
                 "podcast driver re-resolves it"
             ),
         )
-    notes = _pre_transcript(body)
+    notes = _pre_transcript(fields, body)
     meta: dict[str, str | int | None] = {
         key: value for key, value in fields.items() if key not in ("url", "fetched")
     }
@@ -252,16 +257,27 @@ def acquire_podcast_audio(
     return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=notes)
 
 
-def _pre_transcript(body: str) -> str:
+def _pre_transcript(fields: dict[str, str], body: str) -> str:
     """The show-notes half of a park/output body — everything before the transcript.
+
+    A body only holds a transcript section if this drain composed it, and
+    the frontmatter is what says so. A park's body is notes end to end,
+    however many "## Transcript" lines a description or a publisher's show
+    notes happen to contain: reading it by the heading alone truncated the
+    notes at the author's own line, and the drain then wrote that
+    truncation back to disk, losing the tail for good.
 
     A drained no-notes episode's body STARTS with the transcript heading;
     the newline-anchored split below would miss it and hand the previous
-    transcript back as "notes", duplicating it on a re-drain.
+    transcript back as "notes", duplicating it on a re-drain. That split
+    takes the LAST section, because the transcript is what the drain
+    appended last.
     """
+    if _TRANSCRIBED_FIELD not in fields:
+        return body
     if body == _TRANSCRIPT_HEADING or body.startswith(f"{_TRANSCRIPT_HEADING}\n"):
         return ""
-    return body.split(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
+    return body.rsplit(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
 
 
 # In-flight artifacts: yt-dlp's `.part` bodies (also `.part-Frag…`) and
