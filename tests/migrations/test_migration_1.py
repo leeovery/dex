@@ -583,6 +583,31 @@ class TestLedgerTranslation:
         migration.apply(tmp_path)
         assert path.read_text() == original
 
+    def test_current_schema_capped_skip_survives_a_re_apply(self, tmp_path, migration):
+        # The applied-migrations log can be lost (union-merge race, un-pulled
+        # repo), so migration 1 re-runs over lines the rewritten engine wrote.
+        # A cap-refused skip is one of those lines: quarantining it would
+        # brick the ledger it came from.
+        entry = LedgerEntry(
+            hash="6666666666",
+            url="https://a.test/capped",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.SKIPPED,
+            capped=True,
+            reason="media cap reached for this item",
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 1),
+        )
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        ledger.append(path, entry)
+        original = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == original
+        assert report.skipped == []
+        assert not path.with_name("enrichment-ledger.unmigrated.jsonl").exists()
+        assert ledger.load(path)["6666666666"].capped is True
+
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
         # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
