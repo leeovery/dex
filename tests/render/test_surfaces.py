@@ -2,6 +2,7 @@
 
 import pytest
 
+from dex_engine.render.kernel import DEFAULT_WIDTH
 from dex_engine.render.surfaces import SURFACES, PayloadError, render
 
 ENRICH_PAYLOAD = {
@@ -496,6 +497,15 @@ class TestHealthReport:
         assert "waiting cohorts: none" in out
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in out
         assert "reconciled" not in out
+
+    def test_every_finding_label_fits_the_width_budget(self):
+        # The clean report is the surface's static text: one label per
+        # check, nothing data-driven. Item ids and URLs overrun on their
+        # own account and are not this budget's business; the labels are
+        # written here and must fit.
+        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
+        over = [line for line in out.split("\n") if len(line) > DEFAULT_WIDTH]
+        assert over == []
 
     def test_ledger_error_renders_loud(self):
         out = render(

@@ -933,8 +933,10 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     ))
     lines.extend(f"  {row['item']}: {row['bullets']} bullet(s)"
                  for row in off_range[:_HEALTH_LIST_CAP])
+    # The repair ("digest these") lives in the dex-lint skill; the label
+    # names the finding and stays inside the width budget.
     lines.extend(_health_names(surface, payload, "digest_orphans",
-                               "enrichment newer than digest (interrupted session — digest these)"))
+                               "enrichment newer than digest (interrupted session)"))
 
     reconciled = _str_list_at(surface, payload, "reconciled")
     if reconciled:
