@@ -73,11 +73,40 @@ def entry(  # noqa: PLR0913 — one keyword per exercised schema slot
     )
 
 
-def write_entries(root, entries):
+def write_entries(root, entries, *, items=True):
+    """Write the ledger; by default give every named item a corpus file.
+
+    Seeding requires the item to still exist, so the live-item case is the
+    default and ``items=False`` is the purged one.
+    """
     path = root / "state" / "enrichment-ledger.jsonl"
     for one in entries:
         ledger.append(path, one)
+    if items:
+        for item_id in {one.item for one in entries}:
+            write_corpus_item(root, item_id)
     return path
+
+
+def write_corpus_item(root, item_id, urls=()):
+    path = root / "corpus" / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    listing = "".join(f"  - {url}\n" for url in urls)
+    path.write_text(
+        "---\n"
+        f"id: {item_id}\n"
+        "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-05-01\n"
+        + (f"urls:\n{listing}" if listing else "")
+        + "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def write_exclusions(root, rows):
+    path = root / "state" / "exclusions.tsv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{item}\t{reason}\n" for item, reason in rows), encoding="utf-8")
 
 
 class TestSeeding:
@@ -183,6 +212,149 @@ class TestSeeding:
         report = migration.apply(tmp_path)
         assert report.actions == []
         assert report.skipped == []
+
+
+class TestPurgedItemsAreNeverReseeded:
+    """`dex exclude` deletes the item; a seed would fetch it right back."""
+
+    def test_excluded_item_is_skipped_with_the_exclusion_named(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(
+            tmp_path, [("2026-05-01-item-a1b2c3", "out of scope — owner ruling 2026-08-20")]
+        )
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        assert report.actions == []
+        (skip,) = report.skipped
+        assert skip.what == "rerun seed for 2026-05-01-item-a1b2c3"
+        assert "excluded, never reseeded" in skip.why
+        assert "owner ruling 2026-08-20" in skip.why
+
+    def test_end_to_end_the_next_run_does_not_resurrect_the_excluded_item(
+        self, instance, migration
+    ):
+        # The whole point: exclude purges the item, the migration must not
+        # queue it, and the following run must fetch nothing for it.
+        ledger.append(instance.ledger_path, stored(OLD_X_URL, kind=Kind.X, item=ITEM))
+        (instance.state_dir / "exclusions.tsv").parent.mkdir(parents=True, exist_ok=True)
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{ITEM}\tout of scope: marketing content — owner ruling\n", encoding="utf-8"
+        )
+        report = migration.apply(instance.root)
+        assert any("never reseeded" in s.why for s in report.skipped)
+        transport = FakeTransport({})
+        ctx = make_ctx(instance, FakeDriver(), drivers=[XDriver(transport=transport)])
+        run_mod.run(ctx)
+        assert transport.calls == []
+        assert '"queued"' not in instance.ledger_path.read_text()
+
+    def test_item_gone_without_an_exclusions_record_is_still_skipped(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "no state/exclusions.tsv record names the item" in skip.why
+
+    def test_the_skip_states_what_was_checked_and_guesses_no_cause(self, tmp_path, migration):
+        # Both checks are named, and nothing is asserted about how the item
+        # went away — the migration never established that.
+        write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        (skip,) = migration.apply(tmp_path).skipped
+        assert "no live corpus item lists https://a.test/post-web" in skip.why
+        assert "removed by hand" not in skip.why
+        assert "purge was interrupted" not in skip.why
+
+    def test_a_live_item_still_seeds(self, tmp_path, migration):
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)])
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[work_hash(url_of("post-web"))].status is Status.QUEUED
+        assert report.skipped == []
+
+    def test_only_the_seeded_cohort_is_item_checked(self, tmp_path, migration):
+        # A purged item's parked/other-kind entries are none of this
+        # migration's business: no seed, and no noise in the report.
+        write_entries(
+            tmp_path,
+            [
+                entry("a-video", kind=Kind.YOUTUBE),
+                entry("walled", kind=Kind.WEB, status=Status.MANUAL, reason="paywall"),
+            ],
+            items=False,
+        )
+        report = migration.apply(tmp_path)
+        assert report.skipped == []
+
+
+class TestRenamedItemsAreReAttributed:
+    """A rename keeps the shortid and takes a new slug — the work is live."""
+
+    RENAMED = "2026-05-01-renamed-a1b2c3"
+
+    def test_a_renamed_item_seeds_under_its_live_id(self, tmp_path, migration):
+        one = entry("post-x", kind=Kind.X)
+        path = write_entries(tmp_path, [one], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        report = migration.apply(tmp_path)
+        seed = ledger.load(path)[one.hash]
+        assert seed.status is Status.QUEUED
+        assert seed.rerun is True
+        assert seed.item == self.RENAMED
+        assert report.skipped == []
+        assert any("1 re-attributed" in action for action in report.actions)
+
+    def test_the_stale_done_line_keeps_its_own_attribution(self, tmp_path, migration):
+        # History is what it was: only the seed names the live item.
+        one = entry("post-x", kind=Kind.X)
+        path = write_entries(tmp_path, [one], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        migration.apply(tmp_path)
+        lines = [json.loads(line) for line in path.read_text().split("\n") if line.strip()]
+        assert lines[0]["item"] == "2026-05-01-item-a1b2c3"
+        assert lines[0]["status"] == "done"
+        assert lines[-1]["item"] == self.RENAMED
+
+    def test_a_second_apply_re_attributes_nothing_more(self, tmp_path, migration):
+        write_entries(tmp_path, [entry("post-x", kind=Kind.X)], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-x")])
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        migration.apply(tmp_path)
+        first = path.read_text()
+        second = migration.apply(tmp_path)
+        assert path.read_text() == first
+        assert second.actions == []
+        assert second.skipped == []
+
+    def test_the_url_is_matched_on_current_identity_not_spelling(self, tmp_path, migration):
+        # The corpus lists the pre-rewrite spelling; the re-keyed entry
+        # carries the id-keyed one. Same unit, so the claim holds.
+        path = write_entries(tmp_path, [stored(OLD_X_URL, kind=Kind.X)], items=False)
+        write_corpus_item(tmp_path, self.RENAMED, urls=[OLD_X_URL])
+        migration.apply(tmp_path)
+        seed = ledger.load(path)[work_hash(NEW_X_URL)]
+        assert seed.status is Status.QUEUED
+        assert seed.item == self.RENAMED
+
+    def test_a_claim_by_a_live_item_outranks_a_stale_exclusions_row(self, tmp_path, migration):
+        # The exclusions row names an id with no file; a live item listing
+        # the URL is the owner's later word on the same work.
+        one = entry("post-web", kind=Kind.WEB)
+        path = write_entries(tmp_path, [one], items=False)
+        write_exclusions(tmp_path, [("2026-05-01-item-a1b2c3", "excluded 2026-06-01")])
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("post-web")])
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[one.hash].item == self.RENAMED
+        assert report.skipped == []
+
+    def test_an_excluded_item_no_live_url_claims_is_still_refused(self, tmp_path, migration):
+        # The other corpus item is live but lists a different URL — the
+        # exclusion stands, refused exactly as before.
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(tmp_path, [("2026-05-01-item-a1b2c3", "out of scope")])
+        write_corpus_item(tmp_path, self.RENAMED, urls=[url_of("other")])
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "excluded, never reseeded" in skip.why
 
 
 class TestIdempotency:
@@ -328,6 +500,140 @@ class TestIdentityRekey:
         assert second_report.actions == []
 
 
+SIGNED_MEDIA_URL = "https://cdn.a.test/clip.mp4?Expires=1&Signature=abc&ref=share"
+ASSET_PATH = "enrichment/2026-05-01-item-a1b2c3/paper-asset-01.png"
+
+
+def child(url, *, parent, via, kind=Kind.X):
+    return LedgerEntry(
+        hash=work_hash(url),
+        url=url,
+        item="2026-05-01-item-a1b2c3",
+        kind=kind,
+        status=Status.DONE,
+        engine="0.4.0",
+        date=datetime.date(2026, 5, 1),
+        via=via,
+        parent=parent,
+        depth=1,
+        path=f"enrichment/2026-05-01-item-a1b2c3/{kind.value}-{work_hash(url)[:6]}.md",
+    )
+
+
+class TestVerbatimKeysAreNotRekeyed:
+    """Some work keys are the fetch string itself; canonicalizing breaks them."""
+
+    def test_media_line_is_byte_identical_through_the_migration(self, tmp_path, migration):
+        # Canonicalizing would strip `ref` from a signed URL and key the
+        # entry away from the runtime's raw-hash discipline.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [parent, media])
+        before = path.read_text().split("\n")[1]
+        migration.apply(tmp_path)
+        after = path.read_text().split("\n")[1]
+        assert json.loads(after)["hash"] == work_hash(SIGNED_MEDIA_URL)
+        assert json.loads(after)["url"] == SIGNED_MEDIA_URL
+        # only the parent pointer moved — the rest of the line is untouched
+        assert json.loads(before) | {"parent": work_hash(NEW_X_URL)} == json.loads(after)
+
+    def test_media_line_under_a_stable_parent_is_untouched(self, tmp_path, migration):
+        parent = stored("https://blog.example.test/post", kind=Kind.WEB)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media", kind=Kind.WEB)
+        path = write_entries(tmp_path, [parent, media])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text().startswith(before)  # the seed appends; nothing was rewritten
+
+    def test_extract_asset_repo_path_is_never_mangled_into_a_url(self, tmp_path, migration):
+        parent = stored("https://blog.example.test/paper", kind=Kind.WEB)
+        asset = child(ASSET_PATH, parent=parent.hash, via="extract-asset", kind=Kind.WEB)
+        path = write_entries(tmp_path, [parent, asset])
+        migration.apply(tmp_path)
+        line = json.loads(path.read_text().split("\n")[1])
+        assert line["url"] == ASSET_PATH
+        assert line["hash"] == work_hash(ASSET_PATH)
+
+    def test_a_non_http_work_key_keeps_its_identity(self, tmp_path, migration):
+        # `file:<repo-path>` keys are verbatim for the same reason.
+        key = "file:inbox/paper.pdf"
+        entry = LedgerEntry(
+            hash=work_hash(key),
+            url=key,
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.FILE,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 5, 1),
+            path="enrichment/2026-05-01-item-a1b2c3/file-abc123.md",
+        )
+        path = write_entries(tmp_path, [entry])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text() == before
+
+    def test_a_rekeyed_parent_takes_its_children_with_it(self, tmp_path, migration):
+        # A `thread` child is canonically keyed AND has a parent pointer:
+        # both must land on current identities, or the chain dangles.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        reply = child("https://twitter.com/carol/status/301", parent=parent.hash, via="thread")
+        path = write_entries(tmp_path, [parent, reply])
+        report = migration.apply(tmp_path)
+        entries = ledger.load(path)
+        moved = entries[work_hash("https://x.com/i/status/301")]
+        assert moved.parent == work_hash(NEW_X_URL)
+        assert moved.parent in entries  # the pointer resolves
+        assert any("1 parent pointer(s) followed" in action for action in report.actions)
+
+    def test_a_child_listed_before_its_parent_still_follows(self, tmp_path, migration):
+        # File order is birth order in practice, never by contract.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [media, parent])
+        migration.apply(tmp_path)
+        assert json.loads(path.read_text().split("\n")[0])["parent"] == work_hash(NEW_X_URL)
+
+    def test_a_parent_pointer_naming_nothing_is_left_alone(self, tmp_path, migration):
+        orphan = child(SIGNED_MEDIA_URL, parent="0123456789", via="media")
+        path = write_entries(tmp_path, [orphan])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text() == before
+
+    def test_second_apply_moves_nothing(self, tmp_path, migration):
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [parent, media])
+        migration.apply(tmp_path)
+        first = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == first
+        assert report.actions == []
+
+
+class TestCanonicalizationGuard:
+    def test_one_unreadable_url_is_skipped_with_why_and_the_rest_migrate(
+        self, tmp_path, migration
+    ):
+        # urlsplit raises on an invalid IPv6 literal; a migration that dies
+        # here leaves the chain half-applied.
+        broken = LedgerEntry(
+            hash="1111111111",
+            url="https://[bad:ipv6/page",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.MANUAL,
+            reason="hand-healed",
+            engine="0.0.1",
+            date=datetime.date(2026, 5, 1),
+        )
+        path = write_entries(tmp_path, [broken, stored(OLD_X_URL, kind=Kind.X)])
+        report = migration.apply(tmp_path)
+        assert json.loads(path.read_text().split("\n")[0])["hash"] == "1111111111"
+        assert any("canonicalizing" in s.why and "ValueError" in s.why for s in report.skipped)
+        assert work_hash(NEW_X_URL) in ledger.load(path)  # the healthy entry still moved
+
+
 def _refuse_probe(url):
     raise AssertionError(f"unexpected probe of {url!r}")
 
@@ -338,8 +644,8 @@ class TestSeedDedupe:
         # raise the same x post fresh under the new hash while also
         # draining the rerun — one queued unit, one fetch.
         ledger.append(instance.ledger_path, stored(OLD_X_URL, kind=Kind.X, item=ITEM))
-        migration.apply(instance.root)
         write_item(instance, urls=[OLD_X_URL])
+        migration.apply(instance.root)
         tweet = {
             "id": "300",
             "text": "thread body " * 30,

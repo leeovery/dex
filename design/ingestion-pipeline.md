@@ -432,7 +432,11 @@ independently is seven chances to reintroduce it):
   escape the drain or be charged to another unit's line.
   Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
-  keep their cause. The scrubber feeds the ledger `error` field; issue
+  keep their cause. Migrations have the one counterpart outside the
+  pipeline, on the same reasoning: canonicalizing one stored URL runs a
+  driver's arbitrary code over owner data, and a migration that dies
+  part-way leaves state half-moved — so the per-entry canonicalization is
+  broad-caught and skipped-with-why (§12). The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
   section).
 
@@ -839,8 +843,19 @@ Shipping migrations for this rewrite:
    or deliberately parked. Where two old spellings collapse to one new
    hash (the x.com and twitter.com forms of one post), file order is kept
    and the ledger's own last-per-hash rule decides — the later line wins;
-   the report names the collapse. The rewrite is atomic and idempotent —
-   a second apply finds every identity already current.
+   the report names the collapse. A moved hash takes its pointers with it:
+   a child's `parent` naming a re-keyed hash is rewritten in the same pass
+   (the file is read twice, written once — a parent's line may come after
+   its child's). Entries whose key is **verbatim by design** are left
+   alone, because re-keying moves them away from the identity the runtime
+   computes: `via: media` (media URLs are fetched verbatim, signed params
+   included), `via: extract-asset` (the key is a repo path, which
+   canonicalization would mangle into `https:enrichment/…`), and any entry
+   whose URL is not an absolute http(s) URL. Canonicalization is guarded
+   per entry, as in migration 1 — one unreadable URL is skipped-with-why
+   and keeps its stored hash, never aborting the chain part-way through.
+   The rewrite is atomic and idempotent — a second apply finds every
+   identity already current.
    Then, reruns: two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed
@@ -852,7 +867,23 @@ Shipping migrations for this rewrite:
      walks up and re-harvests, so e.g. a thread's YouTube link now becomes
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
-   the new-engine rule, and `manual` entries stay parked for judgment.
+   the new-engine rule, and `manual` entries stay parked for judgment. And
+   only entries whose work a **live corpus item still claims**:
+   `dex exclude` deletes the item and its enrichment while its ledger
+   history stays on file, so a seed keyed to a purged item would re-fetch
+   content ruled out of scope and put an owner ruling back in the queue.
+   The claim is asked of the corpus, never of the entry's stored `item`
+   string alone (amended at phase-4 review, on real state): an item RENAMED
+   since its line was written — same shortid, new slug — has a live file
+   under a new id, and a stored-string check reads that as a purge and
+   refuses a rerun the owner never ruled out. So the entry's own item
+   answers first where its file exists; otherwise the entry whose URL a
+   live item still lists belongs to THAT item and is seeded **re-attributed
+   to it**, the report counting the re-attributions. Only an entry no live
+   item claims is skipped-with-why, naming the `state/exclusions.tsv`
+   record where there is one ("excluded — never reseeded") and otherwise
+   stating what was checked — the missing file, the absent exclusions row,
+   the unclaimed URL — instead of asserting a cause it has not established.
    The re-key pass already ran, so a qualifying entry's hash and URL are
    the current identity: the seed appends under them directly, corpus
    seeding dedupes against it, and the drain fetches once.
@@ -929,6 +960,11 @@ involvement: the engine owner only.
 ```
 src/dex_engine/
   pipeline/    types.py  ledger.py  detect.py  registry.py  run.py
+               ownership.py — which live corpus item claims a work unit
+                 (its urls:/media: hashed exactly as seeding does), the one
+                 answer to "is this entry's item still there?"; lint and
+                 migration 2 share it so a renamed item cannot read as a
+                 purge in one place and a rename in the other
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
@@ -964,7 +1000,12 @@ src/dex_engine/
                  drop the binary's provenance silently)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
-  lint.py      grows checks: ledger schema, waiting cohorts, pass records
+  lint.py      grows checks: ledger schema, ledger↔tree referential
+                 integrity (items with no corpus file — excluded-on-record
+                 told apart from renamed, whose URLs a live item still
+                 lists, and from unclaimed; one row per item and finding
+                 with its entry count; done outputs missing on disk),
+                 waiting cohorts, pass records
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 
@@ -1093,7 +1134,11 @@ Skill changes shipping with this:
   engine-owned frontmatter fields — migration 1 rewrites `kinds:`). Note
   for migration 1's author: `normalize` regeneration re-derives kinds via
   the shared detect module, so rewritten frontmatter converges with
-  regeneration rather than fighting it. Per the repo's anti-drift rules:
+  regeneration rather than fighting it — including its ORDER. Normalize
+  emits `sorted({kind_of(url) …})`, so the migration emits kinds sorted
+  and deduped too; anything else and the first regeneration after the
+  migration rewrites those items again for ordering alone (82 real corpus
+  files), burying the migration's own commit in noise. Per the repo's anti-drift rules:
   pyproject entry points, the shim usage line, the README command table,
   and `docs/capture.md` + `docs/start.md` (dex-capture changes the capture
   story) all move together.

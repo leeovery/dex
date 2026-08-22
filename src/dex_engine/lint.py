@@ -10,10 +10,14 @@ Checks:
   never its citation count), and difflib sentence similarity ("possible restated
   fact — merge?").
 
-  state — ledger schema validation (via ``ledger.load``), waiting cohorts and
-  cognitive-job summary, harvest passes recorded under old rules, the
-  non-empty quarantine file flag, and the enrichment-newer-than-digest
-  orphan listing (the interrupted-session backstop, shared with
+  state — ledger schema validation (via ``ledger.load``), ledger↔tree
+  referential integrity (items with no corpus file, one row per finding
+  with its entry count — excluded-on-record told apart from renamed and
+  from unclaimed; ``done`` entries whose output path is missing on disk),
+  waiting cohorts and cognitive-job
+  summary, harvest passes recorded under old rules, the non-empty
+  quarantine file flag, and the enrichment-newer-than-digest orphan
+  listing (the interrupted-session backstop, shared with
   ``enrich status``).
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
@@ -39,8 +43,10 @@ from pathlib import Path
 
 from .capabilities import Capabilities
 from .pipeline import ledger
+from .pipeline.ownership import corpus_owners
+from .pipeline.registry import DRIVERS
 from .pipeline.run import HARVEST_RULES_VERSION, digest_orphans
-from .pipeline.types import Config, Format, Instance, Need, Status
+from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
@@ -157,7 +163,7 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
-    ledger_error = _state_checks(instance, payload, is_cognitive)
+    ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids)
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
@@ -502,7 +508,10 @@ def _index_consistency(
 
 
 def _state_checks(
-    instance: Instance, payload: dict[str, object], is_cognitive: IsCognitive
+    instance: Instance,
+    payload: dict[str, object],
+    is_cognitive: IsCognitive,
+    corpus_ids: set[str],
 ) -> bool:
     """Fill the payload's state sections; True when the ledger failed to load."""
     try:
@@ -524,10 +533,77 @@ def _state_checks(
                 )
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
+        ghost, missing = _referential_integrity(instance, entries, corpus_ids)
+        payload["ghost_items"] = ghost
+        payload["missing_outputs"] = missing
     payload["stale_passes"] = _stale_passes(instance)
     payload["quarantine"] = _quarantine_lines(instance)
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
+
+
+EXCLUDED_ON_RECORD = "excluded on record"
+_ITEM_UNCLAIMED = "no exclusions.tsv record, and no live corpus item lists this work"
+
+
+def _referential_integrity(
+    instance: Instance,
+    entries: dict[str, LedgerEntry],
+    corpus_ids: set[str],
+) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    """The ledger's two pointers into the tree: item ids, and output paths.
+
+    Schema validity says nothing about whether a line points at anything
+    that exists. An entry naming an id with no corpus file is usually the
+    residue of ``dex exclude`` (which deletes the item and its enrichment
+    but leaves the ledger history standing, deliberately) — worth seeing,
+    and worth telling apart from an item RENAMED since the line was
+    written, whose work a live item under a new id still claims, and from
+    one nothing claims at all. A ``done`` entry whose output file is gone
+    is the enrichment claiming work whose product no longer exists. The two
+    are asked independently — an item purged by ``dex exclude`` answers
+    both, and each finding is still true.
+
+    Ghost rows are one per (item, finding): an item named by ten entries
+    for one reason is one row carrying the count, not ten rows a reader
+    cannot tell apart.
+    """
+    excluded = _excluded_items(instance)
+    dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
+    owners = corpus_owners(instance.root, DRIVERS) if dead else {}
+    counts: dict[tuple[str, str], int] = {}
+    for entry in dead:
+        owner = owners.get(entry.hash)
+        if owner is not None:
+            why = f"renamed — {owner} lists this work"
+        elif entry.item in excluded:
+            why = EXCLUDED_ON_RECORD
+        else:
+            why = _ITEM_UNCLAIMED
+        counts[(entry.item, why)] = counts.get((entry.item, why), 0) + 1
+    ghost: list[dict[str, object]] = [
+        {"item": item, "why": why, "entries": count}
+        for (item, why), count in sorted(counts.items())
+    ]
+    missing: list[dict[str, str]] = [
+        {"item": entry.item, "path": entry.path}
+        for entry in entries.values()
+        if entry.path is not None and not (instance.root / entry.path).exists()
+    ]
+    missing.sort(key=lambda row: (row["item"], row["path"]))
+    return ghost, missing
+
+
+def _excluded_items(instance: Instance) -> set[str]:
+    """Item ids in ``state/exclusions.tsv`` — the on-the-record purges."""
+    path = instance.state_dir / "exclusions.tsv"
+    if not path.exists():
+        return set()
+    return {
+        line.split("\t")[0].strip()
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    }
 
 
 def _stale_passes(instance: Instance) -> list[dict[str, object]]:
