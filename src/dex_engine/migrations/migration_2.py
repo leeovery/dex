@@ -255,7 +255,8 @@ def _rekey_identities(
         unit_hash, url = record.key if record.key is not None else (entry.hash, entry.url)
         parent = entry.parent if entry.parent is None else identity.get(entry.parent, entry.parent)
         if unit_hash != entry.hash or parent != entry.parent:
-            reparented += parent != entry.parent
+            if parent != entry.parent:
+                reparented += 1
             entry = replace(entry, hash=unit_hash, url=url, parent=parent)
             out_lines.append(to_line(entry))
             rekeyed = True
