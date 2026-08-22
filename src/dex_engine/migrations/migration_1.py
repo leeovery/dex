@@ -16,10 +16,12 @@ This migration moves pre-rewrite instance state onto that vocabulary:
   vocabulary by design. The old engine used ``error`` as an informal
   reason field on non-error statuses and once a ``note`` field; those
   values are ported into ``reason``, never destroyed. Old lines carry no
-  ``item``/``engine``: the item is recovered from the output path, from the
-  enrichment tree on disk (outputs are named ``<kind>-<hash[:6]>.md`` under
-  ``enrichment/<item>/``, so the file the unit produced names its owner), or
-  by hashing corpus URLs with the old engine's own canonicalization; the
+  ``item``/``engine``: the item is recovered from the enrichment tree on
+  disk (outputs are named ``<kind>-<hash[:6]>.md`` under
+  ``enrichment/<item>/``, so the file the unit produced names its owner),
+  from the recorded output path, or by hashing corpus URLs with the old
+  engine's own canonicalization — **and every recovered id must have a
+  corpus file, or it is no attribution at all** (see below); the
   engine is stamped ``0.0.1`` — the only version the pre-rewrite engine
   ever shipped as, which is exactly what gives old ``error`` entries their
   retry-on-new-engine semantics;
@@ -29,8 +31,17 @@ This migration moves pre-rewrite instance state onto that vocabulary:
 
 Files this migration cannot judge (a hand-healed corpus file, a config that
 does not fit the new schema) are skipped-with-why for the session to repair.
-A ledger line that still cannot be translated after all three attributions
-is **dropped**, counted and named in the report. Dropping is safe because of
+
+**Attribution resolves to a live corpus item or it does not resolve.** An
+item the owner excluded loses its corpus file and its ``enrichment/<id>/``
+directory, but a done line's recorded ``path`` still spells the id — and
+reading it back out of that string attributes finished work to something
+that no longer exists. Effort to rescue work is reserved for items that are
+still there: a renamed item (same shortid, new slug) resolves through the
+enrichment tree or the corpus URLs and keeps everything it has. An id no
+corpus file answers to is skipped over, the next attribution tried, and a
+line left with none is **dropped**, counted and named in the report exactly
+like a line that never named anything. Dropping is safe because of
 what the ledger is: the corpus is the source of truth and the ledger is
 derived work state — seeding builds work units from corpus items' URLs, so
 anything that still matters re-enters through the front door on the next
@@ -360,6 +371,10 @@ class _Tree:
     outputs: dict[str, str]  # unit hash[:6] -> the item whose tree holds its output
     owners: dict[str, str]  # legacy URL hash -> the corpus item listing that URL
 
+    def is_live(self, item: str) -> bool:
+        """Whether ``item`` still has a corpus file — the only test of alive."""
+        return (self.root / "corpus" / item[:4] / f"{item}.md").exists()
+
 
 def _rewrite_ledger(
     root: Path,
@@ -604,29 +619,43 @@ def _translate_path(
 def _translate_item(
     raw: dict[str, object], *, raw_path: str | None, unit_hash: str, tree: _Tree
 ) -> str:
+    # A line that states its item is carried, never re-derived: re-testing a
+    # stated item against the corpus is a standing sweep of live ledger lines,
+    # which is the machinery this migration exists to make unnecessary.
     if "item" in raw:
         return _expect_str(raw, "item")
+    dead: list[str] = []
     # The tree before the line: an item renamed since the line was written —
     # same shortid, new slug — leaves the recorded path naming a directory
     # that is gone while the output it produced sits under the new id, so a
     # stale string would win over where the file demonstrably is.
     owner = tree.outputs.get(unit_hash[:6])
     if owner is not None:
-        return owner
+        if tree.is_live(owner):
+            return owner
+        dead.append(owner)
     # The raw path attributes the item even when the path field itself is
     # dropped (outputs are done-only) — where the file landed is still
     # true provenance.
     if raw_path is not None:
         parts = raw_path.split("/")
         if len(parts) >= 3 and parts[0] == "enrichment" and parts[1]:  # noqa: PLR2004 — enrichment/<item>/<file>
-            return parts[1]
+            if tree.is_live(parts[1]):
+                return parts[1]
+            dead.append(parts[1])
+    # Live by construction: this map is built from the corpus files themselves.
     owner = tree.owners.get(unit_hash)
-    if owner is None:
+    if owner is not None:
+        return owner
+    if dead:
         raise _UntranslatableError(
-            "no item attribution: the line has no item, no output path, no enrichment "
-            "file on disk carries its hash, and no corpus item's URLs hash to it"
+            f"attributable only to {' and '.join(dict.fromkeys(dead))}, which no corpus "
+            "file answers to, and no live corpus item's URLs hash to it"
         )
-    return owner
+    raise _UntranslatableError(
+        "no item attribution: the line has no item, no output path, no enrichment "
+        "file on disk carries its hash, and no corpus item's URLs hash to it"
+    )
 
 
 def _repoint(path_text: str | None, *, item: str, root: Path) -> str | None:

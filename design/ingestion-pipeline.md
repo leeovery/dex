@@ -964,7 +964,21 @@ Authoring rules:
   the string attributes a live item's finished work to an id no corpus file
   answers to. Where the tree answers and the recorded path
   disagrees, the path moves onto the attributed item too — but only where
-  the file is demonstrably there, never as a guess. That is safe
+  the file is demonstrably there, never as a guess.
+  **Attribution resolves to a LIVE corpus item or it does not resolve**
+  (owner ruling at phase-4 review, on real state): if an item is dead, its
+  stuff goes; nobody gets clever rescuing it. An excluded item loses its
+  corpus file and its `enrichment/<id>/` directory, but a done line's
+  recorded `path` still spells the id — and every derived attribution is
+  therefore checked against `corpus/<id[:4]>/<id>.md` before it is accepted.
+  An id with no corpus file is skipped over, the next attribution is tried,
+  and a line left with none is dropped and named like any other. Rescue
+  effort is reserved for items that are still there: a renamed item — same
+  shortid, new slug — resolves through the enrichment tree or the corpus
+  URLs and keeps its work, path repoint included, because that is a live
+  item's transcription. The corpus URL map needs no check, being built from
+  the corpus files themselves. Nothing will ever seed such a line again, so
+  this is the only place the residue can be dealt with. That is safe
   because of what the ledger IS: the corpus is the source of truth and the
   ledger is derived work state, so seeding re-raises anything that still
   matters through the front door on the next run; and the pre-migration
@@ -1101,7 +1115,7 @@ bolted on afterwards was a patch over that first guess. It cost a real
 17-minute transcription before it was caught. The residue it existed to
 clean is created by migration 1 attributing a line to a dead item, so the
 fix belongs there and nowhere else: migration 1 attributes to a **live**
-corpus item or drops the line (below).
+corpus item or drops the line, per the attribution rule above.
 
 **No new migration without explicit approval** — the same ruling. A
 migration is code every instance carries forever; a one-off tidy is a

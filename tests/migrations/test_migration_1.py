@@ -61,6 +61,13 @@ def write_ledger(root, records):
     return path
 
 
+def write_corpus(root, item_id, **kwargs):
+    path = root / "corpus" / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(corpus_text(item_id, **kwargs))
+    return path
+
+
 class TestCorpusRenames:
     def test_kinds_and_enrichment_listing_renamed_body_byte_exact(self, tmp_path, migration):
         body = "**alex** (2026-05-01):\ntrailing spaces  \n\nunicode — em\n"
@@ -201,6 +208,7 @@ class TestEnrichmentRenames:
 
 class TestLedgerTranslation:
     def test_done_line_gets_kind_path_item_engine(self, tmp_path, migration):
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -330,6 +338,7 @@ class TestLedgerTranslation:
     def test_done_error_text_preserved_in_report_not_line(self, tmp_path, migration):
         # The schema forbids reason on done: the choice is stated in the report and
         # the text lives there, never silently dropped.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -377,6 +386,7 @@ class TestLedgerTranslation:
         assert entry.engine == "0.0.1"
 
     def test_via_whisper_dropped_with_note(self, tmp_path, migration):
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -402,6 +412,7 @@ class TestLedgerTranslation:
         # The old x fetcher stamped its transport ('fxtwitter') as via — 15
         # wild lines on the flagship instance. Any non-current via drops with
         # a note; dropping the whole line would forfeit its migration-2 reseed.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3", kinds=("x",))
         path = write_ledger(
             tmp_path,
             [
@@ -548,6 +559,7 @@ class TestLedgerTranslation:
     def test_an_output_on_disk_attributes_a_line_that_names_none(self, tmp_path, migration):
         # The line records no item and no path, but the file it produced sits
         # under enrichment/<item>/ named for its own hash — that IS the owner.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         enrich_dir = tmp_path / "enrichment" / "2026-05-01-item-a1b2c3"
         enrich_dir.mkdir(parents=True)
         (enrich_dir / "blog-555555.md").write_text("content\n")
@@ -619,6 +631,7 @@ class TestLedgerTranslation:
         # output it produced sits under the new id. Attributing to the string
         # would name an id no corpus file answers to.
         live_id = "2026-05-01-renamed-a1b2c3"
+        write_corpus(tmp_path, live_id, kinds=("youtube",))
         enrich_dir = tmp_path / "enrichment" / live_id
         enrich_dir.mkdir(parents=True)
         (enrich_dir / "youtube-555555.md").write_text("transcript\n")
@@ -640,9 +653,11 @@ class TestLedgerTranslation:
         assert entry.item == live_id
         assert entry.path == f"enrichment/{live_id}/youtube-555555.md"
 
-    def test_a_stale_path_survives_where_disk_cannot_answer(self, tmp_path, migration):
+    def test_a_recorded_path_survives_where_its_item_is_still_live(self, tmp_path, migration):
         # Nothing on disk carries the hash, so the recorded path is the only
-        # provenance there is — repointing it would be a guess.
+        # provenance there is — and the item it names is still in the corpus,
+        # so the work is still owned. Repointing the path would be a guess.
+        write_corpus(tmp_path, "2026-05-01-old-slug-a1b2c3", kinds=("youtube",))
         path = write_ledger(
             tmp_path,
             [
@@ -660,6 +675,85 @@ class TestLedgerTranslation:
         entry = ledger.load(path)["6666660000"]
         assert entry.item == "2026-05-01-old-slug-a1b2c3"
         assert entry.path == "enrichment/2026-05-01-old-slug-a1b2c3/youtube-666666.md"
+
+    def test_a_line_attributable_only_to_a_dead_item_is_dropped(self, tmp_path, migration):
+        # The owner excluded the item: the corpus file and enrichment/<id>/
+        # went, and only the recorded path string is left saying the name.
+        # Reading the id back out of it attributes finished work to something
+        # that no longer exists, and every later stage then has to reason
+        # about a line nothing can own.
+        write_corpus(tmp_path, "2026-05-01-live-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "7777770000",
+                    "url": "https://a.test/excluded",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-excluded-999999/blog-777777.md",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert report.skipped == []
+        named = next(a for a in report.actions if a.startswith("ledger dropped "))
+        assert "7777770000" in named
+        assert "2026-05-01-excluded-999999" in named
+        assert ledger.load(path) == {}
+
+    def test_a_dead_recorded_path_yields_to_the_live_item_listing_the_url(
+        self, tmp_path, migration
+    ):
+        # The rescue is for live items only, but it is a real rescue: the
+        # recorded path names an id with no corpus file while a live item
+        # still lists the URL, so the work is that item's and stays.
+        url = "https://a.test/still-listed"
+        write_corpus(tmp_path, "2026-05-01-claimant-a1b2c3", urls=(url,))
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": _legacy_uhash(url),
+                    "url": url,
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-999999/blog-abcdef.md",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert not any("untranslatable line(s) dropped" in a for a in report.actions)
+        assert ledger.load(path)[_legacy_uhash(url)].item == "2026-05-01-claimant-a1b2c3"
+
+    def test_an_orphaned_enrichment_directory_never_attributes_a_line(
+        self, tmp_path, migration
+    ):
+        # The tree is asked first, but it answers with a directory, not with
+        # an item: a corpus file deleted while enrichment/<id>/ was left
+        # behind is residue, and residue must not own work.
+        enrich_dir = tmp_path / "enrichment" / "2026-05-01-orphan-999999"
+        enrich_dir.mkdir(parents=True)
+        (enrich_dir / "blog-888888.md").write_text("content\n")
+        write_corpus(tmp_path, "2026-05-01-live-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "8888880000",
+                    "url": "https://a.test/orphaned-tree",
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        named = next(a for a in report.actions if a.startswith("ledger dropped "))
+        assert "2026-05-01-orphan-999999" in named
+        assert ledger.load(path) == {}
 
     def test_malformed_corpus_url_never_aborts_the_migration(self, tmp_path, migration):
         # urlsplit raises ValueError on an invalid IPv6 literal; one
