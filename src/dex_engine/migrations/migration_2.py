@@ -18,8 +18,22 @@ sacred; a ``manual`` verdict stays ``manual`` under its new identity.
 Where two old entries collapse to one new hash (the x.com and twitter.com
 spellings of one post), file order is kept, so the ledger's own
 last-per-hash rule decides — the later line wins — and the report names
-the collapse. The rewrite is atomic; a second apply finds every hash
-already current and re-keys nothing.
+the collapse. A moved hash takes its pointers with it: a child's ``parent``
+naming an old hash is rewritten to the new one in the same pass, so no
+chain is left dangling. The rewrite is atomic; a second apply finds every
+hash already current and re-keys nothing.
+
+Not every entry is canonically keyed, and the ones that aren't are left
+exactly as they are — re-keying them would move them AWAY from the
+identity the runtime computes:
+
+- ``via: media`` — media URLs are fetched verbatim, signed query params and
+  all; canonicalizing one strips the signature and mints a key nothing
+  will ever look up again;
+- ``via: extract-asset`` — the work key is a repo path, not a URL;
+  canonicalization would mangle it into ``https:enrichment/…``;
+- any entry whose URL is not an absolute http(s) URL (a ``file:`` work key,
+  a bare repo path) — same reason, generalized.
 
 **Step 2 — rerun seed.** Two fixes shipped with the rewrite make old
 stored enrichments deficient:
@@ -61,7 +75,7 @@ never seeds twice.
 
 import datetime
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from dex_engine import atomic
@@ -91,6 +105,10 @@ INTENT = (
 
 _PRE_REWRITE = (0, 0, 1)
 _SEEDED_KINDS = frozenset({Kind.WEB, Kind.X})
+# Provenance whose work key is the fetch string verbatim, never a canonical
+# URL — see the module docstring.
+_VERBATIM_VIA = frozenset({"media", "extract-asset"})
+_ABSOLUTE_HTTP = ("http://", "https://")
 
 
 def build(
@@ -172,6 +190,17 @@ class IdentityRekeyAndRerunSeed:
         return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Line:
+    """One ledger line as read: its bytes, its entry, and its current key."""
+
+    text: str
+    entry: LedgerEntry | None = None
+    # (hash, canonical url) where the entry is canonically keyed; None where
+    # its key is verbatim by design or canonicalization refused the URL
+    key: tuple[str, str] | None = None
+
+
 def _rekey_identities(
     path: Path, actions: list[str], skipped: list[Skipped]
 ) -> list[LedgerEntry]:
@@ -184,12 +213,13 @@ def _rekey_identities(
     leaves the file untouched. Where re-keying makes two old identities
     share one hash, both keep their file positions: last-per-hash decides,
     exactly as it does for any superseded line.
+
+    Two reads, one write: the whole file is keyed first, because a child's
+    ``parent`` may name a hash whose line comes later, and every pointer to
+    a moved hash moves with it.
     """
     original = path.read_text(encoding="utf-8")
-    out_lines: list[str] = []
-    entries: list[LedgerEntry] = []
-    identity: dict[str, str] = {}
-    rekeyed = False
+    records: list[_Line] = []
     for lineno, line in enumerate(original.split("\n"), start=1):
         if not line.strip():
             continue
@@ -203,36 +233,86 @@ def _rekey_identities(
                     "migration 1's report; not re-keyed or considered for seeding",
                 )
             )
-            out_lines.append(line)
+            records.append(_Line(text=line))
             continue
-        canonical = canonical_url(entry.url, DRIVERS)
-        unit_hash = work_hash(canonical)
-        identity[entry.hash] = unit_hash
-        if unit_hash != entry.hash:
-            entry = replace(entry, hash=unit_hash, url=canonical)
+        records.append(
+            _Line(text=line, entry=entry, key=_current_key(entry, lineno=lineno, skipped=skipped))
+        )
+    identity = {
+        record.entry.hash: record.key[0]
+        for record in records
+        if record.entry is not None and record.key is not None
+    }
+    out_lines: list[str] = []
+    entries: list[LedgerEntry] = []
+    reparented = 0
+    rekeyed = False
+    for record in records:
+        entry = record.entry
+        if entry is None:
+            out_lines.append(record.text)
+            continue
+        unit_hash, url = record.key if record.key is not None else (entry.hash, entry.url)
+        parent = entry.parent if entry.parent is None else identity.get(entry.parent, entry.parent)
+        if unit_hash != entry.hash or parent != entry.parent:
+            reparented += parent != entry.parent
+            entry = replace(entry, hash=unit_hash, url=url, parent=parent)
             out_lines.append(to_line(entry))
             rekeyed = True
         else:
-            out_lines.append(line)
+            out_lines.append(record.text)
         entries.append(entry)
     if rekeyed:
         atomic.write_text(path, "".join(out_line + "\n" for out_line in out_lines))
-        moved = sum(1 for old, new in identity.items() if old != new)
-        landings: dict[str, set[str]] = {}
-        for old, new in identity.items():
-            landings.setdefault(new, set()).add(old)
-        collapsed = sum(len(olds) - 1 for olds in landings.values() if len(olds) > 1)
-        action = (
-            f"re-keyed {moved} entr{'y' if moved == 1 else 'ies'} to current "
-            "identities (x id-keying, youtube shape collapse)"
-        )
-        if collapsed:
-            action += (
-                f"; {collapsed} collapsed duplicate(s) — old spellings of one unit, "
-                "settled by last-per-hash"
-            )
-        actions.append(action)
+        actions.append(_rekey_action(identity, reparented))
     return entries
+
+
+def _current_key(
+    entry: LedgerEntry, *, lineno: int, skipped: list[Skipped]
+) -> tuple[str, str] | None:
+    """The identity the engine computes for this entry today, or None to leave it.
+
+    None means the line keeps its stored hash and URL: either its key is
+    verbatim by design (see the module docstring), or canonicalization
+    refused the URL — and one unreadable URL must never abort a migration
+    chain part-way through, leaving state half-moved.
+    """
+    if entry.via in _VERBATIM_VIA or not entry.url.startswith(_ABSOLUTE_HTTP):
+        return None
+    try:
+        canonical = canonical_url(entry.url, DRIVERS)
+    except Exception as e:  # noqa: BLE001 — a driver's canonical is arbitrary code over owner data
+        skipped.append(
+            Skipped(
+                what=f"ledger line {lineno}",
+                why=f"canonicalizing {entry.url!r} failed ({type(e).__name__}: "
+                f"{' '.join(str(e).split())}) — left on its stored hash; repair the URL "
+                "with `enrich mark`, or accept that this unit keeps its old identity",
+            )
+        )
+        return None
+    return work_hash(canonical), canonical
+
+
+def _rekey_action(identity: dict[str, str], reparented: int) -> str:
+    moved = sum(1 for old, new in identity.items() if old != new)
+    landings: dict[str, set[str]] = {}
+    for old, new in identity.items():
+        landings.setdefault(new, set()).add(old)
+    collapsed = sum(len(olds) - 1 for olds in landings.values() if len(olds) > 1)
+    action = (
+        f"re-keyed {moved} entr{'y' if moved == 1 else 'ies'} to current "
+        "identities (x id-keying, youtube shape collapse)"
+    )
+    if collapsed:
+        action += (
+            f"; {collapsed} collapsed duplicate(s) — old spellings of one unit, "
+            "settled by last-per-hash"
+        )
+    if reparented:
+        action += f"; {reparented} parent pointer(s) followed to the new hash"
+    return action
 
 
 def _exclusions(root: Path) -> dict[str, str]:

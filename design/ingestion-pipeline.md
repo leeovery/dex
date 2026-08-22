@@ -839,8 +839,19 @@ Shipping migrations for this rewrite:
    or deliberately parked. Where two old spellings collapse to one new
    hash (the x.com and twitter.com forms of one post), file order is kept
    and the ledger's own last-per-hash rule decides — the later line wins;
-   the report names the collapse. The rewrite is atomic and idempotent —
-   a second apply finds every identity already current.
+   the report names the collapse. A moved hash takes its pointers with it:
+   a child's `parent` naming a re-keyed hash is rewritten in the same pass
+   (the file is read twice, written once — a parent's line may come after
+   its child's). Entries whose key is **verbatim by design** are left
+   alone, because re-keying moves them away from the identity the runtime
+   computes: `via: media` (media URLs are fetched verbatim, signed params
+   included), `via: extract-asset` (the key is a repo path, which
+   canonicalization would mangle into `https:enrichment/…`), and any entry
+   whose URL is not an absolute http(s) URL. Canonicalization is guarded
+   per entry, as in migration 1 — one unreadable URL is skipped-with-why
+   and keeps its stored hash, never aborting the chain part-way through.
+   The rewrite is atomic and idempotent — a second apply finds every
+   identity already current.
    Then, reruns: two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed

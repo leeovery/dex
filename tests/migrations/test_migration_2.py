@@ -417,6 +417,140 @@ class TestIdentityRekey:
         assert second_report.actions == []
 
 
+SIGNED_MEDIA_URL = "https://cdn.a.test/clip.mp4?Expires=1&Signature=abc&ref=share"
+ASSET_PATH = "enrichment/2026-05-01-item-a1b2c3/paper-asset-01.png"
+
+
+def child(url, *, parent, via, kind=Kind.X):
+    return LedgerEntry(
+        hash=work_hash(url),
+        url=url,
+        item="2026-05-01-item-a1b2c3",
+        kind=kind,
+        status=Status.DONE,
+        engine="0.4.0",
+        date=datetime.date(2026, 5, 1),
+        via=via,
+        parent=parent,
+        depth=1,
+        path=f"enrichment/2026-05-01-item-a1b2c3/{kind.value}-{work_hash(url)[:6]}.md",
+    )
+
+
+class TestVerbatimKeysAreNotRekeyed:
+    """Some work keys are the fetch string itself; canonicalizing breaks them."""
+
+    def test_media_line_is_byte_identical_through_the_migration(self, tmp_path, migration):
+        # Canonicalizing would strip `ref` from a signed URL and key the
+        # entry away from the runtime's raw-hash discipline.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [parent, media])
+        before = path.read_text().split("\n")[1]
+        migration.apply(tmp_path)
+        after = path.read_text().split("\n")[1]
+        assert json.loads(after)["hash"] == work_hash(SIGNED_MEDIA_URL)
+        assert json.loads(after)["url"] == SIGNED_MEDIA_URL
+        # only the parent pointer moved — the rest of the line is untouched
+        assert json.loads(before) | {"parent": work_hash(NEW_X_URL)} == json.loads(after)
+
+    def test_media_line_under_a_stable_parent_is_untouched(self, tmp_path, migration):
+        parent = stored("https://blog.example.test/post", kind=Kind.WEB)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media", kind=Kind.WEB)
+        path = write_entries(tmp_path, [parent, media])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text().startswith(before)  # the seed appends; nothing was rewritten
+
+    def test_extract_asset_repo_path_is_never_mangled_into_a_url(self, tmp_path, migration):
+        parent = stored("https://blog.example.test/paper", kind=Kind.WEB)
+        asset = child(ASSET_PATH, parent=parent.hash, via="extract-asset", kind=Kind.WEB)
+        path = write_entries(tmp_path, [parent, asset])
+        migration.apply(tmp_path)
+        line = json.loads(path.read_text().split("\n")[1])
+        assert line["url"] == ASSET_PATH
+        assert line["hash"] == work_hash(ASSET_PATH)
+
+    def test_a_non_http_work_key_keeps_its_identity(self, tmp_path, migration):
+        # `file:<repo-path>` keys are verbatim for the same reason.
+        key = "file:inbox/paper.pdf"
+        entry = LedgerEntry(
+            hash=work_hash(key),
+            url=key,
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.FILE,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 5, 1),
+            path="enrichment/2026-05-01-item-a1b2c3/file-abc123.md",
+        )
+        path = write_entries(tmp_path, [entry])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text() == before
+
+    def test_a_rekeyed_parent_takes_its_children_with_it(self, tmp_path, migration):
+        # A `thread` child is canonically keyed AND has a parent pointer:
+        # both must land on current identities, or the chain dangles.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        reply = child("https://twitter.com/carol/status/301", parent=parent.hash, via="thread")
+        path = write_entries(tmp_path, [parent, reply])
+        report = migration.apply(tmp_path)
+        entries = ledger.load(path)
+        moved = entries[work_hash("https://x.com/i/status/301")]
+        assert moved.parent == work_hash(NEW_X_URL)
+        assert moved.parent in entries  # the pointer resolves
+        assert any("1 parent pointer(s) followed" in action for action in report.actions)
+
+    def test_a_child_listed_before_its_parent_still_follows(self, tmp_path, migration):
+        # File order is birth order in practice, never by contract.
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [media, parent])
+        migration.apply(tmp_path)
+        assert json.loads(path.read_text().split("\n")[0])["parent"] == work_hash(NEW_X_URL)
+
+    def test_a_parent_pointer_naming_nothing_is_left_alone(self, tmp_path, migration):
+        orphan = child(SIGNED_MEDIA_URL, parent="0123456789", via="media")
+        path = write_entries(tmp_path, [orphan])
+        before = path.read_text()
+        migration.apply(tmp_path)
+        assert path.read_text() == before
+
+    def test_second_apply_moves_nothing(self, tmp_path, migration):
+        parent = stored(OLD_X_URL, kind=Kind.X)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        path = write_entries(tmp_path, [parent, media])
+        migration.apply(tmp_path)
+        first = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == first
+        assert report.actions == []
+
+
+class TestCanonicalizationGuard:
+    def test_one_unreadable_url_is_skipped_with_why_and_the_rest_migrate(
+        self, tmp_path, migration
+    ):
+        # urlsplit raises on an invalid IPv6 literal; a migration that dies
+        # here leaves the chain half-applied.
+        broken = LedgerEntry(
+            hash="1111111111",
+            url="https://[bad:ipv6/page",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.MANUAL,
+            reason="hand-healed",
+            engine="0.0.1",
+            date=datetime.date(2026, 5, 1),
+        )
+        path = write_entries(tmp_path, [broken, stored(OLD_X_URL, kind=Kind.X)])
+        report = migration.apply(tmp_path)
+        assert json.loads(path.read_text().split("\n")[0])["hash"] == "1111111111"
+        assert any("canonicalizing" in s.why and "ValueError" in s.why for s in report.skipped)
+        assert work_hash(NEW_X_URL) in ledger.load(path)  # the healthy entry still moved
+
+
 def _refuse_probe(url):
     raise AssertionError(f"unexpected probe of {url!r}")
 
