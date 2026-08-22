@@ -392,7 +392,15 @@ legal combinations carry `media` or `children` on a non-done result, and
 `assets` is validated done-only while the others are not. Making the wrong
 states unrepresentable is the point, not a side effect. (The sketch above
 does not say where `assets` and the driver-stated `reason` ride on the
-union; settle that when it is built.) Two related shapes settle with it:
+union; settle that when it is built.)
+
+**Open question — `links` or `children`.** The sketch says a driver reports
+`links`; today a driver returns `children` and the run layer assigns item,
+parent and depth. The change of noun may be the point, drivers reporting
+what a page pointed at while the pipeline decides what to promote, but
+nothing here states that, so it is a decision rather than a rename.
+
+Two related shapes settle with it:
 
 - `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so 828
   of 2484 legal ledger states cannot convert. One rule, stated once.
