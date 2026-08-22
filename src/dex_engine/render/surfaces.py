@@ -769,7 +769,6 @@ _HEALTH_OPTIONAL = frozenset(
         "waiting",
         "cognitive",
         "stale_passes",
-        "quarantine",
         "digest_orphans",
         "reconciled",
         "notes",
@@ -809,7 +808,6 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
           "stale_passes": [{"item": str, "rules": int}],
-          "quarantine": int,            # non-empty quarantine line count — LOUD
           "digest_orphans": [str],
           # --write outcomes and free notes
           "reconciled": [str],
@@ -908,14 +906,6 @@ def _render_health_report(payload: Mapping[str, object]) -> str:  # noqa: PLR091
     lines.append(_health_count("harvest passes under old rules (re-judge)", len(stale_passes)))
     lines.extend(f"  {row['item']} (rules v{row['rules']})"
                  for row in stale_passes[:_HEALTH_LIST_CAP])
-    quarantine = _int_at(surface, payload, "quarantine", default=0)
-    if quarantine:
-        lines.append(
-            f"  QUARANTINE NOT EMPTY — {_plural(quarantine, 'line')} in "
-            "state/enrichment-ledger.unmigrated.jsonl: review each, re-add via "
-            "`dex enrich mark <url> <status> --reason ...` or accept the loss, then "
-            "empty the file"
-        )
     lines.extend(_health_names(surface, payload, "digest_orphans",
                                "enrichment newer than digest (interrupted session — digest these)"))
 

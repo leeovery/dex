@@ -28,10 +28,6 @@ step 4.
    - **Ledger schema failure** — repair before anything else touches
      state; the message names the file, line, and likely missing migration
      (usually: run `bin/dex sync`).
-   - **Quarantine not empty** (`state/enrichment-ledger.unmigrated.jsonl`)
-     — run the quarantine review procedure in
-     `.claude/skills/dex-run/references/state-formats.md` (exclusions
-     cross-check first, `enrich mark` for keepers, then empty the file).
    - **Broken wikilinks** — typo → correct it; genuinely missing target →
      create the page if its members justify one, otherwise de-link.
    - **Bad citations** (id not in corpus) — find the right id or remove

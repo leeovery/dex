@@ -423,19 +423,6 @@ class TestStateChecks:
         with pytest.raises(ValueError, match=r"passes\.jsonl:1"):
             lint(instance)
 
-    def test_nonempty_quarantine_is_flagged(self, instance):
-        self._bare_wiki(instance)
-        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text(
-            '{"old": "line"}\n{"older": "line"}\n'
-        )
-        outcome = lint(instance)
-        assert "QUARANTINE NOT EMPTY — 2 lines" in outcome.report
-
-    def test_empty_quarantine_is_silent(self, instance):
-        self._bare_wiki(instance)
-        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text("\n")
-        assert "QUARANTINE" not in lint(instance).report
-
     def test_digest_orphans_listed(self, instance):
         self._bare_wiki(instance)
         item_dir = instance.enrichment_dir / ITEM

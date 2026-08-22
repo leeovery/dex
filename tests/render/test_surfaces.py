@@ -358,7 +358,6 @@ HEALTH_PAYLOAD = {
         {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
     ],
     "stale_passes": [{"item": "2026-01-04-old-dddddd", "rules": 0}],
-    "quarantine": 2,
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
@@ -446,8 +445,6 @@ class TestHealthReport:
         assert "waiting cohorts: transcribe 3" in out
         assert "cognitive jobs (the session completes these with eyes) — 1" in out
         assert "harvest passes under old rules (re-judge) — 1" in out
-        assert "QUARANTINE NOT EMPTY — 2 lines" in out
-        assert "enrich mark" in out
         assert "enrichment newer than digest" in out
         assert "reconciled by --write:" in out
         assert "notes:" in out
@@ -456,7 +453,6 @@ class TestHealthReport:
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
         assert "broken wikilinks — none" in out
         assert "waiting cohorts: none" in out
-        assert "QUARANTINE" not in out
         assert "reconciled" not in out
 
     def test_ledger_error_renders_loud(self):

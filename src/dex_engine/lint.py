@@ -15,10 +15,9 @@ Checks:
   with its entry count — excluded-on-record told apart from renamed and
   from unclaimed; ``done`` entries whose output path is missing on disk),
   waiting cohorts and cognitive-job
-  summary, harvest passes recorded under old rules, the non-empty
-  quarantine file flag, and the enrichment-newer-than-digest orphan
-  listing (the interrupted-session backstop, shared with
-  ``enrich status``).
+  summary, harvest passes recorded under old rules, and the
+  enrichment-newer-than-digest orphan listing (the interrupted-session
+  backstop, shared with ``enrich status``).
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -67,9 +66,6 @@ ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 # than the floor are boilerplate-prone; the ratio is SequenceMatcher's.
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
-
-# The migration-quarantine file — lint flags it non-empty at every health check.
-QUARANTINE_FILE = "enrichment-ledger.unmigrated.jsonl"
 
 IsCognitive = Callable[[Need, Format | None], bool]
 
@@ -537,7 +533,6 @@ def _state_checks(
         payload["ghost_items"] = ghost
         payload["missing_outputs"] = missing
     payload["stale_passes"] = _stale_passes(instance)
-    payload["quarantine"] = _quarantine_lines(instance)
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
 
@@ -632,13 +627,6 @@ def _stale_passes(instance: Instance) -> list[dict[str, object]]:
         for item, rules in sorted(latest.items())
         if rules < HARVEST_RULES_VERSION
     ]
-
-
-def _quarantine_lines(instance: Instance) -> int:
-    path = instance.state_dir / QUARANTINE_FILE
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").split("\n") if line.strip())
 
 
 # ---------------------------------------------------------------------------
