@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import re
 import socket
 import threading
 from collections.abc import Iterator, Mapping
@@ -80,6 +81,29 @@ def fake_transport():
     return FakeTransport
 
 
+def _drain_request(conn: socket.socket) -> None:
+    """Read the whole request — headers AND body — before answering.
+
+    Answering a POST while the client is still uploading closes the socket
+    on unread bytes, and the client sees a reset instead of the truncated
+    read the test is about.
+    """
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    declared = re.search(rb"(?i)content-length:\s*(\d+)", head)
+    outstanding = int(declared.group(1)) - len(body) if declared else 0
+    while outstanding > 0:
+        chunk = conn.recv(min(outstanding, 65536))
+        if not chunk:
+            return
+        outstanding -= len(chunk)
+
+
 @contextlib.contextmanager
 def truncating_server(
     *, body: bytes = b"ID3\x04\x00\x00\x00partial audio", declared: int = 5_000_000
@@ -102,7 +126,7 @@ def truncating_server(
             except OSError:
                 return  # the listener closed: the context manager is done
             with conn, contextlib.suppress(OSError):
-                conn.recv(65536)  # drain the request so the close sends FIN, not RST
+                _drain_request(conn)
                 conn.sendall(
                     b"HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n"
                     b"Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (declared, body)

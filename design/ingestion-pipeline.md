@@ -547,15 +547,14 @@ mechanism, not a hack.
 Provider contract: `available()` failures (model missing, broken install)
 park jobs as `waiting` with the reason — the wait list is normally empty for
 transcription, not absent. A provider raises `ProviderInputError` for
-bad-input cases (corrupt audio, a container carrying no audio stream at
-all, malformed file) → the run layer maps it
-`manual`; **`ProviderUnavailableError`** for call-time availability
-failures (API 5xx/429, missing binary, model-download failure) → the job
-**re-parks `waiting`** with the reason, never burning blocked attempts —
-for **every** capability, extract included (`waiting` + `needs: extract`),
-not transcribe alone; an
-uncaught crash is an engine bug and takes the `error` path (issue filed,
-retry on new engine). The availability seam is **per-format** —
+bad-input cases (corrupt audio, a container carrying no audio stream at all,
+malformed file) → the run layer maps it `manual`;
+**`ProviderUnavailableError`** for call-time availability failures (API
+5xx/429, missing binary, model-download failure) → the job **re-parks
+`waiting`** with the reason, never burning blocked attempts — for **every**
+capability, extract included (`waiting` + `needs: extract`), not transcribe
+alone; an uncaught crash is an engine bug and takes the `error` path (issue
+filed, retry on new engine). The availability seam is **per-format** —
 `available(need, format)` — so a PDF wait never wakes for a CSV-only
 provider. **Acquisition failures are not provider failures**: a failed
 audio download (yt-dlp breakage, blocked enclosure GET) classifies through
@@ -566,7 +565,8 @@ acquisition failure too**: an empty body, a body short of its declared
 error page) is `blocked` and never written under the audio name — cached as
 `<hash>.mp3` it decodes as garbage and parks the episode `manual` forever
 over a fault that has nothing to do with the episode. Bytes that are merely
-bad audio still reach the provider, and its `manual` stands. The blocked line keeps
+bad audio still reach the provider, and its `manual` stands. The blocked
+line keeps
 `needs: transcribe`, so the retry routes back through the transcribe drain
 rather than the driver (§3: a typed field, never the reason's wording).
 Config keys: `transcribe_base_url`,

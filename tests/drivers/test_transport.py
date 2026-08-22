@@ -10,6 +10,7 @@ import http.client
 import pytest
 
 from dex_engine.capabilities import Capabilities
+from dex_engine.capabilities.transcribe.whisper_api import urllib_multipart_post
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import normalize_httplib_errors, urllib_transport
 from dex_engine.pipeline.classify import classify_connection
@@ -38,6 +39,16 @@ class TestHttplibNormalization:
         with pytest.raises(ConnectionResetError) as caught, normalize_httplib_errors():
             raise original
         assert caught.value is original
+
+
+class TestThroughTheWhisperApiPost:
+    def test_a_truncated_response_reaches_the_provider_as_an_oserror(self):
+        # The second urllib seam: whisper-api's multipart POST guards on
+        # `except OSError` too, and maps it to ProviderUnavailableError —
+        # the job waits. Only if the httplib failure arrives as an OSError.
+        with truncating_server() as url, pytest.raises(OSError) as caught:  # noqa: PT011 — the OSError shape IS the assertion
+            urllib_multipart_post(url, api_key=None, fields={}, filename="a.mp3", file_bytes=b"x")
+        assert "truncated response body" in str(caught.value)
 
 
 class TestThroughADriverFetch:
