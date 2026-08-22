@@ -357,12 +357,29 @@ class TestWaitingParks:
         assert reason_of(result) == "no captions available"
         assert result.meta["title"] == "Unindexed Conference Talk"
 
+    def test_the_park_carries_the_description_it_already_fetched(self):
+        # A video that goes private during a transcription backlog must not
+        # take its description with it: the run layer writes this now.
+        driver = driver_for(INFO_WITHOUT)
+        body = body_of(driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert body.startswith("## Description")
+        assert "Recorded on a phone" in body
+        assert "## Transcript" not in body  # the drain appends that later
+
+    def test_a_description_less_video_still_parks_cleanly(self):
+        info = {k: v for k, v in INFO_WITHOUT.items() if k != "description"}
+        result = driver_for(info).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.WAITING
+        assert result.needs is Need.TRANSCRIBE
+        assert result.body is None  # nothing to write, nothing invented
+
     def test_thin_captions_track_parks_waiting_transcribe(self):
         thin = "WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\nhi\n"
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(thin)})
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
         assert result.status is Status.WAITING
         assert result.needs is Need.TRANSCRIBE
+        assert "## Description" in body_of(result)  # the description still lands
 
 
 class TestProbeClassification:

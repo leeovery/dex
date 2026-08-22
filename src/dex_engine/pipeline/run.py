@@ -661,12 +661,17 @@ class _Drain:
     def _acquire_audio(self, entry: LedgerEntry) -> Acquired | Classification:
         """Audio acquisition belongs to the drain, per kind."""
         audio_dir = self.ctx.instance.cache_dir / "audio"
+        # Both kinds park with content already in hand (a description, show
+        # notes) and both compose the transcript onto what that park wrote,
+        # so both acquisitions read the unit's own output file.
+        name = f"{entry.kind.value}-{entry.hash[:6]}.md"
+        enrichment = self.ctx.instance.enrichment_dir / entry.item / name
         match entry.kind:
             case Kind.YOUTUBE:
-                return acquire_youtube_audio(entry, audio_dir, self.ctx.download_audio)
+                return acquire_youtube_audio(
+                    entry, enrichment, audio_dir, self.ctx.download_audio
+                )
             case Kind.PODCAST:
-                name = f"{entry.kind.value}-{entry.hash[:6]}.md"
-                enrichment = self.ctx.instance.enrichment_dir / entry.item / name
                 return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
             case _:
                 return Classification(

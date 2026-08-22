@@ -1,6 +1,7 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
 import dataclasses
+import json
 import os
 import re
 from pathlib import Path
@@ -11,7 +12,7 @@ from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
-from dex_engine.drivers.youtube import ProbeError, _video_meta
+from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import (
@@ -153,12 +154,56 @@ class TestYoutubeDrain:
         assert audio_files(instance) == []
         assert ITEM in report  # the item lands on the cognitive work list
 
+    def _park_through_the_driver(self, instance) -> Path:
+        """Park the video the way the real driver does, and return its file."""
+        write_item(instance, urls=[VIDEO_URL])
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        return instance.enrichment_dir / ITEM / f"youtube-{work_hash(VIDEO_URL)[:6]}.md"
+
+    def test_the_transcript_joins_the_parks_description_in_one_file(self, instance):
+        # The driver's park wrote the description; the drain must append to
+        # it, never write over it — and the two modules must agree on the
+        # section headings they compose around.
+        park = self._park_through_the_driver(instance)
+        assert "Recorded on a phone" in park.read_text()
+        transcriber = FakeTranscriber("whisper-local", text="The transcript text.", model="medium")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=transcriber))
+        content = park.read_text()
+        assert "Recorded on a phone" in content  # the park's own description stands
+        assert "anydoc" not in content  # not the re-probe's, which differs
+        assert "## Transcript\n\nThe transcript text." in content
+
+    def test_a_re_drain_never_duplicates_the_transcript(self, instance):
+        park = self._park_through_the_driver(instance)
+        first = FakeTranscriber("whisper-local", text="First pass words.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=first))
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)],
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                path=None,
+                title=None,
+            ),
+        )
+        second = FakeTranscriber("whisper-local", text="Second pass words.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=second))
+        content = park.read_text()
+        assert content.count("## Transcript") == 1
+        assert content.count("## Description") == 1
+        assert "Recorded on a phone" in content
+        assert "Second pass words." in content
+        assert "First pass words." not in content  # superseded, not stacked
+
     def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
         # One frontmatter shape per kind, whichever route produced the
         # transcript: the drain's meta keys are exactly
         # the captions path's.
         entry = seed_waiting(instance)
-        acquired = acquire_youtube_audio(entry, tmp_path, FakeDownload())
+        acquired = acquire_youtube_audio(entry, tmp_path / "park.md", tmp_path, FakeDownload())
         assert isinstance(acquired, Acquired)
         assert set(acquired.meta) == set(_video_meta({}))
 
@@ -1005,7 +1050,7 @@ class TestPromptBudget:
                 description="sponsors and links " * 200,
             )
 
-        acquired = acquire_youtube_audio(entry, tmp_path, download)
+        acquired = acquire_youtube_audio(entry, tmp_path / "park.md", tmp_path, download)
         assert isinstance(acquired, Acquired)
         assert acquired.prompt.endswith("Ledgers at Scale — Engineering Distilled")
         assert estimated_tokens(acquired.prompt) <= WHISPER_WINDOW_TOKENS

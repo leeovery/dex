@@ -611,6 +611,15 @@ waiting-transcribe park
 that carries an enclosure pointer **always writes its park file** — §9's
 round-trip depends on the frontmatter pointer existing, show notes or not.
 
+**A park never discards content it already fetched.** Both transcribable
+kinds write what they have at park time — a podcast's show notes, a
+video's description — and the drain **appends** the transcript to that
+file rather than replacing it: a source that goes private during a
+transcription backlog would otherwise take the fetched content with it.
+One body shape per kind, whichever route produced it — the transcript is
+always its own `## Transcript` section, so the drain can split a stored
+body on that heading and compose onto what is already there.
+
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
 `transcribe: whisper-local (active) · whisper-api available — set OPENAI_API_KEY`.

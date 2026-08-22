@@ -67,7 +67,12 @@ HEAD_MAX_TOKENS = 60
 
 _SEPARATOR = " — "
 _AUDIO_EXT_DEFAULT = "mp3"
+# The body sections both transcribable kinds compose around. The youtube
+# driver writes the same two headings on its parks (drivers/youtube.py);
+# it cannot import them from here (this module imports that one), so the
+# pairing is pinned by test.
 _TRANSCRIPT_HEADING = "## Transcript"
+_DESCRIPTION_HEADING = "## Description"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -148,12 +153,18 @@ class Acquired:
 
 
 def acquire_youtube_audio(
-    entry: LedgerEntry, cache_dir: Path, download: DownloadAudio
+    entry: LedgerEntry, enrichment_path: Path, cache_dir: Path, download: DownloadAudio
 ) -> Acquired | Classification:
     """Acquire a YouTube unit's audio via the yt-dlp seam.
 
+    The description the park already wrote is the body the transcript
+    joins — the same composition the podcast path uses — so a re-drain
+    appends to what is on disk instead of writing over it. A park that had
+    no description to write falls back to the probe's own.
+
     Args:
         entry: The waiting ledger entry.
+        enrichment_path: ``enrichment/<item>/youtube-<hash6>.md``.
         cache_dir: ``cache/audio/``.
         download: The yt-dlp seam.
 
@@ -173,8 +184,20 @@ def acquire_youtube_audio(
         "duration_min": audio.duration_min,
         "upload_date": audio.upload_date,
     }
-    prompt = _prompt(audio.title, audio.channel, audio.description)
-    return Acquired(audio=audio.path, meta=meta, prompt=prompt, prefix=audio.description)
+    description = _stored_description(enrichment_path) or audio.description
+    prompt = _prompt(audio.title, audio.channel, description)
+    return Acquired(audio=audio.path, meta=meta, prompt=prompt, prefix=description)
+
+
+def _stored_description(path: Path) -> str:
+    """The description a youtube park already wrote, or "" when there is none."""
+    if not path.exists():
+        return ""
+    _fields, body = read_enrichment(path)
+    head = _pre_transcript(body)
+    if head.startswith(_DESCRIPTION_HEADING):
+        return head[len(_DESCRIPTION_HEADING) :].strip()
+    return head
 
 
 def acquire_podcast_audio(
@@ -447,10 +470,15 @@ def keep_last_tokens(text: str, budget: float) -> str:
 
 
 def youtube_body(description: str, transcript: str) -> str:
-    """Description + transcript sections — the youtube driver's own pattern."""
+    """Description + transcript sections — the youtube driver's own pattern.
+
+    The transcript is always its own labelled section: a re-drain splits
+    the stored body on that heading, and a bare transcript would come back
+    as "description" and be duplicated under itself.
+    """
     if description:
-        return f"## Description\n\n{description}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return transcript
+        return f"{_DESCRIPTION_HEADING}\n\n{description}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
+    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
 
 
 def podcast_body(show_notes: str, transcript: str) -> str:
