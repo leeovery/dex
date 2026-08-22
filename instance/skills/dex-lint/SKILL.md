@@ -28,6 +28,17 @@ step 4.
    - **Ledger schema failure** — repair before anything else touches
      state; the message names the file, line, and likely missing migration
      (usually: run `bin/dex sync`).
+   - **Ledger entries naming items with no corpus file** / **done entries
+     whose output file is gone** — `bin/dex exclude` purges an item's
+     ledger entries with the item, so these are anomalies now, not
+     leftovers by design: either a purge that died partway, or something
+     deleted by hand. The finding says which — an item with an
+     `exclusions.tsv` record was ruled out on purpose and its entries
+     should follow it out; one without needs an owner decision on whether
+     the item comes back. Either way close it through the verbs, never by
+     editing state files. Instances purged before exclude swept the ledger
+     carry this as historical residue: clearing it is a one-off, not a
+     per-check chore.
    - **Malformed digests** — the message names what broke (no frontmatter
      fence, a missing or bogus field, an `id` disagreeing with its
      filename). Repair against `.claude/skills/dex-run/references/state-formats.md`;

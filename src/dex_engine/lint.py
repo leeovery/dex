@@ -582,19 +582,29 @@ def _referential_integrity(
     """The ledger's two pointers into the tree: item ids, and output paths.
 
     Schema validity says nothing about whether a line points at anything
-    that exists. An entry naming an id with no corpus file is residue: a
-    purge made before ``dex exclude`` swept the ledger, an item removed by
+    that exists. ``dex exclude`` removes an item's ledger entries along with
+    the item, and migration 1 drops any line it can attribute only to a dead
+    item, so a live entry naming a missing item is no longer anything's
+    normal outcome: it is a purge that died partway, an item deleted by
     hand, or work another live item still claims and ``exclude`` therefore
-    kept. Worth seeing, and worth telling apart — an item RENAMED since the
-    line was written has a live item under a new id claiming its work,
-    which reads nothing like an item nothing claims at all. A ``done``
-    entry whose output file is gone is the enrichment claiming work whose
-    product no longer exists. The two are asked independently — an item
-    purged by ``dex exclude`` answers both, and each finding is still true.
+    kept. Which one shows in ``why`` — the exclusions record is the
+    difference between a purge that happened and a disappearance nobody
+    recorded, and an item RENAMED since the line was written has a live item
+    under a new id claiming its work, which reads nothing like an item
+    nothing claims at all. A ``done`` entry whose output file is gone is the
+    enrichment claiming work whose product no longer exists. The two are
+    asked independently — an item purged by ``dex exclude`` answers both,
+    and each finding is still true.
 
-    Ghost rows are one per (item, finding): an item named by ten entries
-    for one reason is one row carrying the count, not ten rows a reader
-    cannot tell apart.
+    Ghost rows are one per (item, finding): an item named by ten entries for
+    one reason is one row carrying the count, not ten rows a reader cannot
+    tell apart.
+
+    Both stay findings rather than failures. Nothing downstream resolves an
+    entry's item back to a corpus file, so neither breaks a later stage the
+    way a schema error or a bad citation does; and the repair — was this
+    purged on purpose? should the ledger line go, or the item come back? —
+    is judgment, which is the report's business, not the exit code's.
     """
     excluded = _excluded_items(instance)
     dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
