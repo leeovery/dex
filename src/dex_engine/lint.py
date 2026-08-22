@@ -699,9 +699,11 @@ def _incomplete_threads(instance: Instance) -> list[dict[str, str]]:
     """Enrichment files whose stored thread stops short of the root.
 
     The x driver stamps ``thread_cap_hit`` / ``chain_incomplete`` into
-    frontmatter when a walk-up hits the 20-hop cap or a parent it cannot
-    fetch. Unread, a half-thread reads exactly like a whole one, and the
-    digest cites it as though the root were there.
+    frontmatter when a walk-up hits the driver's hop bound (a sanity stop
+    against a cycle, not an editorial one) or a parent it cannot fetch.
+    Unread, a half-thread reads exactly like a whole one, and the digest
+    cites it as though the root were there. The bound is stated in one
+    place — ``drivers.x.MAX_HOPS`` — and restated here in no number.
 
     Only the frontmatter is read: enrichment bodies are whole transcripts.
     """

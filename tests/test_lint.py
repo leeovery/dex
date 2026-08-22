@@ -2,9 +2,11 @@
 
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 
+from dex_engine.drivers.x import MAX_HOPS
 from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
@@ -667,10 +669,29 @@ class TestCapFires:
         assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
 
 
-def write_enrichment(instance: Instance, name: str, frontmatter: str, body: str = "body") -> None:
-    path = instance.enrichment_dir / ITEM / name
+def write_enrichment(
+    instance: Instance, name: str, frontmatter: str, body: str = "body", item: str = ITEM
+) -> None:
+    path = instance.enrichment_dir / item / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\nurl: https://x.com/i/status/1\n{frontmatter}---\n\n{body}\n")
+
+
+SKILL = Path(__file__).resolve().parents[1] / "instance" / "skills" / "dex-lint" / "SKILL.md"
+
+
+class TestThreadCapText:
+    """The shipped guidance names the driver's bound, or it misdiagnoses.
+
+    At 100 hops a cap hit means a cycle or a self-referencing parent, not a
+    truncated thread — a session reading a stale number writes a digest note
+    about a root that is not missing.
+    """
+
+    def test_the_skill_names_the_drivers_walk_up_bound(self):
+        text = SKILL.read_text(encoding="utf-8")
+        assert f"{MAX_HOPS}-hop" in text
+        assert "20-hop" not in text
 
 
 class TestThreadCompleteness:
