@@ -36,8 +36,10 @@ page or video title, once known). The body is the owner's note **verbatim
 and stays that way** — your interpretive context (what a linked video is,
 how a thread relates) belongs in the digest, never the item body; thread
 context lives in the enrichment via walk-up. After creation, exactly two
-frontmatter fields ever change (`status`, `enrichment:`), both derived
-from disk, both written by the engine.
+frontmatter fields ever change (`status`, `enrichment:`), both derived by
+the engine: the listing from the enrichment directory, the status from the
+ledger — `enriched` only once every unit the item owns has landed (or is
+confirmed gone or deliberately skipped), `raw` while any is still owed.
 
 Then delete the capture file — the capture is preserved in git history and
 its content lives on in the corpus.
@@ -120,7 +122,10 @@ otherwise 2–5 kebab-case candidates. Then
 
 A parked item (waiting/blocked/manual) still exists — provenance and note
 were captured at ingest — but gets no digest or wiki work until its
-sources land. Don't force it; the report tracks it.
+sources land. Don't force it; the run report's **incomplete** section names
+each such item and what it is still owed ("3 of 4 units landed — 1 waiting
+on transcription"), and the item stays `status: raw` until the last unit
+lands.
 
 ## 7. Place (judgment)
 

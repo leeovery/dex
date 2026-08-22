@@ -139,6 +139,12 @@ and image-only captures — no URLs, no work units): they surface as
 cognitive work ("awaiting description + digest") so a capture with nothing
 to fetch is never invisible to the session.
 
+**An incomplete item says so on the report.** Every item the run touched
+that still owes work gets a line stating the shape of it — "3 of 4 units
+landed — 1 waiting on transcription" — so completeness is read, never
+inferred from a list of units. Items the run did not touch are the standing
+view's job (`enrich status`), not the run report's.
+
 ## 2. Interfaces
 
 `typing.Protocol` throughout (structural interfaces; engine floor is 3.11).
@@ -282,10 +288,16 @@ vocabulary only and never become work units:
 **Need** — `transcribe, extract, ocr`. Needs are mechanical and
 resource-keyed only. Cognitive obligations on *items* (re-judge under new
 harvest rules, refresh a stale digest) are never queued — they are **derived
-state**, computed on demand from files already on disk (`passes.jsonl` rules
-version vs the current constant; digest date vs the ledger's last `done` for
-the item). Mechanical obligations are queued because they're work to be
-done; staleness is derived because it's a fact that shows.
+state**, computed on demand from state already committed (`passes.jsonl`
+rules version vs the current constant; the item's digest pass date in
+`passes.jsonl` vs the ledger's last `done` for the item). Mechanical
+obligations are queued because they're work to be done; staleness is
+derived because it's a fact that shows. **Both comparands are dates in
+committed state, never file mtimes**: git stamps every file at checkout, so
+on a second machine the whole tree shares one mtime and staleness becomes
+undetectable. Day granularity is the intent — enriching and digesting in
+one session is not stale. The digest file's own `date:` is the item's
+*share* date, so it can never serve here.
 
 **`via`** (provenance) stays a documented string, not an enum —
 `harvest, thread, media, sniff, extract-asset, migration-<n>` — because
@@ -1167,10 +1179,16 @@ Skill changes shipping with this:
   interpretive context (what a linked video is, how a thread relates)
   belongs in the digest, not the item body; thread context itself lives in
   the enrichment via walk-up. After creation, exactly two frontmatter
-  fields ever change (`status`, `enrichment:` listing), both derived from
-  disk, both written by corpus.py. The derivation rule: `status:
-  enriched` iff `enrichment/<id>/` holds markdown files, and the listing
-  is those filenames, sorted. Every run reconciles **every** item against
+  fields ever change (`status`, `enrichment:` listing), both derived, both
+  written by corpus.py. The derivation rule: the listing is the markdown
+  filenames in `enrichment/<id>/`, sorted; `status: enriched` iff the item
+  holds enrichment **and no unit it owns is still outstanding** — queued,
+  waiting, blocked, error, or manual. An item is one unit of knowledge (the
+  post, the thread parents above it, the links harvest promoted, the media,
+  the video awaiting its transcript) and nothing about it advances to
+  digest or wiki until every part has landed, so one pending transcript
+  holds the whole item at `raw`; a `dead` or `skipped` unit owes nothing and
+  holds nothing hostage. Every run reconciles **every** item against
   disk — not just the units it drained — writing only on change, so
   enrichment written outside the drain (media descriptions, cognitive
   heals) converges at the next run; `enrich mark` and `enrich pass`

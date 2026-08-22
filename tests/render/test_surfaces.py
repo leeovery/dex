@@ -108,6 +108,80 @@ class TestEnrichReport:
         with pytest.raises(PayloadError, match="single-line"):
             render("enrich-report", {"counts": {}, "items": items, "parked": []})
 
+    def test_incomplete_items_state_the_shape_of_what_is_missing(self):
+        payload = {
+            **ENRICH_PAYLOAD,
+            "incomplete": [
+                {
+                    "item": "2026-08-19-example-55ad7b",
+                    "landed": 3,
+                    "total": 4,
+                    "outstanding": [{"status": "waiting", "needs": "transcribe", "count": 1}],
+                }
+            ],
+        }
+        out = render("enrich-report", payload)
+        assert "incomplete — 1 item still raw until every unit lands" in out
+        assert "3 of 4 units landed — 1 waiting on transcription" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_several_outstanding_shapes_read_as_one_line(self):
+        payload = {
+            "counts": {},
+            "items": [],
+            "parked": [],
+            "incomplete": [
+                {
+                    "item": "2026-08-19-example-55ad7b",
+                    "landed": 0,
+                    "total": 3,
+                    "outstanding": [
+                        {"status": "blocked", "count": 2},
+                        {"status": "manual", "count": 1},
+                    ],
+                }
+            ],
+        }
+        out = render("enrich-report", payload)
+        assert "0 of 3 units landed — 2 blocked, 1 needing a decision" in out
+
+    def test_absent_incomplete_says_nothing(self):
+        assert "incomplete" not in render("enrich-report", {**ENRICH_PAYLOAD, "incomplete": []})
+
+    def test_a_landed_status_in_outstanding_is_loud(self):
+        payload = {
+            "counts": {},
+            "items": [],
+            "parked": [],
+            "incomplete": [
+                {
+                    "item": "i",
+                    "landed": 0,
+                    "total": 1,
+                    "outstanding": [{"status": "done", "count": 1}],
+                }
+            ],
+        }
+        with pytest.raises(PayloadError, match="outstanding status"):
+            render("enrich-report", payload)
+
+    def test_landed_beyond_total_is_loud(self):
+        payload = {
+            "counts": {},
+            "items": [],
+            "parked": [],
+            "incomplete": [
+                {
+                    "item": "i",
+                    "landed": 5,
+                    "total": 1,
+                    "outstanding": [{"status": "queued", "count": 1}],
+                }
+            ],
+        }
+        with pytest.raises(PayloadError, match="exceeds total"):
+            render("enrich-report", payload)
+
     def test_multiline_note_is_a_payload_error(self):
         notes = ["a note\nwith a newline"]
         with pytest.raises(PayloadError, match=r"notes\[0\]"):

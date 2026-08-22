@@ -113,6 +113,10 @@ MEDIA_MAX_BYTES = 10 * 1024 * 1024
 HARVEST_RULES_VERSION = 1
 
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
+# Work still owed on an item: queued and every parked status. Its complement
+# — done, dead, skipped — is a unit that has landed, is confirmed gone, or
+# was deliberately closed out; none of the three is owed anything further.
+_OUTSTANDING = _PARKED | {Status.QUEUED}
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
 # Whitespace and control characters anywhere in a URL make the HTTP client
@@ -291,6 +295,10 @@ class _Drain:
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
+    # Items this run wrote an outcome for — the report's incompleteness
+    # section covers exactly these (an item nothing happened to this run has
+    # nothing new to say; `enrich status` holds the standing view).
+    touched: set[str] = field(default_factory=set)
     # Rerun-cohort pacing bookkeeping (full drains only). The counted set
     # exists because a redetected unit re-enters the live queue and pops
     # twice — one logical unit must spend one slot of the cohort, not two.
@@ -1156,6 +1164,7 @@ class _Drain:
         self.entries[stamped.hash] = stamped
         if count:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
+            self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
             self.parked.append(
                 {
@@ -1215,7 +1224,9 @@ class _Drain:
         write-only-on-change rule keeps untouched items untouched.
         """
         for item_id, path in self.item_paths.items():
-            detail = _refresh_item_frontmatter(self.ctx.instance, item_id, path)
+            detail = _refresh_item_frontmatter(
+                self.ctx.instance, item_id, path, entries=self.entries
+            )
             if detail is not None:
                 self.notes.append(
                     f"item {item_id}: an enrichment file cannot be listed in "
@@ -1258,12 +1269,48 @@ class _Drain:
             "items": items,
             "parked": self.parked,
         }
+        incomplete = self._incomplete_items()
+        if incomplete:
+            payload["incomplete"] = incomplete
         cognitive = self._cognitive_jobs()
         if cognitive:
             payload["cognitive"] = cognitive
         if self.notes:
             payload["notes"] = list(self.notes)
         return payload
+
+    def _incomplete_items(self) -> list[dict[str, object]]:
+        """Why each touched item is still raw — the shape of what is missing.
+
+        An item is one unit of knowledge, and none of it advances to digest
+        or wiki until every part has landed. The report states that shape
+        per item so a session never has to infer completeness by reading a
+        list of units.
+        """
+        rows: list[dict[str, object]] = []
+        for item_id in sorted(self.touched):
+            units = [entry for entry in self.entries.values() if entry.item == item_id]
+            outstanding = [entry for entry in units if entry.status in _OUTSTANDING]
+            if not outstanding:
+                continue
+            groups: dict[tuple[str, str | None], int] = {}
+            for entry in outstanding:
+                key = (entry.status.value, entry.needs.value if entry.needs else None)
+                groups[key] = groups.get(key, 0) + 1
+            rows.append(
+                {
+                    "item": item_id,
+                    "landed": len(units) - len(outstanding),
+                    "total": len(units),
+                    "outstanding": [
+                        {"status": status, "count": count}
+                        if needs is None
+                        else {"status": status, "needs": needs, "count": count}
+                        for (status, needs), count in groups.items()
+                    ],
+                }
+            )
+        return rows
 
     def _cognitive_jobs(self) -> list[dict[str, str]]:
         """Waiting jobs that resolve to the cognitive floor.
@@ -1316,9 +1363,18 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
 
 
 def _refresh_item_frontmatter(
-    instance: Instance, item_id: str, path: Path | None = None
+    instance: Instance,
+    item_id: str,
+    path: Path | None = None,
+    *,
+    entries: dict[str, LedgerEntry] | None = None,
 ) -> str | None:
-    """Derive one item's ``status``/``enrichment:`` from disk; write only on change.
+    """Derive one item's ``status``/``enrichment:``; write only on change.
+
+    The listing is the enrichment directory's markdown files; the status is
+    the ledger's answer to "has the whole item landed" — ``enriched`` only
+    when no unit the item owns is still outstanding, ``raw`` while one is.
+    Callers holding the ledger pass ``entries``; the rest read it here.
 
     Silent when the corpus file is gone or unreadable: a heal may outlive
     its item (excluded after capture), an unreadable item is seeding's to
@@ -1339,15 +1395,51 @@ def _refresh_item_frontmatter(
         # had landed, and the retry duplicated the record.
         return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
+    units = _item_units(instance, item_id, entries)
     try:
         updated = dataclasses.replace(
-            item, status="enriched" if files else "raw", enrichment=files
+            item, status=_derived_status(item, files, units), enrichment=files
         )
         if updated != item:
             corpus.write_item(path, updated)
     except (OSError, corpus.CorpusSchemaError) as e:
         return str(e)
     return None
+
+
+def _item_units(
+    instance: Instance, item_id: str, entries: dict[str, LedgerEntry] | None
+) -> list[LedgerEntry] | None:
+    """The item's ledger units — from the caller's map, or read here.
+
+    None means the ledger could not be read at all: the quiet callers write
+    first and refresh after, so a nonconforming line must leave the status
+    alone rather than raise past a write that already landed.
+    """
+    if entries is None:
+        try:
+            entries = ledger.load(instance.ledger_path)
+        except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+            return None
+    return [entry for entry in entries.values() if entry.item == item_id]
+
+
+def _derived_status(
+    item: corpus.CorpusItem, files: list[str], units: list[LedgerEntry] | None
+) -> str:
+    """``enriched`` iff the item holds enrichment and owes no further work.
+
+    An item is one unit of knowledge — the post, the thread parents above
+    it, the links harvest promoted, the media, the video awaiting its
+    transcript — so one outstanding unit keeps the whole item ``raw`` and
+    out of digest/wiki. A dead link or a deliberately skipped unit owes
+    nothing and holds nothing hostage.
+    """
+    if not files:
+        return "raw"
+    if units is None:
+        return item.status
+    return "raw" if any(unit.status in _OUTSTANDING for unit in units) else "enriched"
 
 
 # ---------------------------------------------------------------------------
@@ -1658,30 +1750,82 @@ def digest_orphans(instance: Instance) -> list[str]:
     Shared by ``enrich status`` and lint's health check: both list the same
     interrupted-session orphans, computed in one place.
 
+    Staleness is read from committed dates, never file mtimes: git stamps
+    every file at checkout, so on a second machine the whole tree carries
+    one mtime and staleness would be undetectable. The two dates are the
+    item's newest ``done`` ledger line and its digest pass record — both
+    travel in git, and day granularity is the intent (enriching and
+    digesting in one session is not stale).
+
     Args:
         instance: The instance.
 
     Returns:
-        Item ids whose enrichment outputs are newer than their digest (or
-        that have outputs and no digest at all).
+        Item ids whose enrichment landed after their digest pass (or that
+        have enrichment and no digest at all).
     """
     orphans = []
     if not instance.enrichment_dir.is_dir():
         return orphans
+    enriched_on = _last_enriched(instance)
+    digested_on = _last_digested(instance)
     for item_dir in sorted(instance.enrichment_dir.iterdir()):
         if not item_dir.is_dir():
             continue
-        outputs = list(item_dir.glob("*.md"))
-        if not outputs:
+        if not any(item_dir.glob("*.md")):
             continue
-        digest = instance.digests_dir / f"{item_dir.name}.md"
-        if not digest.exists():
+        if not (instance.digests_dir / f"{item_dir.name}.md").exists():
             orphans.append(item_dir.name)
             continue
-        newest = max(path.stat().st_mtime for path in outputs)
-        if newest > digest.stat().st_mtime:
+        landed = enriched_on.get(item_dir.name)
+        digested = digested_on.get(item_dir.name)
+        # No dates on either side is no claim: enrichment written outside
+        # the ledger (a media description) and digests older than the pass
+        # record are facts about history, not staleness.
+        if landed is not None and digested is not None and digested < landed:
             orphans.append(item_dir.name)
     return orphans
+
+
+def _last_enriched(instance: Instance) -> dict[str, datetime.date]:
+    """Each item's newest ``done`` ledger date."""
+    try:
+        entries = ledger.load(instance.ledger_path)
+    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        # A nonconforming ledger is lint's own loud finding; the staleness
+        # backstop simply has nothing to compare and says nothing.
+        return {}
+    newest: dict[str, datetime.date] = {}
+    for entry in entries.values():
+        if entry.status is Status.DONE:
+            newest[entry.item] = max(newest.get(entry.item, entry.date), entry.date)
+    return newest
+
+
+def _last_digested(instance: Instance) -> dict[str, datetime.date]:
+    """Each item's newest recorded digest pass date."""
+    path = instance.passes_path
+    if not path.exists():
+        return {}
+    newest: dict[str, datetime.date] = {}
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # lint parses this file loudly; the backstop skips the line
+        if not isinstance(record, dict) or record.get("stage") != "digest":
+            continue
+        item, raw_date = record.get("item"), record.get("date")
+        if not isinstance(item, str) or not isinstance(raw_date, str):
+            continue
+        try:
+            date = datetime.date.fromisoformat(raw_date)
+        except ValueError:
+            continue
+        newest[item] = max(newest.get(item, date), date)
+    return newest
 
 
 def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
@@ -1775,7 +1919,9 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # drop the item keeps two files for one unit and serves the stale
         # pre-correction view to the digest and query layers forever.
         _drop_superseded_outputs(ctx.instance, healed, effective_path)
-    _refresh_item_frontmatter(ctx.instance, prior.item)
+    # The heal's own line included: the drain's map is the ledger as of this
+    # write, so a heal that completes an item flips its status in the same call.
+    _refresh_item_frontmatter(ctx.instance, prior.item, entries=drain.entries)
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 
 

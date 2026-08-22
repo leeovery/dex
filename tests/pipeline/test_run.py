@@ -375,6 +375,72 @@ class TestFrontmatterRefresh:
         assert confirmation.endswith("done")  # the heal landed, quietly
         assert entry_for(ctx).status is Status.DONE
 
+    VIDEO_URL = "https://example.test/video"
+
+    def _mixed_item(self, instance, second: Result):
+        """An item whose blog unit lands and whose video unit gets ``second``."""
+        path = write_item(instance, urls=[URL, self.VIDEO_URL])
+
+        def fetch(unit):
+            if unit.url == self.VIDEO_URL:
+                return second
+            return Result(status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30)
+
+        return path, make_ctx(instance, FakeDriver(fetch_fn=fetch))
+
+    def _waiting_video(self) -> Result:
+        return Result(
+            status=Status.WAITING,
+            meta={"title": "v"},
+            needs=Need.TRANSCRIBE,
+            reason="no captions available",
+            body="## Description\n\nwhat the video covers",
+        )
+
+    def test_an_outstanding_unit_keeps_the_whole_item_raw(self, instance):
+        path, ctx = self._mixed_item(instance, self._waiting_video())
+        run_mod.run(ctx)
+        item = corpus.read_item(path)
+        assert item.status == "raw"  # the transcript is still owed
+        assert len(item.enrichment) == 2  # both units wrote what they had
+
+    def test_the_item_flips_to_enriched_when_the_last_unit_lands(self, instance):
+        path, ctx = self._mixed_item(instance, self._waiting_video())
+        run_mod.run(ctx)
+        assert corpus.read_item(path).status == "raw"
+        video_out = f"enrichment/{ITEM}/web-{work_hash(self.VIDEO_URL)[:6]}.md"
+        run_mod.mark(ctx, self.VIDEO_URL, Status.DONE, path=video_out)
+        assert corpus.read_item(path).status == "enriched"
+
+    def test_a_dead_unit_never_holds_the_item_hostage(self, instance):
+        dead = Result(status=Status.DEAD, meta={}, reason="404")
+        path, ctx = self._mixed_item(instance, dead)
+        run_mod.run(ctx)
+        assert corpus.read_item(path).status == "enriched"  # confirmed gone owes nothing
+
+    def test_skipped_and_manual_units_differ(self, instance):
+        skipped = Result(status=Status.SKIPPED, meta={}, reason="deliberately not fetched")
+        path, ctx = self._mixed_item(instance, skipped)
+        run_mod.run(ctx)
+        assert corpus.read_item(path).status == "enriched"
+        run_mod.mark(ctx, self.VIDEO_URL, Status.MANUAL, reason="reopened by hand")
+        assert corpus.read_item(path).status == "raw"
+
+    def test_mark_and_pass_work_on_an_item_with_outstanding_units(self, instance):
+        path, ctx = self._mixed_item(instance, self._waiting_video())
+        run_mod.run(ctx)
+        assert run_mod.record_pass(ctx, ITEM, "harvest").endswith(ITEM)
+        confirmation = run_mod.mark(ctx, URL, Status.SKIPPED, reason="superseded by hand")
+        assert confirmation.endswith("skipped")
+        assert corpus.read_item(path).status == "raw"  # the video is still waiting
+
+    def test_an_unreadable_ledger_leaves_the_derived_status_alone(self, instance):
+        path, ctx = self._mixed_item(instance, self._waiting_video())
+        run_mod.run(ctx)
+        instance.ledger_path.write_text("{not json at all\n", encoding="utf-8")
+        assert run_mod.record_pass(ctx, ITEM, "digest").endswith(ITEM)  # the write stands
+        assert corpus.read_item(path).status == "raw"
+
     def test_mark_for_an_excluded_items_unit_still_heals(self, instance):
         path = write_item(instance)
         ctx = make_ctx(instance, FakeDriver())
@@ -383,6 +449,79 @@ class TestFrontmatterRefresh:
         confirmation = run_mod.mark(ctx, URL, Status.SKIPPED, reason="item excluded")
         assert confirmation.endswith("skipped")
         assert entry_for(ctx).status is Status.SKIPPED
+
+
+class TestIncompleteItemsOnTheReport:
+    """The run says WHY an item is still raw — never left to inference."""
+
+    VIDEO_URL = "https://example.test/video"
+
+    def _ctx(self, instance, second: Result):
+        write_item(instance, urls=[URL, self.VIDEO_URL])
+
+        def fetch(unit):
+            if unit.url == self.VIDEO_URL:
+                return second
+            return Result(status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30)
+
+        return make_ctx(instance, FakeDriver(fetch_fn=fetch))
+
+    def test_the_report_names_the_shape_of_what_is_missing(self, instance):
+        waiting = Result(
+            status=Status.WAITING,
+            meta={"title": "v"},
+            needs=Need.TRANSCRIBE,
+            reason="no captions available",
+        )
+        report = run_mod.run(self._ctx(instance, waiting))
+        flat = " ".join(report.split())
+        assert "incomplete — 1 item still raw until every unit lands" in flat
+        assert f"{ITEM} 1 of 2 units landed — 1 waiting on transcription" in flat
+
+    def test_a_complete_item_gets_no_line(self, instance):
+        dead = Result(status=Status.DEAD, meta={}, reason="404")
+        report = run_mod.run(self._ctx(instance, dead))
+        assert "incomplete" not in report
+
+    def test_the_payload_carries_the_counts(self, instance, monkeypatch):
+        waiting = Result(
+            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
+        )
+        captured: dict[str, dict] = {}
+        rendered = run_mod.surfaces.render
+
+        def spy(surface, payload):
+            captured[surface] = dict(payload)
+            return rendered(surface, payload)
+
+        monkeypatch.setattr(run_mod.surfaces, "render", spy)
+        run_mod.run(self._ctx(instance, waiting))
+        assert captured["enrich-report"]["incomplete"] == [
+            {
+                "item": ITEM,
+                "landed": 1,
+                "total": 2,
+                "outstanding": [{"status": "waiting", "needs": "transcribe", "count": 1}],
+            }
+        ]
+
+    def test_an_untouched_item_is_not_listed(self, instance):
+        # The standing view is `enrich status`; the run reports on what it
+        # touched, so a long-parked item does not repeat every run.
+        waiting = Result(
+            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
+        )
+        ctx = self._ctx(instance, waiting)
+        run_mod.run(ctx)
+        assert "incomplete" not in run_mod.run(ctx)  # nothing drainable the second time
+
+    def test_the_other_sections_still_render(self, instance):
+        waiting = Result(
+            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
+        )
+        report = run_mod.run(self._ctx(instance, waiting))
+        assert "cognitive work — 1 item with new or changed content:" in report
+        assert "parked — 1 entry survives this session" in report
 
 
 class TestChildren:
@@ -1550,6 +1689,68 @@ class TestStatusReport:
         report = run_mod.status_report(ctx)
         assert ITEM not in report
 
+    def _enriched_and_digested(self, instance, *, enriched, digested) -> None:
+        """One item with a done ledger line and a recorded digest pass."""
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / "web-abc123.md").write_text("enriched", encoding="utf-8")
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").write_text("digested", encoding="utf-8")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=enriched,
+                path=f"enrichment/{ITEM}/web-abc123.md",
+            ),
+        )
+        instance.passes_path.write_text(
+            json.dumps({"stage": "digest", "item": ITEM, "date": digested.isoformat()}) + "\n",
+            encoding="utf-8",
+        )
+
+    def test_a_clone_still_sees_stale_enrichment(self, instance):
+        # Every file carries the checkout's mtime after a clone; the dates
+        # in the ledger and the pass record are what survive git.
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 18)
+        )
+        stamp = (instance.digests_dir / f"{ITEM}.md").stat().st_mtime
+        for path in instance.root.rglob("*"):
+            if path.is_file():
+                os.utime(path, (stamp, stamp))
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_same_day_enrich_then_digest_is_not_stale(self, instance):
+        day = datetime.date(2026, 8, 20)
+        self._enriched_and_digested(instance, enriched=day, digested=day)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_digest_pass_after_the_enrichment_is_not_stale(self, instance):
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 18), digested=datetime.date(2026, 8, 20)
+        )
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_enrichment_with_no_digest_is_still_an_orphan(self, instance):
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 20)
+        )
+        (instance.digests_dir / f"{ITEM}.md").unlink()
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_an_unreadable_ledger_makes_no_staleness_claim(self, instance):
+        self._enriched_and_digested(
+            instance, enriched=datetime.date(2026, 8, 20), digested=datetime.date(2026, 8, 18)
+        )
+        instance.ledger_path.write_text("{not json\n", encoding="utf-8")
+        assert run_mod.digest_orphans(instance) == []
+
 
 class TestIssueFiling:
     """The filer wiring: error outcomes reach it; the report says so."""
@@ -1934,7 +2135,7 @@ class TestRedetection:
         assert parked.status is Status.MANUAL
         assert web_out.exists()  # the enrichment the item already had stands
         assert corpus.read_item(item_path).enrichment == [web_out.name]
-        assert corpus.read_item(item_path).status == "enriched"
+        assert corpus.read_item(item_path).status == "raw"  # the parked unit is still owed
 
         # The success that replaces it is what drops it.
         mode["extract"] = True
@@ -1944,6 +2145,7 @@ class TestRedetection:
         assert done.status is Status.DONE
         assert not web_out.exists()
         assert corpus.read_item(item_path).enrichment == [f"file-{done.hash[:6]}.md"]
+        assert corpus.read_item(item_path).status == "enriched"
 
     # These two URLs share a sha1[:6] (6f0d01) and detect as different
     # kinds, so under one item they want output names that differ only by
