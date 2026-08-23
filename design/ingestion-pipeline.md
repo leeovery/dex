@@ -200,7 +200,7 @@ keyed on) and `fetched:` (the run date), followed by the driver's `meta`
 verbatim, then the body. Empty and null meta values are dropped rather
 than written blank. Values are quoted defensively against **YAML 1.1
 retyping**, because a plain scalar that merely *looks* like something else
-comes back as that something else: `no`/`off`/`y` and friends read as
+comes back as that something else: `no`/`off`/`on` and friends read as
 booleans, a leading `-`, `?` or `,` or any of the YAML indicator
 characters changes the parse, a tab anywhere invalidates the block, and a
 date-shaped or number-shaped title reads back as a date or a float — so a
@@ -345,10 +345,15 @@ Typing discipline (binding for the implementation):
   deliberately **partial** — a Kind or Status that is a valid member but
   not applicable at that site (transcript bodies and audio acquisition
   cover youtube and podcast only; the acquisition-failure and classifier
-  arms take the three statuses their classifier can return) — closes with
-  a runtime `case _: raise` naming the mismatch instead. Four sites do
-  this, and each one is a loud engine bug when it fires, never a quiet
-  default.
+  arms take the three statuses their classifier can return) — states the
+  mismatch at runtime instead of defaulting quietly. Three do it by
+  raising: the transcript-body dispatch, the acquisition-failure arm and
+  the classifier arm, each a loud engine bug when it fires. The
+  audio-acquisition arm is the one that does not — it returns
+  `Classification(status: manual, …)` naming the same mismatch, so the unit
+  parks with the reason stated and the rest of the drain runs. The fourth
+  `case _: raise` in the tree belongs to none of this: it is `enrich.py`'s
+  argparse guard, unreachable while argparse enforces the command set.
 
 Capability resolution: **per format / per need, first available *mechanical*
 provider wins**, order set by instance config. The **cognitive provider** is
@@ -2049,8 +2054,6 @@ and the outcome union settles several of these on its way past.
 - **A per-item fetched-count cache.** `_cap_fired` recounts the item's
   entries per admission, which is quadratic in the item's ledger.
 - **One long-lived append handle for the ledger.**
-- **A repo-wide `ruff format` pass.** 43 files drift under ruff 0.16.3 —
-  one mechanical reformat commit, on its own.
 - **A cheap guard in `run._admit_children`.** Unreachable until a driver
   emits children.
 
