@@ -410,7 +410,11 @@ class _Drain:
         under its new name, exactly as migration 2's re-key pass holds. So
         is the output, once found — a renamed item's enrichment directory
         moves with it, so the recorded path names a directory that is gone
-        while the file sits under the new id.
+        while the file sits under the new id. So, for the same reason, is
+        the line's provenance: ``item`` is the one field a re-attribution
+        may rewrite, and ``date``/``engine`` describe work this sweep is
+        not doing (see ``carry_provenance`` below, and
+        :func:`ledger.stamp`).
 
         One status does move. A ``done`` line whose output is nowhere on
         disk is not done for the item that owes it: ``exclude`` keeps the
@@ -445,7 +449,25 @@ class _Drain:
                     status=Status.QUEUED if lost else entry.status,
                     path=None if lost else (product or entry.path),
                     title=None if lost else entry.title,
-                )
+                ),
+                # A pure re-attribution corrects WHO owns the work; it does
+                # no work, so it carries the line's ``date`` and ``engine``
+                # rather than claiming this run's. ``engine`` is the load-
+                # bearing one: :func:`is_drainable` retries an ``error``
+                # once per newer engine, and this sweep runs before the
+                # drain builds its queue in the same run — stamping the
+                # running engine here spent that retry without running it,
+                # and a renamed item's error line then waited for the NEXT
+                # release. Sharpest after a sync: migration 1 stamps old
+                # lines ``0.0.1``, so the run meant to rescue them was the
+                # run that silently burned their one shot. ``date`` is the
+                # day the enrichment landed, which the digest-staleness
+                # backstop reads.
+                #
+                # A requeue is the exception, and stamps: "this output is
+                # gone, fetch it again" is a verdict THIS engine reached
+                # today, not one carried from the line it supersedes.
+                carry_provenance=not lost,
             )
             moved += 1
             if lost:
@@ -1314,12 +1336,15 @@ class _Drain:
 
     # -- recording -------------------------------------------------------
 
-    def record(self, entry: LedgerEntry, *, count: bool = False) -> LedgerEntry:
+    def record(
+        self, entry: LedgerEntry, *, count: bool = False, carry_provenance: bool = False
+    ) -> LedgerEntry:
         stamped = ledger.stamp(
             entry,
             today=self.ctx.today,
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
+            carry_provenance=carry_provenance,
         )
         ledger.append(self.ctx.instance.ledger_path, stamped)
         self.entries[stamped.hash] = stamped

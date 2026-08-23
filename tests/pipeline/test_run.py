@@ -2233,6 +2233,48 @@ class TestOwnershipIsTheCorpusAnswer:
         assert transport.calls == []
         assert "queued to re-fetch" not in report
 
+    def test_a_re_attribution_leaves_the_error_lines_engine_alone(self, instance):
+        # `is_drainable` retries an `error` once per newer engine, and this
+        # sweep runs before the drain builds its queue — so stamping the
+        # running engine onto the line spent the retry without running one,
+        # and the unit waited for the NEXT release to try again.
+        self._renamed(instance, status=Status.ERROR, error="ValueError: boom")
+        driver = FakeDriver()
+        ctx = make_ctx(instance, driver, engine_version="0.3.0")
+        run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [URL]  # the rescue run rescued it
+        entry = entry_for(ctx)
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.DONE
+
+    def test_a_re_attribution_carries_the_date_the_work_landed(self, instance):
+        # `date` answers "when did this land" — `_last_enriched` and the
+        # digest-staleness backstop read it — so a line that did no work
+        # must not restate it as today. `at` is the write timestamp, and a
+        # re-attribution IS a write, so that one is this run's.
+        self._waiting(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.date == datetime.date(2026, 8, 1)
+        assert entry.engine == "0.2.0"
+        assert entry.at == NOW
+
+    def test_a_requeue_is_this_engines_verdict_and_stamps(self, instance):
+        # The exception to the rule: "the output is gone, fetch it again" is
+        # a call THIS run made, so the line it writes says so.
+        self._shared_then_excluded(instance)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].engine == "0.2.0"  # the run that excluded alpha
+        run_mod.run(make_ctx(instance, FakeDriver(), engine_version="0.4.0"))
+        requeue = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line)["status"] == "queued"
+        ][-1]
+        assert requeue["engine"] == "0.4.0"
+        assert requeue["date"] == TODAY.isoformat()
+
     def test_a_line_no_live_item_claims_is_left_where_it_is(self, instance):
         # Ownership resolves to a live corpus item or it does not resolve;
         # nobody gets clever rescuing a dead item's work.
