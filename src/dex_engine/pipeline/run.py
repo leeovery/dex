@@ -1600,12 +1600,17 @@ class _Drain:
         Listed on the report for the session — never drained by the run.
         A waiting transcribe job is NOT one of these: transcription has no
         cognitive floor, it waits for a mechanical provider.
+
+        The item named is the corpus's owner (:meth:`owner_of`), like every
+        other surface: the row is the manual-work pointer, and a renamed
+        item's stored string sends the session into ``enrichment/<dead-id>/``
+        while ``enrich status`` names the live one.
         """
         capabilities = self.ctx.capabilities
         if capabilities is None:
             return []
         return [
-            {"item": entry.item, "url": entry.url, "need": entry.needs.value}
+            {"item": self.owner_of(entry), "url": entry.url, "need": entry.needs.value}
             for entry in self.entries.values()
             if entry.status is Status.WAITING
             and entry.needs is not None

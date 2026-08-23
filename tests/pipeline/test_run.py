@@ -2308,6 +2308,28 @@ class TestOwnershipIsTheCorpusAnswer:
             instance, status=Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions"
         )
 
+    def test_a_cognitive_units_pointer_names_the_live_id_on_every_surface(self, instance):
+        # The cognitive row is the manual-work pointer. Run report and lint
+        # spelled the stored string while `enrich status` resolved the
+        # owner, so one unit carried two ids across the surfaces — and the
+        # pointer sent the session into enrichment/<dead-id>/, a directory
+        # the rename moved away.
+        self._renamed(instance, status=Status.WAITING, needs=Need.OCR, reason="scanned pages")
+        ctx = make_ctx(
+            instance, FakeDriver(), capabilities=Capabilities(transcribers=(), extractors=())
+        )
+        run_report = run_mod.run(ctx)
+        status = run_mod.status_report(ctx, item_id=NEW_ITEM)
+        (instance.state_dir / "taxonomy.json").write_text('{"topics": {}, "entities": {}}')
+        lint_report = run_lint(
+            instance, is_cognitive=lambda _need, _fmt=None: True, today=lambda: TODAY, write=False
+        ).report
+        assert f"**{NEW_ITEM}** · `ocr`" in run_report
+        assert f"**{NEW_ITEM}** · `ocr`" in lint_report
+        assert URL in status  # enrich status: the same unit, under the same id
+        for report in (run_report, lint_report):
+            assert f"{OLD_ITEM}** · `ocr`" not in report
+
     def test_a_renamed_item_owing_work_is_never_written_enriched(self, instance):
         # The whole point of deriving status from the ledger: an item
         # holding a waiting unit is raw, whatever id the line spells.

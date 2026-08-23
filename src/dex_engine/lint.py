@@ -564,6 +564,11 @@ def _state_checks(
         entries = None
     if entries is not None:
         payload["ledger_entries"] = len(entries)
+        # One corpus pass answers ownership for everything built from these
+        # entries: the cognitive rows here — manual-work pointers, owed to
+        # the live item like every other surface (:func:`_owner`), never to
+        # a renamed-away id — and the integrity scan below.
+        owners = corpus_owners(instance.root, DRIVERS)
         waiting: dict[str, int] = {}
         cognitive: list[dict[str, str]] = []
         for entry in entries.values():
@@ -571,10 +576,16 @@ def _state_checks(
                 continue
             waiting[entry.needs.value] = waiting.get(entry.needs.value, 0) + 1
             if is_cognitive(entry.needs, entry.format):
-                cognitive.append({"item": entry.item, "url": entry.url, "need": entry.needs.value})
+                cognitive.append(
+                    {
+                        "item": _owner(entry, owners, corpus_ids),
+                        "url": entry.url,
+                        "need": entry.needs.value,
+                    }
+                )
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
-        integrity = _referential_integrity(instance, entries, corpus_ids)
+        integrity = _referential_integrity(instance, entries, corpus_ids, owners)
         payload["ghost_items"] = integrity.ghost
         payload["missing_outputs"] = integrity.missing
         payload["misfiled_outputs"] = integrity.misfiled
@@ -605,6 +616,7 @@ def _referential_integrity(
     instance: Instance,
     entries: dict[str, LedgerEntry],
     corpus_ids: set[str],
+    owners: Mapping[str, str],
 ) -> _IntegrityScan:
     """The ledger's pointers into the tree: item ids, and output paths.
 
@@ -666,11 +678,10 @@ def _referential_integrity(
     """
     excluded = _excluded_items(instance)
     dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
-    # One corpus pass, for the ghost rows AND the two path checks below —
-    # asked unconditionally, so :func:`_owner` decides between the stored
-    # string and the claim on its own rather than on whether this call was
-    # made at all.
-    owners = corpus_owners(instance.root, DRIVERS)
+    # ``owners`` is the caller's one corpus pass, shared with the cognitive
+    # rows and handed in unconditionally, so :func:`_owner` decides between
+    # the stored string and the claim on its own rather than on whether the
+    # pass was made at all.
     counts: dict[tuple[str, str], int] = {}
     for entry in dead:
         owner = owners.get(entry.hash)
