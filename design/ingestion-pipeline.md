@@ -628,6 +628,24 @@ when the running engine is newer. This closes the self-healing loop with zero
 redundant work: bug files issue → fix → release → sync bumps pin → next run
 retries → `done`.
 
+**A write that records no work carries the line's own provenance.** `date`
+and `engine` answer a different question from `at`: when, and by which
+engine, the work a line records was done. So the writer seam stamps them on
+a line that records work, and a pure re-attribution — the seed-time sweep
+moving a line off a dead id onto the live item whose corpus file claims
+that work — stamps only `at` and rewrites only `item`. Both carried fields
+are load-bearing rather than decorative. Re-stamping `engine` spends the
+retry-on-new-engine shot above without ever running it, because the sweep
+runs before the drain builds its queue in the same run: the renamed item's
+`error` line then waits for the NEXT release, sharpest right after a sync,
+where migration 1 stamps old lines `0.0.1` and the run meant to rescue them
+is the run that silently burns their one shot. And `date` is the day the
+enrichment landed, which the digest-staleness backstop reads. `at` is
+stamped either way — it orders the write against another machine's, and a
+re-attribution IS a write. The exception is a requeue: a `done` line whose
+output is nowhere on disk goes back to `queued`, and "the output is gone,
+fetch it again" is a verdict this engine reached today, not one carried
+from the line it supersedes.
 
 Blocked-vs-dead requires visible status codes: the web driver fetches via
 urllib with a browser UA and hands HTML to trafilatura for **extraction
