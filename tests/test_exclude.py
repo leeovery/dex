@@ -64,13 +64,40 @@ class TestRunExclude:
         (enrichment / "web-abc123.md").write_text("fetched")
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert summary == (
-            "excluded 1: removed 1 items (0 already gone), 0 ledger entries dropped, "
-            "0 kept (work another live corpus item still claims)"
+            "excluded 1: removed 1 items (0 already gone), 0 digests, 0 ledger entries "
+            "dropped, 0 kept (work another live corpus item still claims)"
         )
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
         assert not enrichment.exists()
         recorded = (instance.state_dir / "exclusions.tsv").read_text()
         assert recorded == f"{ITEM}\tmeme thread\n"
+
+    def test_the_digest_goes_with_the_item(self, instance):
+        # An excluded item that had been digested left `state/digests/<id>.md`
+        # behind: a permanent fact index over content ruled permanently out
+        # of scope, still feeding query and wiki, and lint's digest check is
+        # shape-only so nothing ever named it.
+        write_item_stub(instance)
+        digest = instance.digests_dir / f"{ITEM}.md"
+        digest.parent.mkdir(parents=True, exist_ok=True)
+        digest.write_text("# facts\n", encoding="utf-8")
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert not digest.exists()
+        assert "1 digests" in summary
+
+    def test_a_digest_symlinked_out_of_the_instance_is_refused(self, instance, tmp_path_factory):
+        # The digest deletion obeys the same containment check as the other
+        # two: the id is well formed, the file it names is not inside.
+        outside = tmp_path_factory.mktemp("outside") / "keepsake.md"
+        outside.write_text("not this instance's to delete")
+        write_item_stub(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").symlink_to(outside)
+        with pytest.raises(ValueError, match="outside the instance"):
+            run_exclude(instance, [{"id": ITEM, "reason": "out of scope"}])
+        assert outside.exists()
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
 
     def test_missing_reason_defaults(self, instance):
         write_item_stub(instance)
@@ -80,8 +107,8 @@ class TestRunExclude:
     def test_already_gone_items_counted_not_fatal(self, instance):
         summary = run_exclude(instance, [{"id": ITEM}])
         assert summary == (
-            "excluded 1: removed 0 items (1 already gone), 0 ledger entries dropped, "
-            "0 kept (work another live corpus item still claims)"
+            "excluded 1: removed 0 items (1 already gone), 0 digests, 0 ledger entries "
+            "dropped, 0 kept (work another live corpus item still claims)"
         )
 
     def test_re_excluding_never_duplicates_the_record(self, instance):
@@ -296,7 +323,8 @@ class TestADuplicateIdInsideOneBatch:
         summary = run_exclude(instance, [{"id": ITEM}, {"id": ITEM}])
         assert summary == (
             "excluded 1 (1 duplicate id(s) collapsed): removed 1 items (0 already gone), "
-            "0 ledger entries dropped, 0 kept (work another live corpus item still claims)"
+            "0 digests, 0 ledger entries dropped, 0 kept (work another live corpus item "
+            "still claims)"
         )
 
     def test_a_genuinely_absent_item_is_still_counted_gone(self, instance):

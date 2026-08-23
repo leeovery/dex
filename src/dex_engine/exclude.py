@@ -5,9 +5,13 @@
 
 Each exclusion appends to ``state/exclusions.tsv`` (consulted by
 ``normalize.py`` so excluded clusters are never regenerated), removes
-``corpus/<year>/<id>.md``, removes ``enrichment/<id>/``, and removes the
-item's ledger entries — the item is gone, so seeding will never raise
-that work again and the lines would otherwise linger forever.
+``corpus/<year>/<id>.md``, removes ``enrichment/<id>/``, removes
+``state/digests/<id>.md``, and removes the item's ledger entries — the
+item is gone, so seeding will never raise that work again and the lines
+would otherwise linger forever. The digest goes with the rest: it is a
+permanent fact index over content this instance has just ruled out of
+scope, and nothing else ever deletes one, so leaving it behind keeps a
+permanently excluded item feeding query and wiki forever.
 
 Except the work another live corpus item still claims. A work unit is
 keyed by URL, not by item, so two items listing one URL share one ledger
@@ -67,10 +71,11 @@ class _Exclusion:
     reason: str
     item_path: Path
     enrichment_path: Path
+    digest_path: Path
 
 
 def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
-    """Exclude the given items: record why, delete item, enrichment and ledger entries.
+    """Exclude the given items: record why, delete item, enrichment, digest and ledger entries.
 
     Args:
         instance: The instance.
@@ -94,7 +99,7 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
             for line in exclusions.read_text(encoding="utf-8").splitlines()
             if line.strip()
         }
-    removed = missing = 0
+    removed = missing = digests = 0
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
         for exclusion in validated:
@@ -106,6 +111,9 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
             else:
                 missing += 1
             shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
+            if exclusion.digest_path.exists():
+                exclusion.digest_path.unlink()
+                digests += 1
     # One rewrite for the whole batch, after the TSV record lands: an
     # interruption before it leaves the entries in place, and the re-run
     # (which the TSV makes idempotent) purges them.
@@ -116,7 +124,10 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
     counted = f"{len(validated)}"
     if collapsed:
         counted += f" ({collapsed} duplicate id(s) collapsed)"
-    summary = f"excluded {counted}: removed {removed} items ({missing} already gone), "
+    summary = (
+        f"excluded {counted}: removed {removed} items ({missing} already gone), "
+        f"{digests} digests, "
+    )
     if not instance.ledger_path.exists():
         return summary + _purge_counts(0, 0)
     unreadable = _unreadable_corpus_items(instance.root)
@@ -172,7 +183,8 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
     must be a refusal naming the entry, not a ``TypeError`` half way down
     the list. The id is checked for shape AND its paths resolved under the
     root: the shape catches an id that is a path, the resolution catches a
-    corpus file or enrichment directory symlinked out of the instance.
+    corpus file, enrichment directory or digest symlinked out of the
+    instance.
 
     Raises:
         ValueError: Any of those, naming the offending entry.
@@ -195,7 +207,8 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
         )
     item_path = resolve_repo_path(instance.root, f"corpus/{item_id[:4]}/{item_id}.md")
     enrichment_path = resolve_repo_path(instance.root, f"enrichment/{item_id}")
-    if item_path is None or enrichment_path is None:
+    digest_path = resolve_repo_path(instance.root, f"state/digests/{item_id}.md")
+    if item_path is None or enrichment_path is None or digest_path is None:
         raise ValueError(
             f"exclusion id {item_id!r} resolves outside the instance — an operation "
             "writes only inside this instance's root, so the batch is refused"
@@ -208,6 +221,7 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
         reason=" ".join(raw_reason.split()) or _DEFAULT_REASON,
         item_path=item_path,
         enrichment_path=enrichment_path,
+        digest_path=digest_path,
     )
 
 
