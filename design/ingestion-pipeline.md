@@ -205,6 +205,31 @@ body line that happens to begin `fetched: ` is content and counts as
 change. Two documented mechanics rest on this: the rerun "changed" list on
 the run report (§12), and the enrichment-newer-than-digest backstop.
 
+**Normalize is contained per channel, and the containment is split between
+the read and the write.** `raw/discord/<channel>/messages.json` is one
+export among many and one bad export must not cost the rest, so a channel
+whose file cannot be read at all — truncated mid-write, not UTF-8, another
+tool's JSON — is named on its own summary line and skipped while every
+other channel normalizes. Inside a readable export, a single message the
+code cannot read (a missing field, a timestamp that will not parse, a
+container that arrived as a string, a display name the corpus cannot take
+as a scalar) is skipped and counted **per reason**, one line per reason
+rather than one per message: a conversion that drops a field drops it on
+every message, and one line says so.
+
+The read/write split is what makes "skipped" true by construction rather
+than by hoping validation caught everything. The whole read — parse, drop
+the messages that cannot be read, cluster — finishes before the first item
+is written, so a channel that faults there has written nothing and
+"skipped" is the whole truth about it. Only the read is contained that way.
+A fault in the WRITE is a different fact about the corpus — some of the
+channel's items are on disk and the rest are not — so it is reported as
+exactly that, with the count that did land, as `channel incomplete`, and
+the run finishes so the report still reaches the operator with a channel to
+re-run. The alternative is the failure this replaces: a calm "skipped" over
+a part-normalized channel whose items are already on their way to
+enrichment and the wiki.
+
 ## 2. Interfaces
 
 `typing.Protocol` throughout (structural interfaces; engine floor is 3.11).
