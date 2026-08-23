@@ -109,8 +109,12 @@ Then do a run now, whatever the host.
    act on nothing.
 
 8. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
-   these** is an interrupted previous session: complete its digest →
-   place → wiki steps now. Every item listed is digestible; one still owing
+   these** is an interrupted previous session: complete its remaining
+   per-item steps now, harvest → digest → place → wiki
+   (`references/ingest-item.md`). The listing says a digest is owed, not
+   that harvest ran — the interruption can predate either step, and no
+   surface here would catch a skipped harvest before the next health
+   check. Every item listed is digestible; one still owing
    a unit is `raw` and never appears there, however long it stays parked.
    **Needs you** and **Waiting on the engine** here are the standing view of
    everything parked in the instance, not just this session's: judge the
