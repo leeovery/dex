@@ -125,9 +125,12 @@ step 4.
      blogrolls and footers being turned away means harvest is promoting
      what the subject rule would not, and the fix is the judgment, not the
      bound. Concentrated in one or two items is normal; spread across many
-     is the signal. A URL you asked for yourself with `enrich fetch` and
-     were refused is no part of this reading — it comes through as a note,
-     and the answer to it is `--force` or nothing. The listing is newest
+     is the signal. Every promotion goes through `enrich fetch`, so this
+     reading covers refusals whoever typed them — a link you promoted on
+     the subject rule and a URL the owner named by hand say the same thing
+     about the bounds. What leaves the reading is an **override**: a
+     refusal answered with `--force` was a decision taken, not drift, and
+     the count already excludes it. The listing is newest
      first, like the thread markers above it: the rows the report names are
      the most recent fires, and the older ones stand behind the count.
 7. Judgment sweep over every page you touched: cross-page contradictions
