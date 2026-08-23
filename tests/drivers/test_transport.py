@@ -189,7 +189,13 @@ class TestNonAsciiUrls:
 
     def test_an_already_encoded_url_passes_through_untouched(self):
         # The encoding is idempotent or it corrupts the canonical URL the
-        # ledger keys on: %C3%A9 must never become %25C3%25A9.
+        # ledger keys on: %C3%A9 must never become %25C3%25A9. The pin has
+        # to be a URL that REACHES the encoder — one already-encoded escape
+        # beside a character that still needs encoding — because a URL the
+        # encoder returns at the guard pins nothing about what quote does.
+        assert _ascii_url("https://fr.wikipedia.org/wiki/Caf%C3%A9?q=thé#frag") == (
+            "https://fr.wikipedia.org/wiki/Caf%C3%A9?q=th%C3%A9#frag"
+        )
         url = "https://fr.wikipedia.org/wiki/Caf%C3%A9?a=b&c=d#frag"
         assert _ascii_url(url) == url
         assert _ascii_url(_ascii_url("https://fr.wikipedia.org/wiki/Café")) == (
