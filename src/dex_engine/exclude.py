@@ -14,7 +14,9 @@ keyed by URL, not by item, so two items listing one URL share one ledger
 entry that names only one of them; purging on the name alone would delete
 a history the survivor still owns. The summary states both counts — this
 runs in bulk from the scope-filter pass, so that line is the owner's only
-signal.
+signal. A corpus file that cannot be read claims nothing, which would make
+that veto fail open toward deletion, so a batch that meets one purges no
+ledger entries at all and the summary says why.
 
 The exclusions file is LLM-authored and this deletes recursively, so every
 entry in the batch is validated before anything is written or removed: an
@@ -32,6 +34,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import corpus
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
@@ -103,10 +106,29 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
     # Scanned after the deletions above, so a purged item cannot claim its
     # own work — what remains is what the surviving corpus still lists.
     purged = {exclusion.item_id for exclusion in validated}
-    claimed = corpus_owners(instance.root, DRIVERS) if instance.ledger_path.exists() else {}
+    summary = f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
+    if not instance.ledger_path.exists():
+        return summary + _purge_counts(0, 0)
+    unreadable = _unreadable_corpus_items(instance.root)
+    if unreadable:
+        # The claim veto decides a deletion, and a corpus file that cannot
+        # be read cannot say which work it claims: purging anyway would
+        # take a live item's history and report a clean drop. So nothing is
+        # purged until the file is readable — the item and its enrichment
+        # still go, and the re-run purges.
+        return (
+            summary
+            + _purge_counts(0, 0)
+            + f"; {unreadable} corpus file(s) could not be read, so no ledger entries "
+            "were purged — repair them (dex-lint names them) and re-run"
+        )
+    claimed = corpus_owners(instance.root, DRIVERS)
     dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
+    return summary + _purge_counts(dropped, kept)
+
+
+def _purge_counts(dropped: int, kept: int) -> str:
     return (
-        f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
         f"{dropped} ledger entries dropped, {kept} kept (work another live corpus item "
         "still claims)"
     )
@@ -157,6 +179,31 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
         item_path=item_path,
         enrichment_path=enrichment_path,
     )
+
+
+def _unreadable_corpus_items(root: Path) -> int:
+    """How many corpus files cannot be read at all.
+
+    ``corpus_owners`` skips them silently, rightly for its other callers —
+    but here its map is a delete decision, and it fails OPEN: a hash
+    claimed only by an item whose frontmatter will not parse reads as
+    claimed by nobody, and the hash's whole history goes, reported as a
+    clean drop. Counted separately (a second parse, on a command that runs
+    rarely and in bulk) rather than by changing what that map means to
+    every caller.
+    """
+    corpus_dir = root / "corpus"
+    if not corpus_dir.is_dir():
+        return 0
+    return sum(1 for path in sorted(corpus_dir.glob("*/*.md")) if not _readable(path))
+
+
+def _readable(path: Path) -> bool:
+    try:
+        corpus.read_item(path)
+    except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+        return False
+    return True
 
 
 def build_parser() -> argparse.ArgumentParser:

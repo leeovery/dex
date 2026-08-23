@@ -318,6 +318,29 @@ class TestTheBatchIsRefusedWhole:
         assert not (instance.state_dir / "exclusions.tsv").exists()
 
 
+class TestUnreadableCorpusFiles:
+    def test_an_unreadable_corpus_file_holds_the_purge_and_says_so(self, instance):
+        # The claimed-hash veto is asked of the corpus, and a file that
+        # will not parse claims nothing: the shared hash's whole history
+        # would go, reported as a clean drop with no mention of the file.
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        (instance.corpus_dir / "2026" / f"{OTHER}.md").write_text("no frontmatter here\n")
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert set(ledger.load(instance.ledger_path)) == {shared}
+        assert "0 ledger entries dropped" in summary
+        assert "1 corpus file(s) could not be read" in summary
+
+    def test_a_readable_corpus_still_purges(self, instance):
+        write_item_stub(instance)
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert "1 ledger entries dropped" in summary
+        assert "could not be read" not in summary
+
+
 class TestCli:
     def test_main_excludes_from_a_file(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
