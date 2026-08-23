@@ -137,6 +137,16 @@ digested whole, after their children land. The only entries that survive a
 session are `waiting` / `blocked` / `error` / `manual`, each parked for a
 stated reason, each printed in the report.
 
+The report that prints them is the report of the run that parked them. A
+unit that outlives that run is untouched standing state, so it is `enrich
+status` that names it — id, URL, status and stated reason, split by who owns
+the next action, exactly as the run report splits its own. Counts alone
+(`**manual** 1`) left a three-month-old park on no surface at all while its
+item sat permanently raw and permanently undigestable. Sourcing the run
+report from every surviving entry instead would reinstate what this section
+already refuses: the same parked item listed as work to do on every run,
+forever.
+
 **Mid-fetch kind discovery** (a server lied to HEAD; "this is actually a
 PDF") — implemented on owner order after an initial unauthorized deferral,
 and NOT as a child (early drafts said "child-re-entry"; a child is a
@@ -1572,6 +1582,15 @@ Shipping migrations for this rewrite:
    The re-key pass already ran, so a qualifying entry's hash and URL are
    the current identity: the seed appends under them directly, corpus
    seeding dedupes against it, and the drain fetches once.
+
+   Lint reads the same three cases and asks the `state/exclusions.tsv`
+   record **before** the claim. A hash two live items shared always has
+   another claimant once one of them is excluded, so asking the claim first
+   reported every deliberate on-the-record exclusion as a rename — asserting
+   a cause the check never established over the one the owner wrote down.
+   The claim still shows (`excluded on record — <id> shares this work`), as
+   the reason those lines survived the purge rather than as what became of
+   the item.
    The draining session re-fetches with current code (stored text is the
    fallback for URLs now dead) and completes the cognitive steps from the
    run report, same as any capture. Legacy items whose `urls:` lists carry

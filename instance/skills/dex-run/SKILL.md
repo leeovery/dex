@@ -112,6 +112,10 @@ Then do a run now, whatever the host.
    these** is an interrupted previous session: complete its digest →
    place → wiki steps now. Every item listed is digestible; one still owing
    a unit is `raw` and never appears there, however long it stays parked.
+   **Needs you** and **Waiting on the engine** here are the standing view of
+   everything parked in the instance, not just this session's: judge the
+   **Needs you** entries per the reference's heal procedure exactly as on
+   the run report, and act on nothing under **Waiting on the engine**.
 
 9. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
    health check reads `## [<date>] lint | …`. If `wiki/log.md` holds no such

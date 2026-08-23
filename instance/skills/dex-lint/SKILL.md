@@ -31,12 +31,15 @@ step 4.
    - **Ledger entries naming items with no corpus file** / **done entries
      whose output file is gone** — `bin/dex exclude` purges an item's
      ledger entries with the item, so these are anomalies now, not
-     leftovers by design: either a purge that died partway, or something
-     deleted by hand. The finding says which — an item with an
-     `exclusions.tsv` record was ruled out on purpose and its entries
-     should follow it out; one without needs an owner decision on whether
-     the item comes back. Either way close it through the verbs, never by
-     editing state files. Instances purged before exclude swept the ledger
+     leftovers by design. The finding says which of three, and they want
+     different things. **Excluded on record** — ruled out on purpose, so
+     its entries should follow it out; where the row also names a sharer,
+     that is why those lines survived the purge. **Renamed** — a live item
+     already lists the work, nothing is lost, and the next `enrich run`
+     re-attributes the lines itself, so this one needs nothing from you.
+     **Unclaimed** — no file, no record, no live claimant: an owner
+     decision on whether the item comes back. Close the first and third
+     through the verbs, never by editing state files. Instances purged before exclude swept the ledger
      carry this as historical residue: clearing it is a one-off, not a
      per-check chore.
      **The `renamed — <id> lists this work` row is the exception, and it
