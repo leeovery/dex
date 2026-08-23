@@ -30,6 +30,7 @@ from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
+    MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
@@ -639,6 +640,50 @@ class TestIncompleteItemsOnTheReport:
 
 class TestReEntryCaps:
     """The caps bound promotion, and promotion is `enrich fetch` alone."""
+
+    def test_the_depth_cap_refuses_the_fifth_hop_of_a_real_chain(self, instance):
+        # Walked the way a session walks one: fetch the page, promote the
+        # link it names, fetch THAT under --parent. Depths 1..4 admit; the
+        # fifth is out of the queue's reach and says so.
+        write_item(instance, urls=["https://chain.test/0"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        parent = work_hash("https://chain.test/0")
+        for depth in range(1, MAX_DEPTH + 1):
+            url = f"https://chain.test/{depth}"
+            run_mod.fetch_urls(ctx, ITEM, [url], parent=parent)
+            landed = ledger.load(instance.ledger_path)[work_hash(url)]
+            assert landed.status is Status.DONE
+            assert landed.depth == depth
+            parent = landed.hash
+        beyond = f"https://chain.test/{MAX_DEPTH + 1}"
+        report = run_mod.fetch_urls(ctx, ITEM, [beyond], parent=parent)
+        refused = ledger.load(instance.ledger_path)[work_hash(beyond)]
+        assert refused.status is Status.SKIPPED
+        assert refused.cap is Cap.DEPTH
+        assert refused.depth == MAX_DEPTH + 1
+        # The owner asked, so the refusal is answered — honestly, with no
+        # route it does not have.
+        flat = " ".join(report.split())
+        assert f"not fetched — {beyond}: depth cap ({MAX_DEPTH}) reached" in flat
+        assert "no --force route" in flat
+
+    def test_force_does_not_reach_past_the_depth_bound(self, instance):
+        # --force is the URL budget's override (§10). Depth is a hard bound
+        # and offering --force against it would promise what it cannot do.
+        write_item(instance, urls=["https://chain.test/0"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        parent = work_hash("https://chain.test/0")
+        for depth in range(1, MAX_DEPTH + 1):
+            url = f"https://chain.test/{depth}"
+            run_mod.fetch_urls(ctx, ITEM, [url], parent=parent)
+            parent = ledger.load(instance.ledger_path)[work_hash(url)].hash
+        beyond = f"https://chain.test/{MAX_DEPTH + 1}"
+        run_mod.fetch_urls(ctx, ITEM, [beyond], parent=parent, force=True)
+        refused = ledger.load(instance.ledger_path)[work_hash(beyond)]
+        assert refused.status is Status.SKIPPED  # still refused
+        assert refused.cap is Cap.DEPTH
 
     def test_the_url_cap_is_per_item(self, instance):
         # The budget bounds how much of the web ONE item drags in: an item

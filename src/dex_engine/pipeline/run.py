@@ -627,13 +627,27 @@ class _Drain:
         is what keeps an owner's twelve-URL capture out of the health
         check's harvest-drift reading.
 
-        The URL bound is a budget on how much of the web one item drags in
-        and it answers whoever asked, so ``--force`` exceeds it
-        deliberately (§10).
+        Depth is asked before the budget: a unit past the depth bound is
+        out of the queue's reach whatever the item's URL count looks like.
+
+        The two bounds differ in what may be done about them, so their
+        refusals do too. The URL bound is a budget on how much of the web
+        one item drags in and answers whoever asked, so ``--force`` exceeds
+        it deliberately (§10). Depth is a hard bound on how far the queue
+        may walk from a shared URL; the design gives it no override, so the
+        refusal names no route rather than offering one that does nothing.
         """
         if parent is None:
             return None
         depth = (parent.depth or 0) + 1
+        if depth > MAX_DEPTH:
+            return _CapRefusal(
+                cap=Cap.DEPTH,
+                reason=f"{CAP_BOUNDS[Cap.DEPTH]} reached — a hard bound, with no --force route",
+                waived=False,
+                parent=parent.hash,
+                depth=depth,
+            )
         if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
             bound = CAP_BOUNDS[Cap.URL_REQUESTED]
             return _CapRefusal(
@@ -1924,10 +1938,11 @@ def fetch_urls(
     This is the ONE way a link is promoted: which links are primary
     artifacts of the item's subject is judgment (§10), so a session names
     them and the engine bounds what it is handed. ``parent`` defaults to the
-    item's primary work unit; depth is the parent's + 1; fetches count
-    against the item's 12-URL cap. ``--force`` may exceed the cap for an
+    item's primary work unit; depth is the parent's + 1; both re-entry caps
+    bound the admission. ``--force`` may exceed the URL cap for an
     owner-requested deepen — the cap fire is still recorded (a superseded
-    skipped line in the audit trail).
+    skipped line in the audit trail) — and reaches no further: the depth
+    bound has no override.
 
     Args:
         ctx: The run context.
