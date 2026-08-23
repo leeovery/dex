@@ -740,7 +740,14 @@ def _translate_title(
 # The current provenance vocabulary — frozen here like the legacy
 # canonicalization above: this migration's contract is "translate to the
 # schema shipping WITH it", so the copy cannot drift out from under it.
-_CURRENT_VIA = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
+# It tracks a RETIREMENT from that vocabulary, though, and must: a value
+# this list passes through but `LedgerEntry` no longer accepts costs the
+# whole line (untranslatable → dropped), where dropping the value alone
+# costs a note. `thread` left when the walk-up's dead child path was
+# deleted — the pre-rewrite engine had no walk-up at all, so no line this
+# migration reads can carry it, and one that somehow did keeps everything
+# but the word.
+_CURRENT_VIA = frozenset({"harvest", "media", "sniff", "extract-asset"})
 _CURRENT_VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
 
 

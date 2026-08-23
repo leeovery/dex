@@ -11,7 +11,6 @@ from dex_engine.pipeline.types import (
     DRIVER_STATUSES,
     Availability,
     Cap,
-    Child,
     Config,
     Format,
     Instance,
@@ -133,25 +132,10 @@ class TestWorkUnit:
         assert spawned.parent == "a1b2c3d4e5"
 
 
-class TestChild:
-    @pytest.mark.parametrize(
-        "via",
-        ["harvest", "thread", "media", "sniff", "extract-asset", "migration-1", "migration-12"],
-    )
-    def test_known_via_accepted(self, via):
-        assert Child(url="https://example.test", via=via).via == via
-
-    @pytest.mark.parametrize("via", ["", "harvested", "migration-", "migration-0", "Harvest"])
-    def test_unknown_via_rejected(self, via):
-        with pytest.raises(ValueError, match="via"):
-            Child(url="https://example.test", via=via)
-
-
 class TestResult:
     def test_simple_driver_return_uses_defaults(self):
         result = Result(status=Status.DONE, meta={"title": "t"}, body="text")
         assert result.media == []
-        assert result.children == []
         assert result.needs is None
 
     def test_queued_is_a_birth_state_not_a_driver_outcome(self):
@@ -313,10 +297,20 @@ class TestLedgerEntryInvariants:
         with pytest.raises(ValueError, match="engine"):
             entry(engine="")
 
-    def test_via_is_validated(self):
-        assert entry(via="migration-2", rerun=True).via == "migration-2"
+    @pytest.mark.parametrize(
+        "via", ["harvest", "media", "sniff", "extract-asset", "migration-1", "migration-12"]
+    )
+    def test_the_known_provenance_vocabulary_is_accepted(self, via):
+        assert entry(via=via, rerun=True).via == via
+
+    @pytest.mark.parametrize(
+        "via", ["", "harvested", "migration-", "migration-0", "Harvest", "thread", "freehand"]
+    )
+    def test_via_outside_the_vocabulary_is_rejected(self, via):
+        # `thread` among them: the walk-up writes its chain into ONE
+        # enrichment file (§8), so nothing was ever ledgered under it.
         with pytest.raises(ValueError, match="via"):
-            entry(via="freehand")
+            entry(via=via)
 
     def test_title_without_path_is_rejected(self):
         with pytest.raises(ValueError, match="travel together"):

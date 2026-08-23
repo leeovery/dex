@@ -17,7 +17,6 @@ __all__ = [
     "Asset",
     "Availability",
     "Cap",
-    "Child",
     "Config",
     "Extraction",
     "Extractor",
@@ -106,10 +105,9 @@ class Cap(StrEnum):
     Typed because the health check aggregates on it: prose that says the
     same bound three ways splits one bound across three readings, and an
     owner's own request read as harvest drift. ``DEPTH`` and ``URL`` are
-    harvest-time fires — the walk promoted a link past a bound, which is
-    the tuning signal. ``URL_REQUESTED`` is the owner naming a URL past
-    the URL bound with ``enrich fetch`` and being refused without
-    ``--force``: the same bound, and nothing about harvest judgment.
+    the bounds a promotion hits — the tuning signal. ``URL_REQUESTED`` is
+    the owner naming a URL past the URL bound with ``enrich fetch`` and
+    being refused without ``--force``: the same bound, a different reading.
     """
 
     DEPTH = "depth"
@@ -139,7 +137,7 @@ DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.
 # dispatched on. It is still validated against the known shapes.
 # ---------------------------------------------------------------------------
 
-_VIA_EXACT = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
+_VIA_EXACT = frozenset({"harvest", "media", "sniff", "extract-asset"})
 _VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
 
 
@@ -251,21 +249,6 @@ class WorkUnit:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Child:
-    """A URL discovered mid-flight that re-enters the queue.
-
-    The pipeline assigns ``depth = parent depth + 1`` and ``parent`` — the
-    spawning driver only names the URL and its provenance.
-    """
-
-    url: str
-    via: str
-
-    def __post_init__(self) -> None:
-        _validate_via(self.via)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
 class Redetection:
     """A mid-fetch kind correction: the content is not what detection said.
 
@@ -309,7 +292,6 @@ class Result:
     meta: dict[str, str | int | None]
     body: str | None = None
     media: list[str] = field(default_factory=list)
-    children: list[Child] = field(default_factory=list)
     # Extraction assets: embedded images have no URL, so bytes are the
     # only possible form — and drivers never touch the disk, so the
     # Result is the one channel through which they can reach the run layer's
@@ -326,15 +308,7 @@ class Result:
                     f"a redetection travels with status 'queued' (a re-birth under the "
                     f"corrected kind), got {self.status!r}"
                 )
-            if (
-                self.meta
-                or self.body
-                or self.media
-                or self.children
-                or self.assets
-                or self.needs
-                or self.reason
-            ):
+            if self.meta or self.body or self.media or self.assets or self.needs or self.reason:
                 raise ValueError(
                     "a redetection carries the corrected identity only — outputs belong "
                     "to the driver that owns the corrected kind"

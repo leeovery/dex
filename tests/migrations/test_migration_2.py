@@ -727,10 +727,10 @@ class TestVerbatimKeysAreNotRekeyed:
         assert path.read_text() == before
 
     def test_a_rekeyed_parent_takes_its_children_with_it(self, tmp_path, migration):
-        # A `thread` child is canonically keyed AND has a parent pointer:
+        # A promoted child is canonically keyed AND has a parent pointer:
         # both must land on current identities, or the chain dangles.
         parent = stored(OLD_X_URL, kind=Kind.X)
-        reply = child("https://twitter.com/carol/status/301", parent=parent.hash, via="thread")
+        reply = child("https://twitter.com/carol/status/301", parent=parent.hash, via="harvest")
         path = write_entries(tmp_path, [parent, reply])
         report = migration.apply(tmp_path)
         entries = ledger.load(path)

@@ -3,8 +3,10 @@
 The ledger is the work queue. A run seeds queued entries for new corpus
 URLs, drains everything :func:`is_drainable`, hands units to drivers, writes
 deterministically named outputs (reruns overwrite, never duplicate),
-downloads media, re-enters children with provenance and caps, and
-renders its report through the ``enrich-report`` surface.
+downloads media, and renders its report through the ``enrich-report``
+surface. Promotion re-enters from outside the drain: which links are
+primary artifacts of an item's subject is judgment, so a session names
+them with ``enrich fetch`` and no driver reports links to promote.
 
 TWO ``except Exception`` exist in the whole pipeline, and both are named
 where they sit: the per-unit loop here, and the canonicalization seam in
@@ -56,7 +58,6 @@ from .transcribe import (
 from .types import (
     Availability,
     Cap,
-    Child,
     Config,
     Format,
     Instance,
@@ -576,8 +577,8 @@ class _Drain:
             return False  # stays waiting untouched; the deferral is noted once
         try:
             # The try spans ALL per-unit processing:
-            # fetch/transcribe/download, output write, media stage, children
-            # admission. An engine bug anywhere in it ledgers `error` — the
+            # fetch/transcribe/download, output write, media stage, asset
+            # writes. An engine bug anywhere in it ledgers `error` — the
             # outcome line supersedes any partial one — never aborts the run.
             if media_job:
                 self._download_media(entry)
@@ -821,7 +822,6 @@ class _Drain:
             self._write_assets(self.entries[entry.hash], result.assets)
         if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
             self._media_stage(self.entries[entry.hash], result.media)
-        self._admit_children(self.entries[entry.hash], result.children)
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
@@ -1192,43 +1192,6 @@ class _Drain:
                 seen += 1
         return seen
 
-    # -- children -----------------------------------------------
-
-    def _admit_children(self, parent: LedgerEntry, children: list[Child]) -> None:
-        for child in children:
-            canonical, unit_hash = self.identify(child.url)
-            if unit_hash in self.entries:
-                continue  # dedupe by hash — a URL under two items enriches under the first
-            depth = (parent.depth or 0) + 1
-            cap = self._cap_fired(parent.item, depth)
-            detection = None if cap else detect(child.url, self.ctx.drivers, sniff=self.sniff)
-            entry = LedgerEntry(
-                hash=unit_hash,
-                url=canonical,
-                item=parent.item,
-                kind=detection.kind if detection else detect_kind(child.url, self.ctx.drivers),
-                format=detection.format if detection else None,
-                status=Status.SKIPPED if cap else Status.QUEUED,
-                cap=cap,
-                engine="seed",
-                date=datetime.date.min,
-                via=child.via,
-                parent=parent.hash,
-                depth=depth,
-                reason=None if cap is None else f"{CAP_BOUNDS[cap]} reached",
-            )
-            self.record(entry)
-            if cap is None:
-                self.queue.append(unit_hash)
-
-    def _cap_fired(self, item_id: str, depth: int) -> Cap | None:
-        """The re-entry cap check: recorded in the ledger, never user-surfaced."""
-        if depth > MAX_DEPTH:
-            return Cap.DEPTH
-        if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
-            return Cap.URL
-        return None
-
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries for the item — what the 12-URL cap bounds.
 
@@ -1385,9 +1348,9 @@ class _Drain:
         per item so a session never has to infer completeness by reading a
         list of units.
 
-        Cap-fire markers are not units: a harvest that overran the URL cap
-        recorded refused work, which no user surface reports (§12). Counted
-        as landed they inflate both halves of the shape — "15 of 16 units
+        Cap-fire markers are not units: a fetch batch that overran a bound
+        recorded refused work, and refused work never landed. Counted as
+        landed they inflate both halves of the shape — "15 of 16 units
         landed" for an item that admitted twelve.
 
         Which units are the item's is the corpus's answer, not the stored

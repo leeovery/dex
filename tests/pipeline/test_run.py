@@ -30,7 +30,6 @@ from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
-    MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
@@ -44,7 +43,6 @@ from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
     Cap,
-    Child,
     Config,
     Format,
     Instance,
@@ -540,6 +538,18 @@ class TestIncompleteItemsOnTheReport:
         monkeypatch.setattr(run_mod.surfaces, "render", spy)
         return run_mod.run(ctx), captured["enrich-report"]
 
+    def _fetch_capturing(self, ctx, urls, monkeypatch) -> tuple[str, dict]:
+        """The same spy over ``enrich fetch`` — the other run that reports."""
+        captured: dict[str, dict] = {}
+        rendered = run_mod.surfaces.render
+
+        def spy(surface, payload):
+            captured[surface] = dict(payload)
+            return rendered(surface, payload)
+
+        monkeypatch.setattr(run_mod.surfaces, "render", spy)
+        return run_mod.fetch_urls(ctx, ITEM, urls), captured["enrich-report"]
+
     def test_the_report_names_the_shape_of_what_is_missing(self, instance):
         waiting = Result(
             status=Status.WAITING,
@@ -585,17 +595,14 @@ class TestIncompleteItemsOnTheReport:
         assert "still raw until every unit lands" not in report
 
     def test_cap_fire_markers_are_not_counted_as_units(self, instance, monkeypatch):
-        # A harvest that overran the URL cap recorded refused work, which no
-        # user surface reports. Counted as landed, the shape read "15 of 16
-        # units landed" for an item that only ever admitted twelve.
-        write_item(instance, urls=["https://hub.test/root"])
-        flood = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM + 3)]
+        # A fetch batch that overran the URL cap recorded refused work.
+        # Counted as landed, the shape read "15 of 16 units landed" for an
+        # item that only ever admitted twelve.
+        captured = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=captured)
 
         def fetch(unit):
-            if unit.depth == 0:
-                children = [Child(url=url, via="harvest") for url in flood]
-                return Result(status=Status.DONE, meta={}, body="b" * 400, children=children)
-            if unit.url == flood[0]:
+            if unit.url == captured[0]:
                 return Result(
                     status=Status.WAITING,
                     meta={},
@@ -604,15 +611,16 @@ class TestIncompleteItemsOnTheReport:
                 )
             return Result(status=Status.DONE, meta={}, body="b" * 400)
 
-        report, payload = self._run_capturing(
-            make_ctx(instance, FakeDriver(fetch_fn=fetch)), monkeypatch
-        )
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        refused = [f"https://hub.test/extra-{n}" for n in range(4)]
+        report, payload = self._fetch_capturing(ctx, refused, monkeypatch)
         capped = [e for e in ledger.load(instance.ledger_path).values() if e.cap is not None]
-        assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)  # 4 children refused
+        assert len(capped) == len(refused)
         assert payload["incomplete"] == [
             {
                 "item": ITEM,
-                "landed": MAX_URLS_PER_ITEM - 1,  # the root + 10 children
+                "landed": MAX_URLS_PER_ITEM - 1,
                 "total": MAX_URLS_PER_ITEM,  # the admitted cohort, refusals excluded
                 "outstanding": [{"status": "waiting", "needs": "transcribe", "count": 1}],
             }
@@ -629,67 +637,37 @@ class TestIncompleteItemsOnTheReport:
         assert "### Waiting on the engine — 1 entry it retries by itself" in report
 
 
-class TestChildren:
-    def test_children_re_enter_with_provenance_and_drain_same_run(self, instance):
-        write_item(instance)
-        child_url = "https://example.test/docs"
+class TestReEntryCaps:
+    """The caps bound promotion, and promotion is `enrich fetch` alone."""
 
-        def fetch(unit):
-            children = []
-            if unit.depth == 0:
-                children = [run_mod.Child(url=child_url, via="harvest")]
-            return Result(status=Status.DONE, meta={}, body="b" * 400, children=children)
-
-        driver = FakeDriver(fetch_fn=fetch)
-        ctx = make_ctx(instance, driver)
+    def test_the_url_cap_is_per_item(self, instance):
+        # The budget bounds how much of the web ONE item drags in: an item
+        # standing at its cap says nothing about the item beside it.
+        other = "2026-08-19-second-bbbbbb"
+        write_item(instance, urls=[f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM)])
+        write_item(instance, other, urls=["https://elsewhere.test/root"])
+        ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
-        child = ledger.load(instance.ledger_path)[work_hash(child_url)]
-        assert child.status is Status.DONE  # drained in the same run
-        assert child.via == "harvest"
-        assert child.parent == work_hash(URL)
-        assert child.depth == 1
-        assert child.item == ITEM  # inherited — the driver never assigns it
-        assert [unit.depth for unit in driver.fetched] == [0, 1]
-
-    def test_depth_cap_fires_and_is_ledger_recorded_never_surfaced(self, instance):
-        write_item(instance, urls=["https://chain.test/0"])
-
-        def fetch(unit):
-            deeper = run_mod.Child(url=f"https://chain.test/{unit.depth + 1}", via="harvest")
-            return Result(status=Status.DONE, meta={}, body="b" * 400, children=[deeper])
-
-        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
-        report = run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, ["https://hub.test/extra"])
+        run_mod.fetch_urls(ctx, other, ["https://elsewhere.test/docs"])
         entries = ledger.load(instance.ledger_path)
-        capped = entries[work_hash(f"https://chain.test/{MAX_DEPTH + 1}")]
-        assert capped.status is Status.SKIPPED
-        assert capped.cap is Cap.DEPTH
-        assert capped.reason == f"depth cap ({MAX_DEPTH}) reached"
-        assert capped.depth == MAX_DEPTH + 1
-        fetched = [e for e in entries.values() if e.status is Status.DONE]
-        assert len(fetched) == MAX_DEPTH + 1  # depths 0..4 fetched, 5 refused
-        assert "depth cap" not in report  # judgment-drift signal, not user-facing
+        refused = entries[work_hash("https://hub.test/extra")]
+        assert refused.status is Status.SKIPPED
+        assert refused.cap is Cap.URL_REQUESTED
+        assert entries[work_hash("https://elsewhere.test/docs")].status is Status.DONE
 
-    def test_url_cap_fires_per_item_and_is_recorded(self, instance):
-        write_item(instance, urls=["https://hub.test/root"])
-        flood = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM + 3)]
-
-        def fetch(unit):
-            children = (
-                [run_mod.Child(url=url, via="harvest") for url in flood] if unit.depth == 0 else []
-            )
-            return Result(status=Status.DONE, meta={}, body="b" * 400, children=children)
-
-        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
-        report = run_mod.run(ctx)
+    def test_a_capture_is_not_a_re_entry_the_caps_read(self, instance):
+        # The caps bound re-entry (§1). Every captured URL is depth 0, the
+        # queue's own front door, and what the owner shared is not a
+        # promotion for a bound to turn away.
+        captured = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM + 3)]
+        write_item(instance, urls=captured)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
         entries = ledger.load(instance.ledger_path)
-        capped = [e for e in entries.values() if e.status is Status.SKIPPED]
-        admitted = [e for e in entries.values() if e.status is Status.DONE]
-        assert len(admitted) == MAX_URLS_PER_ITEM  # the root + 11 children
-        assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)
-        assert all(e.cap is Cap.URL for e in capped)
-        assert all(e.reason == f"url cap ({MAX_URLS_PER_ITEM} per item) reached" for e in capped)
-        assert "url cap" not in report
+        assert len(entries) == len(captured)
+        assert all(e.status is Status.DONE for e in entries.values())
+        assert not [e for e in entries.values() if e.cap is not None]
 
 
 class TestParking:
@@ -1297,21 +1275,14 @@ class TestMediaStage:
         transport = FakeTransport(
             {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"p")}
         )
-        child_url = "https://example.test/docs"
 
         def fetch(unit):
-            if unit.depth == 0:
-                return Result(
-                    status=Status.DONE,
-                    meta={},
-                    body="b" * 400,
-                    media=[self.IMG1],
-                    children=[run_mod.Child(url=child_url, via="harvest")],
-                )
-            return Result(status=Status.DONE, meta={}, body="b" * 400)
+            media = [self.IMG1] if unit.depth == 0 else []
+            return Result(status=Status.DONE, meta={}, body="b" * 400, media=media)
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport)
         run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, ["https://example.test/docs"])
         drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
         assert drain.fetched_count(ITEM) == 2  # seed + child; media excluded
 
@@ -1547,7 +1518,6 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         refused = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert refused.status is Status.SKIPPED
-        # The owner asked for this one: same bound, a different reading.
         assert refused.cap is Cap.URL_REQUESTED
         assert "url cap" in (refused.reason or "")
 
@@ -1860,10 +1830,7 @@ class TestStatusReport:
         def fetch(unit):
             if unit.depth == 0:
                 return Result(
-                    status=Status.DONE,
-                    meta={"title": "t"},
-                    body="substantial body " * 30,
-                    children=[Child(url="https://example.test/child", via="harvest")],
+                    status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30
                 )
             return Result(
                 status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
@@ -1871,6 +1838,7 @@ class TestStatusReport:
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, ["https://example.test/child"])
         report = run_mod.status_report(ctx, item_id=ITEM)
         assert report.startswith(f"## Item {ITEM} — 2 units")
         assert "done" in report
@@ -2243,25 +2211,15 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
 
-    def test_a_renamed_items_child_is_admitted_under_the_live_item(self, instance):
-        # Harvest promotes a child from the parent's line, so the dead id
-        # would propagate onto units written this run, not just carried on
-        # old ones.
+    def test_a_child_promoted_under_a_stale_parent_lands_on_the_live_item(self, instance):
+        # A promotion names its parent by hash, and that line still spells
+        # the dead id — so the dead id would propagate onto units written
+        # this run, not just be carried on old ones.
         self._renamed(instance, status=Status.QUEUED)
-        child = "https://example.test/harvested"
-
-        def fetch(unit):
-            if unit.url != URL:
-                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
-            return Result(
-                status=Status.DONE,
-                meta={"title": "t"},
-                body="body " * 30,
-                children=[Child(url=child, via="harvest")],
-            )
-
-        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
+        child = "https://example.test/harvested"
+        run_mod.fetch_urls(ctx, NEW_ITEM, [child], parent=work_hash(URL))
         entry = ledger.load(instance.ledger_path)[work_hash(child)]
         assert entry.item == NEW_ITEM
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
