@@ -684,8 +684,7 @@ def _referential_integrity(
     misfiled: list[dict[str, str]] = [
         {"item": owner, "path": path}
         for path, owner in landed
-        if (instance.root / path).exists()
-        and Path(path).parent != Path("enrichment") / owner
+        if (instance.root / path).exists() and Path(path).parent != Path("enrichment") / owner
     ]
     misfiled.sort(key=lambda row: (row["item"], row["path"]))
     return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
