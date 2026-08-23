@@ -2168,6 +2168,71 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
 
+    def _drained_then_renamed(self, instance, *, assets=(), media=()) -> FakeTransport:
+        """A real drain under the old id, then the rename that moves it all.
+
+        The state the sweep meets after a rename is whatever the drain left
+        — so it is the drain that builds it here, not a hand-written line.
+        """
+        write_item(instance, OLD_ITEM)
+        transport = FakeTransport(
+            {url: HttpResponse(status=200, content_type="image/png", body=b"png") for url in media}
+        )
+
+        def fetch(_unit):
+            return Result(
+                status=Status.DONE,
+                meta={"title": "t"},
+                body="b" * 400,
+                assets=list(assets),
+                media=list(media),
+            )
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport))
+        old = instance.corpus_dir / "2026" / f"{OLD_ITEM}.md"
+        item = corpus.read_item(old)
+        corpus.write_item(
+            instance.corpus_dir / "2026" / f"{NEW_ITEM}.md", dataclasses.replace(item, id=NEW_ITEM)
+        )
+        old.unlink()
+        (instance.enrichment_dir / OLD_ITEM).rename(instance.enrichment_dir / NEW_ITEM)
+        return transport
+
+    def test_an_extraction_asset_that_moved_with_the_item_is_not_judged_lost(self, instance):
+        # `_unit_product` knew ONE output name (`<kind>-<hash6>.md`), so
+        # every asset read as "output is lost" and requeued — and a
+        # `via: extract-asset` unit's work key is a repo path, not a URL, so
+        # the fetch it was queued for can only ever raise. The unit then sat
+        # in `error`, holding the item `raw` out of digest and wiki forever,
+        # with the asset on disk under the new name the whole time.
+        self._drained_then_renamed(instance, assets=[Asset(data=b"png-bytes", suggested_ext="png")])
+        driver = FakeDriver()
+        report = run_mod.run(make_ctx(instance, driver))
+        asset = next(
+            e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"
+        )
+        assert asset.item == NEW_ITEM
+        assert asset.status is Status.DONE
+        assert asset.path == f"enrichment/{NEW_ITEM}/{work_hash(URL)[:6]}-asset-0.png"
+        assert (instance.root / asset.path).read_bytes() == b"png-bytes"
+        assert driver.fetched == []  # nothing was requeued, so nothing re-fetched
+        assert "queued to re-fetch" not in report
+
+    def test_a_media_download_that_moved_with_the_item_is_not_re_downloaded(self, instance):
+        # The milder half of the same fault: `media-<slot>.<ext>` is a third
+        # name the sweep did not know, so a file that moved with the item was
+        # re-fetched and reported as new material.
+        hero = "https://example.test/hero.png"
+        transport = self._drained_then_renamed(instance, media=[hero])
+        transport.calls.clear()
+        report = run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(hero)]
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{NEW_ITEM}/media-0.png"
+        assert transport.calls == []
+        assert "queued to re-fetch" not in report
+
     def test_a_line_no_live_item_claims_is_left_where_it_is(self, instance):
         # Ownership resolves to a live corpus item or it does not resolve;
         # nobody gets clever rescuing a dead item's work.

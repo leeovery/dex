@@ -469,18 +469,41 @@ class _Drain:
 
         A renamed item's enrichment directory moves with it, so the path
         the line recorded names a directory that is gone while the file
-        sits under the new id. The candidate there must PROVE it is this
-        unit's by the URL it records, the same test
-        :func:`_drop_superseded_outputs` applies before unlinking.
+        sits under the new id — under the SAME name: the rename moved the
+        directory, never the file in it. So the name is read back off the
+        line rather than re-derived here. The drain writes three shapes —
+        :meth:`_write_output`'s ``<kind>-<hash6>.md``,
+        :meth:`_write_assets`' ``<hash6>-asset-<n>.<ext>`` and
+        :meth:`_download_media`'s ``media-<slot>.<ext>`` — and each of
+        them records the name it chose, so the line is the one place that
+        knows all three. A second copy of the first convention here judged
+        every download and extraction asset lost and requeued it, which
+        for a ``via: extract-asset`` unit puts its repo path (the work key
+        those carry instead of a URL) into the fetch queue, where no
+        transport can ever take it.
+
+        An enrichment candidate must PROVE it is this unit's by the URL it
+        records, the same test :func:`_drop_superseded_outputs` applies
+        before unlinking — ``hash6`` is six hex digits, so a neighbour
+        under one item shares it often enough. A download and an asset are
+        bytes with no frontmatter to ask and need none: their names carry
+        this unit's own identity (the download's slot is its position in
+        the item's media order, the asset's is its parent's hash and
+        index), so a name that exists under the new id is this unit's file.
         """
-        if entry.path is not None and (self.ctx.instance.root / entry.path).is_file():
+        if entry.path is None:
+            return None  # a landing that recorded no output has none to find
+        if (self.ctx.instance.root / entry.path).is_file():
             return entry.path
-        name = f"{entry.kind.value}-{entry.hash[:6]}.md"
+        name = Path(entry.path).name
         candidate = self.ctx.instance.enrichment_dir / item_id / name
         if not candidate.is_file():
             return None
+        found = f"enrichment/{item_id}/{name}"
+        if entry.via in ("media", "extract-asset"):
+            return found
         fields, _body = read_enrichment(candidate)
-        return f"enrichment/{item_id}/{name}" if fields.get("url") == entry.url else None
+        return found if fields.get("url") == entry.url else None
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
