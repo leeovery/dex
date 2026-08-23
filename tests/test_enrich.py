@@ -56,8 +56,15 @@ class TestParser:
 
     def test_item_new_takes_capture_slug_shared_by(self):
         args = build_parser().parse_args(
-            ["item", "new", "inbox/20260818-101530.md", "--slug", "great-post",
-             "--shared-by", "Alex"]
+            [
+                "item",
+                "new",
+                "inbox/20260818-101530.md",
+                "--slug",
+                "great-post",
+                "--shared-by",
+                "Alex",
+            ]
         )
         assert (args.command, args.item_command) == ("item", "new")
         assert str(args.capture) == "inbox/20260818-101530.md"

@@ -53,6 +53,7 @@ def looks_like_html(data: bytes) -> bool:
     lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
     return lead.startswith(_HTML_LEADS)
 
+
 # url -> media type ("application/pdf"), or None when the HEAD itself failed.
 # A failed sniff is INCONCLUSIVE, never classified: the GET that follows
 # will surface the real status through the classifier.

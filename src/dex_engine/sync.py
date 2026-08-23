@@ -247,9 +247,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
     return False
 
 
-def _announce(
-    echo: Callable[[str], None], *, current: str, latest_tag: str, major: bool
-) -> None:
+def _announce(echo: Callable[[str], None], *, current: str, latest_tag: str, major: bool) -> None:
     if major:
         banner = "=" * 68
         echo(banner)
@@ -292,9 +290,7 @@ def _copy_tree(root: Path, src_dir: Traversable, dest_dir: Path, changed: list[s
         if item.is_dir():
             _copy_tree(root, item, dest_dir / item.name, changed)
         elif item.is_file():
-            _write_if_changed(
-                root, dest_dir / item.name, item.read_text(encoding="utf-8"), changed
-            )
+            _write_if_changed(root, dest_dir / item.name, item.read_text(encoding="utf-8"), changed)
 
 
 def sync(root: Path, template: Traversable | None = None) -> list[str]:
@@ -428,13 +424,9 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
     if migrate is not None:
         applied = migrate(root)
     else:
-        applied = migrations.run_pending(
-            root, today=today, now=now, engine_version=running_version
-        )
+        applied = migrations.run_pending(root, today=today, now=now, engine_version=running_version)
     changed = sync(root, template=template)
-    notes.extend(
-        rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed
-    )
+    notes.extend(rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed)
     if changed or read_pin(root) != pin:
         notes.append("review + commit the refreshed files and the pin")
     payload = _report_payload(

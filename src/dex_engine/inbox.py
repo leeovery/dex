@@ -71,9 +71,7 @@ API = "https://api.github.com"
 TAG = "inbox"
 UA = "dex-engine-inbox"
 
-_ASSET_URL_RE = re.compile(
-    r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+"
-)
+_ASSET_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+")
 _REMOTE_RE = re.compile(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$")
 
 
@@ -249,9 +247,7 @@ class _Reconcile:
     instance: Instance
     seams: GithubSeams
 
-    def materialize(
-        self, path: Path, frontmatter: dict[str, str], body: str, token: str
-    ) -> bool:
+    def materialize(self, path: Path, frontmatter: dict[str, str], body: str, token: str) -> bool:
         echo = self.seams.echo
         asset_url = frontmatter["asset"]
         if not _ASSET_URL_RE.fullmatch(asset_url):
@@ -298,9 +294,7 @@ class _Reconcile:
             return True
         data = self.seams.download(asset_url, token)
         if len(data) != size:
-            self.seams.echo(
-                f"  FAIL {path.name}: downloaded {len(data)} bytes, expected {size}"
-            )
+            self.seams.echo(f"  FAIL {path.name}: downloaded {len(data)} bytes, expected {size}")
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_bytes(dest, data)
@@ -468,8 +462,7 @@ def ensure(instance: Instance, seams: GithubSeams) -> int:
     repo = reconciler.repo()
     if not token or not repo:
         seams.echo(
-            "need GitHub auth (gh auth login, or GITHUB_TOKEN) and an "
-            "origin remote on github.com"
+            "need GitHub auth (gh auth login, or GITHUB_TOKEN) and an origin remote on github.com"
         )
         return 1
     return 0 if _ensure_release(reconciler, repo, token) else 1
@@ -510,10 +503,7 @@ def reconcile(instance: Instance, seams: GithubSeams) -> int:
     repo = reconciler.repo()
 
     if staged and (not token or not repo):
-        echo(
-            "staged assets need GitHub auth: install gh and `gh auth login`, "
-            "or set GITHUB_TOKEN"
-        )
+        echo("staged assets need GitHub auth: install gh and `gh auth login`, or set GITHUB_TOKEN")
         return 1
 
     materialized, failures = _materialize_all(reconciler, staged, token or "")
@@ -571,8 +561,7 @@ def _release_checks(reconciler: _Reconcile, repo: str | None, token: str | None)
     else:
         why = "no origin remote on github.com — the release checks need one"
     reconciler.seams.echo(
-        f"note: {why} — the inbox-release and orphaned-asset checks were "
-        "skipped, not passed."
+        f"note: {why} — the inbox-release and orphaned-asset checks were skipped, not passed."
     )
     return 0
 

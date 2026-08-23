@@ -58,9 +58,7 @@ def shortid(msg_id: str, channel: str = CHANNEL) -> str:
 
 
 def items(instance: Instance) -> dict[str, corpus.CorpusItem]:
-    return {
-        path.stem: corpus.read_item(path) for path in instance.corpus_dir.glob("*/*.md")
-    }
+    return {path.stem: corpus.read_item(path) for path in instance.corpus_dir.glob("*/*.md")}
 
 
 SUBSTANTIAL = "an observation with enough substance to be knowledge, " * 6
@@ -159,9 +157,7 @@ class TestNormalize:
 
     def test_internal_domains_filter_urls(self, instance):
         write_export(instance, [message("m1", "https://chat.corp.test/thread/1")])
-        lines = run_normalize(
-            instance, Config(internal_domains=["corp.test"])
-        )
+        lines = run_normalize(instance, Config(internal_domains=["corp.test"]))
         assert lines == ["discord/general: 0 items written, 1 clusters skipped"]
 
     def test_embed_title_names_the_slug(self, instance):

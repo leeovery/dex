@@ -121,10 +121,18 @@ class TestEnrichReport:
             "counts": {},
             "items": [],
             "parked": [
-                {"item": "a", "url": "https://a.test", "status": "waiting",
-                 "reason": "waiting on transcribe"},
-                {"item": "b", "url": "https://b.test", "status": "error",
-                 "reason": "connection reset"},
+                {
+                    "item": "a",
+                    "url": "https://a.test",
+                    "status": "waiting",
+                    "reason": "waiting on transcribe",
+                },
+                {
+                    "item": "b",
+                    "url": "https://b.test",
+                    "status": "error",
+                    "reason": "connection reset",
+                },
             ],
         }
         out = render("enrich-report", payload)
@@ -276,9 +284,7 @@ class TestStatusSurface:
         assert "**done** 40 · **manual** 1 · **waiting** 3" in out
         assert "### Waiting on a capability — 3 units" in out
         assert "- `transcribe` — 3" in out
-        assert (
-            "### Digest these — 1 item whose enrichment is newer than its digest"
-        ) in out
+        assert ("### Digest these — 1 item whose enrichment is newer than its digest") in out
         assert "- **2026-08-19-example-55ad7b**" in out
         assert_no_trailing_whitespace(out)
 
@@ -486,16 +492,27 @@ HEALTH_PAYLOAD = {
     "capped": [
         # lint sends the bound, one canonical label per bound — never the
         # ledger line's stated reason.
-        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/deep",
-         "reason": "depth cap (4)"},
-        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/wide",
-         "reason": "url cap (12 per item)"},
-        {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
-         "reason": "url cap (12 per item)"},
+        {
+            "item": "2026-01-06-deep-ffffff",
+            "url": "https://example.test/deep",
+            "reason": "depth cap (4)",
+        },
+        {
+            "item": "2026-01-06-deep-ffffff",
+            "url": "https://example.test/wide",
+            "reason": "url cap (12 per item)",
+        },
+        {
+            "item": "2026-01-07-wide-999999",
+            "url": "https://example.test/other",
+            "reason": "url cap (12 per item)",
+        },
     ],
     "incomplete_threads": [
-        {"path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
-         "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone"}
+        {
+            "path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
+            "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone",
+        }
     ],
     "digest_errors": [{"item": "2026-01-09-broken-777777", "why": "frontmatter missing topics"}],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
@@ -513,12 +530,23 @@ class TestItemStatus:
             {
                 "item": "2026-08-19-example-55ad7b",
                 "units": [
-                    {"url": "https://example.test/post", "status": "done",
-                     "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md"},
-                    {"url": "https://youtube.test/w", "status": "waiting",
-                     "needs": "transcribe", "via": "harvest", "depth": 1},
-                    {"url": "https://paywalled.test/a", "status": "manual",
-                     "reason": "thin-extraction"},
+                    {
+                        "url": "https://example.test/post",
+                        "status": "done",
+                        "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md",
+                    },
+                    {
+                        "url": "https://youtube.test/w",
+                        "status": "waiting",
+                        "needs": "transcribe",
+                        "via": "harvest",
+                        "depth": 1,
+                    },
+                    {
+                        "url": "https://paywalled.test/a",
+                        "status": "manual",
+                        "reason": "thin-extraction",
+                    },
                 ],
             },
         )
@@ -551,18 +579,20 @@ class TestItemStatus:
         with pytest.raises(PayloadError, match="transcode"):
             render(
                 "item-status",
-                {"item": "x-a",
-                 "units": [{"url": "https://a.test", "status": "waiting",
-                            "needs": "transcode"}]},
+                {
+                    "item": "x-a",
+                    "units": [{"url": "https://a.test", "status": "waiting", "needs": "transcode"}],
+                },
             )
 
     def test_unknown_unit_key_is_loud(self):
         with pytest.raises(PayloadError, match="parent"):
             render(
                 "item-status",
-                {"item": "x-a",
-                 "units": [{"url": "https://a.test", "status": "done",
-                            "parent": "abc"}]},
+                {
+                    "item": "x-a",
+                    "units": [{"url": "https://a.test", "status": "done", "parent": "abc"}],
+                },
             )
 
 
@@ -615,14 +645,26 @@ class TestHealthReport:
         # so the same ledger always renders the same line.
         payload = dict(HEALTH_PAYLOAD)
         payload["capped"] = [
-            {"item": "2026-01-07-wide-999999", "url": "https://example.test/a",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/b",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-07-wide-999999", "url": "https://example.test/c",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/d",
-             "reason": "url cap (12 per item)"},
+            {
+                "item": "2026-01-07-wide-999999",
+                "url": "https://example.test/a",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-06-deep-ffffff",
+                "url": "https://example.test/b",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-07-wide-999999",
+                "url": "https://example.test/c",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-06-deep-ffffff",
+                "url": "https://example.test/d",
+                "reason": "url cap (12 per item)",
+            },
         ]
         out = render("health-report", payload)
         assert "most often: **2026-01-06-deep-ffffff** 2 · **2026-01-07-wide-999999** 2" in out
@@ -797,8 +839,7 @@ class TestIdentityIsNeverTruncated:
         base = "https://example.test/a-very-long-path-segment-that-forces-a-line-break/"
         urls = [base + f"{n:04d}" + "?utm_campaign=" + "x" * 200 for n in range(40)]
         parked = [
-            {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"}
-            for url in urls
+            {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"} for url in urls
         ]
         out = render("enrich-report", {"counts": {}, "items": [], "parked": parked})
         rendered = [line for line in out.splitlines() if line.strip().startswith("↳ https")]
@@ -867,9 +908,7 @@ SURFACE_PAYLOADS = {
     "status": {"counts": {"done": 4}, "waiting": {"ocr": 1}, "orphans": [LONG_ID]},
     "item-status": {"item": LONG_ID, "units": [{"url": LONG_URL, "status": "done"}]},
     "capability-report": {
-        "capabilities": [
-            {"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}
-        ]
+        "capabilities": [{"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}]
     },
     "sync-report": {"pin": "v1", "migrations": [], "machinery_changes": 2},
     "ingest-receipt": {"item": LONG_ID, "fetched": 2},
@@ -879,7 +918,6 @@ SURFACE_PAYLOADS = {
 
 class TestNoSurfaceRendersATable:
     """Markdown, headings and bullets — no tables, and no hard wrapping."""
-
 
     def test_every_surface_has_a_payload_here(self):
         assert set(SURFACE_PAYLOADS) == set(SURFACES)

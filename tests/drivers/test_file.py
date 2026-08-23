@@ -299,11 +299,7 @@ class TestRedetection:
 
     def test_html_lead_bytes_redetect_even_with_a_lying_content_type(self):
         transport = FakeTransport(
-            {
-                PDF_URL: HttpResponse(
-                    status=200, content_type="application/pdf", body=self.HTML
-                )
-            }
+            {PDF_URL: HttpResponse(status=200, content_type="application/pdf", body=self.HTML)}
         )
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))

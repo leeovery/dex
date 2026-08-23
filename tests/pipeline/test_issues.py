@@ -88,9 +88,7 @@ class TestErrorEvent:
     def test_engine_frames_are_package_relative(self):
         # Drive a real engine function into raising so the traceback holds
         # dex_engine frames with absolute paths.
-        event = _capture(
-            lambda: from_line("not json"), kind=Kind.FILE, unit_format=Format.PDF
-        )
+        event = _capture(lambda: from_line("not json"), kind=Kind.FILE, unit_format=Format.PDF)
         assert event.function == "from_line"
         assert "dex_engine/pipeline/ledger.py" in event.frames
         assert "/Users/" not in event.frames

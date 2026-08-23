@@ -297,9 +297,7 @@ class _ItemOutcome:
     def reason(self) -> str:
         """What landed, named — "3 new" never said new *what*."""
         parts = [
-            f"{self.new} new enrichment {'file' if self.new == 1 else 'files'}"
-            if self.new
-            else "",
+            f"{self.new} new enrichment {'file' if self.new == 1 else 'files'}" if self.new else "",
             f"{self.changed} rewritten" if self.changed else "",
             f"{self.media} media {'file' if self.media == 1 else 'files'}" if self.media else "",
         ]
@@ -731,9 +729,7 @@ class _Drain:
         enrichment = self.ctx.instance.enrichment_dir / self.owner_of(entry) / name
         match entry.kind:
             case Kind.YOUTUBE:
-                return acquire_youtube_audio(
-                    entry, enrichment, audio_dir, self.ctx.download_audio
-                )
+                return acquire_youtube_audio(entry, enrichment, audio_dir, self.ctx.download_audio)
             case Kind.PODCAST:
                 return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
             case _:
@@ -1779,9 +1775,7 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     if not availability.ok:
         drain.notes.append(f"no transcription provider available — {availability.reason}")
         return _finish(drain)
-    targets = {
-        unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)
-    }
+    targets = {unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)}
     drain.drain(only=targets)
     return _finish(drain)
 

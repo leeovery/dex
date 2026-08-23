@@ -766,9 +766,7 @@ class TestVerbatimKeysAreNotRekeyed:
 
 
 class TestCanonicalizationGuard:
-    def test_one_unreadable_url_is_skipped_with_why_and_the_rest_migrate(
-        self, tmp_path, migration
-    ):
+    def test_one_unreadable_url_is_skipped_with_why_and_the_rest_migrate(self, tmp_path, migration):
         # urlsplit raises on an invalid IPv6 literal; a migration that dies
         # here leaves the chain half-applied.
         broken = LedgerEntry(

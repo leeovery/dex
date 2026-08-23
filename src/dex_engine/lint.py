@@ -150,9 +150,7 @@ def run_lint(
     entity_members = _entity_members(instance)
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
-    scan = _scan_wiki(
-        pages, taxonomy, entity_members, corpus_ids, write=write, today=today
-    )
+    scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
 
     ledgered = _uncategorized_items(taxonomy)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
@@ -196,11 +194,7 @@ def run_lint(
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links
-        or scan.bad_citations
-        or ledger_error
-        or taxonomy_error
-        or digest_errors
+        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error or digest_errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -228,9 +222,7 @@ def _load_taxonomy(instance: Instance) -> tuple[dict[str, object], str | None]:
 def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     """The uncategorized-shares ledger's item ids, tolerating malformed shapes."""
     topics = taxonomy.get("topics", {})
-    uncategorized = (
-        topics.get("uncategorized-shares", {}) if isinstance(topics, dict) else {}
-    )
+    uncategorized = topics.get("uncategorized-shares", {}) if isinstance(topics, dict) else {}
     items = uncategorized.get("items", []) if isinstance(uncategorized, dict) else []
     if not isinstance(items, list):
         return set()
@@ -275,9 +267,7 @@ def _entity_members(instance: Instance) -> dict[str, list[str]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: expected an object of entity -> item list")
-    return {
-        name: members for name, members in raw.items() if isinstance(members, list)
-    }
+    return {name: members for name, members in raw.items() if isinstance(members, list)}
 
 
 def _frontmatter(text: str) -> str | None:
@@ -423,14 +413,8 @@ def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity
         return text
     updated = frontmatter
     recorded = ITEMS_RE.search(frontmatter)
-    if (
-        recorded is not None
-        and expected is not None
-        and int(recorded.group(1)) != expected
-    ):
-        scan.count_drift.append(
-            {"page": name, "recorded": recorded.group(1), "actual": expected}
-        )
+    if recorded is not None and expected is not None and int(recorded.group(1)) != expected:
+        scan.count_drift.append({"page": name, "recorded": recorded.group(1), "actual": expected})
         if write:
             updated = ITEMS_RE.sub(f"items: {expected}", updated, count=1)
             scan.reconciled.append(f"{name}: items: {recorded.group(1)} -> {expected}")
@@ -470,9 +454,7 @@ def _restated_pairs(name: str, text: str) -> list[dict[str, str]]:
                 and matcher.quick_ratio() >= RESTATED_RATIO
                 and matcher.ratio() >= RESTATED_RATIO
             ):
-                pairs.append(
-                    {"page": name, "first": _clip(raw_a), "second": _clip(raw_b)}
-                )
+                pairs.append({"page": name, "first": _clip(raw_a), "second": _clip(raw_b)})
     return pairs
 
 
@@ -564,9 +546,7 @@ def _state_checks(
                 continue
             waiting[entry.needs.value] = waiting.get(entry.needs.value, 0) + 1
             if is_cognitive(entry.needs, entry.format):
-                cognitive.append(
-                    {"item": entry.item, "url": entry.url, "need": entry.needs.value}
-                )
+                cognitive.append({"item": entry.item, "url": entry.url, "need": entry.needs.value})
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
         integrity = _referential_integrity(instance, entries, corpus_ids)
@@ -814,9 +794,7 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
         if entry.cap is Cap.URL_REQUESTED:
             requested += 1
             continue
-        scan.rows.append(
-            {"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]}
-        )
+        scan.rows.append({"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]})
     if requested:
         scan.notes.append(
             f"{requested} owner-requested fetch refusal{'' if requested == 1 else 's'} "

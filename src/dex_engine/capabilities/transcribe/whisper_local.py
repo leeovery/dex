@@ -82,8 +82,7 @@ def _unknown_model(model: str) -> Availability:
     return Availability(
         ok=False,
         reason=(
-            f"unknown whisper model {model!r} — use a faster-whisper size name "
-            "or an HF repo id"
+            f"unknown whisper model {model!r} — use a faster-whisper size name or an HF repo id"
         ),
     )
 

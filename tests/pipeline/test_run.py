@@ -914,8 +914,7 @@ class TestRerun:
         run_mod.run(ctx)
         item_dir = instance.enrichment_dir / ITEM
         snapshot = {
-            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-            for path in item_dir.iterdir()
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in item_dir.iterdir()
         }
         before = ledger.load(instance.ledger_path)
         for entry in before.values():
@@ -934,8 +933,7 @@ class TestRerun:
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         after = ledger.load(instance.ledger_path)
         assert {
-            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-            for path in item_dir.iterdir()
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in item_dir.iterdir()
         } == snapshot
         assert set(after) == set(before)  # no new units minted, audit lines only
         assert all(entry.status is Status.DONE for entry in after.values())
@@ -1281,9 +1279,7 @@ class TestMediaStage:
         )
         driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
         run_mod.run(make_ctx(instance, driver, transport=transport))
-        lines = [
-            line for line in instance.ledger_path.read_text().split("\n") if line.strip()
-        ]
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
         assert json.loads(lines[-1])["hash"] == work_hash(self.IMG1)
         instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")  # the crash
         assert (instance.enrichment_dir / ITEM / "media-0.png").exists()
@@ -1738,9 +1734,7 @@ class TestVerbs:
             status=Status.DONE, meta={}, body="b" * 400, media=[raw]
         )
         image = HttpResponse(status=200, content_type="image/png", body=b"png")
-        ctx = make_ctx(
-            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image})
-        )
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image}))
         run_mod.run(ctx)
         run_mod.mark(ctx, raw, Status.DEAD, reason="the page is gone")
         entries = ledger.load(instance.ledger_path)
@@ -2001,9 +1995,7 @@ class TestStatusReport:
             instance, enriched=datetime.date(2026, 8, 19), digested=datetime.date(2026, 8, 18)
         )
         with instance.passes_path.open("a", encoding="utf-8") as passes:
-            passes.write(
-                json.dumps({"stage": "digest", "item": ITEM, "date": "2026-08-20"}) + "\n"
-            )
+            passes.write(json.dumps({"stage": "digest", "item": ITEM, "date": "2026-08-20"}) + "\n")
         assert run_mod.digest_orphans(instance) == []
 
     def test_a_digest_predating_the_pass_record_is_not_stale(self, instance):
@@ -2802,10 +2794,12 @@ class TestRerunPacing:
         ctx = make_ctx(instance, driver)
         self._seed_reruns(ctx, run_mod.RERUN_DRAIN_CAP + 5)
         report = run_mod.run(ctx)
-        done = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                if e.status is Status.DONE]
-        queued = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                  if e.status is Status.QUEUED]
+        done = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.DONE
+        ]
+        queued = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.QUEUED
+        ]
         assert len(done) == run_mod.RERUN_DRAIN_CAP
         assert len(queued) == 5
         assert (
@@ -2814,8 +2808,9 @@ class TestRerunPacing:
         ) in report
         # The next run drains the remainder and says so.
         second = run_mod.run(make_ctx(instance, FakeDriver()))
-        remaining = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                     if e.status is Status.QUEUED]
+        remaining = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.QUEUED
+        ]
         assert remaining == []
         assert "rerun cohort: 5 of 5 drained" in second
         assert "queue for the next run" not in second
@@ -2981,11 +2976,7 @@ class TestRedetection:
         # the content type, file re-routes back on the bytes — the second
         # correction hits the once-only guard.
         transport = FakeTransport(
-            {
-                self.PDF_URL: HttpResponse(
-                    status=200, content_type="application/pdf", body=self.HTML
-                )
-            }
+            {self.PDF_URL: HttpResponse(status=200, content_type="application/pdf", body=self.HTML)}
         )
         write_item(instance, urls=[self.PDF_URL])
         ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
@@ -3027,9 +3018,7 @@ class TestRedetection:
         # enrichment: listing; the ledger audit trail is the history.
         article = fixture_text("web", "article.html")
         responses = {
-            self.PDF_URL: HttpResponse(
-                status=200, content_type="text/html", body=article.encode()
-            )
+            self.PDF_URL: HttpResponse(status=200, content_type="text/html", body=article.encode())
         }
         transport = FakeTransport(responses)
         item_path = write_item(instance, urls=[self.PDF_URL])

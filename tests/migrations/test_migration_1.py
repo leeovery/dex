@@ -237,9 +237,7 @@ class TestLedgerTranslation:
         unit_hash = _legacy_uhash(url)
         item_path = tmp_path / "corpus" / "2026" / "2026-05-01-item-a1b2c3.md"
         item_path.parent.mkdir(parents=True)
-        item_path.write_text(
-            corpus_text("2026-05-01-item-a1b2c3", urls=(url,), kinds=("youtube",))
-        )
+        item_path.write_text(corpus_text("2026-05-01-item-a1b2c3", urls=(url,), kinds=("youtube",)))
         path = write_ledger(
             tmp_path,
             [
@@ -728,9 +726,7 @@ class TestLedgerTranslation:
         assert not any("untranslatable line(s) dropped" in a for a in report.actions)
         assert ledger.load(path)[_legacy_uhash(url)].item == "2026-05-01-claimant-a1b2c3"
 
-    def test_an_orphaned_enrichment_directory_never_attributes_a_line(
-        self, tmp_path, migration
-    ):
+    def test_an_orphaned_enrichment_directory_never_attributes_a_line(self, tmp_path, migration):
         # The tree is asked first, but it answers with a directory, not with
         # an item: a corpus file deleted while enrichment/<id>/ was left
         # behind is residue, and residue must not own work.
@@ -931,9 +927,7 @@ class TestConfigRename:
         state.mkdir()
         (state / "normalize-config.json").write_text('{"internal_domains": ["a.test"]}\n')
         report = migration.apply(tmp_path)
-        assert json.loads((state / "config.json").read_text()) == {
-            "internal_domains": ["a.test"]
-        }
+        assert json.loads((state / "config.json").read_text()) == {"internal_domains": ["a.test"]}
         assert not any("name_map" in action for action in report.actions)
 
     def test_unknown_key_skipped_for_the_session(self, tmp_path, migration):

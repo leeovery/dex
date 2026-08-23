@@ -154,9 +154,9 @@ class TestThreadWalkUp:
         # A post naming itself as its own parent used to walk the full
         # bound: 100 back-to-back requests to a free community API for one
         # unit. Seeing the id already walked ends it at zero further calls.
-        transport = FakeTransport({API + "status/500": json_response(
-            {"tweet": self._looping_post("500", "500")}
-        )})
+        transport = FakeTransport(
+            {API + "status/500": json_response({"tweet": self._looping_post("500", "500")})}
+        )
         result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
             make_unit("https://x.com/loop/status/500", Kind.X)
         )

@@ -183,8 +183,7 @@ def truncating_server(
                 if redirect_first and served == 1:
                     conn.sendall(
                         b"HTTP/1.1 302 Found\r\nLocation: http://%s:%d/signed\r\n"
-                        b"Content-Length: 0\r\nConnection: close\r\n\r\n"
-                        % (host.encode(), port)
+                        b"Content-Length: 0\r\nConnection: close\r\n\r\n" % (host.encode(), port)
                     )
                 else:
                     conn.sendall(

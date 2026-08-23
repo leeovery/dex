@@ -280,10 +280,14 @@ class TestRssIshResolution:
         assert result.meta["title"] == "Ledgers as Work Queues"
 
     def test_a_page_with_no_feed_link_still_resolves_from_its_player(self):
-        page = indie_page().text().replace(
-            '<link rel="alternate" type="application/rss+xml" title="Engineering Distilled"\n'
-            '        href="https://feeds.pods.test/engineering-distilled.rss" />',
-            "",
+        page = (
+            indie_page()
+            .text()
+            .replace(
+                '<link rel="alternate" type="application/rss+xml" title="Engineering Distilled"\n'
+                '        href="https://feeds.pods.test/engineering-distilled.rss" />',
+                "",
+            )
         )
         d = driver({PAGE_URL: html_response(page)})
         result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))

@@ -1342,8 +1342,7 @@ class TestReadEnrichmentFields:
     def test_agrees_with_the_full_read(self, tmp_path):
         record = tmp_path / "podcast-abc123.md"
         record.write_text(
-            '---\nurl: https://x.test\nfetched: 2026-08-20\ntitle: "Ep: one"\n'
-            "---\n\nnotes body\n"
+            '---\nurl: https://x.test\nfetched: 2026-08-20\ntitle: "Ep: one"\n---\n\nnotes body\n'
         )
         assert read_enrichment_fields(record) == read_enrichment(record)[0]
 
