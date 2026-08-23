@@ -968,7 +968,7 @@ class _Drain:
                 continue
             changed = not out.exists() or out.read_bytes() != asset.data
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(asset.data)
+            atomic.write_bytes(out, asset.data)
             if changed:
                 self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
             self._asset_outcome(entry, rel, status=Status.DONE, path=rel)
@@ -1117,7 +1117,7 @@ class _Drain:
         owner = self.owner_of(entry)
         out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{_ext_of(entry.url)}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(response.body)
+        atomic.write_bytes(out, response.body)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(
             entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))

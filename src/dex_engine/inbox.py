@@ -303,7 +303,7 @@ class _Reconcile:
             )
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        atomic.write_bytes(dest, data)
         return True
 
     def _promote(  # noqa: PLR0913, PLR0917 — the tail of the sequence needs the whole capture context

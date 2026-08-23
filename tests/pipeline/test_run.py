@@ -14,7 +14,7 @@ import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from dex_engine import corpus
+from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.github import GitHubDriver
@@ -959,6 +959,46 @@ class TestMediaStage:
         assert media.path == f"enrichment/{ITEM}/media-0.png"
         assert (instance.root / media.path).read_bytes() == b"png"
         assert entries[work_hash(self.IMG2)].path == f"enrichment/{ITEM}/media-1.jpg"
+
+    def test_a_downloaded_media_file_lands_atomically(self, instance, monkeypatch):
+        # A media file is content, not a scratch artifact: a run killed
+        # mid-download must not leave a half-image standing where the
+        # ledger says a whole one is. Asserting the seam, because a plain
+        # write_bytes leaves no evidence behind once it succeeds.
+        written: list[Path] = []
+        real = atomic.write_bytes
+
+        def spy(path, data):
+            written.append(path)
+            real(path, data)
+
+        monkeypatch.setattr(run_mod.atomic, "write_bytes", spy)
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(kind=Kind.X, fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        standing = instance.root / f"enrichment/{ITEM}/media-0.png"
+        assert standing.read_bytes() == b"png"
+        assert standing in written
+
+    def test_a_failed_media_write_leaves_the_standing_file_whole(self, instance, monkeypatch):
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(kind=Kind.X, fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        standing = instance.root / f"enrichment/{ITEM}/media-0.png"
+        before = sorted(p.name for p in standing.parent.iterdir())
+
+        failing_fdopen(monkeypatch)
+        with pytest.raises(OSError, match="No space left"):
+            run_mod.atomic.write_bytes(standing, b"truncated")
+        assert standing.read_bytes() == b"png"
+        # No half-written temp left beside it.
+        assert sorted(p.name for p in standing.parent.iterdir()) == before
 
     def test_media_config_none_gates_the_stage_off(self, instance):
         write_item(instance)
