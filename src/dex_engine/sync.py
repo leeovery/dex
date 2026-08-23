@@ -465,9 +465,23 @@ def _report_payload(
         payload["pin"] = pin
         if previous is not None and previous != pin:
             payload["previous"] = previous
+            if _is_major_bump(previous, pin):
+                payload["major"] = True
     if notes:
         payload["notes"] = notes
     return payload
+
+
+def _is_major_bump(previous: str, pin: str) -> bool:
+    """Whether the pin transition crossed a major version.
+
+    ``--previous-pin`` arrives from argv, so an unparseable value reads as
+    not-major rather than failing the report the re-exec exists to render.
+    """
+    try:
+        return parse_version(pin)[0] > parse_version(previous)[0]
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------

@@ -764,6 +764,9 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
                                       #   unpinned pre-first-release mode)
           "previous": str,            # optional: prior pin (absent = no bump;
                                       #   requires pin)
+          "major": bool,              # optional: the bump crossed a major —
+                                      #   an owner-visible event, announced
+                                      #   distinctly (requires previous)
           "migrations": [             # applied this sync, may be empty
             {"number": int, "intent": str,
              "actions": [str],                     # optional
@@ -782,23 +785,40 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "notes"}),
+        optional=frozenset({"pin", "previous", "major", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
     if previous is not None and pin is None:
         _fail(surface, "previous requires pin — a bump lands on a pinned tag")
+    major = payload.get("major", False)
+    if not isinstance(major, bool):
+        _fail(surface, f"major must be a boolean, got {major!r}")
+    if major and previous is None:
+        _fail(surface, "major requires a pin transition — previous and pin")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
     machinery_changes = _int_at(surface, payload, "machinery_changes")
     notes = _str_list_at(surface, payload, "notes")
 
     if pin is None:
         head = "Sync — engine unpinned (no release pinned; see notes)"
+    elif major:
+        head = f"Sync — MAJOR upgrade {previous} → {pin}"
     elif previous is not None and previous != pin:
         head = f"Sync — pin bumped {previous} → {pin}"
     else:
         head = f"Sync — engine pinned at {pin}"
     blocks = [kernel.heading(head), ""]
+    if major:
+        # A major is an owner-visible event, not a row: the loud line sits
+        # above everything else the report has to say.
+        blocks += [
+            (
+                f"{kernel.bold('MAJOR ENGINE UPGRADE')} — {previous} → {pin} auto-applied "
+                "(the always-migratable commitment); review this report closely."
+            ),
+            "",
+        ]
     if migrations:
         blocks += [kernel.heading(f"Migrations applied — {len(migrations)}", level=3), ""]
         blocks += [

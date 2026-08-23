@@ -259,6 +259,16 @@ class TestSteadyStateAndEdges:
         channel, _ = make_channel(listing_for("v0.1.2"))
         report, _ = run(inst, channel, template, previous_pin="v0.1.0")
         assert "## Sync — pin bumped v0.1.0 → v0.1.2" in report
+        assert "MAJOR" not in report
+
+    def test_previous_pin_across_a_major_announces_loudly_in_the_report(self, inst, template):
+        # The pre-exec echo dies with the process that execvp'd away; the
+        # post-re-exec report is where the major reaches the owner.
+        write_pin(inst.root, "v1.0.0")
+        channel, _ = make_channel(listing_for("v1.0.0"))
+        report, _ = run(inst, channel, template, previous_pin="v0.9.3")
+        assert "## Sync — MAJOR upgrade v0.9.3 → v1.0.0" in report
+        assert "MAJOR ENGINE UPGRADE" in report
 
 
 class TestMigrationsInTheFlow:

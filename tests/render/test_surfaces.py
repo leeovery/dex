@@ -448,6 +448,51 @@ class TestSyncReport:
         assert "## Sync — engine unpinned" in out
         assert "- no release tags on the remote yet — running unpinned" in out
 
+    def test_a_major_bump_renders_distinctly_and_loudly(self):
+        # §12: a major is an owner-visible event, not a row — the heading
+        # names it and a loud line follows, unlike any patch bump.
+        out = render(
+            "sync-report",
+            {
+                "pin": "v1.0.0",
+                "previous": "v0.9.3",
+                "major": True,
+                "migrations": [],
+                "machinery_changes": 0,
+            },
+        )
+        assert out.startswith("## Sync — MAJOR upgrade v0.9.3 → v1.0.0\n")
+        assert "**MAJOR ENGINE UPGRADE**" in out
+        assert "always-migratable commitment" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_a_patch_bump_never_reads_as_major(self):
+        out = render(
+            "sync-report",
+            {"pin": "v0.2.2", "previous": "v0.2.1", "migrations": [], "machinery_changes": 0},
+        )
+        assert "MAJOR" not in out
+
+    def test_major_without_a_pin_transition_is_loud(self):
+        with pytest.raises(PayloadError, match="major requires"):
+            render(
+                "sync-report",
+                {"pin": "v1.0.0", "major": True, "migrations": [], "machinery_changes": 0},
+            )
+
+    def test_non_boolean_major_is_loud(self):
+        with pytest.raises(PayloadError, match="major"):
+            render(
+                "sync-report",
+                {
+                    "pin": "v1.0.0",
+                    "previous": "v0.9.3",
+                    "major": "yes",
+                    "migrations": [],
+                    "machinery_changes": 0,
+                },
+            )
+
     def test_previous_without_pin_is_loud(self):
         with pytest.raises(PayloadError, match="previous requires pin"):
             render(

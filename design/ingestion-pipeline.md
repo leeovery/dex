@@ -1425,8 +1425,13 @@ case this exists for.) A symlinked skill directory is unlinked rather than
 recursed into, so whatever it pointed at is left alone. Nothing outside the
 `dex-` prefix is ever touched — an owner's own skills are instance-owned.
 
-Majors also auto-apply (the always-migratable commitment) but announce loudly
-in session and health report. Minors only for the foreseeable future.
+Majors also auto-apply (the always-migratable commitment) but announce
+loudly twice: in session before the re-exec (the echo of the process about
+to replace itself), and distinctly on the post-re-exec sync report — the
+heading names the MAJOR upgrade and a loud line leads the report, the
+transition read off `--previous-pin`. A major is an owner-visible event,
+never a row a patch bump would also render. Minors only for the
+foreseeable future.
 Transition bootstrap is automatic: sync rewrites its own shim, so existing
 instances move from main-tracking to tag-pinning on their next sync.
 
