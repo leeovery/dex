@@ -17,10 +17,11 @@ runs in bulk from the scope-filter pass, so that line is the owner's only
 signal.
 
 The exclusions file is LLM-authored and this deletes recursively, so every
-id is validated before anything is written or removed: it names one file in
-the corpus tree, never a path, and it must resolve inside this instance's
-root. A refused id reaches neither the disk nor ``state/exclusions.tsv``,
-where the record would be permanent.
+entry in the batch is validated before anything is written or removed: an
+id is a corpus item id, never a path, every value is checked for its type,
+and the batch is refused whole. A half-applied batch is worse than none —
+its first entry is recorded in ``state/exclusions.tsv`` permanently, with
+its ledger purge unrun and the entries after it silently lost.
 """
 
 import argparse
@@ -59,7 +60,7 @@ class _Exclusion:
     enrichment_path: Path
 
 
-def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
+def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
     """Exclude the given items: record why, delete item, enrichment and ledger entries.
 
     Args:
@@ -70,9 +71,10 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
         The one-line summary.
 
     Raises:
-        ValueError: An entry has no ``id``, or an ``id`` that is not a
-            corpus item id or resolves outside the instance. The whole
-            batch is refused before anything is written or deleted.
+        ValueError: An entry is not an object, has no ``id``, has an ``id``
+            that is not a corpus item id or resolves outside the instance,
+            or has a non-string ``reason``. The whole batch is refused
+            before anything is written or deleted.
     """
     validated = [_validated(instance, entry) for entry in entries]
     exclusions = instance.state_dir / "exclusions.tsv"
@@ -110,25 +112,35 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
     )
 
 
-def _validated(instance: Instance, entry: dict[str, str]) -> _Exclusion:
-    """One entry's id checked and its paths resolved inside the instance.
+def _validated(instance: Instance, entry: object) -> _Exclusion:
+    """One entry's types checked and its paths resolved inside the instance.
 
-    The id is checked for shape AND its paths resolved under the root: the
-    shape catches an id that is a path, the resolution catches a corpus
-    file or enrichment directory symlinked out of the instance.
+    Every value is LLM-authored, so none is trusted for its type: the batch
+    runs in bulk and the operation is a recursive delete, so a wrong shape
+    must be a refusal naming the entry, not a ``TypeError`` half way down
+    the list. The id is checked for shape AND its paths resolved under the
+    root: the shape catches an id that is a path, the resolution catches a
+    corpus file or enrichment directory symlinked out of the instance.
 
     Raises:
-        ValueError: Either check fails, naming the offending entry.
+        ValueError: Any of those, naming the offending entry.
     """
+    if not isinstance(entry, dict):
+        raise ValueError(f"exclusion entry is not an object: {entry!r}")
     item_id = entry.get("id")
     if not item_id:
         raise ValueError(f"exclusion entry has no id: {entry!r}")
-    if not _ITEM_ID_RE.fullmatch(item_id):
+    if not isinstance(item_id, str) or not _ITEM_ID_RE.fullmatch(item_id):
         raise ValueError(
             f"exclusion id is not a corpus item id: {item_id!r} (in {entry!r}) — an id "
             "names one file in the corpus tree, never a path"
         )
     raw_reason = entry.get("reason", _DEFAULT_REASON)
+    if not isinstance(raw_reason, str):
+        raise ValueError(
+            f"exclusion reason for {item_id} must be a string, got "
+            f"{type(raw_reason).__name__}: {entry!r}"
+        )
     item_path = resolve_repo_path(instance.root, f"corpus/{item_id[:4]}/{item_id}.md")
     enrichment_path = resolve_repo_path(instance.root, f"enrichment/{item_id}")
     if item_path is None or enrichment_path is None:
@@ -158,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_entries(path: Path) -> list[dict[str, str]]:
+def _load_entries(path: Path) -> list[dict[str, object]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list) or not all(isinstance(e, dict) for e in raw):
         raise ValueError(f"{path}: expected a JSON list of objects")

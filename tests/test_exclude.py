@@ -278,6 +278,46 @@ class TestBadIdsAreRefused:
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
 
 
+class TestTheBatchIsRefusedWhole:
+    """One bad entry refuses the batch: a half-applied one is worse than none."""
+
+    def test_a_wrongly_typed_id_mid_batch_leaves_no_trace(self, instance):
+        # Entry 1's TSV record was permanent while its ledger purge never
+        # ran (that comes after the loop), and entry 3 was lost silently.
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        before = instance.ledger_path.read_text()
+        with pytest.raises(ValueError, match="999"):
+            run_exclude(
+                instance,
+                [
+                    {"id": ITEM, "reason": "meme thread"},
+                    {"id": 999, "reason": "meme thread"},
+                    {"id": OTHER, "reason": "meme thread"},
+                ],
+            )
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert (instance.corpus_dir / "2026" / f"{OTHER}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+        assert instance.ledger_path.read_text() == before
+
+    @pytest.mark.parametrize("reason", [None, 7, ["meme thread"]])
+    def test_a_non_string_reason_refuses_the_batch(self, instance, reason):
+        write_item_stub(instance)
+        with pytest.raises(ValueError, match="must be a string"):
+            run_exclude(instance, [{"id": ITEM, "reason": reason}])
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+    def test_an_entry_that_is_not_an_object_is_refused(self, instance):
+        # Unreachable through the CLI, which parses the file first, but
+        # `run_exclude` is called directly too and deletes either way.
+        with pytest.raises(ValueError, match="not an object"):
+            run_exclude(instance, [ITEM])  # ty: ignore[invalid-argument-type]
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+
 class TestCli:
     def test_main_excludes_from_a_file(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
