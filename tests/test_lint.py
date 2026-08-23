@@ -665,6 +665,45 @@ class TestCapFires:
         assert "1 owner-requested fetch refusal standing at the url cap (12 per item)" in flat
         assert "https://example.test/3" not in flat  # the refused-on-request URL
 
+    def test_the_newest_fire_is_listed_first(self, instance):
+        # Nothing supersedes a cap line, so the listing only grows: oldest
+        # first would bury the fires a session can still act on.
+        self._bare_wiki(instance)
+        old_item = "2026-01-02-old-aaaaaa"
+        new_item = "2026-08-20-new-bbbbbb"
+        for i, item in enumerate((old_item, new_item)):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i}"),
+            )
+        # The counts above the listing are ordered their own way; the rows
+        # naming a refused URL are the listing.
+        rows = [line for line in lint(instance).report.split("\n") if " -> " in line]
+        assert rows == [
+            f"  {new_item} -> https://example.test/1",
+            f"  {old_item} -> https://example.test/0",
+        ]
+
+    def test_a_fire_today_is_listed_even_once_the_listing_is_full(self, instance):
+        # The surface caps the listing; the fire stamped today must not be
+        # the one it drops.
+        self._bare_wiki(instance)
+        older = [f"2026-01-{day:02d}-old-{day:06d}" for day in range(1, 26)]
+        newest = "2026-08-20-brand-new-ffffff"
+        for i, item in enumerate([*older, newest]):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(
+                    f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i:02d}"
+                ),
+            )
+        report = lint(instance).report
+        assert "re-entry cap fires (tuning signal, not an alarm) — 26 across 26 items" in report
+        assert f"{newest} -> https://example.test/25" in report
+        # the oldest is what the cap drops (bare ids also appear under the
+        # ghost-item listing, so the URL is what this asserts on)
+        assert "https://example.test/00" not in report
+
     def test_a_tuning_signal_never_fails_the_check(self, instance):
         self._bare_wiki(instance)
         ledger.append(

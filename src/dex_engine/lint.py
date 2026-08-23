@@ -715,10 +715,16 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
     being tight or about harvest promoting too much. It leaves the tuning
     count entirely and stands as a note: it was already answered, with its
     ``--force`` route, on the run report where it was asked.
+
+    Newest first, by item id (date-prefixed). Nothing supersedes a cap
+    fire — the skipped line is the ledger's standing record that the URL
+    was refused, and compaction keeps it — so this listing only grows, and
+    oldest-first meant the rows the surface shows were held forever by the
+    oldest items, with a fire stamped today appearing nowhere.
     """
     scan = _CapScan()
     requested = 0
-    for entry in sorted(entries.values(), key=lambda e: (e.item, e.url)):
+    for entry in sorted(entries.values(), key=lambda e: (e.item, e.url), reverse=True):
         if entry.cap is None:
             continue
         if entry.cap is Cap.URL_REQUESTED:
@@ -763,10 +769,10 @@ def _incomplete_threads(instance: Instance) -> _ThreadScan:
 
     Newest first, and read as a standing count rather than a work list.
     Nothing clears a marker — a parent that 404s stays unfetchable — so
-    unlike every other capped listing in the report this one only grows,
-    and oldest-first would mean a thread stamped today is never the one
-    shown. Newest is by item id (date-prefixed): the stamping instant is
-    not recorded, and a file mtime resets on any checkout.
+    this listing only grows, as the cap-fire listing above it does, and
+    oldest-first would mean a thread stamped today is never the one shown.
+    Newest is by item id (date-prefixed): the stamping instant is not
+    recorded, and a file mtime resets on any checkout.
     """
     scan = _ThreadScan()
     for path in sorted(instance.enrichment_dir.glob("*/*.md"), reverse=True):
