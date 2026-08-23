@@ -87,6 +87,11 @@ step 4.
      digest: cite it on
      the best existing page, or ledger it into `uncategorized-shares` in
      `state/taxonomy.json` if genuinely low-signal.
+   - **Items a page cites but no taxonomy topic records** — the other face
+     of the coverage invariant: a citation is not a placement. Read the
+     digest and append the id to each matching topic's `items` in
+     `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
+     genuinely low-signal.
    - **Index drift** — regenerate the affected `wiki/index.md` entries.
    - **Stale pages** (members newer than the page) — fold the newer items
      in via rewrite-not-append; if the new material supersedes old claims,

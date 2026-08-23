@@ -4,7 +4,9 @@ Checks:
 
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
-  citation everywhere, index included), coverage orphans, index consistency,
+  citation everywhere, index included), coverage orphans and their cited
+  complement (items pages cite that no taxonomy topic records), index
+  consistency,
   stale pages, page item-count drift (frontmatter ``items:`` vs the page's
   MEMBER count — its taxonomy topic's items, or its entity-members list;
   never its citation count), and difflib sentence similarity ("possible restated
@@ -155,6 +157,12 @@ def run_lint(
 
     ledgered = _uncategorized_items(taxonomy)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
+    # The coverage invariant's other face: a citation is not a placement,
+    # so a cited item can still be in no topic's items and off the
+    # uncategorized ledger — invisible to the orphan check, which only
+    # asks about the uncited. The cited set is the wiki scan's; the
+    # placed set is the taxonomy's own listing.
+    unplaced = sorted(scan.cited - _placed_items(taxonomy))
     unindexed, ghost_index = _index_consistency(instance, pages, taxonomy)
     # Shortid-shaped citations flag everywhere — index included: latent
     # shortids in an index never tripped the old citation check because no
@@ -177,6 +185,7 @@ def run_lint(
         "bad_citations": scan.bad_citations,
         "shortid_citations": scan.shortid_citations,
         "orphans": orphans,
+        "unplaced": unplaced,
         "unindexed": unindexed,
         "ghost_index": ghost_index,
         "stale_pages": scan.stale_pages,
@@ -228,6 +237,24 @@ def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     if not isinstance(items, list):
         return set()
     return {item for item in items if isinstance(item, str)}
+
+
+def _placed_items(taxonomy: dict[str, object]) -> set[str]:
+    """Every item id some topic's ``items`` records — uncategorized-shares included.
+
+    The coverage invariant's whole placed set, read with the same
+    tolerance for hand-mangled shapes :func:`_uncategorized_items` shows:
+    a malformed topic contributes nothing rather than a crash.
+    """
+    topics = taxonomy.get("topics", {})
+    if not isinstance(topics, dict):
+        return set()
+    placed: set[str] = set()
+    for topic in topics.values():
+        items = topic.get("items", []) if isinstance(topic, dict) else []
+        if isinstance(items, list):
+            placed |= {item for item in items if isinstance(item, str)}
+    return placed
 
 
 def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:

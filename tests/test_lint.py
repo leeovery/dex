@@ -197,6 +197,45 @@ class TestWikiChecks:
         assert orphaned in outcome.report
         assert "items no page cites and the taxonomy does not record — **1**" in outcome.report
 
+    def test_cited_but_unplaced_items_are_flagged(self, instance):
+        # A citation is not a placement: the coverage invariant wants every
+        # item in some topic's `items` or the uncategorized ledger, and the
+        # orphan check only ever asks about the uncited.
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(instance, "brewing", page_text(items=None, body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+        assert outcome.exit_code == 0  # a finding to repair, like the orphan row
+
+    def test_a_placed_and_cited_item_is_not_unplaced(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+
+    def test_an_uncited_unplaced_item_is_the_orphan_finding_not_this_one(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+        assert "items no page cites and the taxonomy does not record — **1**" in outcome.report
+
+    def test_an_uncategorized_ledgered_citation_is_placed(self, instance):
+        # uncategorized-shares is a topic like any other to the placed set:
+        # a cited item resting on the ledger satisfies the invariant.
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(items=None, body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+
     def test_index_consistency(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
         write_page(instance, "brewing", page_text(items=None, body="text\n"))

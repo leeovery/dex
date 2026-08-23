@@ -969,6 +969,7 @@ _HEALTH_OPTIONAL = frozenset(
         "bad_citations",
         "shortid_citations",
         "orphans",
+        "unplaced",
         "unindexed",
         "ghost_index",
         "stale_pages",
@@ -1025,6 +1026,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "bad_citations": [{"page": str, "id": str}],
           "shortid_citations": [{"page": str, "token": str}],
           "orphans": [str],
+          "unplaced": [str],   # cited, but in no topic's items and unledgered
           "unindexed": [str],
           "ghost_index": [str],
           "stale_pages": [{"page": str, "newer": int}],
@@ -1161,6 +1163,9 @@ def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> lis
     )
     blocks += _health_names(
         surface, payload, "orphans", "items no page cites and the taxonomy does not record"
+    )
+    blocks += _health_names(
+        surface, payload, "unplaced", "items a page cites but no taxonomy topic records"
     )
     blocks += _health_names(surface, payload, "unindexed", "pages missing from index")
     blocks += _health_names(surface, payload, "ghost_index", "ghost index entries")
