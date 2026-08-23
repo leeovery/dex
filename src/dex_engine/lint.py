@@ -22,9 +22,9 @@ Checks:
   enrichment-newer-than-digest orphan listing (the interrupted-session
   backstop, shared with ``enrich status``).
 
-  judgment drift — the signals the pipeline records for this check and no
-  other surface: harvest-time re-entry cap fires (ledger lines carrying a
-  ``cap``: are the bounds too tight for this corpus, or is harvest
+  judgment drift — the signals the pipeline records for this check: the
+  re-entry cap fires nobody overrode (ledger lines carrying a ``cap`` and
+  not ``forced``: are the bounds too tight for this corpus, or is harvest
   over-promoting?) and
   thread-completeness markers in enrichment frontmatter
   (``thread_cap_hit`` / ``chain_incomplete``: a stored thread a digest
@@ -65,7 +65,7 @@ from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
 from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans
 from .pipeline.transcribe import read_enrichment_fields
-from .pipeline.types import Cap, Config, Format, Instance, LedgerEntry, Need, Status
+from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
@@ -553,9 +553,7 @@ def _state_checks(
         payload["ghost_items"] = integrity.ghost
         payload["missing_outputs"] = integrity.missing
         payload["misfiled_outputs"] = integrity.misfiled
-        fires = _cap_fires(entries)
-        payload["capped"] = fires.rows
-        notes += fires.notes
+        payload["capped"] = _cap_fires(entries)
     payload["stale_passes"] = _stale_passes(instance)
     threads = _incomplete_threads(instance)
     payload["incomplete_threads"] = threads.rows
@@ -751,16 +749,8 @@ def _stale_passes(instance: Instance) -> list[dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, kw_only=True)
-class _CapScan:
-    """The cap fires standing in the ledger, split by who they answer to."""
-
-    rows: list[dict[str, str]] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
-
-
-def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
-    """The harvest-time cap fires standing in the ledger, one row each.
+def _cap_fires(entries: dict[str, LedgerEntry]) -> list[dict[str, str]]:
+    """The cap fires standing in the ledger that nobody overrode, one row each.
 
     A fire is a tuning reading, not a fault: it says either that the
     depth/URL bounds are too tight for this corpus, or that harvest
@@ -773,34 +763,29 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
     reason: the reason is prose written for the audit trail, and a bound
     worded two ways would aggregate as two bounds.
 
-    An owner-requested ``enrich fetch`` refusal is neither reading — the
-    owner asked for that URL by name, so it says nothing about the bounds
-    being tight or about harvest promoting too much. It leaves the tuning
-    count entirely and stands as a note: it was already answered, with its
-    ``--force`` route, on the run report where it was asked.
+    **What the reading splits on is the override, not who asked.** Every
+    promotion is a URL a session named with ``enrich fetch``, so "who
+    typed it" separates nothing; what a refusal says about the bounds is
+    the same whether the session promoted the link on the subject rule or
+    the owner named it by hand. A refusal that stood is drift to read. A
+    refusal the owner then waived with ``--force`` is a decision already
+    taken, so it leaves the reading — read off the typed ``forced``, for
+    the same reason the bound is read off ``cap``. The refusal is still
+    answered where it was asked, on the run report, with its ``--force``
+    route; the two surfaces do different jobs and both do theirs.
 
     Newest first, by item id (date-prefixed). Nothing supersedes a cap
-    fire — the skipped line is the ledger's standing record that the URL
-    was refused, and compaction keeps it — so this listing only grows, and
-    oldest-first meant the rows the surface shows were held forever by the
-    oldest items, with a fire stamped today appearing nowhere.
+    fire that stood — the skipped line is the ledger's standing record
+    that the URL was refused, and compaction keeps it — so this listing
+    only grows, and oldest-first meant the rows the surface shows were
+    held forever by the oldest items, with a fire stamped today appearing
+    nowhere.
     """
-    scan = _CapScan()
-    requested = 0
-    for entry in sorted(entries.values(), key=lambda e: (e.item, e.url), reverse=True):
-        if entry.cap is None:
-            continue
-        if entry.cap is Cap.URL_REQUESTED:
-            requested += 1
-            continue
-        scan.rows.append({"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]})
-    if requested:
-        scan.notes.append(
-            f"{requested} owner-requested fetch refusal{'' if requested == 1 else 's'} "
-            f"standing at the {CAP_BOUNDS[Cap.URL_REQUESTED]} — answered on the run "
-            "report when asked, and no part of the tuning reading above"
-        )
-    return scan
+    return [
+        {"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]}
+        for entry in sorted(entries.values(), key=lambda e: (e.item, e.url), reverse=True)
+        if entry.cap is not None and not entry.forced
+    ]
 
 
 @dataclass(slots=True, kw_only=True)

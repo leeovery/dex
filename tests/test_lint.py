@@ -736,7 +736,9 @@ class TestReferentialIntegrity:
         assert "done entries whose output file is gone from disk — none" in outcome.report
 
 
-def capped_entry(unit_hash: str, *, item: str = ITEM, cap: Cap, url: str) -> LedgerEntry:
+def capped_entry(
+    unit_hash: str, *, item: str = ITEM, cap: Cap, url: str, forced: bool = False
+) -> LedgerEntry:
     return LedgerEntry(
         hash=unit_hash,
         url=url,
@@ -744,14 +746,15 @@ def capped_entry(unit_hash: str, *, item: str = ITEM, cap: Cap, url: str) -> Led
         kind=Kind.WEB,
         status=Status.SKIPPED,
         cap=cap,
+        forced=forced,
         engine="0.1.0",
         date=TODAY,
         via="harvest",
         parent="0000000000",
         depth=5,
         # The engine words the same bound differently per writer; the check
-        # reads the typed cap, never this.
-        reason=f"{CAP_BOUNDS[cap]} reached",
+        # reads the typed cap and the typed override, never this.
+        reason=f"{CAP_BOUNDS[cap]} {'exceeded by --force' if forced else 'reached'}",
     )
 
 
@@ -798,9 +801,8 @@ class TestCapFires:
         assert "↳ https://example.test/0" in outcome.report
 
     def test_one_bound_reads_as_one_bound(self, instance):
-        # The engine words the same bound three ways — one of them an
-        # owner-requested `fetch` refusal. The bound is one row, and the
-        # owner asking for a URL is not harvest drift.
+        # The engine spells the URL bound two ways — the second is what an
+        # `enrich fetch` refusal writes. One bound, one row.
         self._bare_wiki(instance)
         other = "2026-08-19-other-bbbbbb"
         fires = [
@@ -815,11 +817,37 @@ class TestCapFires:
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
             )
         flat = " ".join(lint(instance).report.split())
-        assert "re-entry cap fires (tuning signal, not an alarm) — **3** across 2 items" in flat
-        assert "by bound: `depth cap (4)` 1 · `url cap (12 per item)` 2" in flat
-        assert "--force" not in flat.split("stored threads")[0].split("re-entry cap fires")[1]
-        assert "1 owner-requested fetch refusal standing at the url cap (12 per item)" in flat
-        assert "https://example.test/3" not in flat  # the refused-on-request URL
+        assert "re-entry cap fires (tuning signal, not an alarm) — **4** across 2 items" in flat
+        assert "by bound: `depth cap (4)` 1 · `url cap (12 per item)` 3" in flat
+
+    def test_a_refusal_that_stood_is_read_whoever_asked_for_the_url(self, instance):
+        # Every promotion is a URL a session named, so "who typed it"
+        # separates nothing: a refusal nobody overrode is drift to read.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            capped_entry("73bd784849", cap=Cap.URL_REQUESTED, url="https://example.test/refused"),
+        )
+        flat = " ".join(lint(instance).report.split())
+        assert "re-entry cap fires (tuning signal, not an alarm) — **1** across 1 item" in flat
+        assert "https://example.test/refused" in flat
+
+    def test_a_fire_the_owner_waived_leaves_the_reading(self, instance):
+        # `--force` is a decision already taken; reading it back as drift
+        # would tell the owner their own override is the signal.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            capped_entry(
+                "73bd784849",
+                cap=Cap.URL_REQUESTED,
+                url="https://example.test/deepened",
+                forced=True,
+            ),
+        )
+        flat = " ".join(lint(instance).report.split())
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in flat
+        assert "https://example.test/deepened" not in flat
 
     def test_the_newest_fire_is_listed_first(self, instance):
         # Nothing supersedes a cap line, so the listing only grows: oldest

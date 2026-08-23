@@ -582,6 +582,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         needs=needs,
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
         cap=cap,
+        forced=cap is not None and draw(st.booleans()),
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),

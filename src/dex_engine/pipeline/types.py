@@ -100,14 +100,15 @@ class Need(StrEnum):
 
 
 class Cap(StrEnum):
-    """Which bound refused a work unit, and who it answers to.
+    """Which bound refused a work unit.
 
     Typed because the health check aggregates on it: prose that says the
-    same bound three ways splits one bound across three readings, and an
-    owner's own request read as harvest drift. ``DEPTH`` and ``URL`` are
-    the bounds a promotion hits — the tuning signal. ``URL_REQUESTED`` is
-    the owner naming a URL past the URL bound with ``enrich fetch`` and
-    being refused without ``--force``: the same bound, a different reading.
+    same bound three ways splits one bound across three readings. ``DEPTH``
+    is the hard bound on how far the queue may walk from a shared URL;
+    ``URL`` and ``URL_REQUESTED`` are one bound — the item's fetched-page
+    budget — under two spellings, ``URL_REQUESTED`` being what an
+    ``enrich fetch`` refusal writes. Whether a fire is drift to read is
+    decided by ``LedgerEntry.forced``, not by which of these it names.
     """
 
     DEPTH = "depth"
@@ -462,6 +463,11 @@ class LedgerEntry:
     # a cap-fire marker: this skipped line records refused work, not an
     # admitted unit, and names the bound that refused it
     cap: Cap | None = None
+    # whether `--force` waived that bound. Typed rather than read out of
+    # `reason`, per §3: the health check's drift reading counts the fires
+    # nobody overrode, and counting them off the prose that worded the
+    # override would put a routing signal in the free-text namespace.
+    forced: bool = False
     engine: str
     date: datetime.date
     # the write instant, UTC, sub-second — what resolves last-per-hash when
@@ -513,6 +519,8 @@ def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
         raise ValueError(
             f"cap marks a cap-refused skip — skipped-only, got status {entry.status!r}"
         )
+    if entry.forced and entry.cap is None:
+        raise ValueError("forced says --force waived a bound — it rides a cap-fire marker only")
     if isinstance(entry.attempts, bool):
         raise ValueError("attempts must be an integer, not a boolean")
     if entry.status is Status.BLOCKED and (entry.attempts is None or entry.attempts < 1):

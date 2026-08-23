@@ -113,6 +113,7 @@ _TOLERATED_KEYS = frozenset(
         "needs",
         "attempts",
         "cap",
+        "forced",
         "engine",
         "date",
         "at",
@@ -511,6 +512,7 @@ def _translate_record(
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
             cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
+            forced=_expect_bool(raw, "forced") if "forced" in raw else False,
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             # Carried, never re-stamped: this run's instant would claim the

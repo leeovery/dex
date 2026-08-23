@@ -662,6 +662,7 @@ class TestReEntryCaps:
         assert refused.status is Status.SKIPPED
         assert refused.cap is Cap.DEPTH
         assert refused.depth == MAX_DEPTH + 1
+        assert refused.forced is False
         # The owner asked, so the refusal is answered — honestly, with no
         # route it does not have.
         flat = " ".join(report.split())
@@ -684,6 +685,7 @@ class TestReEntryCaps:
         refused = ledger.load(instance.ledger_path)[work_hash(beyond)]
         assert refused.status is Status.SKIPPED  # still refused
         assert refused.cap is Cap.DEPTH
+        assert refused.forced is False  # nothing was waived
 
     def test_the_url_cap_is_per_item(self, instance):
         # The budget bounds how much of the web ONE item drags in: an item
@@ -1565,6 +1567,7 @@ class TestVerbs:
         assert refused.status is Status.SKIPPED
         assert refused.cap is Cap.URL_REQUESTED
         assert "url cap" in (refused.reason or "")
+        assert refused.forced is False  # a refusal that stood — the drift reading's
 
         # A repeat WITHOUT --force is refused again — the refusal marker is
         # not an admitted unit and must never sneak in as a "rerun":
@@ -1574,9 +1577,15 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra], force=True)
         forced = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert forced.status is Status.DONE
-        # The cap fire stayed in the audit trail:
-        lines = instance.ledger_path.read_text().split("\n")
-        assert any("exceeded by --force" in line for line in lines)
+        # The cap fire stayed in the audit trail, marked as the waiver it is:
+        waived = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line).get("forced")
+        ]
+        assert len(waived) == 1
+        assert waived[0]["cap"] == Cap.URL_REQUESTED.value
+        assert "exceeded by --force" in waived[0]["reason"]
 
     def test_a_capped_fetch_refusal_is_surfaced_with_its_force_route(self, instance):
         # An owner-requested refusal IS surfaced — a bare "skipped 1" leaves

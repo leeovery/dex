@@ -98,8 +98,9 @@ __all__ = [
 ]
 
 # Re-entry caps: mechanical backstops, not targets. Fires are recorded in
-# the ledger — a skipped entry naming the bound in `cap` — and a
-# harvest-time fire is never user-surfaced.
+# the ledger — a skipped entry naming the bound in `cap` — answered on the
+# run report to the session that asked, and read as a tuning signal by the
+# health check unless `--force` waived them.
 MAX_DEPTH = 4
 MAX_URLS_PER_ITEM = 12
 
@@ -690,6 +691,7 @@ class _Drain:
                 kind=detect_kind(url, self.ctx.drivers),
                 status=Status.SKIPPED,
                 cap=refusal.cap,
+                forced=refusal.waived,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
                 via=via,
