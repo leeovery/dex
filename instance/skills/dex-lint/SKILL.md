@@ -51,7 +51,8 @@ step 4.
    - **Shortid-shaped citations** (backticked 6-hex, index included) —
      citations are full item ids, always: resolve each to its full id or
      remove the claim.
-   - **Orphans** (uncited, unledgered items) — read the digest: cite it on
+   - **Items no page cites and the taxonomy does not record** — read the
+     digest: cite it on
      the best existing page, or ledger it into `uncategorized-shares` in
      `state/taxonomy.json` if genuinely low-signal.
    - **Index drift** — regenerate the affected `wiki/index.md` entries.
@@ -66,8 +67,9 @@ step 4.
      those items under the current subject rule (dex-run's
      `references/ingest-item.md`), then `bin/dex enrich pass ... --stage
      harvest`.
-   - **Cognitive jobs / waiting cohorts** — complete them per the same
-     reference (media described with eyes, `enrich mark` closing each).
+   - **Read these yourself** (the engine cannot do them) and **waiting on a
+     capability** — complete them per the same reference (media described
+     with eyes, `enrich mark` closing each).
    - **Enrichment newer than digest** — an interrupted session: finish
      digest → place → wiki for each listed item.
 6. Read the standing signals — they are counts, not a queue that drains.
@@ -93,7 +95,9 @@ step 4.
      bound. Concentrated in one or two items is normal; spread across many
      is the signal. A URL you asked for yourself with `enrich fetch` and
      were refused is no part of this reading — it comes through as a note,
-     and the answer to it is `--force` or nothing.
+     and the answer to it is `--force` or nothing. The listing is newest
+     first, like the thread markers above it: the rows the report names are
+     the most recent fires, and the older ones stand behind the count.
 7. Judgment sweep over every page you touched: cross-page contradictions
    (surface with dates), self-citation, scope creep.
 8. Coarse-topic check: when a topic has grown unwieldy or a coherent
