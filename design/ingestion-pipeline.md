@@ -550,7 +550,7 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14) |
+| `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
@@ -1456,7 +1456,7 @@ Authoring rules:
   **Attribution resolves to a LIVE corpus item or it does not resolve**
   (owner ruling at phase-4 review, on real state): if an item is dead, its
   stuff goes; nobody gets clever rescuing it. An excluded item loses its
-  corpus file and its `enrichment/<id>/` directory, but a done line's
+  corpus file, its `enrichment/<id>/` directory and its digest, but a done line's
   recorded `path` still spells the id — and every derived attribution is
   therefore checked against `corpus/<id[:4]>/<id>.md` before it is accepted.
   An id with no corpus file is skipped over, the next attribution is tried,
@@ -1569,7 +1569,8 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item, its enrichment **and the ledger entries
+   `dex exclude` deletes the item, its enrichment, its digest **and the
+   ledger entries
    for work no surviving item claims**, so a seed keyed to a purged item
    would re-fetch content ruled out of scope and put an owner ruling back in
    the queue. (Purges made before `exclude` swept the ledger left their
