@@ -1321,6 +1321,20 @@ class TestReadEnrichment:
         record.write_text("just text\n")
         assert read_enrichment(record) == ({}, "just text")
 
+    def test_an_unclosed_fence_yields_no_fields(self, tmp_path):
+        # Every caller decides on a field it looks up, so transcript prose
+        # read as frontmatter answers those lookups with nonsense: a stale
+        # output survives a correction, a park reports a description it
+        # never wrote. The sibling scan raises on this shape instead.
+        record = tmp_path / "podcast-abc123.md"
+        record.write_text(
+            "---\nurl: https://x.test\nenclosure: https://cdn.test/a.mp3\n"
+            "and then the transcript began\n"
+        )
+        fields, body = read_enrichment(record)
+        assert fields == {}
+        assert "transcript" in body
+
 
 class TestReadEnrichmentFields:
     """The frontmatter-only read: same parse, none of the body."""

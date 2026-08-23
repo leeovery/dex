@@ -518,13 +518,23 @@ def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
     Args:
         path: The enrichment markdown file.
 
+    A fence that opens and never closes yields no fields, not the whole
+    file read as frontmatter — every caller decides on a field it looks up,
+    and transcript prose parsed as fields answers those lookups with
+    nonsense. ``read_enrichment_fields`` raises on the same shape instead,
+    because a scan that exists to report an unreadable file has to tell it
+    apart from a clean one; a drain that only has to avoid being fooled
+    does not.
+
     Returns:
         The fields (JSON-quoted values unquoted) and the stripped body.
     """
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         return {}, text.strip()
-    head, _sep, body = text[4:].partition("\n---\n")
+    head, sep, body = text[4:].partition("\n---\n")
+    if not sep:
+        return {}, text.strip()
     return _frontmatter_fields(head.split("\n")), body.strip()
 
 
