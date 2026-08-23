@@ -389,10 +389,70 @@ class _Drain:
             for repo_path in item.media:
                 self._seed_media_file(item.id, repo_path)
         self.resolve_owners()
+        self._reattribute_dead_items()
 
     def resolve_owners(self) -> None:
         """Re-read which live corpus item owns each unit (one corpus pass)."""
         self.owners = _unit_owners(self.ctx.instance, self.entries, self.ctx.drivers)
+
+    def _reattribute_dead_items(self) -> None:
+        """Move a line naming a dead id onto the live item that owns its work.
+
+        Reading ownership off the corpus (:func:`_unit_owners`) is enough
+        for the surfaces, which derive fresh every time — but not for the
+        drain, which carries ``entry.item`` forward into the next line and
+        into the output path it writes. A renamed item's waiting unit
+        drained on the stored string writes its enrichment into
+        ``enrichment/<dead-id>/``, so the string itself has to heal, and
+        seeding is where the corpus has just been read.
+
+        The status is untouched: a ``manual`` verdict is still ``manual``
+        under its new name, exactly as migration 2's re-key pass holds. So
+        is the output, once found — a renamed item's enrichment directory
+        moves with it, so the recorded path names a directory that is gone
+        while the file sits under the new id.
+
+        Idempotent by construction: once the line names a live item the
+        condition stops matching.
+        """
+        live = {path.stem for path in self.ctx.instance.corpus_dir.glob("*/*.md")}
+        moved = 0
+        for entry in list(self.entries.values()):
+            if entry.item in live:
+                continue
+            owner = next((item for item in self.owners.get(entry.hash, ()) if item in live), None)
+            if owner is None:
+                continue  # nothing live claims it — lint's ghost-item finding
+            # Only a landing has an output to find: on every other status a
+            # path is a schema violation, not a repair.
+            product = self._unit_product(entry, owner) if entry.status is Status.DONE else None
+            self.record(dataclasses.replace(entry, item=owner, path=product or entry.path))
+            moved += 1
+        if not moved:
+            return
+        self.notes.append(
+            f"re-attributed {moved} ledger {'entry' if moved == 1 else 'entries'} to the "
+            "live items whose corpus files claim the work"
+        )
+        self.resolve_owners()
+
+    def _unit_product(self, entry: LedgerEntry, item_id: str) -> str | None:
+        """This unit's output on disk — the recorded path, else ``item_id``'s.
+
+        A renamed item's enrichment directory moves with it, so the path
+        the line recorded names a directory that is gone while the file
+        sits under the new id. The candidate there must PROVE it is this
+        unit's by the URL it records, the same test
+        :func:`_drop_superseded_outputs` applies before unlinking.
+        """
+        if entry.path is not None and (self.ctx.instance.root / entry.path).is_file():
+            return entry.path
+        name = f"{entry.kind.value}-{entry.hash[:6]}.md"
+        candidate = self.ctx.instance.enrichment_dir / item_id / name
+        if not candidate.is_file():
+            return None
+        fields, _body = read_enrichment(candidate)
+        return f"enrichment/{item_id}/{name}" if fields.get("url") == entry.url else None
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.

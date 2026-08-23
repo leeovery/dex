@@ -2093,6 +2093,41 @@ class TestOwnershipIsTheCorpusAnswer:
         self._waiting(instance)
         assert run_mod.digest_orphans(instance) == []
 
+    def test_the_stale_line_is_moved_onto_the_item_that_owns_the_work(self, instance):
+        # The repair path: `mark` copies the prior line's item and has no
+        # --item flag, `enrich fetch` refuses a URL another item enriches,
+        # and migration 1 never re-derives a stated item — so seeding is
+        # the one place the string can heal.
+        self._waiting(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.WAITING  # the verdict is untouched
+        assert entry.needs is Need.TRANSCRIBE
+        assert "re-attributed 1 ledger entry" in report
+
+    def test_the_repaired_unit_drains_into_the_live_items_enrichment(self, instance):
+        # Without the heal `record_outcome` carries the dead id forward and
+        # `_write_output` lands the file in `enrichment/<dead-id>/`.
+        self._renamed(instance, status=Status.QUEUED)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == NEW_ITEM
+        assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
+        assert not (instance.enrichment_dir / OLD_ITEM).exists()
+
+    def test_a_line_no_live_item_claims_is_left_where_it_is(self, instance):
+        # Ownership resolves to a live corpus item or it does not resolve;
+        # nobody gets clever rescuing a dead item's work.
+        self._waiting(instance)
+        (instance.corpus_dir / "2026" / f"{NEW_ITEM}.md").unlink()
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)
+        assert entry_for(ctx).item == OLD_ITEM
+        assert "re-attributed" not in report
+
     def test_an_outstanding_shared_unit_holds_every_item_listing_it_raw(self, instance):
         # The line names alpha, but bravo lists the URL too, so bravo owes
         # the work — and an item owing work is out of digest and wiki.
