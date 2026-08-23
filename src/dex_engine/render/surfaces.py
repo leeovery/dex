@@ -417,9 +417,11 @@ def _enrich_parked_section(parked: list[dict[str, object]], *, mine: bool) -> st
             "the engine has given up on"
         )
     else:
+        # "it" is the engine, so the verb agrees with the engine and not
+        # with however many entries it is holding.
         title = (
             f"Waiting on the engine — {kernel.plural(len(rows), 'entry', 'entries')} "
-            f"it {_agree(len(rows), 'retries', 'retry')} by itself"
+            "it retries by itself"
         )
     lines = [kernel.heading(title, level=3), ""]
     for row in rows:
@@ -1021,8 +1023,7 @@ def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
         ("page", "target"), lambda p, t: f"{kernel.bold(p)} → `[[{t}]]`",
     )
     reserved = _int_at(surface, payload, "reserved_links", default=0)
-    if reserved:
-        blocks.append(kernel.bullet(f"reserved/unbuilt links — {reserved} (informational)"))
+    blocks.append(_health_count("reserved/unbuilt links (informational)", reserved))
     blocks += _health_pairs(
         surface, payload, "bad_citations", "bad citations (id not in corpus)",
         ("page", "id"), lambda p, i: f"{kernel.bold(p)} → {kernel.bold(i)}",

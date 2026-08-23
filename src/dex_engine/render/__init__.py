@@ -1,7 +1,7 @@
 """Rendering: judgment decides, code renders.
 
-``kernel`` is pure layout with zero dex vocabulary; ``surfaces`` names the
-reports and validates their payloads loudly. Never hand-draw a table or
+``kernel`` is markdown composition with zero dex vocabulary; ``surfaces``
+names the reports and validates their payloads loudly. Never hand-draw a
 report — there is a surface for it.
 """
 

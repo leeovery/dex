@@ -520,7 +520,7 @@ class TestHealthReport:
         assert "### Wiki" in out
         assert "- broken wikilinks — **1**" in out
         assert "  - **pour-over** → `[[brewing]]`" in out
-        assert "- reserved/unbuilt links — 3 (informational)" in out
+        assert "- reserved/unbuilt links (informational) — **3**" in out
         assert "- bad citations (id not in corpus) — **1**" in out
         assert "  - **pour-over** → **2026-01-01-gone-aaaaaa**" in out
         assert "- shortid-shaped citations (citations are full item ids, always) — **1**" in out
@@ -617,6 +617,7 @@ class TestHealthReport:
         assert "- broken wikilinks — none" in out
         assert "- waiting on a capability — none" in out
         assert "- MALFORMED DIGESTS (the wiki layer reads these) — none" in out
+        assert "- reserved/unbuilt links (informational) — none" in out
         assert "Reconciled by" not in out
 
     def test_a_capped_listing_says_how_much_it_withheld(self):
@@ -704,9 +705,9 @@ class TestIngestReceipt:
 class TestIdentityIsNeverTruncated:
     """The rule the whole rewrite exists to enforce, on every surface.
 
-    The old layout middle-elided any cell too wide for its column, and
-    measured against real data that collapsed distinct URLs onto identical
-    rows. These assert the opposite property directly.
+    The old layout hard-split any token wider than its column, so a long URL
+    reached the reader as fragments and an id could break across a line.
+    These assert the opposite property directly.
     """
 
     def test_enrich_report_over_a_real_parked_ledger(self):
@@ -733,9 +734,10 @@ class TestIdentityIsNeverTruncated:
         assert_whole(out, LONG_URL, *[str(p["item"]) for p in parked])
 
     def test_no_two_parked_entries_can_render_the_same(self):
-        # 106 of 2452 real URLs used to collapse onto another URL's
-        # rendering, four of them inside the same item.
-        base = "https://example.test/a-very-long-path-segment-that-forces-the-old-elision/"
+        # URLs that agree for their first few hundred characters and differ
+        # only deep in the query string: the shape a splitting layout used to
+        # break across lines at the same place.
+        base = "https://example.test/a-very-long-path-segment-that-forces-a-line-break/"
         urls = [base + f"{n:04d}" + "?utm_campaign=" + "x" * 200 for n in range(40)]
         parked = [
             {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"}

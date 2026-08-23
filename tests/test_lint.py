@@ -153,7 +153,7 @@ class TestWikiChecks:
         outcome = lint(instance)
         assert outcome.exit_code == 1  # broken link
         assert "**brewing** → `[[no-such-page]]`" in outcome.report
-        assert "reserved/unbuilt links — 1 (informational)" in outcome.report
+        assert "reserved/unbuilt links (informational) — **1**" in outcome.report
 
     def test_bad_citation_fails(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
