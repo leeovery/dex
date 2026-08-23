@@ -953,12 +953,61 @@ class TestDigestShape:
         assert outcome.exit_code == 1
         assert "signal must be one of high, medium, low, got 'urgent'" in outcome.report
 
-    def test_empty_topics_fails(self, instance):
+    @pytest.mark.parametrize("topics", ["[]", "[ ]", "[  ]", "[\t]"])
+    def test_empty_topics_fails_however_it_is_spaced(self, instance, topics):
+        # The emptiness of a list is not a spelling of its brackets.
         self._bare_wiki(instance)
-        write_digest(instance, ITEM, digest_text(topics="[]"))
+        write_digest(instance, ITEM, digest_text(topics=topics))
         outcome = lint(instance)
         assert outcome.exit_code == 1
         assert "topics is empty" in outcome.report
+
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_quoted_scalars_conform(self, instance, quote):
+        # Digests are freehand and session-written; nothing tells the
+        # session to leave a scalar bare, and to the only other reader they
+        # have — a session reading YAML — a quoted scalar is the same
+        # scalar. Quoted was a hard failure on a correct digest.
+        self._bare_wiki(instance)
+        q = quote
+        write_digest(
+            instance,
+            ITEM,
+            f"---\nid: {q}{ITEM}{q}\ndate: {q}2026-08-19{q}\nsignal: {q}high{q}\n"
+            f"topics: [{q}brewing{q}]\n---\n- fact number 0 with concrete specifics.\n",
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+    def test_a_quoted_signal_is_still_read_against_the_vocabulary(self, instance):
+        # Unquoting is not laxness: the value inside the quotes is checked.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal='"urgent"'))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "signal must be one of high, medium, low, got 'urgent'" in outcome.report
+
+    def test_block_style_topics_conform(self, instance):
+        # YAML's other list form, and the one a session writes by hand.
+        self._bare_wiki(instance)
+        write_digest(
+            instance,
+            ITEM,
+            f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: high\ntopics:\n  - brewing\n"
+            "  - coffee\n---\n- fact number 0 with concrete specifics.\n",
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+    def test_a_topics_key_with_nothing_under_it_is_missing(self, instance):
+        # A block list opened and never written is the key with no value.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(topics=""))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: frontmatter missing topics" in outcome.report
 
     def test_id_must_match_the_filename(self, instance):
         self._bare_wiki(instance)

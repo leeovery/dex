@@ -13,15 +13,13 @@ digestion mechanism, not what was shared; the transcript supersedes it; the
 recorded enclosure URL is the re-fetch pointer.
 """
 
-import contextlib
-import json
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from dex_engine import atomic
+from dex_engine import atomic, frontmatter
 from dex_engine.drivers.transport import HttpResponse, Transport
 from dex_engine.drivers.youtube import ProbeError, classify_probe_failure
 
@@ -560,10 +558,5 @@ def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
         if ":" not in line:
             continue
         key, _, raw = line.partition(":")
-        value = raw.strip()
-        if value.startswith('"'):
-            # On a malformed quote the raw text stands — a pointer beats a crash.
-            with contextlib.suppress(json.JSONDecodeError):
-                value = json.loads(value)
-        fields[key.strip()] = value
+        fields[key.strip()] = frontmatter.unquote(raw.strip())
     return fields

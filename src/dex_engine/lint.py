@@ -54,6 +54,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import frontmatter
 from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
@@ -840,29 +841,57 @@ def _digest_body_fault(body: str) -> str | None:
     return "states no facts — the digest body has no bullets"
 
 
-def _digest_parts(text: str) -> tuple[dict[str, str] | None, str]:
-    """A digest's frontmatter fields and body; fields None without a fence."""
+def _digest_parts(text: str) -> tuple[dict[str, str | list[str]] | None, str]:
+    """A digest's frontmatter fields and body; fields None without a fence.
+
+    The YAML a session actually writes, not a canonical subset of it: no
+    verb writes a digest, nothing tells the session to leave a scalar
+    unquoted, and its only other reader is a session reading YAML. So
+    quotes come off (the same way every other frontmatter reader takes
+    them off), and a list is read in either form — flow (``[a, b]``) or
+    block (``- a`` lines under the key). A shape check that failed on a
+    correct digest would route a healthy instance to repair.
+    """
     if not text.startswith("---\n"):
         return None, text
     head, sep, body = text[4:].partition("\n---\n")
     if not sep:
         return None, text
-    fields: dict[str, str] = {}
-    for line in head.split("\n"):
-        key, colon, value = line.partition(":")
-        if colon:
-            fields[key.strip()] = value.strip()
+    fields: dict[str, str | list[str]] = {}
+    lines = head.split("\n")
+    i = 0
+    while i < len(lines):
+        key, colon, value = lines[i].partition(":")
+        i += 1
+        if not colon:
+            continue
+        raw = value.strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            inner = raw[1:-1].strip()
+            fields[key.strip()] = (
+                [frontmatter.unquote(part.strip()) for part in inner.split(",")] if inner else []
+            )
+        elif raw:
+            fields[key.strip()] = frontmatter.unquote(raw)
+        else:
+            # A key with nothing after the colon opens a block list; with
+            # no items under it, it is the empty value it looks like.
+            items: list[str] = []
+            while i < len(lines) and lines[i].lstrip().startswith("- "):
+                items.append(frontmatter.unquote(lines[i].lstrip()[2:].strip()))
+                i += 1
+            fields[key.strip()] = items or ""
     return fields, body
 
 
-def _digest_frontmatter_fault(item: str, fields: dict[str, str]) -> str | None:
+def _digest_frontmatter_fault(item: str, fields: dict[str, str | list[str]]) -> str | None:
     """The first way this digest's frontmatter breaks the contract, or None."""
-    missing = [key for key in _DIGEST_REQUIRED if not fields.get(key)]
+    missing = [key for key in _DIGEST_REQUIRED if fields.get(key, "") == ""]
     if missing:
         return f"frontmatter missing {', '.join(missing)}"
     if fields["signal"] not in _DIGEST_SIGNALS:
         return f"signal must be one of {', '.join(_DIGEST_SIGNALS)}, got {fields['signal']!r}"
-    if fields["topics"] in ("[]", "[ ]"):
+    if not fields["topics"]:
         return "topics is empty — every item is placed, uncategorized-shares included"
     if fields["id"] != item:
         # The id keys the corpus, the taxonomy, and every citation; a digest
