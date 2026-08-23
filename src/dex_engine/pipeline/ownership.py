@@ -52,10 +52,10 @@ def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
 def corpus_claims(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, tuple[str, ...]]:
     """Map work hash -> EVERY live corpus item that claims it.
 
-    One work unit is keyed by URL, so two items listing one URL share it —
-    80 hashes in dex-engineering are claimed by more than one live item.
-    Seeding hands the enrichment file to the first of them and the ledger
-    line names only that one, but both items genuinely owe the work: an
+    One work unit is keyed by URL, so two items listing one URL share it,
+    and a hash claimed by more than one live item is common in a real
+    instance. Seeding hands the enrichment file to the first of them and
+    the ledger line names only that one, but both items genuinely owe it: an
     outstanding unit holds every item that lists it out of digest, not just
     the one whose name the line happens to carry.
 

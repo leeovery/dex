@@ -21,7 +21,7 @@ addresses: during a production instance install (2026-08-19), Cloudflare
 transiently challenged the enricher's fetch of the owner's own website; the
 enricher — unable to distinguish a 403 challenge from a dead domain —
 ledgered it `dead` (terminal, never retried), and Claude's in-session heal
-(hand-fetching 11 pages) left the ledger contradicting the corpus.
+(hand-fetching the pages) left the ledger contradicting the corpus.
 
 What the design does about that class — honestly stated, since no design
 can force a site to serve us: (1) the redesigned web driver often avoids
@@ -141,7 +141,7 @@ The report that prints them is the report of the run that parked them. A
 unit that outlives that run is untouched standing state, so it is `enrich
 status` that names it — id, URL, status and stated reason, split by who owns
 the next action, exactly as the run report splits its own. Counts alone
-(`**manual** 1`) left a three-month-old park on no surface at all while its
+(`**manual** 1`) left a months-old park on no surface at all while its
 item sat permanently raw and permanently undigestable. Sourcing the run
 report from every surviving entry instead would reinstate what this section
 already refuses: the same parked item listed as work to do on every run,
@@ -170,8 +170,9 @@ pre-correction view of the item was served to the digest and query layers
 permanently. **The file dropped is named, never pattern-matched**: a
 candidate is `<kind>-<hash6>.md` for one of the closed set of kinds, and it
 must record this unit's `url:` to be dropped at all. `hash6` is six hex
-digits, so two units under one item do collide (a real `web-6968e3.md` /
-`file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
+digits, so two units under one item can collide — a `web-…`/`file-…` pair
+under one hash6 has been seen in a live instance — and a name-pattern
+unlink deleted
 the neighbour's enrichment while its ledger line still read `done`. Nothing
 is dropped for a replacement that is not itself on disk. Works in both
 directions (web→file, file→web), and carries two further discoveries that
@@ -422,9 +423,11 @@ decision: either the delegation is legitimate and named, or fetch, wayback
 and extraction hoist into a lib and the exception goes.
 
 **What this replaces.** `Result` becomes the union above rather than a flat
-dataclass whose fields are only meaningful for some statuses. Today 204
-legal combinations carry `media` or `children` on a non-done result, and
-`assets` is validated done-only while the others are not. Making the wrong
+dataclass whose fields are only meaningful for some statuses. Today a
+`Result` may carry `media` or `children` on a non-done result: `assets` is
+validated done-only while those two are not, so the type admits outputs on
+a result that produced none, and nothing but convention keeps them off.
+Making the wrong
 states unrepresentable is the point, not a side effect. (The sketch above
 does not say where `assets` and the driver-stated `reason` ride on the
 union; settle that when it is built.)
@@ -437,8 +440,11 @@ nothing here states that, so it is a decision rather than a rename.
 
 Two related shapes settle with it:
 
-- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so 828
-  of 2484 legal ledger states cannot convert. One rule, stated once.
+- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so a
+  whole class of legal ledger states cannot convert: an entry pairs
+  `parent` with *having* a depth, a unit pairs it with a **non-zero**
+  depth, so `LedgerEntry(parent set, depth 0)` is legal and the same
+  `WorkUnit` is refused. One rule, stated once.
 - `via` carries provenance, routing (`via == "media"` dispatches, §3) and a
   migration marker. Three jobs, one field. Provenance and routing separate.
 
@@ -1065,12 +1071,14 @@ a download beyond the cap and beside a description of something else.
   `article.preview_text`, and `raw_text.text` holding only the shortlink to
   the article; the body is title + preview text + that link. A body that is
   nothing but a shortlink is **not content** — the "no text or media"
-  `manual` park applies, because a post ledgered `done` on ~74 characters of
-  URL is thin garbage the digest layer cannot tell from real capture.
+  `manual` park applies, because a post ledgered `done` on a shortlink and
+  nothing else is thin garbage the digest layer cannot tell from real
+  capture.
 - Chain media pooled, captured post's first, media-stage cap applies.
 - **Incomplete chains are recorded, never silently presented as complete**
-  (learned from a 2026-08-20 production run — a thread's root promised
-  "8 things", six existed publicly): a parent fetch failing mid-walk is
+  (learned from a 2026-08-20 production run — a thread's root promised a
+  numbered list and not all of it existed publicly): a parent fetch failing
+  mid-walk is
   mechanical — the driver records the gap in meta
   (`chain_incomplete: true` + how far it got). A chain that's
   *semantically* short (deleted/restricted posts detectable only by
@@ -1125,8 +1133,9 @@ underneath; the audio lives in the feed's `<enclosure>`:
   text-to-speech widgets and encyclopedias embed media samples, and the
   catch-all rule handed those articles to `podcast`, which resolved the
   widget as the enclosure and parked `waiting: transcribe` with an **empty
-  body** — the article never extracted, its links never harvested (~1 in
-  145 real web URLs). The asymmetry decides every tie: a false positive
+  body** — the article never extracted, its links never harvested. An
+  uncommon shape, and one a real corpus does contain. The asymmetry
+  decides every tie: a false positive
   costs the whole article, a false negative costs a podcast page keeping
   its show notes instead of a transcript. A bare link to an mp3 is not the
   signal either: a post linking one is still a post. The signal itself is
@@ -1217,8 +1226,9 @@ The surfaces were originally laid out for a person at a 72-column terminal:
 fixed-width tables, column fitting to the widest cell, greedy wrapping, and
 hanging-indent continuation. Nothing was ever elided or truncated — the old
 kernel had no elision and no display-column measurement in it — but a token
-wider than the budget was hard-split across lines mid-string. A 375-character
-URL arrived in the reader as several fragments, and an item id could break
+wider than the budget was hard-split across lines mid-string. A URL of
+several hundred characters arrived in the reader as several fragments, and
+an item id could break
 across a line boundary the same way. That costs the two things these reports
 exist for: an id a grep can find, and a URL that survives a copy. It also
 bought nothing, because the primary reader is a Claude session in a client
@@ -1252,7 +1262,8 @@ match; it is never prose.
 
 **Identity is never truncated and never wrapped.** An item id, a URL, or a
 file path renders whole, on its own line, whatever its length. Real item ids
-average 58 characters and one real URL in a live instance is 375. Nothing in
+are long and real URLs longer still — several hundred characters is an
+ordinary length for one. Nothing in
 the render path may shorten one, split one, or elide the middle of one. The
 code that could split one is deleted rather than bounded, because a bound is
 a setting and a deletion is a guarantee — and with it went the rest of the
@@ -1460,8 +1471,8 @@ Shipping migrations for this rewrite:
    **immediately drainable** now (whisper-local exists; chunking removed the
    length limit), resurrecting work the old system permanently gave up on.
    Old `error` entries adopt retry-on-new-engine semantics. The old ledger
-   used `error` as an informal reason field on non-error statuses (28 wild
-   lines: dead/nocaptions/done/skipped/manual, plus one `note` field) —
+   used `error` as an informal reason field on non-error statuses (wild
+   lines across dead/nocaptions/done/skipped/manual, plus a `note` field) —
    migration 1 **never destroys those values**: on a status that may carry
    a reason they move into `reason`, on `error` they stay in `error`, and
    on `done`/`queued` — where §5 forbids `reason` outright — the text is
@@ -1542,8 +1553,9 @@ Shipping migrations for this rewrite:
    ledger every entry names a live item.)
    **`exclude` purges work units, not item names** (amended at phase-4
    review, on real state): a unit is keyed by URL, so two corpus items
-   listing one URL share one entry that names only one of them — 80 hashes
-   in dex-engineering are claimed by more than one live item. The hash is
+   listing one URL share one entry that names only one of them, and a hash
+   claimed by more than one live item is common in a real instance. The
+   hash is
    judged on the line `load` resolves to, and a hash any surviving corpus
    item still claims is kept whole; the corpus is scanned after the
    deletions, so a purged item cannot claim its own work. A kept landing
@@ -1619,7 +1631,7 @@ to tidy a handful of lines in one instance. Its predicate — infer "purged"
 from "the corpus file is missing" — is ambiguous by construction: a rename,
 a partial checkout and a hand deletion look identical to it, and every guard
 bolted on afterwards was a patch over that first guess. It cost a real
-17-minute transcription before it was caught. The residue it existed to
+transcription before it was caught. The residue it existed to
 clean is created by migration 1 attributing a line to a dead item, so the
 fix belongs there and nowhere else: migration 1 attributes to a **live**
 corpus item or drops the line, per the attribution rule above.
@@ -1907,7 +1919,7 @@ Skill changes shipping with this:
 - **Wiki frontmatter's derived fields are lint-repaired, not carefully
   authored**: `lint --write` reconciles `items:` counts and `generated:`
   dates mechanically at health checks (the field the 2026-08-20 analysis
-  found drifting on 16 pages). Wiki *bodies* remain the most freehand
+  found drifting across the wiki). Wiki *bodies* remain the most freehand
   artifact in the system, on purpose — synthesis is the judgment.
 - **Shipping obligations in the same change**: `dex-contract.md` updated
   (operations become capture/run/query/lint; dataflow adds `cache/`, the
@@ -1919,8 +1931,8 @@ Skill changes shipping with this:
   regeneration rather than fighting it — including its ORDER. Normalize
   emits `sorted({kind_of(url) …})`, so the migration emits kinds sorted
   and deduped too; anything else and the first regeneration after the
-  migration rewrites those items again for ordering alone (82 real corpus
-  files), burying the migration's own commit in noise. Per the repo's anti-drift rules:
+  migration rewrites every one of those items again for ordering alone,
+  burying the migration's own commit in noise. Per the repo's anti-drift rules:
   pyproject entry points, the shim usage line, the README command table,
   and `docs/capture.md` + `docs/start.md` (dex-capture changes the capture
   story) all move together.
@@ -1935,9 +1947,9 @@ Skill changes shipping with this:
   "possible restated fact — merge?" warnings at health checks, and a
   **page item-count consistency check** (frontmatter `items:` vs the
   page's topic/entity MEMBER count — never its citation count; the wild
-  convention and the "16 drifting pages" figure are both member-semantics —
-  16 pages were silently drifting when the 2026-08-20 analysis looked,
-  caught by accident rather than mechanism), and a **shortid-shaped
+  convention and the drift the 2026-08-20 analysis found are both
+  member-semantics — pages were silently drifting when it looked, caught by
+  accident rather than mechanism), and a **shortid-shaped
   citation flag**: backticked 6-hex shortids are probable malformed
   citations everywhere — index included — not just where full-id resolution
   happens to fail (a 2026-08-20 production run found latent shortid
