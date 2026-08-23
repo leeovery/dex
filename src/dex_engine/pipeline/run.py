@@ -1422,7 +1422,9 @@ class _Drain:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
-            self.parked.append(_parked_row(stamped, stamped.item))
+            self.parked.append(
+                _parked_row(stamped, stamped.item, media_fetch=self.ctx.config.media_fetch)
+            )
         return stamped
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
@@ -1604,13 +1606,36 @@ class _Drain:
         ]
 
 
-def _parked_row(entry: LedgerEntry, item_id: str) -> dict[str, object]:
+def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) -> dict[str, object]:
     """One parked entry as both report surfaces read it.
 
     The run report says what THIS run parked and the standing view says
     what is parked now; they are the same shape read at two moments, so
     they are built here once.
+
+    Built here, with the config in hand, is also where a resting media
+    unit is told apart: under ``media_fetch: none`` the drain defers every
+    media job, so a parked one waits on the owner flipping the config, not
+    on any retry the engine will make. The renderer cannot ask the config
+    (payloads are self-contained), so the row itself carries the
+    classification — marked ``resting``, reason naming what unblocks it,
+    and no attempt count, because "attempt n of m" is retry framing for
+    retries that are switched off. ``manual`` media rows keep their own
+    stated reason: they wait on the owner either way, and turning media
+    back on resumes nothing for them.
     """
+    if (
+        entry.via == "media"
+        and media_fetch is MediaFetch.NONE
+        and entry.status is not Status.MANUAL
+    ):
+        return {
+            "item": item_id,
+            "url": entry.url,
+            "status": entry.status.value,
+            "reason": "media_fetch is `none` — stays parked until it is turned back on",
+            "resting": True,
+        }
     row: dict[str, object] = {
         "item": item_id,
         "url": entry.url,
@@ -2120,7 +2145,11 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
     """
     owners = _unit_owners(ctx.instance, entries, ctx.drivers)
     rows = [
-        _parked_row(entry, owners.get(entry.hash, (entry.item,))[0])
+        _parked_row(
+            entry,
+            owners.get(entry.hash, (entry.item,))[0],
+            media_fetch=ctx.config.media_fetch,
+        )
         for entry in entries.values()
         if entry.status in _PARKED
     ]

@@ -1392,7 +1392,12 @@ retry without being asked. So `manual` (the engine has given up) becomes
 **Needs you**, while `blocked`, `waiting` and `error` (the engine retries by
 itself) become **Waiting on the engine**, with the retry state visible on
 the entry. The same rule renames every other engine-internal label to what
-the reader must do about it.
+the reader must do about it. One exception rides the row, not the status:
+a parked media unit under `media_fetch: none` is deferred by the drain,
+never retried, so it waits on the owner flipping the config — the payload
+builder, the one place the config is in hand (payloads stay
+self-contained), marks the row `resting`, and it renders under **Needs
+you** with a reason naming what unblocks it and no retry framing.
 
 **Open question — where `error` entries belong.** They sit under **Waiting
 on the engine** today, on the rule above: `error` retries by itself, once
@@ -1422,8 +1427,8 @@ silently short list is a lie about scale.
 |---|---|
 | **Needs writing up** | items with new enrichment for the session to digest |
 | **Read these yourself** | jobs resolving to the cognitive floor (OCR, extraction Claude must do with eyes) |
-| **Needs you** | entries the engine has given up on: ledger status `manual` |
-| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` |
+| **Needs you** | entries the engine has given up on (ledger status `manual`), plus media units resting under `media_fetch: none` — the owner's config change is what moves them |
+| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` — minus media units resting under `media_fetch: none`, which it will not retry |
 | **Not finished** | items still `raw` because a unit they own has not landed |
 | **Digest these** | items whose enrichment is newer than their digest |
 | **Waiting on a capability** | the `waiting` cohort, counted by the capability it needs |
