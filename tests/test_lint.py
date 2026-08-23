@@ -82,14 +82,25 @@ class TestPreTaxonomy:
     def test_fresh_instance_is_clean(self, instance):
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "fresh instance" in outcome.report
+        # Rendered through the health-report surface, never hand-drawn:
+        # the heading opens the report and names its scale.
+        assert outcome.report.startswith("## Health check — fresh instance, 0 corpus items\n")
+        assert "nothing to lint" in outcome.report
 
     def test_stranded_corpus_without_taxonomy_is_broken_mid_ingest(self, instance):
         write_corpus_stub(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert "broken mid-ingest" in outcome.report
-        assert ITEM in outcome.report
+        assert outcome.report.startswith("## Health check — broken mid-ingest, 1 corpus item\n")
+        assert "BROKEN MID-INGEST" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+
+    def test_a_long_stranded_listing_says_it_is_capped(self, instance):
+        for day in range(1, 26):
+            write_corpus_stub(instance, f"2026-01-{day:02d}-stranded-{day:06d}")
+        outcome = lint(instance)
+        assert "broken mid-ingest, 25 corpus items" in outcome.report
+        assert "… and 5 more, not listed" in outcome.report
 
 
 class TestMalformedTaxonomy:

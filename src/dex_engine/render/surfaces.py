@@ -976,6 +976,12 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     Payload::
 
         {
+          # EITHER the pre-taxonomy shape, travelling alone — the two
+          # states before state/taxonomy.json exists, when no other check
+          # has run and a full payload would claim checks that never did:
+          "pre_taxonomy": {"stranded": [str]},   # [] = fresh instance;
+                                                 # ids = broken mid-ingest
+          # OR the full shape:
           "summary": {"corpus_items": int, "pages": int, "cited": int},
           # wiki checks — each optional, absent = not applicable
           "broken_links": [{"page": str, "target": str}],
@@ -1013,6 +1019,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         }
     """
     surface = "health-report"
+    if "pre_taxonomy" in payload:
+        return _health_pre_taxonomy(surface, payload)
     _check_keys(surface, payload, required=frozenset({"summary"}), optional=_HEALTH_OPTIONAL)
     summary = payload["summary"]
     if not isinstance(summary, Mapping):
@@ -1039,6 +1047,41 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         blocks += ["", kernel.heading("Reconciled by `--write`", level=3), ""]
         blocks += [kernel.bullet(line) for line in reconciled]
     blocks += _note_section("Notes", _str_list_at(surface, payload, "notes"))
+    return kernel.document(blocks)
+
+
+def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
+    """The two states before a taxonomy exists: fresh instance, broken mid-ingest.
+
+    The key travels alone — no check beyond the corpus glob has run, and a
+    full payload beside it would render checks that never did. The heading
+    still names the scale it has in hand: the corpus item count.
+    """
+    _check_keys(surface, payload, required=frozenset({"pre_taxonomy"}))
+    inner = payload["pre_taxonomy"]
+    if not isinstance(inner, Mapping):
+        _fail(surface, f"pre_taxonomy must be an object, got {type(inner).__name__}")
+    _check_keys(surface, inner, required=frozenset({"stranded"}), where="pre_taxonomy.")
+    stranded = _str_list_at(surface, inner, "stranded", "pre_taxonomy.")
+    if not stranded:
+        return kernel.document(
+            [
+                kernel.heading("Health check — fresh instance, 0 corpus items"),
+                "",
+                "No `state/taxonomy.json` yet — nothing to lint.",
+            ]
+        )
+    scale = kernel.plural(len(stranded), "corpus item")
+    blocks = [
+        kernel.heading(f"Health check — broken mid-ingest, {scale}"),
+        "",
+        kernel.bullet(
+            f"{kernel.bold('BROKEN MID-INGEST')} — {scale} but no "
+            "`state/taxonomy.json`; placement never ran"
+        ),
+    ]
+    blocks += [kernel.bullet(kernel.bold(item), depth=1) for item in stranded[:_HEALTH_LIST_CAP]]
+    blocks += _health_elided(len(stranded))
     return kernel.document(blocks)
 
 

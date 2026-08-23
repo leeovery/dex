@@ -759,6 +759,39 @@ class TestHealthReport:
         with pytest.raises(PayloadError, match="broken_wikilinks"):
             render("health-report", {**CLEAN_HEALTH, "broken_wikilinks": []})
 
+    def test_pre_taxonomy_fresh_instance_names_its_scale(self):
+        out = render("health-report", {"pre_taxonomy": {"stranded": []}})
+        assert out.startswith("## Health check — fresh instance, 0 corpus items\n")
+        assert "No `state/taxonomy.json` yet — nothing to lint." in out
+        assert_no_trailing_whitespace(out)
+
+    def test_pre_taxonomy_stranded_items_render_broken_mid_ingest(self):
+        stranded = ["2026-01-01-first-aaaaaa", "2026-01-02-second-bbbbbb"]
+        out = render("health-report", {"pre_taxonomy": {"stranded": stranded}})
+        assert out.startswith("## Health check — broken mid-ingest, 2 corpus items\n")
+        assert "- **BROKEN MID-INGEST** — 2 corpus items but no `state/taxonomy.json`" in out
+        assert "placement never ran" in out
+        assert "  - **2026-01-01-first-aaaaaa**" in out
+        assert "  - **2026-01-02-second-bbbbbb**" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_pre_taxonomy_listing_says_how_much_it_withheld(self):
+        stranded = [f"2026-01-{n:02d}-item-{n:06x}" for n in range(1, 26)]
+        out = render("health-report", {"pre_taxonomy": {"stranded": stranded}})
+        assert "broken mid-ingest, 25 corpus items" in out
+        assert "  - … and 5 more, not listed" in out
+
+    def test_pre_taxonomy_travels_alone(self):
+        # A full payload beside it would render checks that never ran.
+        with pytest.raises(PayloadError, match="summary"):
+            render("health-report", {**CLEAN_HEALTH, "pre_taxonomy": {"stranded": []}})
+
+    def test_pre_taxonomy_shape_is_validated_loudly(self):
+        with pytest.raises(PayloadError, match="stranded"):
+            render("health-report", {"pre_taxonomy": {}})
+        with pytest.raises(PayloadError, match="must be an object"):
+            render("health-report", {"pre_taxonomy": ["stranded"]})
+
     def test_bad_waiting_need_is_loud(self):
         with pytest.raises(PayloadError, match="transcode"):
             render("health-report", {**CLEAN_HEALTH, "waiting": {"transcode": 1}})

@@ -230,20 +230,17 @@ def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
 
 
 def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
-    """The two pre-taxonomy states: fresh instance, or broken mid-ingest."""
+    """The two pre-taxonomy states: fresh instance, or broken mid-ingest.
+
+    Rendered through the health-report surface's pre-taxonomy shape like
+    every other report — never hand-drawn.
+    """
     if (instance.state_dir / "taxonomy.json").exists():
         return None
     stranded = sorted(path.stem for path in instance.corpus_dir.glob("*/*.md"))
-    if stranded:
-        head = (
-            f"broken mid-ingest: {len(stranded)} corpus item(s) but no "
-            "state/taxonomy.json — placement never ran:"
-        )
-        lines = [head, *(f"  - {item}" for item in stranded)]
-        return LintOutcome(report="\n".join(lines) + "\n", exit_code=1)
     return LintOutcome(
-        report="fresh instance: no state/taxonomy.json yet — nothing to lint.\n",
-        exit_code=0,
+        report=surfaces.render("health-report", {"pre_taxonomy": {"stranded": stranded}}),
+        exit_code=1 if stranded else 0,
     )
 
 
