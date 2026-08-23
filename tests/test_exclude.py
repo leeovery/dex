@@ -254,9 +254,7 @@ class TestBadIdsAreRefused:
         assert (victim / "keepsake.txt").exists()
         assert not (instance.state_dir / "exclusions.tsv").exists()
 
-    def test_an_enrichment_symlink_out_of_the_instance_is_refused(
-        self, instance, tmp_path_factory
-    ):
+    def test_an_enrichment_symlink_out_of_the_instance_is_refused(self, instance, tmp_path_factory):
         # The id is a perfectly well-formed one; the directory it names is
         # not inside the instance. Resolving both sides is what sees that.
         victim = self.victim(tmp_path_factory)

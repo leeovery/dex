@@ -92,22 +92,24 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
 
 
 def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
-    """Resolve a ``file:<repo-path>`` work key's path strictly under the root.
+    """Resolve a repo-relative path strictly under the instance root.
 
-    Repo paths come from owner-editable frontmatter, so they are data, never
-    trusted as paths: an absolute path (which ``root / path`` would silently
-    substitute for the root), a ``..`` climb, or a symlink pointing outside
-    the root all resolve elsewhere. Both sides are resolved before the
-    containment check so symlinks cannot smuggle a path out.
+    The one containment check: a ``file:`` work key's path, and the paths
+    ``dex-exclude`` deletes. Both come from data an owner or the scope
+    filter wrote, so they are never trusted as paths: an absolute path
+    (which ``root / path`` would silently substitute for the root), a ``..``
+    climb, or a symlink pointing outside the root all resolve elsewhere.
+    Both sides are resolved before the containment check so symlinks cannot
+    smuggle a path out.
 
     Args:
         root: The instance root directory.
-        repo_path: The repo-relative path from a ``file:`` work key.
+        repo_path: The repo-relative path to resolve.
 
     Returns:
         The resolved path, or ``None`` when it escapes the root or cannot
-        be a path at all (an embedded NUL byte) — the caller parks the
-        unit; the bytes are never read.
+        be a path at all (an embedded NUL byte) — the drain parks the unit
+        and never reads the bytes; ``exclude`` refuses the batch.
     """
     try:
         resolved = (root / repo_path).resolve()
