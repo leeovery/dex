@@ -95,6 +95,33 @@ def _is_internal(url: str, internal_domains: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _unreadable_reason(message: dict) -> str | None:
+    """Why this message cannot be read, or ``None`` when it can.
+
+    Every field the clustering and emit passes index directly is checked
+    here once, so those passes may index. DiscordChatExporter writes all of
+    them at every version that exports JSON; an export converted from
+    another source into that shape is where one goes missing, and such a
+    message is skipped and counted rather than aborting its channel.
+    """
+    for field in ("id", "type", "timestamp"):
+        if not message.get(field):
+            return f"no {field}"
+    author = message.get("author")
+    if not author:
+        return "no author"
+    if not author.get("id"):
+        return "author has no id"
+    if not (author.get("nickname") or author.get("name")):
+        return "author has no name"
+    if any(
+        not attachment.get("url") or not attachment.get("fileName")
+        for attachment in message.get("attachments") or []
+    ):
+        return "attachment has no url or fileName"
+    return None
+
+
 def _clusters(messages: list[dict]) -> list[list[dict]]:
     """Group messages: replies join their target; same-author runs merge (gap rule)."""
     clusters: list[list[dict]] = []
@@ -273,12 +300,20 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
         # array, and named messages.json too), or a conversion that never
         # landed. The caller names the channel and moves on.
         raise ValueError("no messages array — not a DiscordChatExporter JSON export")
-    messages = [
-        message
-        for message in export
-        if message["type"] in ("Default", "Reply")
-        and (message.get("content") or message.get("attachments"))
-    ]
+    messages: list[dict] = []
+    unreadable: dict[str, int] = {}
+    for message in export:
+        reason = _unreadable_reason(message)
+        if reason is not None:
+            unreadable[reason] = unreadable.get(reason, 0) + 1
+        elif message["type"] in ("Default", "Reply") and (
+            message.get("content") or message.get("attachments")
+        ):
+            messages.append(message)
+    for reason, count in sorted(unreadable.items()):
+        # Counted per reason, not per message: a conversion that drops a
+        # field drops it on every message, and one line says so.
+        warn(f"warn: raw/discord/{channel}: {count} message(s) unreadable ({reason}) — skipped")
     written = skipped = 0
     for cluster in _clusters(messages):
         first = cluster[0]

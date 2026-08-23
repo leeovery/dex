@@ -250,6 +250,58 @@ class TestVariantExports:
         assert any(line.startswith("discord/interrupted: export unreadable") for line in lines)
         assert len(items(instance)) == 1
 
+    @pytest.mark.parametrize(
+        ("missing", "reason"),
+        [
+            ("id", "no id"),
+            ("type", "no type"),
+            ("timestamp", "no timestamp"),
+            ("author", "no author"),
+            ("author.id", "author has no id"),
+            ("author.name", "author has no name"),
+            ("attachments.url", "attachment has no url or fileName"),
+            ("attachments.fileName", "attachment has no url or fileName"),
+        ],
+    )
+    def test_a_message_missing_a_field_the_code_reads_is_skipped(self, instance, missing, reason):
+        # A backfill converted from another source into the exporter's
+        # shape is where a field goes missing — DiscordChatExporter itself
+        # writes every one of them. The rest of the export still normalizes.
+        variant = message(
+            "m2",
+            "https://example.test/other",
+            nickname=None,
+            timestamp="2026-08-19T10:05:00+00:00",
+            attachments=[{"url": "assets/photo.png", "fileName": "photo.png"}],
+        )
+        field, _, leaf = missing.partition(".")
+        if not leaf:
+            del variant[field]
+        elif field == "attachments":
+            del variant[field][0][leaf]
+        else:
+            del variant[field][leaf]
+        write_export(instance, [message("m1", "https://example.test/post"), variant])
+        lines = run_normalize(instance, Config())
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_unreadable_messages_are_counted_once_per_reason(self, instance):
+        # A conversion that drops a field drops it on every message: the
+        # operator wants the count and the reason, not one line per message.
+        stripped = []
+        for n in range(3):
+            variant = message(f"x{n}", SUBSTANTIAL, timestamp=f"2026-08-19T1{n}:00:00+00:00")
+            del variant["timestamp"]
+            stripped.append(variant)
+        write_export(instance, [message("m1", "https://example.test/post"), *stripped])
+        lines = run_normalize(instance, Config())
+        expected = "warn: raw/discord/general: 3 message(s) unreadable (no timestamp) — skipped"
+        assert expected in lines
+        assert len(items(instance)) == 1
+
 
 class TestRegeneration:
     def test_regeneration_is_byte_identical(self, instance):
