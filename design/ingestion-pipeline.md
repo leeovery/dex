@@ -1476,7 +1476,12 @@ believes it. (`dex-ingest`, split into `dex-capture` + `dex-run`, is the
 case this exists for.) The same holds INSIDE a live skill: a synced `dex-*`
 directory mirrors the template exactly, so a reference file the template
 dropped is removed too, reported the same way — copy-only sync left it
-loading its stale procedure in every instance forever. A symlinked skill
+loading its stale procedure in every instance forever. The mirror binds
+shape as well as content: where a release replaces a synced file with a
+same-named directory, or folds a directory down to a file, the conflicting
+entry is removed — reported as a machinery change — and the template's
+shape is written; copy-only sync crashed on the standing entry instead and
+took the whole sync with it. A symlinked skill
 directory is unlinked rather than recursed into, so whatever it pointed at
 is left alone. Nothing outside the `dex-` prefix is ever touched — an
 owner's own skills are instance-owned.
