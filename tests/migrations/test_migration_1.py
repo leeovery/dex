@@ -847,10 +847,21 @@ class TestLedgerTranslation:
         assert report.skipped == []
         assert ledger.load(path)["7777777777"].at == at
 
-    @pytest.mark.parametrize("junk", ["yesterday", "2026-08-20T09:00:00"])
-    def test_a_junk_write_timestamp_costs_the_value_not_the_line(
-        self, tmp_path, migration, junk
-    ):
+    @pytest.mark.parametrize(
+        "junk",
+        [
+            "yesterday",
+            "2026-08-20T09:00:00",
+            # Every other JSON type is as unreadable as an unparseable
+            # string, and every one of them used to cost the whole line.
+            1755772800,
+            None,
+            True,
+            ["2026-08-20T09:00:00+00:00"],
+            {"at": "2026-08-20T09:00:00+00:00"},
+        ],
+    )
+    def test_a_junk_write_timestamp_costs_the_value_not_the_line(self, tmp_path, migration, junk):
         # `at` breaks ties between concurrent writes; it is not load-bearing
         # like date/status/kind/item. Dropping a line's whole work history
         # over a malformed tie-breaker (unparseable, or naive and so

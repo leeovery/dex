@@ -573,17 +573,24 @@ def _translate_at(
     destroy its whole work history to protect nothing. A dropped value
     leaves the line sorting by file position, exactly as every line did
     before the field existed.
+
+    Unreadable covers every JSON type, not only a string that fails to
+    parse: a number or ``null`` here is as unusable as ``"yesterday"``, and
+    routing it through ``_expect_str`` would drop the line over exactly the
+    malformed tie-breaker this function exists to survive.
     """
     if "at" not in raw:
         return None
-    text = _expect_str(raw, "at")
-    try:
-        parsed = datetime.datetime.fromisoformat(text)
-    except ValueError:
-        parsed = None
+    value = raw["at"]
+    parsed = None
+    if isinstance(value, str):
+        try:
+            parsed = datetime.datetime.fromisoformat(value)
+        except ValueError:
+            parsed = None
     if parsed is None or parsed.utcoffset() is None:
         notes.append(
-            f"ledger {unit_hash}: unusable write timestamp {text!r} dropped — the line "
+            f"ledger {unit_hash}: unusable write timestamp {value!r} dropped — the line "
             "is kept and orders by file position, as it did before the field existed"
         )
         return None
