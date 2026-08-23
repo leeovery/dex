@@ -2,20 +2,67 @@
 
 The truncated-body cases run against a real localhost socket — the failure
 lives inside ``http.client``'s read path and no in-process double reproduces
-it faithfully.
+it faithfully. The non-ASCII cases use one for the same reason: what a URL
+becomes on the wire is only visible from the other end of the socket.
 """
 
+import contextlib
 import http.client
+import socket
+import threading
+from collections.abc import Iterator
 
 import pytest
 
 from dex_engine.capabilities import Capabilities
 from dex_engine.capabilities.transcribe.whisper_api import WhisperApi, urllib_multipart_post
 from dex_engine.drivers.file import FileDriver
-from dex_engine.drivers.transport import normalize_httplib_errors, urllib_transport
+from dex_engine.drivers.transport import (
+    _ascii_url,
+    normalize_httplib_errors,
+    urllib_transport,
+)
 from dex_engine.pipeline.classify import ProviderInputError, classify_connection, classify_http
 from dex_engine.pipeline.types import Kind, Status
 from tests.drivers.conftest import make_unit, truncating_server
+
+
+@contextlib.contextmanager
+def recording_server() -> Iterator[tuple[str, list[str]]]:
+    """Serve 200 OK, recording each request line. Yields the base URL and the log."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    host, port = listener.getsockname()
+    seen: list[str] = []
+
+    def serve() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return  # the listener closed: the context manager is done
+            with conn, contextlib.suppress(OSError):
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+                seen.append(data.split(b"\r\n")[0].decode("ascii", "replace"))
+                conn.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                    b"Content-Length: 2\r\nConnection: close\r\n\r\nhi"
+                )
+                conn.shutdown(socket.SHUT_WR)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield f"http://{host}:{port}", seen
+    finally:
+        listener.close()
+        thread.join(timeout=5)
 
 
 class TestHttplibNormalization:
@@ -90,3 +137,52 @@ class TestThroughADriverFetch:
             result = driver.fetch(make_unit(url, Kind.FILE))
         assert result.status is Status.BLOCKED
         assert "truncated response body" in (result.reason or "")
+
+
+class TestNonAsciiUrls:
+    """A URL with an accent in it is a URL to fetch, not a codec error."""
+
+    @pytest.mark.parametrize(
+        ("path", "wire"),
+        [
+            ("/wiki/Café", "/wiki/Caf%C3%A9"),  # an accented Wikipedia path
+            ("/记/分布式", "/%E8%AE%B0/%E5%88%86%E5%B8%83%E5%BC%8F"),  # a CJK slug
+            ("/search?q=café", "/search?q=caf%C3%A9"),  # the query too
+        ],
+    )
+    def test_the_url_reaches_the_wire_percent_encoded(self, path, wire):
+        # http.client ascii-encodes the request line, so every one of these
+        # raised UnicodeEncodeError before a byte left the machine — and a
+        # UnicodeEncodeError IS a ValueError, so it walked past the drivers'
+        # `except OSError` guards and parked the item manual, unfetched,
+        # with a raw codec message as the operator's stated reason.
+        with recording_server() as (base, seen):
+            response = urllib_transport(base + path)
+        assert response.status == 200
+        assert seen == [f"GET {wire} HTTP/1.1"]
+
+    def test_an_idn_host_is_punycoded(self):
+        assert _ascii_url("https://münchen.example/rathaus") == (
+            "https://xn--mnchen-3ya.example/rathaus"
+        )
+
+    def test_an_idn_host_keeps_its_port_and_encodes_its_path(self):
+        assert _ascii_url("https://例え.テスト:8443/パス?q=検索") == (
+            "https://xn--r8jz45g.xn--zckzah:8443/%E3%83%91%E3%82%B9?q=%E6%A4%9C%E7%B4%A2"
+        )
+
+    def test_an_already_encoded_url_passes_through_untouched(self):
+        # The encoding is idempotent or it corrupts the canonical URL the
+        # ledger keys on: %C3%A9 must never become %25C3%25A9.
+        url = "https://fr.wikipedia.org/wiki/Caf%C3%A9?a=b&c=d#frag"
+        assert _ascii_url(url) == url
+        assert _ascii_url(_ascii_url("https://fr.wikipedia.org/wiki/Café")) == (
+            "https://fr.wikipedia.org/wiki/Caf%C3%A9"
+        )
+
+    def test_an_unencodable_host_fails_with_a_stated_reason(self):
+        # The one genuinely unfetchable shape: an IDN label DNS cannot
+        # carry. It still fails as a stated ValueError the bad-seed
+        # containment can park on, never the codec's own words.
+        with pytest.raises(ValueError, match="is not encodable for DNS"):
+            urllib_transport("https://" + "ü" * 200 + ".example/")
