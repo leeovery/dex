@@ -12,9 +12,17 @@ writer stamps one, so an unstamped line necessarily predates every stamped
 one — and lines that tie (both unstamped, or the same instant) fall back to
 file position.
 
-This layer never reads the ambient clock: today's date, the write instant,
+``at`` is the writing machine's wall clock, and a wall clock can be wrong.
+Two guards bound what a wrong one costs: it is set by the writer alone
+(:func:`stamp`, from an injected clock) and never carried in from a caller,
+and a stored value further ahead than :data:`FUTURE_SKEW_ALLOWANCE` is read
+as no timestamp at all (:func:`resolution_key`).
+
+Stamping never reads the ambient clock: today's date, the write instant,
 and the engine version are injected so stamping and retry-on-new-engine are
-testable.
+testable. Resolution has to compare a stored ``at`` against the present, so
+it does read a clock — injectable, defaulting to the wall clock, because
+every reader resolves and not every reader has a clock to hand.
 """
 
 import datetime
@@ -28,6 +36,7 @@ from dex_engine import atomic
 from .types import Format, Kind, LedgerEntry, Need, Status
 
 __all__ = [
+    "FUTURE_SKEW_ALLOWANCE",
     "LedgerSchemaError",
     "append",
     "compact",
@@ -217,8 +226,28 @@ def to_line(entry: LedgerEntry) -> str:
 # before that release shipped.
 _UNSTAMPED = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 
+# How far ahead of the reader's clock a write timestamp may sit and still be
+# read as one. `at` decides which line of a hash is live and it comes from
+# another machine's wall clock: a machine whose clock has jumped stamps a
+# line years ahead, that line wins its hash against every later real write,
+# and `compact` then deletes the real ones — the unit stuck until the wall
+# clock catches up, with no working repair verb. Past this much skew a value
+# is not a write instant, so it is read as unstamped: it sorts oldest and
+# loses to every real write, costing that one line its ordering and never
+# the hash. Five minutes is wide enough for the ordinary spread between two
+# machines whose lines merge; a clock stepping BACKWARDS inside the window
+# still mis-orders two of its own writes, and that is accepted.
+FUTURE_SKEW_ALLOWANCE = datetime.timedelta(minutes=5)
 
-def resolution_key(entry: LedgerEntry, position: int) -> tuple[datetime.datetime, int]:
+
+def _utc_now() -> datetime.datetime:
+    """The reader's clock: the default for resolution, never for stamping."""
+    return datetime.datetime.now(datetime.UTC)
+
+
+def resolution_key(
+    entry: LedgerEntry, position: int, *, now: datetime.datetime
+) -> tuple[datetime.datetime, int]:
     """The ordering key that decides which line of a hash is the latest.
 
     Public so a migration reading the file tolerantly resolves hashes by the
@@ -228,14 +257,20 @@ def resolution_key(entry: LedgerEntry, position: int) -> tuple[datetime.datetime
         entry: The parsed entry.
         position: Its position in the file (line number, or any monotonic
             counter over the lines read).
+        now: The instant the ledger is being read at, UTC-aware. An ``at``
+            further ahead than :data:`FUTURE_SKEW_ALLOWANCE` is read as
+            unstamped — no clock is trusted past the present.
 
     Returns:
         A sort key; the greatest key for a hash names its live line.
     """
-    return (entry.at or _UNSTAMPED, position)
+    at = entry.at
+    if at is None or at > now + FUTURE_SKEW_ALLOWANCE:
+        at = _UNSTAMPED
+    return (at, position)
 
 
-def load(path: Path) -> dict[str, LedgerEntry]:
+def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict[str, LedgerEntry]:
     """Load the ledger; the latest line per hash wins.
 
     Latest is by write timestamp, then by file position — see the module
@@ -243,6 +278,8 @@ def load(path: Path) -> dict[str, LedgerEntry]:
 
     Args:
         path: The ledger file; a missing file is an empty ledger.
+        now: The reader's clock, defaulting to the wall clock — what a
+            future-dated ``at`` is judged against (:func:`resolution_key`).
 
     Returns:
         Entries keyed by hash, in first-seen-hash order, each holding the
@@ -255,6 +292,7 @@ def load(path: Path) -> dict[str, LedgerEntry]:
     entries: dict[str, LedgerEntry] = {}
     if not path.exists():
         return entries
+    moment = now()
     winning: dict[str, tuple[datetime.datetime, int]] = {}
     # JSONL records are delimited by "\n" alone: str.splitlines() would also
     # split on unicode line separators (U+0085, U+2028, ...) INSIDE a JSON
@@ -266,7 +304,7 @@ def load(path: Path) -> dict[str, LedgerEntry]:
             entry = from_line(line)
         except LedgerSchemaError as e:
             raise LedgerSchemaError(f"{path}:{lineno}: {e}") from e
-        key = resolution_key(entry, lineno)
+        key = resolution_key(entry, lineno, now=moment)
         if entry.hash in winning and key < winning[entry.hash]:
             continue
         # Reassigning an existing key keeps its insertion position, so a
@@ -277,22 +315,30 @@ def load(path: Path) -> dict[str, LedgerEntry]:
 
 
 def append(path: Path, entry: LedgerEntry) -> None:
-    """Append one entry as a full-record line, creating the file if needed."""
+    """Append one entry as a full-record line, creating the file if needed.
+
+    ``entry`` arrives already stamped: :func:`stamp` is the only place a
+    written line's ``at`` is set, so the timestamp that orders a line is
+    always the writing machine's own clock and never a value a caller chose.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(to_line(entry) + "\n")
 
 
-def compact(path: Path) -> int:
+def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:
     """Rewrite the ledger keeping only the latest line per hash.
 
     Also settles git union merges — it keeps the line ``load`` resolves to,
     so a merge whose newer line landed first is settled in the newer line's
     favor rather than against it. Superseded lines — the audit trail — are
-    dropped.
+    dropped. Because it keeps exactly ``load``'s line, a future-dated ``at``
+    cannot make it delete a real write: such a line is read as unstamped and
+    loses, and it is the line that goes.
 
     Args:
         path: The ledger file; a missing file is a no-op.
+        now: The reader's clock, passed through to :func:`load`.
 
     Returns:
         The number of superseded lines removed.
@@ -300,13 +346,19 @@ def compact(path: Path) -> int:
     if not path.exists():
         return 0
     lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
-    entries = load(path)
+    entries = load(path, now=now)
     # Atomic: a crash mid-write must never lose the ledger.
     atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
     return len(lines) - len(entries)
 
 
-def drop_items(path: Path, items: Collection[str], *, claimed: Collection[str]) -> tuple[int, int]:
+def drop_items(
+    path: Path,
+    items: Collection[str],
+    *,
+    claimed: Collection[str],
+    now: Callable[[], datetime.datetime] = _utc_now,
+) -> tuple[int, int]:
     """Purge the work units ``items`` leave behind; return (lines removed, units kept).
 
     For purges only. ``bin/dex exclude`` deletes a corpus item and its
@@ -337,6 +389,8 @@ def drop_items(path: Path, items: Collection[str], *, claimed: Collection[str]) 
         claimed: The work hashes live corpus items still list — computed
             after the purge deletes their files, so a purged item cannot
             claim its own work.
+        now: The reader's clock — the hash is judged on the line ``load``
+            resolves to, so it resolves against the same present.
 
     Returns:
         The number of lines removed, and the number of work units kept
@@ -346,7 +400,9 @@ def drop_items(path: Path, items: Collection[str], *, claimed: Collection[str]) 
         return 0, 0
     text = path.read_text(encoding="utf-8")
     purged = [
-        unit_hash for unit_hash, entry in _latest_readable(text).items() if entry.item in items
+        unit_hash
+        for unit_hash, entry in _latest_readable(text, now=now()).items()
+        if entry.item in items
     ]
     orphaned = {unit_hash for unit_hash in purged if unit_hash not in claimed}
     kept_units = len(purged) - len(orphaned)
@@ -366,7 +422,7 @@ def drop_items(path: Path, items: Collection[str], *, claimed: Collection[str]) 
     return removed, kept_units
 
 
-def _latest_readable(text: str) -> dict[str, LedgerEntry]:
+def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEntry]:
     """The latest entry per hash over the lines that parse, as ``load`` resolves them.
 
     Not ``load`` itself: one hand-tampered line would abort the purge, and a
@@ -381,7 +437,7 @@ def _latest_readable(text: str) -> dict[str, LedgerEntry]:
             entry = from_line(line)
         except LedgerSchemaError:
             continue
-        key = resolution_key(entry, lineno)
+        key = resolution_key(entry, lineno, now=now)
         if entry.hash in winning and key < winning[entry.hash]:
             continue
         latest[entry.hash] = entry
@@ -414,7 +470,9 @@ def stamp(
 
     Every entry the pipeline writes goes through this — it is the one place
     ``date``, ``at`` and ``engine`` are set, and none comes from an ambient
-    global.
+    global. Whatever ``at`` the caller built the entry with is overwritten:
+    the write timestamp is what orders this line against another machine's,
+    so it is the writer's own clock or nothing.
 
     Args:
         entry: The entry to stamp.

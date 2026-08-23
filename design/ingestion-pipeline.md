@@ -368,6 +368,26 @@ Without this, a scheduled run's 09:00 `blocked` could land after the owner's
 10:00 `manual` in the merged file, re-drain against the owner's decision, and
 `compact` would then delete the newer line permanently.
 
+**`at` is stamped by the writer, and never trusted past the present.** A
+write timestamp is the writing machine's wall clock, and a wall clock can be
+wrong, so two rules bound what a wrong one costs. On write: `at` is set by
+`ledger.stamp` from the injected clock and is never carried in from a caller
+— every write path goes through that seam, a migration's seeds included. On
+read: a stored `at` more than five minutes
+(`ledger.FUTURE_SKEW_ALLOWANCE`) ahead of the reader's clock — the wall
+clock, injectable so resolution is testable — is not read as a write instant
+at all. It is treated as unstamped, so it sorts oldest and loses to every
+real write, and `compact`, which keeps exactly the line `load` resolves to,
+drops it rather than the real writes behind it. A jumped clock therefore
+costs one line its ordering and never the hash, and `mark` still heals,
+because a heal is the newest real write. Without the ceiling, one line
+stamped 2099 owns its hash until the wall clock catches up: `mark` reports
+success, the item's frontmatter is rewritten from the in-memory drain and
+reads healed, `load` goes on resolving the stale line, and `compact` deletes
+every correct write behind it. The allowance is the ordinary spread between
+two machines whose lines merge; a clock stepping backwards inside that
+window can still mis-order two writes of one hash, and that is accepted.
+
 ## 5. Ledger entry schema and status lifecycle
 
 ```jsonc

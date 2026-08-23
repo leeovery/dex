@@ -2,6 +2,7 @@
 
 import dataclasses
 import datetime
+import inspect
 import json
 import subprocess
 from pathlib import Path
@@ -11,8 +12,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ledger import LedgerSchemaError
 from dex_engine.pipeline.types import Format, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.urls import work_hash
+from tests.conftest import FakeDriver
+from tests.pipeline.test_run import ITEM, URL, make_ctx, write_item
 
 TODAY = datetime.date(2026, 8, 20)
 AT = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
@@ -285,6 +290,97 @@ class TestWriteTimestampResolution:
             ledger.from_line(json.dumps(record))
 
 
+class TestFutureDatedWriteTimestamps:
+    """A jumped clock costs one line's ordering, never the hash."""
+
+    def clock(self):
+        return lambda: AT
+
+    def jumped(self) -> LedgerEntry:
+        # The machine whose clock reads 2099: without the ceiling this line
+        # wins its hash until the wall clock catches up, and `compact` then
+        # deletes every real write behind it.
+        return entry(
+            status=Status.BLOCKED,
+            attempts=3,
+            at=datetime.datetime(2099, 1, 1, tzinfo=datetime.UTC),
+        )
+
+    def real(self, *, hours: int = 0) -> LedgerEntry:
+        return entry(
+            status=Status.MANUAL,
+            reason="owner ruled: read it myself",
+            at=AT + datetime.timedelta(hours=hours),
+        )
+
+    def test_a_future_dated_line_loses_to_every_real_write(self, instance: Instance):
+        # Three correct writes across three days, all of them behind the
+        # jumped line in the file and every one of them lost to it before.
+        ledger.append(instance.ledger_path, self.jumped())
+        for hours in (-48, -24, 0):
+            ledger.append(instance.ledger_path, self.real(hours=hours))
+        loaded = ledger.load(instance.ledger_path, now=self.clock())
+        assert loaded[BASE_ENTRY.hash] == self.real()
+
+    def test_a_future_dated_line_written_last_still_loses(self, instance: Instance):
+        ledger.append(instance.ledger_path, self.real())
+        ledger.append(instance.ledger_path, self.jumped())
+        loaded = ledger.load(instance.ledger_path, now=self.clock())
+        assert loaded[BASE_ENTRY.hash] == self.real()
+
+    def test_compact_keeps_the_real_write_and_drops_the_future_dated_line(self, instance: Instance):
+        # The line that goes is the bogus one: compact keeps exactly what
+        # `load` resolves to, so it can never delete a real write in favor
+        # of a timestamp no clock could have produced.
+        ledger.append(instance.ledger_path, self.jumped())
+        ledger.append(instance.ledger_path, self.real())
+        assert ledger.compact(instance.ledger_path, now=self.clock()) == 1
+        assert instance.ledger_path.read_text().strip() == ledger.to_line(self.real())
+
+    def test_a_timestamp_at_the_skew_boundary_is_still_a_write_timestamp(self):
+        # The allowance is the ordinary spread between two machines' clocks:
+        # a line right at it is a real write and keeps its ordering.
+        at_boundary = entry(at=AT + ledger.FUTURE_SKEW_ALLOWANCE)
+        past_boundary = entry(at=AT + ledger.FUTURE_SKEW_ALLOWANCE + datetime.timedelta(seconds=1))
+        assert ledger.resolution_key(at_boundary, 0, now=AT)[0] == at_boundary.at
+        assert ledger.resolution_key(past_boundary, 0, now=AT) == ledger.resolution_key(
+            entry(), 0, now=AT
+        )
+
+    def test_a_line_with_no_timestamp_resolves_exactly_as_it_always_did(self, instance: Instance):
+        # Pre-`at` lines are unstamped, and a future-dated line is READ as
+        # unstamped: the two tie, and the tie falls back to file position,
+        # as every line resolved before the field existed.
+        legacy = entry(status=Status.DEAD)
+        ledger.append(instance.ledger_path, self.jumped())
+        ledger.append(instance.ledger_path, legacy)
+        assert ledger.load(instance.ledger_path, now=self.clock())[BASE_ENTRY.hash] == legacy
+
+    def test_the_mark_verb_heals_a_hash_a_jumped_clock_captured(self, instance: Instance):
+        # End to end through the sanctioned repair verb: the reviewer's
+        # scenario, where `mark` printed success, the item's frontmatter
+        # showed healed, and `load` went on resolving the 2099 line.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        ledger.append(
+            instance.ledger_path,
+            entry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                status=Status.BLOCKED,
+                attempts=3,
+                at=datetime.datetime(2099, 1, 1, tzinfo=datetime.UTC),
+            ),
+        )
+        confirmation = run_mod.mark(ctx, URL, Status.MANUAL, reason="owner ruled")
+        assert "manual" in confirmation
+        healed = ledger.load(instance.ledger_path)[work_hash(URL)]
+        assert (healed.status, healed.reason) == (Status.MANUAL, "owner ruled")
+        ledger.compact(instance.ledger_path)
+        assert ledger.load(instance.ledger_path)[work_hash(URL)] == healed
+
+
 class TestLoadAppendCompact:
     def test_missing_file_is_an_empty_ledger(self, instance: Instance):
         assert ledger.load(instance.ledger_path) == {}
@@ -353,10 +449,16 @@ class TestStamp:
         assert stamped.at == datetime.datetime(2027, 1, 2, 14, 30, 5, 125000, tzinfo=datetime.UTC)
         assert stamped.engine == "0.3.0"
 
-    def test_layer_never_calls_the_ambient_clock(self):
+    def test_stamping_never_calls_the_ambient_clock(self):
         source = Path(ledger.__file__).read_text(encoding="utf-8")
         assert "date.today()" not in source
-        assert "datetime.now(" not in source
+        # The layer reads a wall clock in exactly one place: `_utc_now`, the
+        # default a reader judges a future-dated `at` against (every reader
+        # resolves, and not every reader has a clock to hand). Stamping
+        # stays injected — a write instant the writer did not choose orders
+        # nothing.
+        assert source.count("datetime.now(") == 1
+        assert "datetime.now(" not in inspect.getsource(ledger.stamp)
 
 
 # ---------------------------------------------------------------------------

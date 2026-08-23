@@ -181,6 +181,13 @@ class TestSeeding:
         migration.apply(tmp_path)
         assert ledger.load(path)[work_hash(url_of("superseded"))].status is Status.DEAD
 
+    def test_a_seed_carries_the_writers_own_write_instant(self, tmp_path, migration):
+        # `at` is set by the writer seam and never hand-built at a call
+        # site: it is what orders this line against another machine's.
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)])
+        migration.apply(tmp_path)
+        assert ledger.load(path)[work_hash(url_of("post-web"))].at == NOW
+
     def test_unparseable_engine_skipped_with_why(self, tmp_path, migration):
         url = "https://a.test/weird"
         record = {

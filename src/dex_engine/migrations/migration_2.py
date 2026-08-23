@@ -90,7 +90,7 @@ from pathlib import Path
 from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
-from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, to_line
+from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, stamp, to_line
 from dex_engine.pipeline.ownership import corpus_owners
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import (
@@ -199,17 +199,24 @@ class IdentityRekeyAndRerunSeed:
                 continue
             append(
                 path,
-                LedgerEntry(
-                    hash=entry.hash,
-                    url=entry.url,
-                    item=item,
-                    kind=entry.kind,
-                    status=Status.QUEUED,
-                    engine=self._engine_version,
-                    date=self._today(),
-                    at=self._now(),
-                    via="migration-2",
-                    rerun=True,
+                # Stamped, never hand-dated: `at` is the writer's own clock
+                # everywhere in the engine, and a seed is a write like any
+                # other (ledger.stamp sets date/at/engine together).
+                stamp(
+                    LedgerEntry(
+                        hash=entry.hash,
+                        url=entry.url,
+                        item=item,
+                        kind=entry.kind,
+                        status=Status.QUEUED,
+                        engine="seed",  # stamped below
+                        date=datetime.date.min,
+                        via="migration-2",
+                        rerun=True,
+                    ),
+                    today=self._today,
+                    now=self._now,
+                    engine_version=self._engine_version,
                 ),
             )
             counts[entry.kind] += 1
