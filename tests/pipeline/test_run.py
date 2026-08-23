@@ -20,6 +20,7 @@ from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
+from dex_engine.exclude import run_exclude
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
@@ -2127,6 +2128,46 @@ class TestOwnershipIsTheCorpusAnswer:
         report = run_mod.run(ctx)
         assert entry_for(ctx).item == OLD_ITEM
         assert "re-attributed" not in report
+
+    def _shared_then_excluded(self, instance) -> RunContext:
+        """Two items on one URL; the one the ledger line names is purged."""
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)  # alpha wins the dedupe, so the line names alpha
+        run_exclude(instance, [{"id": ALPHA, "reason": "out of scope"}])
+        return ctx
+
+    def test_the_survivors_url_is_fetched_after_its_twin_is_excluded(self, instance):
+        # `exclude` rightly keeps the line — bravo still claims the work —
+        # but deletes the enrichment with alpha, leaving a `done` hash whose
+        # product is gone and which seeding's short-circuit never revisits.
+        ctx = self._shared_then_excluded(instance)
+        assert not (instance.enrichment_dir / BRAVO).exists()
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == BRAVO
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{BRAVO}/web-{entry.hash[:6]}.md"
+        assert (instance.root / entry.path).is_file()
+
+    def test_the_survivor_is_not_reported_as_a_no_source_item(self, instance):
+        # bravo lists a URL; "no-source item — awaiting description" says
+        # the opposite of what its own frontmatter says.
+        ctx = self._shared_then_excluded(instance)
+        assert "no-source item" not in run_mod.run(ctx)
+
+    def test_a_done_unit_whose_output_stands_is_never_re_fetched(self, instance):
+        # The dedupe is the design, not a fault: alpha holds the one file
+        # for the shared URL and bravo has none, on 80 hashes in one real
+        # instance. Only a landing with nothing on disk is re-fetched.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.run(ctx)
+        assert not (instance.enrichment_dir / BRAVO).exists()
+        assert entry_for(ctx).item == ALPHA
 
     def test_an_outstanding_shared_unit_holds_every_item_listing_it_raw(self, instance):
         # The line names alpha, but bravo lists the URL too, so bravo owes

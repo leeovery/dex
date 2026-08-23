@@ -412,11 +412,22 @@ class _Drain:
         moves with it, so the recorded path names a directory that is gone
         while the file sits under the new id.
 
+        One status does move. A ``done`` line whose output is nowhere on
+        disk is not done for the item that owes it: ``exclude`` keeps the
+        line where another live item claims the work, but deletes the
+        enrichment along with the item that produced it — leaving the
+        survivor's URL ``done`` with nothing to show, and seeding's
+        already-a-unit short-circuit means nothing ever fetches it again.
+        That one requeues, and the run it re-enters fetches it under the
+        item that claims it.
+
         Idempotent by construction: once the line names a live item the
-        condition stops matching.
+        first condition stops matching, and once the fetch lands the
+        second does too.
         """
         live = {path.stem for path in self.ctx.instance.corpus_dir.glob("*/*.md")}
         moved = 0
+        requeued = 0
         for entry in list(self.entries.values()):
             if entry.item in live:
                 continue
@@ -426,14 +437,31 @@ class _Drain:
             # Only a landing has an output to find: on every other status a
             # path is a schema violation, not a repair.
             product = self._unit_product(entry, owner) if entry.status is Status.DONE else None
-            self.record(dataclasses.replace(entry, item=owner, path=product or entry.path))
+            lost = entry.status is Status.DONE and entry.path is not None and product is None
+            self.record(
+                dataclasses.replace(
+                    entry,
+                    item=owner,
+                    status=Status.QUEUED if lost else entry.status,
+                    path=None if lost else (product or entry.path),
+                    title=None if lost else entry.title,
+                )
+            )
             moved += 1
+            if lost:
+                requeued += 1
         if not moved:
             return
-        self.notes.append(
+        note = (
             f"re-attributed {moved} ledger {'entry' if moved == 1 else 'entries'} to the "
             "live items whose corpus files claim the work"
         )
+        if requeued:
+            note += (
+                f"; {requeued} queued to re-fetch — the enrichment went with the item "
+                "that produced it"
+            )
+        self.notes.append(note)
         self.resolve_owners()
 
     def _unit_product(self, entry: LedgerEntry, item_id: str) -> str | None:
