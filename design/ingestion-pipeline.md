@@ -1259,7 +1259,16 @@ glyphs, and identity is never split.
 (`## Enrich run — 6 units processed`). `###` opens each section and names
 the section plus its scale (`### Needs you — 1 entry the engine has given up
 on`). A reader who stops at the headings still knows what happened and how
-much of it there is.
+much of it there is. **No surface is exempt**: the two that carried bare
+headings — the capability report's `## Capabilities` and its per-capability
+`###`, and the health report's `### Wiki` / `### State` / `### Digests` —
+state capabilities, providers, pages, ledger entries and digests
+respectively, every one of which the site already had in hand. The health
+report's `State` is the case worth stating: a ledger that will not load has
+no scale, so that heading says `ledger unreadable` rather than `0 ledger
+entries`, which would report an unreadable file as an empty one. Where a
+section genuinely has no number to give, that is the heading's problem to
+say out loud, not a licence to drop the scale.
 
 **Bullets.** `-` for every list. One entry per bullet. A detail hanging off
 an entry is a continuation line indented two spaces and opened with `↳`;

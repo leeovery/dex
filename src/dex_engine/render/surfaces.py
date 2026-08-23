@@ -709,12 +709,18 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
     capabilities = _obj_list_at(surface, payload, "capabilities", required=True)
     if not capabilities:
         _fail(surface, "capabilities must name at least one capability")
-    blocks = [kernel.heading("Capabilities")]
+    scale = kernel.plural(len(capabilities), "capability", "capabilities")
+    blocks = [kernel.heading(f"Capabilities — {scale}")]
     for i, capability in enumerate(capabilities):
         where = f"capabilities[{i}]."
         _check_keys(surface, capability, required=frozenset({"name", "providers"}), where=where)
-        blocks += ["", kernel.heading(_need_at(surface, capability, "name", where), level=3), ""]
+        name = _need_at(surface, capability, "name", where)
         providers = _obj_list_at(surface, capability, "providers", required=True)
+        blocks += [
+            "",
+            kernel.heading(f"{name} — {kernel.plural(len(providers), 'provider')}", level=3),
+            "",
+        ]
         if not providers:
             blocks.append(kernel.bullet("no providers"))
             continue
@@ -945,6 +951,7 @@ _HEALTH_OPTIONAL = frozenset(
         "stale_passes",
         "capped",
         "incomplete_threads",
+        "digests",
         "digest_errors",
         "digest_orphans",
         "reconciled",
@@ -998,6 +1005,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
           "incomplete_threads": [{"path": str, "why": str}],      # short thread walk-ups
           # digests
+          "digests": int,
           "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
           "digest_orphans": [str],
           # --write outcomes and free notes
@@ -1024,7 +1032,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         ]
     )
     blocks = [kernel.heading(f"Health check — {scale}")]
-    blocks += _health_wiki(surface, payload)
+    blocks += _health_wiki(surface, payload, _int_at(surface, summary, "pages", "summary."))
     blocks += _health_state(surface, payload)
     blocks += _health_digests(surface, payload)
     reconciled = _str_list_at(surface, payload, "reconciled")
@@ -1035,8 +1043,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     return kernel.document(blocks)
 
 
-def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("Wiki", level=3), ""]
+def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> list[str]:
+    blocks = ["", kernel.heading(f"Wiki — {kernel.plural(pages, 'page')}", level=3), ""]
     if "taxonomy_error" in payload:
         blocks.append(
             kernel.bullet(
@@ -1103,7 +1111,17 @@ def _health_restated(surface: str, payload: Mapping[str, object]) -> list[str]:
 
 
 def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("State", level=3), ""]
+    # The ledger is the section's scale, and a ledger that will not load has
+    # none to state — saying "0 entries" there would report an unreadable
+    # file as an empty one.
+    scale = (
+        "ledger unreadable"
+        if "ledger_error" in payload
+        else kernel.plural(
+            _int_at(surface, payload, "ledger_entries", default=0), "ledger entry", "ledger entries"
+        )
+    )
+    blocks = ["", kernel.heading(f"State — {scale}", level=3), ""]
     if "ledger_error" in payload:
         blocks.append(
             kernel.bullet(
@@ -1163,7 +1181,8 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
 
 
 def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("Digests", level=3), ""]
+    digests = _int_at(surface, payload, "digests", default=0)
+    blocks = ["", kernel.heading(f"Digests — {kernel.plural(digests, 'digest')}", level=3), ""]
     blocks += _health_pairs(
         surface, payload, "digest_errors", "MALFORMED DIGESTS (the wiki layer reads these)",
         ("item", "why"), lambda i, w: f"{kernel.bold(i)} — {w}",

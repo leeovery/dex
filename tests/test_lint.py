@@ -1230,6 +1230,19 @@ class TestDigestShape:
         outcome = lint(instance)
         assert outcome.exit_code == 0
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+        assert "### Digests — 0 digests" in outcome.report
+
+    def test_the_digest_section_states_how_many_digests_there_are(self, instance):
+        # Every heading states its scale; this one had none, so a reader who
+        # stopped at it could not tell an instance with no digests from one
+        # whose digests all conform.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=2))
+        second = "2026-08-19-second-bbbbbb"
+        write_digest(instance, second, digest_text(item=second, bullets=1))
+        outcome = lint(instance)
+        assert "### Digests — 2 digests" in outcome.report
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
 
 
 class TestCli:

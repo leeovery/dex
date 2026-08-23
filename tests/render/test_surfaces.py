@@ -361,12 +361,14 @@ class TestCapabilityReport:
                 ]
             },
         )
-        assert out.startswith("## Capabilities\n")
-        assert "### transcribe" in out
+        # Every heading states its scale — a reader who stops at them knows
+        # how many capabilities there are and how many providers each has.
+        assert out.startswith("## Capabilities — 2 capabilities\n")
+        assert "### transcribe — 2 providers" in out
         assert "- **whisper-local** · `active`" in out
         assert "- **whisper-api** · `available`" in out
         assert "  ↳ set OPENAI_API_KEY" in out
-        assert "### ocr" in out
+        assert "### ocr — 0 providers" in out
         assert "- no providers" in out
         assert_no_trailing_whitespace(out)
 
@@ -475,6 +477,7 @@ HEALTH_PAYLOAD = {
         {"page": "pour-over", "first": "The dose is 60g/L.", "second": "Use a 60g/L dose."}
     ],
     "ledger_entries": 42,
+    "digests": 7,
     "waiting": {"transcribe": 3},
     "cognitive": [
         {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
@@ -567,7 +570,7 @@ class TestHealthReport:
     def test_full_report(self):
         out = render("health-report", HEALTH_PAYLOAD)
         assert out.startswith("## Health check — 120 corpus items · 14 pages · 118 cited\n")
-        assert "### Wiki" in out
+        assert "### Wiki — 14 pages" in out
         assert "- broken wikilinks — **1**" in out
         assert "  - **pour-over** → `[[brewing]]`" in out
         assert "- reserved/unbuilt links (informational) — **3**" in out
@@ -583,12 +586,12 @@ class TestHealthReport:
         assert "- item-count drift (frontmatter `items:` vs members) — **1**" in out
         assert "  - **pour-over** — `items: 3`, 5 members" in out
         assert "- possible restated facts (same page, merge?) — **1**" in out
-        assert "### State" in out
+        assert "### State — 42 ledger entries" in out
         assert "- ledger — **42 entries**, schema valid" in out
         assert "- waiting on a capability — `transcribe` 3" in out
         assert "- read these yourself (the engine cannot do them) — **1**" in out
         assert "- harvest passes under old rules (re-judge) — **1**" in out
-        assert "### Digests" in out
+        assert "### Digests — 7 digests" in out
         assert "- digest these (enrichment newer than digest) — **1**" in out
         assert "### Reconciled by `--write`" in out
         assert "### Notes" in out
@@ -691,6 +694,10 @@ class TestHealthReport:
         )
         assert "**LEDGER SCHEMA FAILURE**" in out
         assert "unknown field(s)" in out
+        # The section states its scale off the ledger, and a ledger that will
+        # not load has none: "0 ledger entries" would report an unreadable
+        # file as an empty one.
+        assert "### State — ledger unreadable" in out
 
     def test_taxonomy_error_renders_loud(self):
         out = render(

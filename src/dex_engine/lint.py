@@ -186,10 +186,9 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
-    ledger_error = _state_checks(
-        instance, payload, is_cognitive, corpus_ids, notes=scan.notes
-    )
-    digest_errors = _digest_checks(instance)
+    ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids, notes=scan.notes)
+    digests, digest_errors = _digest_checks(instance)
+    payload["digests"] = digests
     payload["digest_errors"] = digest_errors
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
@@ -900,17 +899,22 @@ def _unread_note(rel: str, why: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _digest_checks(instance: Instance) -> list[dict[str, str]]:
-    """The digests that do not conform, and how each one breaks.
+def _digest_checks(instance: Instance) -> tuple[int, list[dict[str, str]]]:
+    """How many digests there are, and the ones that do not conform.
 
     Shape only. How MANY facts a digest states is the source's business —
     two lines of tweet yield two facts and no honest digest can invent a
     third — so there is no target count and no count finding. Stating
     none at all is different in kind: the file is empty of the one thing
     it exists to hold.
+
+    The count comes back with the errors because the section's heading
+    states its scale, and this pass is the one that walks the directory.
     """
     errors: list[dict[str, str]] = []
+    digests = 0
     for path in sorted(instance.digests_dir.glob("*.md")):
+        digests += 1
         item = path.stem or path.name
         try:
             text = path.read_text(encoding="utf-8")
@@ -924,7 +928,7 @@ def _digest_checks(instance: Instance) -> list[dict[str, str]]:
         why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
         if why is not None:
             errors.append({"item": item, "why": why})
-    return errors
+    return digests, errors
 
 
 def _digest_body_fault(body: str) -> str | None:
