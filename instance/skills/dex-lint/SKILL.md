@@ -95,6 +95,13 @@ step 4.
    - **Possible restated facts** — read each flagged pair: same fact →
      merge into one sentence carrying both citations; genuinely distinct →
      leave them (the flag is a question, not a verdict).
+   - **Harvest these (no pass on record)** — the item's pages were fetched
+     but no harvest pass was ever recorded: "never ran" is the standing
+     state, not "ran and promoted nothing". Run the harvest judgment now
+     under the current subject rule (dex-run's `references/ingest-item.md`),
+     then `bin/dex enrich pass <item> --stage harvest` — the pass is
+     recorded even when nothing was promoted, and recording it is what
+     keeps this row empty.
    - **Harvest passes under old rules** — re-run the harvest judgment for
      those items under the current subject rule (dex-run's
      `references/ingest-item.md`), then `bin/dex enrich pass ... --stage

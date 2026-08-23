@@ -982,6 +982,7 @@ _HEALTH_OPTIONAL = frozenset(
         "misfiled_outputs",
         "waiting",
         "cognitive",
+        "never_harvested",
         "stale_passes",
         "capped",
         "incomplete_threads",
@@ -1040,6 +1041,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "misfiled_outputs": [{"item": str, "path": str}],
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
+          "never_harvested": [str],   # fetched pages landed, no pass on record
           "stale_passes": [{"item": str, "rules": int}],
           # judgment drift — recorded for this surface, shown on no other
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
@@ -1266,6 +1268,12 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
         blocks.append(kernel.bullet(kernel.inline([kernel.bold(item), kernel.code(need)]), depth=1))
         blocks.append(kernel.detail(url, depth=1))
     blocks += _health_elided(len(cognitive))
+    blocks += _health_names(
+        surface,
+        payload,
+        "never_harvested",
+        "harvest these (enrichment landed, no harvest pass on record)",
+    )
     stale_passes = _health_rows(surface, payload, "stale_passes", ("item",), int_keys=("rules",))
     blocks += _health_listing(
         "harvest passes under old rules (re-judge)",

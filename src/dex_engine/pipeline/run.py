@@ -90,6 +90,7 @@ __all__ = [
     "head_sniffer",
     "is_drainable",
     "mark",
+    "never_harvested",
     "no_providers",
     "record_pass",
     "run",
@@ -2296,6 +2297,87 @@ def _last_digested(instance: Instance) -> dict[str, datetime.date]:
             continue
         newest[item] = max(newest.get(item, date), date)
     return newest
+
+
+def never_harvested(instance: Instance) -> list[str]:
+    """Items whose fetched pages landed with no harvest pass ever recorded.
+
+    A recorded pass is what makes "ran and promoted nothing" distinguishable
+    from "never ran", and this is the reader of the distinction: the
+    stale-pass check reads only the records that exist, so an item whose
+    session skipped harvest outright was digested and cited on the strength
+    of the shared link alone, on no surface at all.
+
+    Who owes a pass is bounded the way the ingest procedure bounds the
+    step. An item still owing a unit derives ``raw`` and has not reached
+    harvest, so it is never listed, however long it stays parked — the same
+    rule :func:`digest_orphans` applies. An item with no fetched page at
+    all — a no-source capture, or one whose every unit died unfetched — has
+    no pages to read the subject rule over; its work is description and
+    digest, and it owes no pass. A fetched page is a ``done`` unit that is
+    not a media download or an extracted asset, the same reading the URL
+    cap counts (:meth:`_Drain.fetched_count`).
+
+    A recorded pass covers an item by the id's trailing shortid, the
+    trailing-id match exclusions already use across renames: a rename keeps
+    the shortid and rewrites the slug, so a full-id match would report
+    every renamed item's harvest as never run while the record stands in
+    the file under the old name.
+
+    An item on the digest backstop is listed here too when both hold: the
+    two findings are different facts with different repairs — the
+    backstop's repair is digest → place → wiki, which never runs harvest —
+    so each check answers for itself, as the referential-integrity rows do.
+
+    Args:
+        instance: The instance.
+
+    Returns:
+        Item ids owing a harvest pass that no record covers, sorted.
+    """
+    entries = _ledger_or_none(instance)
+    if not entries:
+        return []
+    owners = _unit_owners(instance, entries)
+    owing = _items_owing_work(entries, owners)
+    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    fetched = {
+        item_id
+        for entry in entries.values()
+        if entry.status is Status.DONE and entry.via not in ("media", "extract-asset")
+        for item_id in owners.get(entry.hash, (entry.item,))
+    }
+    recorded = _harvested_shortids(instance)
+    return sorted(
+        item_id
+        for item_id in fetched & live
+        if item_id not in owing and item_id.rsplit("-", 1)[-1] not in recorded
+    )
+
+
+def _harvested_shortids(instance: Instance) -> set[str]:
+    """The trailing shortid of every item a harvest pass was recorded for.
+
+    Any rules version counts: a pass under old rules RAN, which is the
+    stale-pass finding, never this one's.
+    """
+    path = instance.passes_path
+    if not path.exists():
+        return set()
+    recorded: set[str] = set()
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # lint parses this file loudly; this reader skips the line
+        if not isinstance(record, dict) or record.get("stage") != "harvest":
+            continue
+        item = record.get("item")
+        if isinstance(item, str):
+            recorded.add(item.rsplit("-", 1)[-1])
+    return recorded
 
 
 def _writes_that_did_not_land(
