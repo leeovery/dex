@@ -1,5 +1,16 @@
 """The paper driver: arxiv API + HTML full text; openreview/hf-papers as articles.
 
+A paper's identity is its arxiv id: every spelling — ``/abs``, ``/pdf``
+(with or without the ``.pdf`` tail), ``/html``, a ``v<n>`` version suffix,
+a ``?context=`` listing tail — canonicalizes to
+``https://arxiv.org/abs/<id>``, one work unit per paper. **The version is
+dropped because the fetch is versionless**: the export API is queried by
+bare id and the HTML rendering is read from the bare id too, so both
+return whatever arxiv currently calls latest. Keying ``v5`` separately
+would give one paper two ledger entries, two enrichment files and two
+copies of one abstract in the digest — while both of them fetched the same
+bytes. Identity has to agree with what fetch retrieves.
+
 arxiv papers get the abstract from the export API (Atom, parsed properly —
 no regex-over-XML) plus full text from arxiv's own HTML rendering, falling
 back to ar5iv. A missing full text degrades to abstract-only with a note —
@@ -29,7 +40,13 @@ from .web import HtmlExtract, WebDriver, trafilatura_extract
 
 __all__ = ["PaperDriver"]
 
-ARXIV_ID = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([\d.]+?)(?:v\d+)?(?:\.pdf)?/?$")
+_ARXIV_HOST = "arxiv.org"
+# The paper id inside an arxiv PATH: /abs|pdf|html/<id>, the ``v<n>``
+# version suffix and the ``.pdf`` tail both optional and both discarded.
+# Matched against the path alone so a query tail — arxiv's own listing
+# links carry ``?context=cs`` — cannot hide the id and split the paper off
+# into a second work unit.
+ARXIV_ID = re.compile(r"^/(?:abs|pdf|html)/([\d.]+?)(?:v\d+)?(?:\.pdf)?/?$")
 
 _ARXIV_API = "https://export.arxiv.org/api/query?id_list="
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -71,15 +88,24 @@ class PaperDriver:
         return host == "huggingface.co" and urlsplit(url).path.startswith("/papers")
 
     def canonical(self, url: str) -> str:
-        """The generic canonical form (ARXIV_ID handles abs/pdf/html variants)."""
+        """An arxiv paper keys on its id — ``abs/<id>``, version stripped.
+
+        Every other paper host keeps the generic canonical form: openreview
+        and huggingface pages are fetched as articles at the URL they were
+        shared at, and rewriting their keys would orphan their ledger
+        entries for nothing.
+        """
+        arxiv_id = _arxiv_id(url)
+        if arxiv_id is not None:
+            return f"https://{_ARXIV_HOST}/abs/{arxiv_id}"
         return base_canonical(url)
 
     def fetch(self, unit: WorkUnit) -> Result:
         """Arxiv ids go through the API; everything else reads as an article."""
-        match = ARXIV_ID.search(unit.url)
-        if match is None:
+        arxiv_id = _arxiv_id(unit.url)
+        if arxiv_id is None:
             return self._web.fetch(unit)
-        return self._fetch_arxiv(match.group(1))
+        return self._fetch_arxiv(arxiv_id)
 
     def _fetch_arxiv(self, arxiv_id: str) -> Result:
         entry = self._fetch_feed_entry(arxiv_id)
@@ -141,6 +167,19 @@ class PaperDriver:
             if text and len(text) >= _MIN_FULLTEXT_CHARS:
                 return text
         return None
+
+
+def _arxiv_id(url: str) -> str | None:
+    """The arxiv paper id a URL addresses, version stripped, or None.
+
+    The one place a URL is read as an arxiv paper: ``canonical`` keys the
+    work unit on it and ``fetch`` asks the API for it, so the identity and
+    the content can never come from two different readings of the URL.
+    """
+    if host_of(url) != _ARXIV_HOST:
+        return None
+    match = ARXIV_ID.match(urlsplit(url).path)
+    return match.group(1) if match else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,9 +1,13 @@
 """Tests for drivers/paper.py: arxiv API + full text, web delegation."""
 
-from dex_engine.drivers.paper import ARXIV_ID, PaperDriver
+from hypothesis import assume, given
+from hypothesis import strategies as st
+
+from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
 
 ABS_URL = "https://arxiv.org/abs/2408.12345"
@@ -34,6 +38,16 @@ def driver_for(responses: dict, extract=long_extract) -> PaperDriver:
     return PaperDriver(transport=FakeTransport(responses), extract=extract)
 
 
+class _RefusingWeb(WebDriver):
+    """A delegate that must never be reached — an arxiv paper is not an article."""
+
+    def __init__(self) -> None:
+        super().__init__(transport=FakeTransport({}), extract=long_extract)
+
+    def fetch(self, unit):
+        raise AssertionError(f"the web delegate must not see the arxiv URL {unit.url!r}")
+
+
 class TestIdentity:
     def test_kind_and_sleep(self):
         driver = driver_for({})
@@ -48,19 +62,104 @@ class TestIdentity:
         assert not driver.matches("https://huggingface.co/models/acme/thing")
         assert not driver.matches("https://example.test/paper")
 
-    def test_arxiv_id_handles_abs_pdf_html_and_versions(self):
+    def test_canonical_collapses_abs_pdf_html_and_versions_to_one_key(self):
+        driver = driver_for({})
         for url in (
             "https://arxiv.org/abs/2408.12345",
+            "https://arxiv.org/pdf/2408.12345",
             "https://arxiv.org/pdf/2408.12345.pdf",
             "https://arxiv.org/pdf/2408.12345v2",
             "https://arxiv.org/html/2408.12345v1",
+            "https://arxiv.org/abs/2408.12345v5/",
+            "http://www.arxiv.org/abs/2408.12345",
+            "https://arxiv.org/abs/2408.12345?context=cs.CL",
+            "https://arxiv.org/abs/2408.12345#S3",
         ):
-            match = ARXIV_ID.search(url)
-            assert match is not None
-            assert match.group(1) == "2408.12345"
+            assert driver.canonical(url) == ABS_URL
+
+    def test_canonical_is_idempotent_across_the_rewrite(self):
+        driver = driver_for({})
+        once = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
+        assert driver.canonical(once) == once
+
+    def test_non_arxiv_paper_keys_keep_the_generic_canonical_form(self):
+        driver = driver_for({})
+        assert driver.canonical("https://openreview.net/forum?id=abc") == (
+            "https://openreview.net/forum?id=abc"
+        )
+        assert driver.canonical("https://huggingface.co/papers/2408.12345") == (
+            "https://huggingface.co/papers/2408.12345"
+        )
+        # An arxiv URL that addresses no single paper is not rewritten either.
+        assert driver.canonical("https://arxiv.org/list/cs.AI/recent") == (
+            "https://arxiv.org/list/cs.AI/recent"
+        )
+
+
+# Modern arxiv ids are YYMM.NNNNN, optionally versioned; the strategy
+# generates the number space the driver has to key on.
+_arxiv_ids = st.builds(
+    "{}.{}".format,
+    st.integers(min_value=1, max_value=9999).map(lambda n: f"{n:04d}"),
+    st.integers(min_value=1, max_value=99999).map(lambda n: f"{n:05d}"),
+)
+_versions = st.sampled_from(["", "v1", "v2", "v11"])
+
+
+def _paper_shapes(arxiv_id: str, version: str) -> list[str]:
+    return [
+        f"https://arxiv.org/abs/{arxiv_id}{version}",
+        f"https://www.arxiv.org/abs/{arxiv_id}{version}",
+        f"https://arxiv.org/abs/{arxiv_id}{version}/",
+        f"https://arxiv.org/abs/{arxiv_id}{version}?context=cs.CL",
+        f"https://arxiv.org/pdf/{arxiv_id}{version}",
+        f"https://arxiv.org/pdf/{arxiv_id}{version}.pdf",
+        f"https://arxiv.org/html/{arxiv_id}{version}",
+    ]
+
+
+class TestIdentityProperties:
+    @given(_arxiv_ids, _versions)
+    def test_every_spelling_of_a_paper_is_one_work_unit(self, arxiv_id, version):
+        # Five spellings of one paper were five ledger entries, five
+        # enrichment files and five copies of one abstract in the digest.
+        driver = driver_for({})
+        canonicals = {driver.canonical(shape) for shape in _paper_shapes(arxiv_id, version)}
+        assert canonicals == {f"https://arxiv.org/abs/{arxiv_id}"}
+
+    @given(_arxiv_ids)
+    def test_versions_key_together_because_the_fetch_is_versionless(self, arxiv_id):
+        # The API is queried by bare id and returns latest, so a v5-keyed
+        # unit would fetch exactly what the unversioned one fetches.
+        driver = driver_for({})
+        keys = {work_hash(driver.canonical(url)) for url in _paper_shapes(arxiv_id, "v5")}
+        assert keys == {work_hash(f"https://arxiv.org/abs/{arxiv_id}")}
+
+    @given(_arxiv_ids, _arxiv_ids)
+    def test_different_papers_stay_different_work_units(self, id_a, id_b):
+        assume(id_a != id_b)
+        driver = driver_for({})
+        hashes_a = {work_hash(driver.canonical(s)) for s in _paper_shapes(id_a, "")}
+        hashes_b = {work_hash(driver.canonical(s)) for s in _paper_shapes(id_b, "v2")}
+        assert hashes_a.isdisjoint(hashes_b)
 
 
 class TestArxiv:
+    def test_the_canonical_key_is_what_fetch_reads(self):
+        # Identity and content must not diverge: the form canonical emits
+        # has to route through the arxiv API, never the web delegate.
+        driver = PaperDriver(
+            transport=FakeTransport(
+                {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
+            ),
+            extract=long_extract,
+            web=_RefusingWeb(),
+        )
+        canonical = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
+        result = driver.fetch(make_unit(canonical, Kind.PAPER))
+        assert result.status is Status.DONE
+        assert result.meta["arxiv_id"] == "2408.12345"
+
     def test_abstract_and_full_text_sections(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
