@@ -117,3 +117,24 @@ the engine stays unaware of which ones exist.
   above — keep it true whenever any of this changes.
 - **`docs/shortcut.md` is device-verified**: never guess iOS Shortcuts UI —
   verify on a device or ask the owner what their screen shows.
+
+## When you review
+
+- **Verify by running the code, not by reading it.** Build a scratch instance
+  and drive the verbs. Every finding states the trigger that reaches it and
+  says whether it was reproduced or only reasoned about. Reading a line and
+  imagining a path to it produces findings that cost more to triage than they
+  are worth.
+- **Findings are fix-or-drop.** A finding is an issue when something that
+  actually happens can trigger it: a jumped clock, an interrupted run, an
+  LLM-authored input file, a malformed file, a weird URL. It is not an issue
+  when it needs a hand-edit of a file the contract forbids hand-editing, or a
+  writer that does not exist — drop it, and don't record it. There is no
+  backlog tier for known defects; the roadmap's backlog holds unbuilt features
+  only.
+- **Stop when a cycle returns nothing above that bar.** Early cycles on new
+  work legitimately surface majors, and they get fixed. Later cycles surface a
+  long tail that costs more to chase than to ship. Say the surface is done and
+  stop reviewing it.
+- **Decide the cheap ones.** A low-likelihood finding with a one-line fix is
+  not a decision to escalate. Make the call, do it, and say what you decided.
