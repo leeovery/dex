@@ -565,6 +565,37 @@ trail of the attempt. The drain's exit path makes the same check for `run`
 because a run does real work and the rest of what it reports is true. The
 resolution rule itself is untouched.
 
+**Ownership is asked of the corpus, never of the line's stored `item`.** A
+ledger line's `item` is the attribution as of the day it was written, and
+migration 1 carries a stated item verbatim — so every line of an item
+RENAMED since names an id no corpus file answers to, and an `exclude` that
+keeps a line a surviving co-claimant shares leaves it naming the purged
+one. The corpus is the source of truth, so the corpus is asked
+(`pipeline/ownership.py`): the live items listing the URL, failing that
+the parent's owners (a harvest-promoted child, a media download and an
+extracted asset are in no frontmatter), failing that the stored string as
+written. Every reader routes through it — the item's derived
+`status`/`enrichment:` refresh, `enrich status`, the run report's parked
+and incompleteness rows, the digest-staleness backstop's landing dates,
+`mark`'s post-heal refresh, `exclude`'s claim veto, and lint's ghost and
+output rows.
+
+**And so does the write path**, which is what makes healing unnecessary.
+The drain carries an entry's item into the outcome line it records and
+into the `enrichment/<item>/` path it writes, so it resolves the owner at
+that moment from the same seam the readers use: the outcome line, the
+enrichment file, a media download's directory and slot, the transcribe
+drain's park file, a redetection's superseding line, and the `WorkUnit`
+handed to a driver. Where nothing live claims the unit the stored string
+stands, exactly as the read side falls back. Nothing rewrites a persisted
+line to correct it: a stale `item` on an old line is historical
+attribution, every reader and every writer resolves the work to the live
+item anyway, and a session that renames an item has nothing to do about
+its ledger. What a rename CAN leave behind is the enrichment directory,
+if the session moved the corpus file and stopped — lint names that as a
+`done` output filed where the item that owns it cannot list it, and moving
+files is judgment work, not the drain's.
+
 ## 5. Ledger entry schema and status lifecycle
 
 ```jsonc
@@ -628,24 +659,20 @@ when the running engine is newer. This closes the self-healing loop with zero
 redundant work: bug files issue → fix → release → sync bumps pin → next run
 retries → `done`.
 
-**A write that records no work carries the line's own provenance.** `date`
-and `engine` answer a different question from `at`: when, and by which
-engine, the work a line records was done. So the writer seam stamps them on
-a line that records work, and a pure re-attribution — the seed-time sweep
-moving a line off a dead id onto the live item whose corpus file claims
-that work — stamps only `at` and rewrites only `item`. Both carried fields
-are load-bearing rather than decorative. Re-stamping `engine` spends the
-retry-on-new-engine shot above without ever running it, because the sweep
-runs before the drain builds its queue in the same run: the renamed item's
-`error` line then waits for the NEXT release, sharpest right after a sync,
-where migration 1 stamps old lines `0.0.1` and the run meant to rescue them
-is the run that silently burns their one shot. And `date` is the day the
-enrichment landed, which the digest-staleness backstop reads. `at` is
-stamped either way — it orders the write against another machine's, and a
-re-attribution IS a write. The exception is a requeue: a `done` line whose
-output is nowhere on disk goes back to `queued`, and "the output is gone,
-fetch it again" is a verdict this engine reached today, not one carried
-from the line it supersedes.
+**Every write records work, so every write stamps.** `date` and `engine`
+answer a different question from `at`: when, and by which engine, the work
+a line records was done. The writer seam (`ledger.stamp`) sets all three
+from the injected clocks and the running version, with no carve-out,
+because nothing writes a line that records no work. Both are load-bearing
+rather than decorative — re-stamping `engine` on a line that ran nothing
+would spend the retry-on-new-engine shot above without ever running it,
+and `date` is the day the enrichment landed, which the digest-staleness
+backstop reads. That rule is what rules out the obvious repair for a
+stale `item`: a line re-recorded purely to correct its attribution would
+have to carry both fields rather than claim them, and the write path asks
+the corpus who owns the unit instead (§4). A line's stored `item` is
+therefore never rewritten — it is the attribution as of the day it was
+written, and history is not repaired.
 
 Blocked-vs-dead requires visible status codes: the web driver fetches via
 urllib with a browser UA and hands HTML to trafilatura for **extraction
@@ -1484,9 +1511,20 @@ Shipping migrations for this rewrite:
    in dex-engineering are claimed by more than one live item. The hash is
    judged on the line `load` resolves to, and a hash any surviving corpus
    item still claims is kept whole; the corpus is scanned after the
-   deletions, so a purged item cannot claim its own work. The summary line
-   states both counts — dropped and kept — because `exclude` runs in bulk
-   from the scope-filter pass and that line is the owner's only signal. One
+   deletions, so a purged item cannot claim its own work. A kept landing
+   whose output lived in the deleted `enrichment/<purged>/` goes back to
+   `queued` in the same command, named after the item that claims it: the
+   survivor's URL would otherwise be `done` with nothing on disk, and
+   seeding's already-a-unit short-circuit means nothing would ever fetch
+   it again — the item owes nothing, derives `enriched`, and the digest
+   and query layers have no file to read. It is recorded here rather than
+   inferred by a later run because here the deletion is a fact, and a
+   recorded path is missing for innocent reasons too (a rename moves the
+   enrichment directory as well, and re-fetching on that would put a
+   `via: extract-asset` unit's repo path into the fetch queue, where no
+   transport can take it). The summary line states the counts — dropped,
+   kept, and any re-queued — because `exclude` runs in bulk from the
+   scope-filter pass and that line is the owner's only signal. One
    id twice in a batch is not a refusal, for the reason a re-run is not:
    excluding an item is idempotent by construction, so the second copy asks
    for what the first already did. The copies collapse to one and the
@@ -1612,7 +1650,10 @@ src/dex_engine/
                  answer to "is this entry's item still there?"; lint and
                  migration 2 share it so a renamed item cannot read as a
                  purge in one place and a rename in the other; `exclude`
-                 asks it before deleting work history, for the same reason
+                 asks it before deleting work history, for the same reason;
+                 and the drain asks it as it WRITES — the outcome line and
+                 the enrichment path both — so a stale stored `item` never
+                 needs healing (§4)
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
                transport.py  the HTTP seam (§5's OSError normalization)
   capabilities/
@@ -1659,7 +1700,9 @@ src/dex_engine/
                  integrity (items with no corpus file — excluded-on-record
                  told apart from renamed, whose URLs a live item still
                  lists, and from unclaimed; one row per item and finding
-                 with its entry count; done outputs missing on disk),
+                 with its entry count; done outputs missing on disk, and
+                 done outputs filed under another item's directory — both
+                 asked of the owning item, §4),
                  waiting cohorts, pass records, the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape
