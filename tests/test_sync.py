@@ -318,6 +318,16 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert sync(inst.root, template=template) == []
 
+    def test_sync_ensures_the_cache_directory_exists(self, inst, template):
+        # A migrated pre-existing instance never went through the scaffold
+        # that creates `cache/`, and the per-item procedure renders every
+        # receipt through cache/receipt.json — sync makes §4's claim true.
+        assert not (inst.root / "cache").exists()
+        sync(inst.root, template=template)
+        assert (inst.root / "cache").is_dir()
+        # Idempotent, harmless on every run — and never a reported change.
+        assert sync(inst.root, template=template) == []
+
     def test_retired_engine_skills_are_removed(self, inst, template):
         retired = inst.root / ".claude" / "skills" / "dex-ingest"
         retired.mkdir(parents=True)

@@ -300,7 +300,9 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     ``bin/dex`` (kept executable), and ``.gitattributes`` — and REMOVES any
     ``dex-*`` skill directory the template no longer ships (the ``dex-``
     namespace under ``.claude/skills`` is engine-owned; a retired skill left
-    in place would keep loading its stale procedure in sessions).
+    in place would keep loading its stale procedure in sessions). Also
+    ensures the gitignored ``cache/`` directory exists — every render
+    receipt goes through it, and a pre-existing instance never scaffolded.
     Instance-owned files (CLAUDE.md, README, content, ``.dex-engine-pin``,
     non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
     to seed a fresh instance.
@@ -317,6 +319,12 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         skills.
     """
     tpl = template if template is not None else _bundled_template()
+    # Ensured here, not only at scaffold: a migrated pre-existing instance
+    # never went through dex-new, and the per-item procedure renders every
+    # receipt through cache/receipt.json — the session's own write, which
+    # cannot create the directory for itself. Idempotent, never a reported
+    # change (gitignored ephemera, not machinery).
+    (root / "cache").mkdir(exist_ok=True)
     changed: list[str] = []
     template_skills: set[str] = set()
     for skill in (tpl / "skills").iterdir():

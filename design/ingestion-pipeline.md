@@ -562,7 +562,7 @@ Files:
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
-| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
+| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold and ensured by every sync — a migrated pre-existing instance never scaffolded — since the per-item procedure renders every receipt through `cache/receipt.json` |
 
 Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
