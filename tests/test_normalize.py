@@ -288,6 +288,95 @@ class TestVariantExports:
         (item_id,) = items(instance)
         assert item_id.endswith(shortid("m1"))
 
+    def test_an_author_name_the_corpus_will_not_take_is_skipped(self, instance):
+        # A conversion that carries display names through verbatim can hand
+        # over "Bob " — a name shared_by, a corpus scalar, refuses. Caught
+        # in the read, so the channel's earlier clusters are not already on
+        # disk under a line calling the whole channel skipped.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message(
+                    "m2",
+                    "https://example.test/post",
+                    author_id="u2",
+                    name="bob",
+                    nickname="Bob ",
+                    timestamp="2026-08-19T12:00:00+00:00",
+                ),
+            ],
+        )
+        lines = run_normalize(instance, Config())
+        reason = "author name is not a single trimmed line"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert not any("export unreadable" in line for line in lines)
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_a_timestamp_that_does_not_parse_is_skipped(self, instance):
+        # The reply joins its target's cluster, so the gap rule never parses
+        # its timestamp — the emit pass does, one cluster after the first
+        # has already been written.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message("m2", "https://example.test/post", timestamp="2026-08-19T12:00:00+00:00"),
+                message(
+                    "m3",
+                    "reply from someone else",
+                    author_id="u2",
+                    name="sam",
+                    nickname=None,
+                    msg_type="Reply",
+                    reference="m2",
+                    timestamp="not-a-timestamp",
+                ),
+            ],
+        )
+        lines = run_normalize(instance, Config())
+        reason = "timestamp is not ISO 8601"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 2 items written, 0 clusters skipped" in lines
+        assert not any("export unreadable" in line for line in lines)
+        assert sorted(item[-6:] for item in items(instance)) == sorted(
+            [shortid("m1"), shortid("m2")]
+        )
+
+    def test_a_write_that_fails_is_named_with_its_count_not_called_skipped(
+        self, instance, monkeypatch
+    ):
+        # A full disk faults the emit pass, not the read. The channel has
+        # items on disk by then, so it cannot be reported as skipped — and
+        # the run still finishes with its report for every other channel.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message("m2", "https://example.test/post", timestamp="2026-08-19T12:00:00+00:00"),
+            ],
+        )
+        write_export(instance, [message("n1", "https://example.test/other")], channel="zzz-later")
+        done = []
+        real_write_item = corpus.write_item
+
+        def failing_write(path, item):
+            if done:
+                raise OSError(28, "No space left on device")
+            done.append(path)
+            real_write_item(path, item)
+
+        monkeypatch.setattr(corpus, "write_item", failing_write)
+        lines = run_normalize(instance, Config())
+        assert (
+            "discord/general: 1 items written, then write failed "
+            "([Errno 28] No space left on device) — channel incomplete" in lines
+        )
+        assert not any("skipped" in line for line in lines if line.startswith("discord/general"))
+        assert any(line.startswith("discord/zzz-later:") for line in lines)  # the run finished
+
     def test_unreadable_messages_are_counted_once_per_reason(self, instance):
         # A conversion that drops a field drops it on every message: the
         # operator wants the count and the reason, not one line per message.
