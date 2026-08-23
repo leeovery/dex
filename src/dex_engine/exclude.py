@@ -22,6 +22,11 @@ signal. A corpus file that cannot be read claims nothing, which would make
 that veto fail open toward deletion, so a batch that meets one purges no
 ledger entries at all and the summary says why.
 
+A kept entry whose output was filed under the purged item goes back to
+``queued`` in the same breath: the line survives on the survivor's claim,
+but the enrichment left with the item that produced it, and seeding's
+already-a-unit short-circuit means nothing would ever fetch it again.
+
 The exclusions file is LLM-authored and this deletes recursively, so every
 entry in the batch is validated before anything is written or removed: an
 id is a corpus item id, never a path, every value is checked for its type,
@@ -37,10 +42,13 @@ pass as an item already gone.
 """
 
 import argparse
+import dataclasses
+import datetime
 import json
 import re
 import shutil
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,12 +56,22 @@ from . import corpus
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
-from .pipeline.types import Instance
+from .pipeline.types import Instance, LedgerEntry, Status
 from .pipeline.urls import resolve_repo_path
+from .version import engine_version
 
 __all__ = ["build_parser", "main", "run_exclude"]
 
 _DEFAULT_REASON = "out of scope"
+
+
+def _today() -> datetime.date:
+    return datetime.datetime.now(datetime.UTC).date()
+
+
+def _utc_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.UTC)
+
 
 # An item id names one file in the corpus tree — the normalizer mints
 # `<date>-<slug>-<shortid>`, a single path component. Anything with a
@@ -74,12 +92,23 @@ class _Exclusion:
     digest_path: Path
 
 
-def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
+def run_exclude(
+    instance: Instance,
+    entries: list[dict[str, object]],
+    *,
+    today: Callable[[], datetime.date] = _today,
+    now: Callable[[], datetime.datetime] = _utc_now,
+    version: Callable[[], str] = engine_version,
+) -> str:
     """Exclude the given items: record why, delete item, enrichment, digest and ledger entries.
 
     Args:
         instance: The instance.
         entries: ``{"id": ..., "reason": ...}`` records (reason optional).
+        today: Injected date clock, for the re-queue lines below.
+        now: Injected instant clock, UTC-aware — the write timestamp.
+        version: The running engine's version, read lazily: only a purge
+            that strands a survivor's landing writes a ledger line at all.
 
     Returns:
         The one-line summary.
@@ -91,29 +120,7 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
             before anything is written or deleted.
     """
     validated = _deduplicated([_validated(instance, entry) for entry in entries])
-    exclusions = instance.state_dir / "exclusions.tsv"
-    existing: set[str] = set()
-    if exclusions.exists():
-        existing = {
-            line.split("\t")[0]
-            for line in exclusions.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
-    removed = missing = digests = 0
-    exclusions.parent.mkdir(parents=True, exist_ok=True)
-    with exclusions.open("a", encoding="utf-8") as f:
-        for exclusion in validated:
-            if exclusion.item_id not in existing:
-                f.write(f"{exclusion.item_id}\t{exclusion.reason}\n")
-            if exclusion.item_path.exists():
-                exclusion.item_path.unlink()
-                removed += 1
-            else:
-                missing += 1
-            shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
-            if exclusion.digest_path.exists():
-                exclusion.digest_path.unlink()
-                digests += 1
+    removed, missing, digests = _record_and_remove(instance, validated)
     # One rewrite for the whole batch, after the TSV record lands: an
     # interruption before it leaves the entries in place, and the re-run
     # (which the TSV makes idempotent) purges them.
@@ -145,7 +152,126 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
         )
     claimed = corpus_owners(instance.root, DRIVERS)
     dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
-    return summary + _purge_counts(dropped, kept)
+    summary += _purge_counts(dropped, kept)
+
+    def stamp(entry: LedgerEntry) -> LedgerEntry:
+        # `version` is read here and nowhere else: only a purge that
+        # strands a survivor's landing writes a ledger line at all.
+        return ledger.stamp(entry, today=today, now=now, engine_version=version())
+
+    requeued = _requeue_stranded_landings(instance, purged, claimed, now=now, stamp=stamp)
+    if requeued:
+        summary += f"; {requeued} re-queued (enrichment went with the item that produced it)"
+    return summary
+
+
+def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple[int, int, int]:
+    """Record each exclusion and remove what it owns; return the three counts.
+
+    The TSV record lands first for every entry, because it is what makes a
+    re-run idempotent: an interruption after it leaves an id recorded whose
+    deletions the re-run finishes.
+    """
+    exclusions = instance.state_dir / "exclusions.tsv"
+    existing: set[str] = set()
+    if exclusions.exists():
+        existing = {
+            line.split("\t")[0]
+            for line in exclusions.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+    removed = missing = digests = 0
+    exclusions.parent.mkdir(parents=True, exist_ok=True)
+    with exclusions.open("a", encoding="utf-8") as f:
+        for exclusion in validated:
+            if exclusion.item_id not in existing:
+                f.write(f"{exclusion.item_id}\t{exclusion.reason}\n")
+            if exclusion.item_path.exists():
+                exclusion.item_path.unlink()
+                removed += 1
+            else:
+                missing += 1
+            shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
+            if exclusion.digest_path.exists():
+                exclusion.digest_path.unlink()
+                digests += 1
+    return removed, missing, digests
+
+
+def _requeue_stranded_landings(
+    instance: Instance,
+    purged: set[str],
+    claimed: Mapping[str, str],
+    *,
+    now: Callable[[], datetime.datetime],
+    stamp: Callable[[LedgerEntry], LedgerEntry],
+) -> int:
+    """Re-queue every kept landing whose output this purge just deleted.
+
+    A work unit is keyed by URL, so a hash two items shared survives on the
+    survivor's claim — but its output lived in ``enrichment/<purged>/``,
+    which went with the item that produced it. That leaves the survivor's
+    URL ``done`` with nothing on disk, and seeding's already-a-unit
+    short-circuit means no run ever fetches it again: the item owes
+    nothing, so it derives ``enriched``, and the digest and query layers
+    have no file to read. The line goes back to ``queued`` here, where the
+    deletion is a fact this command knows, rather than being inferred later
+    from a path that is missing for innocent reasons too (a rename moves
+    the enrichment directory as well, and re-fetching on that would put a
+    ``via: extract-asset`` unit's repo path into the fetch queue, where no
+    transport can take it).
+
+    The line names the item that claims the work, not the purged one it was
+    written under, for the same reason every other write does. The re-queue
+    stamps this engine and today: "the output is gone, fetch it again" is a
+    verdict THIS command reached, not one carried from the line it
+    supersedes.
+
+    Args:
+        instance: The instance.
+        purged: The excluded item ids, whose directories are already gone.
+        claimed: Work hash -> the live item that still claims it.
+        now: Injected instant clock, UTC-aware — the ledger resolves each
+            hash against the same present the purge did.
+        stamp: The writer seam — :func:`ledger.stamp` with this command's
+            clocks and engine bound.
+
+    Returns:
+        How many landings were re-queued.
+    """
+    try:
+        kept = ledger.load(instance.ledger_path, now=now)
+    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        # A line this layer cannot read leaves the re-queue unrun rather
+        # than the purge half-reported; the stranded landing then shows on
+        # the health check as a done output gone from disk, and the next
+        # verb names the unreadable line loudly.
+        return 0
+    deleted = {Path("enrichment") / item_id for item_id in purged}
+    stranded = [
+        entry
+        for entry in kept.values()
+        if entry.status is Status.DONE
+        and entry.path is not None
+        and Path(entry.path).parent in deleted
+        and not (instance.root / entry.path).exists()
+    ]
+    if not stranded:
+        return 0
+    for entry in stranded:
+        ledger.append(
+            instance.ledger_path,
+            stamp(
+                dataclasses.replace(
+                    entry,
+                    item=claimed.get(entry.hash, entry.item),
+                    status=Status.QUEUED,
+                    path=None,
+                    title=None,
+                )
+            ),
+        )
+    return len(stranded)
 
 
 def _deduplicated(validated: list[_Exclusion]) -> list[_Exclusion]:

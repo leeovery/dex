@@ -255,6 +255,122 @@ class TestLedgerPurge:
         assert instance.ledger_path.read_text() == "{torn\n"
 
 
+class TestStrandedLandings:
+    """The kept line's product went with the item that produced it."""
+
+    TODAY = datetime.date(2026, 8, 21)
+    NOW = datetime.datetime(2026, 8, 21, 11, 0, tzinfo=datetime.UTC)
+
+    def _shared_landing(self, instance) -> str:
+        """Two items on one URL; the line names the one about to be purged."""
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        output = instance.enrichment_dir / ITEM / "web-73bd78.md"
+        output.parent.mkdir(parents=True)
+        output.write_text("the fetched page\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=shared,
+                url=SHARED_URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.1",
+                date=datetime.date(2026, 8, 20),
+                at=datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
+                path=f"enrichment/{ITEM}/web-73bd78.md",
+                title="a page",
+            ),
+        )
+        return shared
+
+    def _exclude(self, instance) -> str:
+        return run_exclude(
+            instance,
+            [{"id": ITEM, "reason": "meme thread"}],
+            today=lambda: self.TODAY,
+            now=lambda: self.NOW,
+            version=lambda: "0.4.0",
+        )
+
+    def test_a_kept_landing_whose_output_was_deleted_goes_back_to_queued(self, instance):
+        # The line survives on the survivor's claim, but its enrichment left
+        # with the item that produced it — and seeding's already-a-unit
+        # short-circuit means no run would ever fetch it again. The survivor
+        # would then derive `enriched` off a unit with nothing on disk.
+        shared = self._shared_landing(instance)
+        summary = self._exclude(instance)
+        entry = ledger.load(instance.ledger_path)[shared]
+        assert entry.status is Status.QUEUED
+        assert entry.item == OTHER  # the item that claims the work, not the purged one
+        assert entry.path is None
+        assert entry.title is None
+        assert "1 re-queued (enrichment went with the item that produced it)" in summary
+
+    def test_the_re_queue_is_this_commands_verdict_and_stamps(self, instance):
+        # "the output is gone, fetch it again" is a call THIS command made,
+        # not one carried from the line it supersedes.
+        shared = self._shared_landing(instance)
+        self._exclude(instance)
+        entry = ledger.load(instance.ledger_path)[shared]
+        assert entry.engine == "0.4.0"
+        assert entry.date == self.TODAY
+        assert entry.at == self.NOW
+
+    def test_a_landing_filed_elsewhere_is_left_alone(self, instance):
+        # Only a product in the directory this purge deleted is stranded.
+        # A landing under the survivor's own id is untouched, and re-queuing
+        # it would spend a fetch on a file that is right there.
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        output = instance.enrichment_dir / OTHER / "web-73bd78.md"
+        output.parent.mkdir(parents=True)
+        output.write_text("the fetched page\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=shared,
+                url=SHARED_URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.1",
+                date=datetime.date(2026, 8, 20),
+                path=f"enrichment/{OTHER}/web-73bd78.md",
+            ),
+        )
+        summary = self._exclude(instance)
+        assert ledger.load(instance.ledger_path)[shared].status is Status.DONE
+        assert "re-queued" not in summary
+
+    def test_a_purged_hash_is_dropped_rather_than_re_queued(self, instance):
+        # Nothing claims it, so the line goes with the item — there is no
+        # survivor to fetch it for.
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        output = instance.enrichment_dir / ITEM / "web-73bd78.md"
+        output.parent.mkdir(parents=True)
+        output.write_text("the fetched page\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_identity(SHARED_URL, DRIVERS),
+                url=SHARED_URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.1",
+                date=datetime.date(2026, 8, 20),
+                path=f"enrichment/{ITEM}/web-73bd78.md",
+            ),
+        )
+        summary = self._exclude(instance)
+        assert ledger.load(instance.ledger_path) == {}
+        assert "re-queued" not in summary
+
+
 class TestBadIdsAreRefused:
     """An id is a corpus item id, never a path — `exclude` deletes recursively."""
 
