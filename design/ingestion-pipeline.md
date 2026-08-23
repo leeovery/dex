@@ -89,8 +89,8 @@ recorded in the ledger (`cap` on the skipped line, naming the bound that
 refused the work) and internal
 logs. Who the fire answers to decides where it shows (§12): a
 **harvest-time** fire — the walk promoting a link past a bound — is a
-judgment-drift signal for the health check and reaches no user-facing
-surface, run report included; an **owner-requested** refusal, `enrich
+judgment-drift signal for the health check and stays off the run report; an
+**owner-requested** refusal, `enrich
 fetch` naming a URL past the URL cap, is answered where it was asked, on
 that run report, with the `--force` route it needs to be actionable. The
 health check is where the drift reading belongs and where it is read: lint
@@ -658,6 +658,18 @@ independently is seven chances to reintroduce it):
   The same guard wraps `dex-inbox`'s two urllib sites — an asset download is
   the same large-read shape — so a truncated read there is a stated
   `dex-inbox:` failure, not a traceback.
+- **The transport seam puts a non-ASCII URL on the wire, it does not refuse
+  one.** `http.client` encodes the request line as ASCII, so an accented
+  path, a CJK slug or an IDN host raised `UnicodeEncodeError` — a
+  `ValueError`, so it escaped every `except OSError` guard and parked the
+  whole item `manual` with a raw codec dump as the owner-facing reason,
+  before a single byte was fetched. The seam now encodes on the way out:
+  IDNA for the host, percent-encoding for path, query and fragment, with
+  `%` in every safe set so an already-encoded URL passes through
+  byte-identical and the transform is idempotent. Canonical form is
+  untouched — it keys the ledger, and re-encoding it would orphan every
+  existing entry. Only a host DNS genuinely cannot carry fails, as a stated
+  `ValueError` the bad-seed containment parks on with a readable reason.
 - **A truncated ERROR body never costs the status code.** The body of a
   4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
   transport, whisper-api's multipart POST) drop a failed error-body read and
@@ -1110,9 +1122,9 @@ acted) and cognitive (Claude writes a JSON payload — including free-prose
 fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
 Standing skill rule: **never hand-draw a report; there is a surface for it
-— call it.** Harvest-time cap fires are internal (ledger/log) and appear on
-no user-facing surface; an owner-requested `enrich fetch` refusal is
-answered on the report of the run the owner asked for (§1).
+— call it.** Harvest-time cap fires stay off the run report and are read on
+the health check as a tuning signal; an owner-requested `enrich fetch`
+refusal is answered on the report of the run the owner asked for (§1).
 
 ### Who reads a report
 
@@ -1121,15 +1133,18 @@ the report to decide what to do next, and it reads every line of it. The
 owner reads the same reports rarely, in whatever client he happens to be in.
 
 The surfaces were originally laid out for a person at a 72-column terminal:
-fixed-width tables, column fitting, hard wrapping, and middle-elision of any
-cell too wide for its column. Measured against real instance data, that
-layout destroyed the data the reports exist to carry. In one table 71-79% of
-item ids were elided and in another 100% were; across 2452 real URLs, 106
-rendered identically to a different URL, including four corpus items holding
-two of their own URLs that collapsed onto each other. A report that renders
-two different rows the same way is worse than no report. So **every surface
-emits markdown, not fixed-width layout**: no column arithmetic, no padding,
-no rules, no box glyphs.
+fixed-width tables, column fitting to the widest cell, greedy wrapping, and
+hanging-indent continuation. Nothing was ever elided or truncated — the old
+kernel had no elision and no display-column measurement in it — but a token
+wider than the budget was hard-split across lines mid-string. A 375-character
+URL arrived in the reader as several fragments, and an item id could break
+across a line boundary the same way. That costs the two things these reports
+exist for: an id a grep can find, and a URL that survives a copy. It also
+bought nothing, because the primary reader is a Claude session in a client
+with no fixed width at all, and the owner reads the same reports in whatever
+client he happens to be in. So **every surface emits markdown, not
+fixed-width layout**: no column arithmetic, no padding, no rules, no box
+glyphs, and identity is never split.
 
 ### Layout rules
 
@@ -1158,11 +1173,10 @@ match; it is never prose.
 file path renders whole, on its own line, whatever its length. Real item ids
 average 58 characters and one real URL in a live instance is 375. Nothing in
 the render path may shorten one, split one, or elide the middle of one. The
-elision code that could do so is deleted rather than bounded, because a
-bound is a setting and a deletion is a guarantee — and with it went the rest
-of the terminal geometry the kernel used to hold: display-column
-measurement, greedy word wrap, hanging-indent wrap, fill-to-width, table
-column fitting, key-value blocks and tree gutters.
+code that could split one is deleted rather than bounded, because a bound is
+a setting and a deletion is a guarantee — and with it went the rest of the
+terminal geometry the kernel held: greedy word wrap, hanging-indent wrap,
+fill-to-width, table column fitting, key-value blocks and tree gutters.
 
 **Prose may soft-wrap.** No renderer hard-wraps anything. Terminals,
 editors and chat clients all soft-wrap, and a hard wrap inserted at render
@@ -1513,8 +1527,9 @@ corpus item or drops the line, per the attribution rule above.
 migration is code every instance carries forever; a one-off tidy is a
 one-off tidy.
 
-Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
-every user surface; an owner-requested `enrich fetch` refusal IS surfaced
+Cap-event surfacing, blessed precisely: harvest-time cap fires stay off the
+run report and are read on the health check as a tuning signal (§1); an
+owner-requested `enrich fetch` refusal IS surfaced
 (the owner asked and deserves the answer); media-cap and oversize skips
 surface as ordinary unit outcomes per the media-stage rules.
 
@@ -1587,8 +1602,14 @@ src/dex_engine/
     ocr/         cognitive.py
   atomic.py    the ONE atomic-write implementation (same-dir temp file,
                then one replace; no temp orphan on failure) — every state
-               write shares it: ledger, corpus items, the pin file,
-               capture pointers, cached audio, migration rewrites
+               write shares it: ledger, corpus items, enrichment outputs,
+               the pin file, capture pointers, cached audio, migration
+               rewrites
+  frontmatter.py
+               the ONE frontmatter-scalar unquoting rule (double-quoted
+               read as JSON, single-quoted as YAML's literal form), shared
+               by the enrichment reader and lint's digest check; imports
+               nothing from the package
   corpus.py    the ONE corpus-item frontmatter read/write point: a frozen
                `CorpusItem` dataclass, parse/serialize that passes the
                Claude-authored body through byte-exact. Replaces the old
