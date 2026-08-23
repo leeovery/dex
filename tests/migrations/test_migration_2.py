@@ -5,13 +5,15 @@ import json
 
 import pytest
 
+from dex_engine import corpus
 from dex_engine.drivers.x import XDriver
 from dex_engine.drivers.youtube import YouTubeDriver
 from dex_engine.migrations import MigrationError
 from dex_engine.migrations.migration_2 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.types import Kind, LedgerEntry, Status
+from dex_engine.pipeline.transcribe import read_enrichment
+from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeTransport, json_response
@@ -556,6 +558,120 @@ def child(url, *, parent, via, kind=Kind.X):
         depth=1,
         path=f"enrichment/2026-05-01-item-a1b2c3/{kind.value}-{work_hash(url)[:6]}.md",
     )
+
+
+def write_output(root, entry, *, body="the pre-rewrite view", kind=None, url=None):
+    """The unit's enrichment file as the drain writes it: `<kind>-<hash6>.md`."""
+    name = f"{(kind or entry.kind).value}-{entry.hash[:6]}.md"
+    path = root / "enrichment" / entry.item / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\nurl: {json.dumps(url or entry.url)}\nfetched: 2026-05-01\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestOutputsFollowTheRekey:
+    """`<kind>-<hash6>.md` names an identity, so a re-key has to move it too."""
+
+    def test_the_rerun_replaces_the_stale_view_instead_of_landing_beside_it(
+        self, instance, migration
+    ):
+        # The whole rollout, end to end: the file stayed on the OLD hash,
+        # `_drop_superseded_outputs` builds its candidates from the NEW one
+        # and could never see it, and the item ended up carrying two views
+        # of one x post — both listed in engine-owned `enrichment:`.
+        original = stored(OLD_X_URL, kind=Kind.X, item=ITEM)
+        ledger.append(instance.ledger_path, original)
+        write_item(instance, urls=[OLD_X_URL], kinds=["x"])
+        write_output(instance.root, original)
+        migration.apply(instance.root)
+        tweet = {
+            "id": "300",
+            "text": "thread body " * 30,
+            "created_at": "Thu Aug 20 10:00:00 +0000 2026",
+            "author": {"name": "Carol Chen", "screen_name": "carol"},
+            "replying_to": None,
+            "replying_to_status": None,
+        }
+        transport = FakeTransport(
+            {"https://api.fxtwitter.com/status/300": json_response({"tweet": tweet})}
+        )
+        ctx = make_ctx(instance, FakeDriver(), drivers=[XDriver(transport=transport)])
+        run_mod.run(ctx)
+        current = f"x-{work_hash(NEW_X_URL)[:6]}.md"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")) == [current]
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert item.enrichment == [current]
+
+    def test_the_stored_path_follows_the_file_it_names(self, tmp_path, migration):
+        # A `path` left on the old name is a done line pointing at nothing
+        # — the exact shape dex-lint reports as a missing output.
+        original = stored(OLD_X_URL, kind=Kind.X)
+        path = write_entries(tmp_path, [original])
+        write_output(tmp_path, original)
+        report = migration.apply(tmp_path)
+        history = json.loads(path.read_text().split("\n")[0])
+        current = f"enrichment/{original.item}/x-{work_hash(NEW_X_URL)[:6]}.md"
+        assert history["path"] == current
+        assert (tmp_path / history["path"]).is_file()
+        assert any("output file(s) renamed" in action for action in report.actions)
+
+    def test_a_youtube_parks_description_survives_into_the_transcribe_drain(
+        self, tmp_path, migration
+    ):
+        # The silent-data-loss leg: a `nocaptions` park migration 1 turned
+        # into waiting/transcribe carries its description in the file, and
+        # the transcribe drain reads `youtube-<hash6>.md` off the CURRENT
+        # hash. Left behind, the description is simply gone.
+        park = LedgerEntry(
+            hash=work_hash(LIVE_URL),
+            url=LIVE_URL,
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.YOUTUBE,
+            status=Status.WAITING,
+            needs=Need.TRANSCRIBE,
+            engine="0.0.1",
+            date=datetime.date(2026, 5, 1),
+        )
+        ledger_path = write_entries(tmp_path, [park])
+        write_output(tmp_path, park, body="the stream's stored description")
+        migration.apply(tmp_path)
+        moved = ledger.load(ledger_path)[work_hash(WATCH_URL)]
+        drain_reads = tmp_path / "enrichment" / moved.item / f"youtube-{moved.hash[:6]}.md"
+        _fields, body = read_enrichment(drain_reads)
+        assert body == "the stream's stored description"
+
+    def test_a_collapsed_pairs_second_view_is_reported_not_overwritten(self, tmp_path, migration):
+        # Both old spellings of one post land on one identity, so the
+        # second file's target already exists. Overwriting would destroy a
+        # view; it stays, named on the report.
+        first = stored(OLD_X_URL, kind=Kind.X)
+        second = stored("https://twitter.com/carol/status/300", kind=Kind.X)
+        write_entries(tmp_path, [first, second])
+        write_output(tmp_path, first, body="the x.com view")
+        write_output(tmp_path, second, body="the twitter.com view")
+        report = migration.apply(tmp_path)
+        item_dir = tmp_path / "enrichment" / first.item
+        assert sorted(p.name for p in item_dir.glob("*.md")) == sorted(
+            [f"x-{work_hash(NEW_X_URL)[:6]}.md", f"x-{second.hash[:6]}.md"]
+        )
+        assert (item_dir / f"x-{second.hash[:6]}.md").read_text().endswith("the twitter.com view\n")
+        assert any("refusing to overwrite" in one.why for one in report.skipped)
+
+    def test_a_hash6_neighbours_output_is_left_alone(self, tmp_path, migration):
+        # Six hex digits collide, so the candidate must prove it belongs to
+        # this unit by the URL it records — the drain's own drop guards the
+        # same way. Moving a neighbour's file would strand THAT unit.
+        original = stored(OLD_X_URL, kind=Kind.X)
+        write_entries(tmp_path, [original])
+        neighbour = write_output(
+            tmp_path, original, body="another unit's view", url="https://a.test/neighbour"
+        )
+        migration.apply(tmp_path)
+        assert neighbour.is_file()
+        assert not (neighbour.parent / f"x-{work_hash(NEW_X_URL)[:6]}.md").exists()
 
 
 class TestVerbatimKeysAreNotRekeyed:
