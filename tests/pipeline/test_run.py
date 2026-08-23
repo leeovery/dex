@@ -548,6 +548,42 @@ class TestIncompleteItemsOnTheReport:
         assert "incomplete" not in payload
         assert "still raw until every unit lands" not in report
 
+    def test_cap_fire_markers_are_not_counted_as_units(self, instance, monkeypatch):
+        # A harvest that overran the URL cap recorded refused work, which no
+        # user surface reports. Counted as landed, the shape read "15 of 16
+        # units landed" for an item that only ever admitted twelve.
+        write_item(instance, urls=["https://hub.test/root"])
+        flood = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM + 3)]
+
+        def fetch(unit):
+            if unit.depth == 0:
+                children = [Child(url=url, via="harvest") for url in flood]
+                return Result(status=Status.DONE, meta={}, body="b" * 400, children=children)
+            if unit.url == flood[0]:
+                return Result(
+                    status=Status.WAITING,
+                    meta={},
+                    needs=Need.TRANSCRIBE,
+                    reason="no captions available",
+                )
+            return Result(status=Status.DONE, meta={}, body="b" * 400)
+
+        report, payload = self._run_capturing(
+            make_ctx(instance, FakeDriver(fetch_fn=fetch)), monkeypatch
+        )
+        capped = [e for e in ledger.load(instance.ledger_path).values() if e.capped]
+        assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)  # 4 children refused
+        assert payload["incomplete"] == [
+            {
+                "item": ITEM,
+                "landed": MAX_URLS_PER_ITEM - 1,  # the root + 10 children
+                "total": MAX_URLS_PER_ITEM,  # the admitted cohort, refusals excluded
+                "outstanding": [{"status": "waiting", "needs": "transcribe", "count": 1}],
+            }
+        ]
+        flat = " ".join(report.split())
+        assert f"{ITEM} 11 of 12 units landed — 1 waiting on transcription" in flat
+
     def test_the_other_sections_still_render(self, instance):
         waiting = Result(
             status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"

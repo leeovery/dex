@@ -1296,10 +1296,19 @@ class _Drain:
         or wiki until every part has landed. The report states that shape
         per item so a session never has to infer completeness by reading a
         list of units.
+
+        Cap-fire markers are not units: a harvest that overran the URL cap
+        recorded refused work, which no user surface reports (§12). Counted
+        as landed they inflate both halves of the shape — "15 of 16 units
+        landed" for an item that admitted twelve.
         """
         rows: list[dict[str, object]] = []
         for item_id in sorted(self.touched):
-            units = [entry for entry in self.entries.values() if entry.item == item_id]
+            units = [
+                entry
+                for entry in self.entries.values()
+                if entry.item == item_id and not _is_cap_refusal(entry)
+            ]
             outstanding = [entry for entry in units if entry.status in _OUTSTANDING]
             if not outstanding:
                 continue
