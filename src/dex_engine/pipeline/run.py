@@ -642,6 +642,11 @@ class _Drain:
                 )
         result = Result(status=Status.DONE, meta=meta, body=body)
         path = self._write_output(entry, result)
+        # A unit corrected to a transcribable kind (web → podcast) lands its
+        # own output HERE, never through _apply_done — the pre-correction
+        # kind's file leaves on the same rule, or the item carries two views
+        # of one unit forever.
+        _drop_superseded_outputs(self.ctx.instance, entry, path)
         title = meta.get("title")
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
@@ -1343,8 +1348,9 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     The stale file leaves the disk here, on the success that replaces it,
     and never earlier: a corrected fetch that parks must leave the item
     exactly as enriched as it found it. The ledger's audit trail keeps the
-    history either way. Both routes to a unit's own output come through
-    here — the drain's write, and a hand-written file closed by ``mark``.
+    history either way. Every route to a unit's own output comes through
+    here — the drain's fetch write, the transcribe drain's landing, and a
+    hand-written file closed by ``mark``.
 
     Candidate names are the closed ``<kind>-<hash6>.md`` set, and each
     candidate must PROVE it belongs to this unit by the URL it records:
