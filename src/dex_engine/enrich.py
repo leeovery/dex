@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .capabilities import Capabilities
 from .pipeline.capture import item_new
+from .pipeline.digest import item_digest
 from .pipeline.registry import build_drivers
 from .pipeline.run import (
     RunContext,
@@ -111,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     item_parser = commands.add_parser(
-        "item", help="corpus-item operations — code writes frontmatter, never freehand"
+        "item", help="per-item file writes — code writes the shape, judgment supplies the values"
     )
     item_commands = item_parser.add_subparsers(dest="item_command", required=True)
     new_parser = item_commands.add_parser(
@@ -128,6 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
         dest="shared_by",
         default="owner",
         help="provenance display name (default: owner)",
+    )
+    digest_parser = item_commands.add_parser(
+        "digest", help="write an item's digest from a JSON payload (judgment in, shape decided)"
+    )
+    digest_parser.add_argument(
+        "--file",
+        required=True,
+        type=Path,
+        help="the JSON payload file (conventionally under cache/): "
+        '{"id", "signal", "topics", "facts"}, entities optional',
     )
 
     return parser
@@ -156,6 +167,8 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             )
         case "pass":
             return record_pass(ctx, args.item, args.stage)
+        case "item" if args.item_command == "digest":
+            return item_digest(args.file, instance=ctx.instance)
         case "item":
             return item_new(
                 args.capture,
