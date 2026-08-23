@@ -61,7 +61,9 @@ jobs:
         env:
           # Names the shells this runner guarantees, so a future image that
           # drops one fails loudly instead of silently testing under sh alone.
-          DEX_SHIM_SHELLS: ${{ runner.os == 'Linux' && 'sh dash ksh' || 'sh' }}
+          # Both images ship bash; Ubuntu's /bin/sh is dash and ksh is
+          # installed above, while macOS pledges only its bash-backed sh.
+          DEX_SHIM_SHELLS: ${{ runner.os == 'Linux' && 'sh bash dash ksh' || 'sh bash' }}
         run: uv run --no-sync pytest -m "not live"
 
   lint:

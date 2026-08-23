@@ -119,10 +119,11 @@ sh and instances require git, gh and uv.
 bumping by hand, and nothing will tell you — check it when a runner image
 deprecation bites, or once a year.
 
-**The shim is tested under three shells.** "POSIX sh" is not one interpreter —
+**The shim is tested under four shells.** "POSIX sh" is not one interpreter —
 macOS's `/bin/sh` is bash in POSIX mode, a Linux instance's is dash — so
-`tests/test_shim.py` parametrizes over `sh`, `dash` and `ksh`, skipping any
-the machine lacks. CI sets `DEX_SHIM_SHELLS="sh dash ksh"` on Linux, which
+`tests/test_shim.py` parametrizes every case over `sh`, `bash`, `dash` and
+`ksh`, skipping any the machine lacks. CI sets
+`DEX_SHIM_SHELLS="sh bash dash ksh"` on Linux and `"sh bash"` on macOS, which
 turns a missing interpreter from a silent skip into a failure. Install `dash`
 and `ksh` locally if you touch `instance/dex`; bashisms in that file are
 invisible on a Mac and fatal in an instance.
