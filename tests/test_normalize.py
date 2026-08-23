@@ -214,6 +214,43 @@ class TestNormalize:
             run_normalize(instance, Config())
 
 
+class TestVariantExports:
+    """One unreadable export never aborts the rest — the containment rule."""
+
+    def write_raw(self, instance: Instance, channel: str, text: str) -> None:
+        chan_dir = instance.root / "raw" / "discord" / channel
+        chan_dir.mkdir(parents=True, exist_ok=True)
+        (chan_dir / "messages.json").write_text(text)
+
+    def test_a_data_package_dump_is_named_and_the_run_continues(self, instance):
+        # Discord's own data package writes a bare array — under the same
+        # messages.json name the exporter's channel export uses.
+        write_export(instance, [message("m1", "https://example.test/post")])
+        self.write_raw(
+            instance,
+            "exported-by-hand",
+            json.dumps([{"ID": "1", "Timestamp": "2026-08-19", "Contents": "hi"}]),
+        )
+        lines = run_normalize(instance, Config())
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert any(
+            line.startswith("discord/exported-by-hand: export unreadable")
+            and "not a DiscordChatExporter JSON export" in line
+            for line in lines
+        )
+        assert len(items(instance)) == 1
+
+    def test_a_truncated_export_is_named_and_the_run_continues(self, instance):
+        # The exporter flushes as it goes: an interrupted export leaves a
+        # messages.json whose JSON stops mid-object.
+        write_export(instance, [message("m1", "https://example.test/post")])
+        self.write_raw(instance, "interrupted", '{"messages": [{"id": "m1", "typ')
+        lines = run_normalize(instance, Config())
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert any(line.startswith("discord/interrupted: export unreadable") for line in lines)
+        assert len(items(instance)) == 1
+
+
 class TestRegeneration:
     def test_regeneration_is_byte_identical(self, instance):
         write_export(instance, [message("m1", "https://example.test/post\nnote")])

@@ -262,11 +262,20 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
 
     Returns:
         ``(written, skipped)`` cluster counts.
+
+    Raises:
+        ValueError: The file is not readable as an exporter JSON export.
     """
     data = json.loads((chan_dir / "messages.json").read_text(encoding="utf-8"))
+    export = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(export, list):
+        # Not this exporter's shape: a Discord data-package dump (a bare
+        # array, and named messages.json too), or a conversion that never
+        # landed. The caller names the channel and moves on.
+        raise ValueError("no messages array — not a DiscordChatExporter JSON export")
     messages = [
         message
-        for message in data["messages"]
+        for message in export
         if message["type"] in ("Default", "Reply")
         and (message.get("content") or message.get("attachments"))
     ]
@@ -304,14 +313,22 @@ def run_normalize(instance: Instance, config: Config) -> list[str]:
     for chan_dir in channel_dirs:
         if not (chan_dir / "messages.json").exists():
             continue
-        written, skipped = normalize_discord(
-            chan_dir,
-            chan_dir.name,
-            instance=instance,
-            config=config,
-            excluded=excluded,
-            warn=lines.append,
-        )
+        try:
+            written, skipped = normalize_discord(
+                chan_dir,
+                chan_dir.name,
+                instance=instance,
+                config=config,
+                excluded=excluded,
+                warn=lines.append,
+            )
+        except (OSError, ValueError) as e:
+            # An export that cannot be read at all — truncated mid-write,
+            # non-UTF-8, the wrong tool's JSON — fails alone: it is named
+            # here and every other channel still normalizes.
+            detail = " ".join(str(e).split())
+            lines.append(f"discord/{chan_dir.name}: export unreadable ({detail}) — skipped")
+            continue
         lines.append(
             f"discord/{chan_dir.name}: {written} items written, {skipped} clusters skipped"
         )
