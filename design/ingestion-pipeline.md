@@ -388,6 +388,24 @@ every correct write behind it. The allowance is the ordinary spread between
 two machines whose lines merge; a clock stepping backwards inside that
 window can still mis-order two writes of one hash, and that is accepted.
 
+**The ceiling bounds the future only, so a write is read back before it is
+reported.** Nothing bounds a clock set BACKWARDS — a dead RTC, a container
+with no NTP, a restored snapshot — because there is no reference point for
+"too old", and in that direction the correction is stamped in the past,
+where it loses to the very line it was written to supersede and `compact`
+then deletes it as superseded with no audit trail. Strictly worse than the
+forward case, which at least keeps the correction, and the verb reported
+success throughout. So `mark` re-reads the ledger after appending and,
+unless the hash now resolves to the line it just wrote, raises — naming the
+URL, what the ledger resolves that unit to instead, and this machine's
+clock as the likely cause. It fails BEFORE the superseded outputs are
+dropped and the item's frontmatter refreshed, so nothing acts on a
+correction the ledger did not take; the appended line stays as the audit
+trail of the attempt. The drain's exit path makes the same check for `run`
+/ `fetch` / `transcribe` and reports it as a note rather than raising,
+because a run does real work and the rest of what it reports is true. The
+resolution rule itself is untouched.
+
 ## 5. Ledger entry schema and status lifecycle
 
 ```jsonc
@@ -1060,6 +1078,20 @@ Shipping migrations for this rewrite:
    and keeps its stored hash, never aborting the chain part-way through.
    The rewrite is atomic and idempotent — a second apply finds every
    identity already current.
+   **The unit's output file moves with the hash** — migration 1's hazard,
+   one half of the name along: an output is named `<kind>-<hash6>.md`, so
+   a re-key touching only the ledger leaves the file under an identity
+   nothing computes any more, the rerun seeded below lands beside it (two
+   views of one unit, both listed in engine-owned `enrichment:`
+   frontmatter), and a re-keyed youtube park loses the description the
+   transcribe drain reads back out of that file. So the file is renamed
+   under the new hash and the entry's `path` repointed to it. Every kind
+   prefix is tried, since a unit redetected since its line was written has
+   its output under the older kind, and each candidate proves it belongs to
+   this unit by the `url:` it records — six hex digits collide, and moving
+   a neighbour's file would strand THAT unit. A target that already exists
+   — both old spellings of one post landing on one identity — is refused
+   and reported, never clobbered.
    Then, reruns: two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed
@@ -1088,7 +1120,14 @@ Shipping migrations for this rewrite:
    item still claims is kept whole; the corpus is scanned after the
    deletions, so a purged item cannot claim its own work. The summary line
    states both counts — dropped and kept — because `exclude` runs in bulk
-   from the scope-filter pass and that line is the owner's only signal.
+   from the scope-filter pass and that line is the owner's only signal. One
+   id twice in a batch is not a refusal, for the reason a re-run is not:
+   excluding an item is idempotent by construction, so the second copy asks
+   for what the first already did. The copies collapse to one and the
+   summary says how many — `excluded N (M duplicate id(s) collapsed)` —
+   because applied twice they wrote the permanent `state/exclusions.tsv`
+   record twice and reported the second pass as an item already gone, on
+   that same only signal.
    The claim is asked of the corpus, never of the entry's stored `item`
    string alone (amended at phase-4 review, on real state): an item RENAMED
    since its line was written — same shortid, new slug — has a live file
