@@ -29,5 +29,8 @@ full fetched source — and summarize from that.
    page), file it as `wiki/syntheses/<slug>.md` — frontmatter `type: synthesis`,
    `question:`, `generated:` date; body cites item ids and wikilinks related
    topics. Add to index, log it, commit and push. Syntheses are question-shaped, dated
-   snapshots; the health check refreshes them as new material lands.
+   snapshots; no mechanical check refreshes one — a check cannot tell a
+   stale synthesis from a deliberately time-scoped one. Refreshing is
+   judgment, done here: when a query reads a synthesis whose `generated:`
+   date predates material that changes its answer, rewrite it.
 6. Never cite wiki pages as sources — item ids only.
