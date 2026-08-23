@@ -1,5 +1,6 @@
 """Tests for drivers/youtube.py: captions, waiting parks, probe classification."""
 
+import datetime
 import itertools
 import json
 
@@ -10,7 +11,13 @@ from hypothesis import strategies as st
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, clean_vtt
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.types import Kind, Need, Status
+from dex_engine.pipeline.transcribe import (
+    Acquired,
+    YoutubeAudio,
+    acquire_youtube_audio,
+    youtube_body,
+)
+from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import base_canonical, work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
 
@@ -354,6 +361,109 @@ class TestCaptions:
         driver = driver_for(info, {TRACK_URL: vtt_response(VTT)})
         meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
         assert meta["duration_min"] is None
+
+    def test_a_captions_transcript_stamps_its_provenance(self):
+        # Frontmatter, not the heading, says a body holds a transcript.
+        driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
+        meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
+        assert meta["via"] == "captions"
+
+
+def _park_file(path, result, url: str = URL) -> None:
+    """Write the enrichment file the run layer writes for ``result``.
+
+    The frontmatter is the driver's OWN meta — the point of the round trip
+    below is that whatever the driver did or did not stamp is what the
+    drain reads back.
+    """
+    fields = "".join(
+        f"{key}: {value}\n" for key, value in result.meta.items() if value not in (None, "")
+    )
+    path.write_text(
+        f"---\nurl: {url}\nfetched: '2026-08-10'\n{fields}---\n\n{result.body}\n",
+        encoding="utf-8",
+    )
+
+
+class FakeDownload:
+    """A yt-dlp seam that writes fake audio — the drain's acquisition point."""
+
+    def __call__(self, _url: str, cache_dir, stem: str) -> YoutubeAudio:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / f"{stem}.m4a"
+        path.write_bytes(b"fake-audio")
+        return YoutubeAudio(
+            path=path,
+            title="Ledgers as Work Queues: a Field Report",
+            channel="Systems Field Notes",
+            description="the re-probe's description",
+            duration_min=13,
+            upload_date="20260810",
+        )
+
+
+class TestCaptionsRoundTripThroughTheDrain:
+    """A captioned body re-entering the transcribe path (`enrich mark … waiting`)."""
+
+    def _drain_over(self, tmp_path, result) -> str:
+        park = tmp_path / "youtube-abc123.md"
+        _park_file(park, result)
+        entry = LedgerEntry(
+            hash=work_hash(URL),
+            url=URL,
+            item="2026-08-19-example-55ad7b",
+            kind=Kind.YOUTUBE,
+            status=Status.WAITING,
+            needs=Need.TRANSCRIBE,
+            engine="0.2.0",
+            date=datetime.date(2026, 8, 10),
+        )
+        acquired = acquire_youtube_audio(entry, park, tmp_path / "cache", FakeDownload())
+        assert isinstance(acquired, Acquired)
+        # Exactly what run.py composes from the acquisition.
+        return youtube_body(acquired.prefix, "The whisper transcript.")
+
+    def test_a_whisper_drain_never_stacks_a_second_transcript(self, tmp_path):
+        # Reachable by `enrich mark <url> waiting --needs transcribe`, or a
+        # rerun where the captions vanished. Unstamped, the whole captions
+        # body came back as "description" and the drain wrote old caption
+        # text and new whisper text into one file under two headings.
+        driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
+        body = self._drain_over(tmp_path, driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert body.count("## Transcript") == 1
+        assert body.count("## Description") == 1
+        assert "The whisper transcript." in body
+        assert "not receipts, they are the queue" not in body  # superseded, not stacked
+
+    def test_the_description_the_captions_route_wrote_survives(self, tmp_path):
+        driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
+        body = self._drain_over(tmp_path, driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert "why blocked is not dead" in body  # the park's own, not the re-probe's
+        assert "the re-probe's description" not in body
+
+    def test_a_description_less_captions_body_holds_no_stale_transcript(self, tmp_path):
+        # Nothing but `## Transcript` on disk — the newline-anchored split
+        # would miss a body that STARTS with the heading and hand the
+        # captions back as notes. The drain's own no-notes fallback (the
+        # re-probe's description) then stands alone above one transcript.
+        info = {k: v for k, v in INFO_WITH.items() if k != "description"}
+        driver = driver_for(info, {TRACK_URL: vtt_response(VTT)})
+        result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
+        assert body_of(result).startswith("## Transcript\n\n")
+        body = self._drain_over(tmp_path, result)
+        assert body.count("## Transcript") == 1
+        assert "not receipts, they are the queue" not in body
+        assert body.endswith("## Transcript\n\nThe whisper transcript.")
+
+    def test_a_park_is_still_read_as_notes_end_to_end(self, tmp_path):
+        # The other half of the contract: a park stamps nothing, so its
+        # body — `## Transcript` lines in the author's description and all —
+        # is never truncated at a heading it does not own.
+        info = dict(INFO_WITHOUT)
+        info["description"] = "Chapters below.\n\n## Transcript\n\nsee the pinned comment"
+        body = self._drain_over(tmp_path, driver_for(info).fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert "see the pinned comment" in body
+        assert body.endswith("## Transcript\n\nThe whisper transcript.")
 
 
 class TestWaitingParks:
