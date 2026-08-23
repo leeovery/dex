@@ -11,7 +11,12 @@ pointers bottom-to-top (bounded at 100 hops, paced a second apart, ending
 at the first id it has already walked); storage is reading order — root
 first, captured post last, each post attributed. Quoted posts stay inline
 as blockquotes; promoting a quote is a harvest judgment. Chain media is
-pooled, the captured post's first.
+pooled, the captured post's first — **photos and videos alike**: both are
+URL downloads, and the media stage already meets an oversize one with its
+own honest outcome (``skipped``, the 10MB ceiling named, charged to the
+media unit). A media-only post is therefore ``done`` with a minimal
+attributed body, whatever the media is; the "no text or media" park is
+said only when the payload truly holds neither.
 
 Incomplete chains are recorded, never silently presented as complete: a
 parent fetch failing mid-walk, or a chain looping back on itself, sets
@@ -70,6 +75,15 @@ HOP_SLEEP = 1.0
 # A body that is nothing but x's own t.co shortlink is a pointer to
 # content, never the content itself.
 _SHORTLINK_ONLY_RE = re.compile(r"\s*https?://t\.co/\S+\s*")
+
+# fxtwitter nests a post's media under `photos` and `videos`, and repeats
+# the union of both under `all` in post order. `all` leads so a mixed post
+# keeps its order; the typed lists follow so a payload without `all` loses
+# nothing, and the URL dedupe absorbs the overlap. Reading `photos` alone
+# made a video-only post look medialess: it parked `manual` saying
+# "fxtwitter returned no text or media" over a payload holding media, and
+# dropped the video the media stage would have fetched.
+_MEDIA_LISTS = ("all", "photos", "videos")
 
 
 class XDriver:
@@ -197,7 +211,7 @@ def _status_id(url: str) -> str | None:
 def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]) -> Result:
     """Assemble the Result: reading-order body, pooled media, attribution meta."""
     has_content = any(
-        _text_of(post) or isinstance(post.get("quote"), dict) or _photo_urls(post) for post in posts
+        _text_of(post) or isinstance(post.get("quote"), dict) or _media_urls(post) for post in posts
     )
     body = "\n\n".join(_render_post(post) for post in reversed(posts))  # root -> captured
     author = captured.get("author") or {}
@@ -211,9 +225,12 @@ def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | 
     meta.update(walk_meta)
     if not has_content:
         return Result(status=Status.MANUAL, meta=meta, reason="fxtwitter returned no text or media")
-    # Photo-only posts are DONE, not manual: the body stays a minimal
-    # attributed record and the media stage fetches the photos themselves.
-    media = [url for post in posts for url in _photo_urls(post)]  # captured post's first
+    # Media-only posts are DONE, not manual: the body stays a minimal
+    # attributed record and the media stage fetches the files themselves —
+    # under its 4-file cap and 10MB ceiling, which a big video meets as
+    # `skipped — media exceeds 10MB ceiling`, charged to the media unit
+    # with the size stated, rather than as a manual park on the post.
+    media = [url for post in posts for url in _media_urls(post)]  # captured post's first
     return Result(status=Status.DONE, meta=meta, body=body, media=media)
 
 
@@ -224,9 +241,9 @@ def _render_post(post: dict) -> str:
     if text:
         lines.append("")
         lines.append(text)
-    elif _photo_urls(post):
+    elif (note := _media_note(post)) is not None:
         lines.append("")
-        lines.append("(photo post)")
+        lines.append(note)
     quote = post.get("quote")
     if isinstance(quote, dict):
         quote_author = quote.get("author") or {}
@@ -262,6 +279,40 @@ def _raw_text(post: dict) -> str:
     return raw_text.get("text", "") if isinstance(raw_text, dict) else ""
 
 
-def _photo_urls(post: dict) -> list[str]:
-    photos = (post.get("media") or {}).get("photos") or []
-    return [photo["url"] for photo in photos if isinstance(photo, dict) and photo.get("url")]
+def _media_entries(post: dict) -> list[dict]:
+    """Every media object on a post, in post order, deduped by URL."""
+    media = post.get("media")
+    if not isinstance(media, dict):
+        return []
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for key in _MEDIA_LISTS:
+        for entry in media.get(key) or []:
+            url = entry.get("url") if isinstance(entry, dict) else None
+            if isinstance(url, str) and url and url not in seen:
+                seen.add(url)
+                entries.append(entry)
+    return entries
+
+
+def _media_urls(post: dict) -> list[str]:
+    """The post's media URLs, photos and videos alike — the media stage's input."""
+    return [entry["url"] for entry in _media_entries(post)]
+
+
+def _media_note(post: dict) -> str | None:
+    """The stand-in line for a post with media and no prose, or None.
+
+    Named by what the payload actually holds: a video-only post rendered
+    "(photo post)" would be the same false statement the manual park used
+    to make, moved into the body.
+    """
+    entries = _media_entries(post)
+    if not entries:
+        return None
+    types = {entry.get("type") for entry in entries}
+    if types == {"photo"}:
+        return "(photo post)"
+    if types <= {"video", "gif"}:
+        return "(video post)"
+    return "(media post)"  # mixed, or a type this driver has not met
