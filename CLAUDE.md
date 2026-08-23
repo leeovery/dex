@@ -16,7 +16,8 @@ the engine stays unaware of which ones exist.
     `detect.py`, `registry.py` (explicit ordered driver list), `run.py`
     (the orchestrator; the pipeline's single broad except), `classify.py`
     (central failure classification + the scrubber), `transcribe.py`,
-    `urls.py`, `capture.py` (`enrich item new`), `issues.py` (the
+    `urls.py`, `capture.py` (`enrich item new`), `digest.py` (`enrich item
+    digest` — the ONE digest write point), `issues.py` (the
     issue filer).
   - `drivers/` — one per source shape: youtube, x, github, paper, podcast,
     web (catch-all, always last), file; `transport.py` is the HTTP seam.
