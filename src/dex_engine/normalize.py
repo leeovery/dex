@@ -95,18 +95,36 @@ def _is_internal(url: str, internal_domains: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _unreadable_reason(message: dict) -> str | None:
+def _is_text(value: object) -> bool:
+    """Whether a field arrived as the non-empty string the code reads it as."""
+    return isinstance(value, str) and bool(value)
+
+
+def _unreadable_reason(message: object) -> str | None:
     """Why this message cannot be read, or ``None`` when it can.
 
     Every field the clustering and emit passes index directly is checked
-    here once, so those passes may index — and checked as those passes
-    will use it, not merely for presence: a timestamp they parse, a
-    display name the corpus takes as a scalar. DiscordChatExporter writes
-    all of them, in those shapes, at every version that exports JSON; an
-    export converted from another source into that shape is where one goes
-    missing or arrives unusable, and such a message is skipped and counted
-    rather than aborting its channel.
+    here once, so those passes may index — and checked in the shape those
+    passes use it, not merely for presence: a container they index into, a
+    timestamp they parse, a display name the corpus takes as a scalar.
+    DiscordChatExporter writes all of them, in those shapes, at every
+    version that exports JSON. An export converted from another source is
+    where a field goes missing or arrives in another shape — Discord's own
+    data package holds a message's attachment as a single URL string, and
+    a conversion that copies the field across emits that verbatim — and
+    such a message is skipped and counted rather than aborting its channel.
     """
+    if not isinstance(message, dict):
+        return "message is not an object"
+    return (
+        _unreadable_scalar_reason(message)
+        or _unreadable_list_reason(message)
+        or _unreadable_author_reason(message.get("author"))
+    )
+
+
+def _unreadable_scalar_reason(message: dict) -> str | None:
+    """Why the message's own fields cannot be read, or ``None`` when they can."""
     for field in ("id", "type", "timestamp"):
         if not message.get(field):
             return f"no {field}"
@@ -114,22 +132,38 @@ def _unreadable_reason(message: dict) -> str | None:
         datetime.fromisoformat(message["timestamp"])
     except (TypeError, ValueError):
         return "timestamp is not ISO 8601"
+    content = message.get("content")
+    if content is not None and not isinstance(content, str):
+        return "content is not text"
+    if not isinstance(message.get("reference") or {}, dict):
+        return "reference is not an object"
+    return None
+
+
+def _unreadable_list_reason(message: dict) -> str | None:
+    """Why the message's lists cannot be read, or ``None`` when they can."""
+    for field in ("attachments", "embeds", "reactions"):
+        entries = message.get(field) or []
+        if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+            return f"{field} is not a list of objects"
     if any(
-        not attachment.get("url") or not attachment.get("fileName")
+        not _is_text(attachment.get("url")) or not _is_text(attachment.get("fileName"))
         for attachment in message.get("attachments") or []
     ):
         return "attachment has no url or fileName"
-    return _unreadable_author_reason(message.get("author"))
+    return None
 
 
-def _unreadable_author_reason(author: dict | None) -> str | None:
+def _unreadable_author_reason(author: object) -> str | None:
     """Why the message's author cannot be read, or ``None`` when it can."""
     if not author:
         return "no author"
+    if not isinstance(author, dict):
+        return "author is not an object"
     if not author.get("id"):
         return "author has no id"
     name = author.get("nickname") or author.get("name")
-    if not name:
+    if not name or not isinstance(name, str):
         return "author has no name"
     if name != name.strip() or "\n" in name:
         # It becomes shared_by, a corpus scalar: one line, no edge space.
@@ -177,7 +211,9 @@ def _cluster_body(messages: list[dict], embed_titles: dict[str, str]) -> str:
             lines.append(message["content"])
         lines.extend(
             f"*[attached: {attachment['fileName']}]*"
-            for attachment in message.get("attachments", [])
+            # `or []`, not a default: a conversion writes the empty list
+            # as null, and the read pass reads that as no attachments.
+            for attachment in message.get("attachments") or []
         )
         if message is first:
             lines.extend(f"> unfurl: {title}" for title in embed_titles.values())
@@ -201,7 +237,7 @@ def _emit_cluster(
     attachments = [
         attachment["url"]
         for message in messages
-        for attachment in message.get("attachments", [])
+        for attachment in message.get("attachments") or []
         if not attachment["url"].startswith("http")
     ]
     substance = len(re.sub(r"\s+", " ", URL_RE.sub("", all_text)).strip())
@@ -214,7 +250,7 @@ def _emit_cluster(
     embed_titles = {
         embed["url"]: embed["title"]
         for message in messages
-        for embed in message.get("embeds", [])
+        for embed in message.get("embeds") or []
         if embed.get("url") and embed.get("title")
     }
     if external and embed_titles.get(external[0]):
@@ -222,9 +258,9 @@ def _emit_cluster(
     else:
         slug = slugify(URL_RE.sub("", all_text)[:80])
     reactions = sum(
-        reaction.get("count", 0)
+        reaction.get("count") or 0
         for message in messages
-        for reaction in message.get("reactions", [])
+        for reaction in message.get("reactions") or []
     )
     item = corpus.CorpusItem(
         id=f"{date:%Y-%m-%d}-{slug}-{shortid}",

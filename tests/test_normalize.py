@@ -377,6 +377,71 @@ class TestVariantExports:
         assert not any("skipped" in line for line in lines if line.startswith("discord/general"))
         assert any(line.startswith("discord/zzz-later:") for line in lines)  # the run finished
 
+    @pytest.mark.parametrize(
+        ("field", "value", "reason"),
+        [
+            # Discord's own data package holds the attachment as a single
+            # URL string, and a conversion that copies the field across
+            # emits that verbatim — with the author beside it.
+            ("attachments", "https://cdn.test/photo.png", "attachments is not a list of objects"),
+            ("attachments", ["https://cdn.test/photo.png"], "attachments is not a list of objects"),
+            ("embeds", "https://example.test/post", "embeds is not a list of objects"),
+            ("reactions", "3", "reactions is not a list of objects"),
+            ("author", "alex", "author is not an object"),
+            ("reference", "m1", "reference is not an object"),
+            ("content", ["a block", "another"], "content is not text"),
+        ],
+    )
+    def test_a_field_of_the_wrong_type_is_skipped_like_a_missing_one(
+        self, instance, field, value, reason
+    ):
+        variant = message(
+            "m2",
+            "https://example.test/other",
+            timestamp="2026-08-19T12:00:00+00:00",
+        )
+        variant[field] = value
+        write_export(instance, [message("m1", "https://example.test/post"), variant])
+        lines = run_normalize(instance, Config())
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_a_message_that_is_not_an_object_is_skipped(self, instance):
+        # A conversion that emits the channel's messages as bare strings.
+        export: list = [message("m1", "https://example.test/post"), "2026-08-19 alex: hi"]
+        write_export(instance, export)
+        lines = run_normalize(instance, Config())
+        reason = "message is not an object"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+
+    def test_an_empty_list_written_as_null_is_read_as_empty(self, instance):
+        # A conversion that writes null for an empty collection is not
+        # unreadable — it says the message has no attachments, no embeds
+        # and no reactions, and the message still normalizes.
+        variant = message("m1", "https://example.test/post")
+        variant.update(attachments=None, embeds=None, reactions=None, reference=None)
+        write_export(instance, [variant])
+        lines = run_normalize(instance, Config())
+        assert lines == ["discord/general: 1 items written, 0 clusters skipped"]
+        item = next(iter(items(instance).values()))
+        assert item.attachments == []
+        assert item.reactions is None
+
+    def test_a_wrong_typed_field_never_costs_the_run_its_report(self, instance):
+        # The whole harm of a crash here: summaries accumulate and print at
+        # the end, so one bad message used to take every channel's line
+        # with it — including channels that had already written items.
+        write_export(instance, [message("m1", "https://example.test/post")], channel="aaa-first")
+        variant = message("m2", "https://example.test/other")
+        variant["attachments"] = "https://cdn.test/photo.png"
+        write_export(instance, [variant], channel="zzz-later")
+        lines = run_normalize(instance, Config())
+        assert "discord/aaa-first: 1 items written, 0 clusters skipped" in lines
+        assert "discord/zzz-later: 0 items written, 0 clusters skipped" in lines
+
     def test_unreadable_messages_are_counted_once_per_reason(self, instance):
         # A conversion that drops a field drops it on every message: the
         # operator wants the count and the reason, not one line per message.
