@@ -563,6 +563,77 @@ class TestReferentialIntegrity:
         outcome = lint(instance)
         assert "done entries whose output file is gone from disk — none" in outcome.report
 
+    def _output(self, instance, item_id: str, name: str = "web-73bd78.md") -> None:
+        path = instance.enrichment_dir / item_id / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("the fetched page\n")
+
+    def test_an_output_under_another_items_directory_is_flagged(self, instance):
+        # A rename done in steps and interrupted between the corpus file and
+        # the enrichment directory: the line names the live item, its output
+        # is on disk, and the item's derived `enrichment:` listing — the
+        # markdown in ITS directory — is empty, so it stays `raw` while the
+        # unit is `done` and never drainable again. Nothing else says so:
+        # the seed-time sweep heals the item id, which is right and which is
+        # what cleared the ghost row this used to show up as.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        self._output(instance, "2026-08-19-old-slug-55ad7b")
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path="enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — none" in outcome.report  # the sweep healed it
+        assert "done entries whose output file is gone from disk — none" in outcome.report
+        assert (
+            "done entries whose output sits under another item's directory — **1**"
+            in outcome.report
+        )
+        assert (
+            f"**{ITEM}** → `enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md`" in outcome.report
+        )
+
+    def test_an_output_under_its_own_item_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        self._output(instance, ITEM)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output sits under another item's directory — none" in (
+            outcome.report
+        )
+
+    def test_a_gone_output_is_the_other_finding_not_this_one(self, instance):
+        # "not there" and "there, but where its item cannot see it" have
+        # different repairs, so a path that is simply gone answers one check.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path="enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — **1**" in outcome.report
+        assert "done entries whose output sits under another item's directory — none" in (
+            outcome.report
+        )
+
+    def test_a_misfiled_output_is_a_finding_not_a_failure(self, instance):
+        # Same rule as its two siblings: the repair (move the directory?
+        # re-fetch? finish the rename?) is judgment, not the exit code's.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        self._output(instance, "2026-08-19-old-slug-55ad7b")
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path="enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md"),
+        )
+        assert lint(instance).exit_code == 0
+
     def test_a_purged_item_answers_both_checks(self, instance):
         # exclude deletes enrichment/<item>/ too; both findings are true of
         # it, and neither is suppressed by the other.

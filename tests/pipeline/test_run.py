@@ -21,6 +21,7 @@ from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
 from dex_engine.exclude import run_exclude
+from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
@@ -2168,11 +2169,16 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
 
-    def _drained_then_renamed(self, instance, *, assets=(), media=()) -> FakeTransport:
+    def _drained_then_renamed(
+        self, instance, *, assets=(), media=(), move_enrichment: bool = True
+    ) -> FakeTransport:
         """A real drain under the old id, then the rename that moves it all.
 
         The state the sweep meets after a rename is whatever the drain left
         — so it is the drain that builds it here, not a hand-written line.
+        ``move_enrichment=False`` is the interrupted rename: a rename is
+        judgment work a session does in steps, and one interrupted between
+        the corpus file and the enrichment directory leaves exactly that.
         """
         write_item(instance, OLD_ITEM)
         transport = FakeTransport(
@@ -2195,8 +2201,32 @@ class TestOwnershipIsTheCorpusAnswer:
             instance.corpus_dir / "2026" / f"{NEW_ITEM}.md", dataclasses.replace(item, id=NEW_ITEM)
         )
         old.unlink()
-        (instance.enrichment_dir / OLD_ITEM).rename(instance.enrichment_dir / NEW_ITEM)
+        if move_enrichment:
+            (instance.enrichment_dir / OLD_ITEM).rename(instance.enrichment_dir / NEW_ITEM)
         return transport
+
+    def test_an_interrupted_rename_does_not_become_invisible(self, instance):
+        # The corpus file moved and the enrichment directory did not. The
+        # sweep heals the line's item id — correctly — and that clears the
+        # ghost row this state used to show up as, leaving a `done` unit
+        # nothing drains again and an item that derives `raw` with an empty
+        # listing forever. Moving files is not the drain's business; naming
+        # the state is lint's, and the state must stay named.
+        self._drained_then_renamed(instance, move_enrichment=False)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md"
+        new_path = instance.corpus_dir / "2026" / f"{NEW_ITEM}.md"
+        assert corpus.read_item(new_path).status == "raw"  # its listing is empty
+        (instance.state_dir / "taxonomy.json").write_text('{"topics": {}, "entities": {}}')
+        report = run_lint(
+            instance, is_cognitive=lambda _need, _fmt=None: False, today=lambda: TODAY, write=False
+        ).report
+        assert "ledger items with no corpus file — none" in report  # the ghost row is gone
+        assert "done entries whose output sits under another item's directory — **1**" in report
 
     def test_an_extraction_asset_that_moved_with_the_item_is_not_judged_lost(self, instance):
         # `_unit_product` knew ONE output name (`<kind>-<hash6>.md`), so

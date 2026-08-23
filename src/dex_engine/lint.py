@@ -13,7 +13,9 @@ Checks:
   state — ledger schema validation (via ``ledger.load``), ledger↔tree
   referential integrity (items with no corpus file, one row per finding
   with its entry count — excluded-on-record told apart from renamed and
-  from unclaimed; ``done`` entries whose output path is missing on disk),
+  from unclaimed; ``done`` entries whose output path is missing on disk,
+  and ``done`` entries whose output is on disk under a DIFFERENT item's
+  enrichment directory, where the item that owns it cannot list it),
   waiting cohorts and cognitive-job
   summary, harvest passes recorded under old rules, and the
   enrichment-newer-than-digest orphan listing (the interrupted-session
@@ -566,9 +568,10 @@ def _state_checks(
                 )
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
-        ghost, missing = _referential_integrity(instance, entries, corpus_ids)
-        payload["ghost_items"] = ghost
-        payload["missing_outputs"] = missing
+        integrity = _referential_integrity(instance, entries, corpus_ids)
+        payload["ghost_items"] = integrity.ghost
+        payload["missing_outputs"] = integrity.missing
+        payload["misfiled_outputs"] = integrity.misfiled
         fires = _cap_fires(entries)
         payload["capped"] = fires.rows
         notes += fires.notes
@@ -584,12 +587,21 @@ EXCLUDED_ON_RECORD = "excluded on record"
 _ITEM_UNCLAIMED = "no exclusions.tsv record, and no live corpus item lists this work"
 
 
+@dataclass(slots=True, kw_only=True)
+class _IntegrityScan:
+    """The three ledger→tree pointer findings, each its own listing."""
+
+    ghost: list[dict[str, object]] = field(default_factory=list)
+    missing: list[dict[str, str]] = field(default_factory=list)
+    misfiled: list[dict[str, str]] = field(default_factory=list)
+
+
 def _referential_integrity(
     instance: Instance,
     entries: dict[str, LedgerEntry],
     corpus_ids: set[str],
-) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
-    """The ledger's two pointers into the tree: item ids, and output paths.
+) -> _IntegrityScan:
+    """The ledger's pointers into the tree: item ids, and output paths.
 
     Schema validity says nothing about whether a line points at anything
     that exists. ``dex exclude`` removes an item's ledger entries along with
@@ -602,9 +614,22 @@ def _referential_integrity(
     recorded, and an item RENAMED since the line was written has a live item
     under a new id claiming its work, which reads nothing like an item
     nothing claims at all. A ``done`` entry whose output file is gone is the
-    enrichment claiming work whose product no longer exists. The two are
-    asked independently — an item purged by ``dex exclude`` answers both,
-    and each finding is still true.
+    enrichment claiming work whose product no longer exists. The checks are
+    asked independently — an item purged by ``dex exclude`` answers two of
+    them, and each finding is still true.
+
+    The output path is asked twice, because "is it there" and "is it where
+    its item can see it" are different questions with different repairs. An
+    item's frontmatter ``enrichment:`` listing, and therefore its derived
+    ``raw``/``enriched`` status, is the markdown IN ``enrichment/<item>/`` —
+    so a ``done`` output filed under a DIFFERENT item is invisible to the
+    item that owns it, which stays ``raw`` with an empty listing while the
+    unit is ``done`` and never drainable again. A rename done in steps and
+    interrupted between the corpus file and the enrichment directory leaves
+    exactly that, and the seed-time re-attribution sweep then heals the
+    line's item id — correctly, but that clears the ghost row this state
+    used to show up as. Moving files is not the drain's business; naming the
+    state is this check's.
 
     **The record is asked before the claim.** A hash two live items shared
     always has another claimant after one of them is excluded, so asking
@@ -617,11 +642,12 @@ def _referential_integrity(
     one reason is one row carrying the count, not ten rows a reader cannot
     tell apart.
 
-    Both stay findings rather than failures. Nothing downstream resolves an
-    entry's item back to a corpus file, so neither breaks a later stage the
-    way a schema error or a bad citation does; and the repair — was this
-    purged on purpose? should the ledger line go, or the item come back? —
-    is judgment, which is the report's business, not the exit code's.
+    All three stay findings rather than failures. Nothing downstream
+    resolves an entry's item back to a corpus file, so none breaks a later
+    stage the way a schema error or a bad citation does; and the repair —
+    was this purged on purpose? should the ledger line go, the item come
+    back, or the directory follow the rename? — is judgment, which is the
+    report's business, not the exit code's.
     """
     excluded = _excluded_items(instance)
     dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
@@ -654,7 +680,15 @@ def _referential_integrity(
         if entry.path is not None and not (instance.root / entry.path).exists()
     ]
     missing.sort(key=lambda row: (row["item"], row["path"]))
-    return ghost, missing
+    misfiled: list[dict[str, str]] = [
+        {"item": entry.item, "path": entry.path}
+        for entry in entries.values()
+        if entry.path is not None
+        and (instance.root / entry.path).exists()
+        and Path(entry.path).parent != Path("enrichment") / entry.item
+    ]
+    misfiled.sort(key=lambda row: (row["item"], row["path"]))
+    return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
 
 
 def _excluded_items(instance: Instance) -> set[str]:

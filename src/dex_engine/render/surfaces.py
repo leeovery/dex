@@ -939,6 +939,7 @@ _HEALTH_OPTIONAL = frozenset(
         "ledger_error",
         "ghost_items",
         "missing_outputs",
+        "misfiled_outputs",
         "waiting",
         "cognitive",
         "stale_passes",
@@ -988,6 +989,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           # one row per (item, finding), never per entry — "entries" is the multiplicity
           "ghost_items": [{"item": str, "why": str, "entries": int}],  # item has no corpus file
           "missing_outputs": [{"item": str, "path": str}], # done output gone from disk
+          # done output on disk, but under another item's enrichment directory
+          "misfiled_outputs": [{"item": str, "path": str}],
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
           "stale_passes": [{"item": str, "rules": int}],
@@ -1125,6 +1128,11 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
     )
     blocks += _health_pairs(
         surface, payload, "missing_outputs", "done entries whose output file is gone from disk",
+        ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
+    )
+    blocks += _health_pairs(
+        surface, payload, "misfiled_outputs",
+        "done entries whose output sits under another item's directory",
         ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
     )
     waiting = _needs_counts(surface, payload, "waiting")
