@@ -137,6 +137,16 @@ Then do a run now, whatever the host.
 - Cap-fired events (depth/URL caps) are internal — they live in the
   ledger for the health check and appear in no report you write.
 
+## State writes
+
+Where a state file has a verb, the verb writes it and you never do:
+corpus items come from `enrich item new`, digests from `enrich item digest
+--file cache/digest.json`, ledger lines from `enrich mark` and the run
+itself, stage records from `enrich pass`. You supply the judgment as JSON
+or arguments; the engine decides the shape, so a malformed file cannot be
+written. Same motion as rendering, below. `state/taxonomy.json` is the one
+you still write directly.
+
 ## Rendering
 
 Never hand-draw a receipt or report — there is a surface for it. Surfaces

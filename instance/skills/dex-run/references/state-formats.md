@@ -12,36 +12,55 @@ markdown; state machinery processes is JSONL/JSON; nothing binary in
 One per corpus item, written at digest time. Digests are permanent: pages
 regenerate from digests, digests never regenerate from pages.
 
+**Never hand-write this file.** Write the judgment as JSON and let the
+engine serialize it:
+
+```json
+{"id": "<corpus item id>",
+ "signal": "high",
+ "topics": ["agent-architecture"],
+ "entities": ["claude-code"],
+ "facts": ["one standalone fact per fact the source actually yields, with concrete specifics, readable without the source in front of you",
+           "..."]}
+```
+
+then `bin/dex enrich item digest --file cache/digest.json`. `signal` is
+high | medium | low; topics and entities are canonical taxonomy names once
+taxonomy exists, otherwise 2–5 kebab-case candidates; `entities` may be
+omitted. `date` and `media:` are **not yours to pass** — they are the
+item's own share date and media, the engine reads both off the corpus item,
+and a payload naming either is refused. Rewriting is how a revised judgment
+lands: run the verb again with the new payload and the whole file is
+re-derived.
+
+What it writes:
+
 ```markdown
 ---
 id: <corpus item id>
 date: 2026-08-18                  # the item's share date
 signal: high                      # high | medium | low
-topics: [agent-architecture]      # canonical taxonomy names once taxonomy exists;
-entities: [claude-code]           #   otherwise 2–5 kebab-case candidates
-media: [media/<id>/photo.jpg]     # only when the item has media
+topics: [agent-architecture]
+entities: [claude-code]           # omitted when you name none
+media:                            # only when the item has media
+  - media/<id>/photo.jpg
 ---
-- one standalone fact bullet per fact the source actually yields, with
-  concrete specifics, each readable without the source in front of you.
+- one standalone fact bullet per fact the source actually yields.
 ```
 
-No verb writes digests — `signal` and `topics` are the judgment — so
-`bin/dex lint` is the only thing that checks them, and it checks two
-different things. The frontmatter is a **hard failure**: a digest with no
-complete fence, missing `id`/`date`/`signal`/`topics`, a `signal` outside
-high|medium|low, empty `topics`, or an `id` that disagrees with its
-filename exits 1, exactly like a malformed ledger line — the wiki layer
-reads these files, and a digest that states no facts at all fails with
-them — an empty body is the one thing the file exists not to be. How many
-facts beyond that is **never checked**: the count measures the source, not
-the digest, and no honest digest makes three facts out of a two-line
-tweet.
+`bin/dex lint` checks the same shape, and it checks two different things.
+The frontmatter is a **hard failure**: a digest with no complete fence,
+missing `id`/`date`/`signal`/`topics`, a `signal` outside high|medium|low,
+empty `topics`, or an `id` that disagrees with its filename exits 1,
+exactly like a malformed ledger line — the wiki layer reads these files,
+and a digest that states no facts at all fails with them — an empty body is
+the one thing the file exists not to be. How many facts beyond that is
+**never checked**: the count measures the source, not the digest, and no
+honest digest makes three facts out of a two-line tweet.
 
-**Never hand-write this file.** Write the judgment as JSON and let the
-engine serialize it: `bin/dex enrich item digest --file cache/digest.json`.
-The judgment is yours, the shape is the engine's, and a digest that went
-through the verb cannot fail the check above. Lint's frontmatter check is a
-backstop for files that predate the verb or were edited by hand.
+A digest that went through the verb cannot fail any of that — the check is
+a backstop for files that predate the verb or were edited by hand, and the
+repair for one is to rewrite it through the verb.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 
