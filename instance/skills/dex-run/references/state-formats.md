@@ -185,7 +185,9 @@ a malformed record impossible:
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never
   ran"; `rules` versions the harvest rules). Written by
-  `bin/dex enrich pass`.
+  `bin/dex enrich pass`; the digest pass is recorded by `enrich item
+  digest` itself, in the same call as the file (`enrich pass --stage
+  digest` remains the manual re-record).
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
 - `state/issue-reports.jsonl` — what this instance filed/commented

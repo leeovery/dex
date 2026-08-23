@@ -143,8 +143,12 @@ class TestMain:
         )
         capsys.readouterr()
         main(["item", "digest", "--file", str(payload)])
-        assert capsys.readouterr().out == f"wrote state/digests/{item_id}.md\n"
+        assert capsys.readouterr().out == (
+            f"wrote state/digests/{item_id}.md · digest pass recorded\n"
+        )
         assert (instance.digests_dir / f"{item_id}.md").read_text().startswith("---\n")
+        record = json.loads(instance.passes_path.read_text().split("\n")[0])
+        assert (record["stage"], record["item"]) == ("digest", item_id)
 
     def test_a_refused_digest_payload_exits_with_a_stated_line(self, instance, monkeypatch):
         monkeypatch.chdir(instance.root)

@@ -16,6 +16,15 @@ Rewriting is allowed — a session revising its judgment writes the payload
 again — and nothing carries over from the file being replaced. Every field
 is either the payload's judgment or the corpus item's fact, so a rewrite is
 a full re-derivation and there is nothing only the old file knew.
+
+The verb also records the item's digest pass — the comparand the
+staleness backstop reads — through the same seam ``enrich pass`` uses, so
+a digest cannot land unrecorded. The record goes in after validation and
+before the file write: a refused payload records nothing, and a crash
+between the two writes leaves a pass with no digest file, which the
+backstop's no-digest branch lists loudly. The other residue — a digest
+with no pass — has no reader at all, and is exactly the silently
+uncomparable state this recording exists to end.
 """
 
 import json
@@ -25,6 +34,7 @@ from typing import NoReturn
 
 from dex_engine import atomic, corpus
 
+from .run import RunContext, record_pass
 from .types import Instance
 
 __all__ = ["SIGNALS", "DigestPayloadError", "item_digest"]
@@ -47,13 +57,21 @@ class DigestPayloadError(ValueError):
     """A digest payload does not conform to the shape the verb writes."""
 
 
-def item_digest(payload_path: Path, *, instance: Instance) -> str:
-    """Write one item's digest from its JSON payload.
+def item_digest(payload_path: Path, *, ctx: RunContext) -> str:
+    """Write one item's digest from its JSON payload, recording the pass.
+
+    The digest pass goes through :func:`record_pass` — the one
+    pass-writing path — after the payload survives validation and before
+    the file lands: a refused payload records nothing, and a crash
+    between the record and the write leaves a pass with no digest file,
+    the state the staleness backstop's no-digest branch reports loudly.
+    Writing the file first would leave the opposite residue, a digest no
+    record dates, which no reader ever flags.
 
     Args:
         payload_path: The JSON payload (conventionally under ``cache/``):
             ``{"id", "signal", "topics", "facts"}``, ``entities`` optional.
-        instance: The instance.
+        ctx: The run context.
 
     Returns:
         A one-line confirmation naming the file written.
@@ -61,10 +79,12 @@ def item_digest(payload_path: Path, *, instance: Instance) -> str:
     Raises:
         DigestPayloadError: The payload is not a JSON object, a key is
             missing, unknown, engine-owned or the wrong type, or the id
-            names no readable corpus item. Nothing is written.
+            names no readable corpus item. Nothing is written and no pass
+            is recorded.
         OSError: The payload file cannot be read, or the digest cannot be
             written.
     """
+    instance = ctx.instance
     payload = _load(payload_path)
     item_id = _text(payload_path, payload, "id")
     if not _ITEM_ID_RE.fullmatch(item_id):
@@ -83,13 +103,14 @@ def item_digest(payload_path: Path, *, instance: Instance) -> str:
     facts = _facts(payload_path, payload)
     item = _corpus_item(payload_path, instance, item_id)
 
+    record_pass(ctx, item_id, "digest")
     target = instance.digests_dir / f"{item_id}.md"
     rewrite = target.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
     atomic.write_text(
         target, _serialize(item, signal=signal, topics=topics, entities=entities, facts=facts)
     )
-    return f"{'rewrote' if rewrite else 'wrote'} state/digests/{item_id}.md"
+    return f"{'rewrote' if rewrite else 'wrote'} state/digests/{item_id}.md · digest pass recorded"
 
 
 def _corpus_item(payload_path: Path, instance: Instance, item_id: str) -> corpus.CorpusItem:

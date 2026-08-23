@@ -141,7 +141,8 @@ tweet earns two, and padding to a number invents facts. Interpretive
 context lives here, not in item bodies. Topics: canonical names from
 `state/taxonomy.json` when it exists; otherwise 2–5 kebab-case candidates.
 Revising a digest later is the same call with a new payload — the file is
-rewritten whole. Then `bin/dex enrich pass <item-id> --stage digest`.
+rewritten whole. The verb records the digest pass itself — the
+confirmation says so — so there is no separate pass command to run here.
 
 A parked item (waiting/blocked/manual) still exists — provenance and note
 were captured at ingest — but gets no digest or wiki work until its

@@ -149,8 +149,9 @@ Then do a run now, whatever the host.
 
 Where a state file has a verb, the verb writes it and you never do:
 corpus items come from `enrich item new`, digests from `enrich item digest
---file cache/digest.json`, ledger lines from `enrich mark` and the run
-itself, stage records from `enrich pass`. You supply the judgment as JSON
+--file cache/digest.json` (which records the digest pass itself), ledger
+lines from `enrich mark` and the run itself, harvest and wiki stage
+records from `enrich pass`. You supply the judgment as JSON
 or arguments; the engine decides the shape, so a malformed file cannot be
 written. Same motion as rendering, below. `state/taxonomy.json` is the one
 you still write directly.

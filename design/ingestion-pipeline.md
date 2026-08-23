@@ -556,7 +556,7 @@ Files:
 | file | holds |
 |---|---|
 | `state/enrichment-ledger.jsonl` | work units (§5) |
-| `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10) |
+| `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10). The digest pass is recorded by `enrich item digest` itself, in the same call as the file (§10); `enrich pass` records the harvest and wiki stages, and remains the manual re-record for any stage |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
@@ -1270,6 +1270,19 @@ later mechanical stage breaks on a missing harvest pass the way the wiki
 layer breaks on a malformed digest, and the repair — run the judgment now,
 then `enrich pass --stage harvest` — is judgment, the report's business.
 
+**The digest pass is recorded by the digest verb, not by a second
+command.** `enrich item digest` records the pass itself, through the same
+`record_pass` path `enrich pass` uses — a separate recording command was a
+step a session could forget, and a forgotten one silently cost the
+staleness backstop its comparand: a digest with no pass record is dated by
+nothing, so no later enrichment could ever read as newer than it. The
+verb records after validation and before the file write, so both failure
+shapes stay honest: a refused payload records nothing, and a crash
+between the record and the write leaves a pass with no digest file —
+which the backstop's no-digest branch lists loudly — never the unreadable
+opposite. `enrich pass --stage digest` remains the manual re-record, and
+the harvest and wiki stages still record through `enrich pass`.
+
 ## 11. Rendering: judgment decides, code renders
 
 Composition that is fully determined by data is computed in code and emitted
@@ -1863,7 +1876,9 @@ src/dex_engine/
                  total validation — a missing, unknown or mistyped key, a
                  `signal` outside the vocabulary, empty `topics` or
                  `facts`, an id naming no corpus item — and nothing is
-                 written on a refusal. Rewriting is allowed and carries
+                 written on a refusal, no pass record included. Records
+                 the digest pass itself, before the file write (§10).
+                 Rewriting is allowed and carries
                  nothing over: every field is the payload's judgment or
                  the corpus item's fact)
   normalize.py imports shared detect/types (private kind_of copy deleted)
