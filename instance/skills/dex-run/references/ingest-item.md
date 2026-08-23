@@ -38,8 +38,15 @@ how a thread relates) belongs in the digest, never the item body; thread
 context lives in the enrichment via walk-up. After creation, exactly two
 frontmatter fields ever change (`status`, `enrichment:`), both derived by
 the engine: the listing from the enrichment directory, the status from the
-ledger — `enriched` only once every unit the item owns has landed (or is
-confirmed gone or deliberately skipped), `raw` while any is still owed.
+ledger — `enriched` only once every unit the ownership map gives the item
+has landed (or is confirmed gone or deliberately skipped), `raw` while any
+is still owed. The status is what the item owes, never what its own
+directory holds; the one exception is a capture that seeded nothing at all,
+which stays `raw` on no units and no files because it still owes its
+description and its digest. So `enrichment: []` on an `enriched` item is
+not a fault: a URL two captures share is fetched once and its output lands
+under whichever item hit first, and the listing names only that item's own
+directory. `bin/dex enrich status <item>` is where the shared unit shows.
 
 Then delete the capture file — the capture is preserved in git history and
 its content lives on in the corpus.

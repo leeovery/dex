@@ -628,6 +628,7 @@ when the running engine is newer. This closes the self-healing loop with zero
 redundant work: bug files issue → fix → release → sync bumps pin → next run
 retries → `done`.
 
+
 Blocked-vs-dead requires visible status codes: the web driver fetches via
 urllib with a browser UA and hands HTML to trafilatura for **extraction
 only** (`trafilatura.fetch_url`'s failure mode — `None` for everything — is
@@ -1753,14 +1754,27 @@ Skill changes shipping with this:
   the enrichment via walk-up. After creation, exactly two frontmatter
   fields ever change (`status`, `enrichment:` listing), both derived, both
   written by corpus.py. The derivation rule: the listing is the markdown
-  filenames in `enrichment/<id>/`, sorted; `status: enriched` iff the item
-  holds enrichment **and no unit it owns is still outstanding** — queued,
+  filenames in `enrichment/<id>/`, sorted; `status: enriched` iff **no unit
+  the ownership map gives the item is still outstanding** — queued,
   waiting, blocked, error, or manual. An item is one unit of knowledge (the
   post, the thread parents above it, the links harvest promoted, the media,
   the video awaiting its transcript) and nothing about it advances to
   digest or wiki until every part has landed, so one pending transcript
   holds the whole item at `raw`; a `dead` or `skipped` unit owes nothing and
-  holds nothing hostage. Every run reconciles **every** item against
+  holds nothing hostage. What the item OWES is the whole question and the
+  ledger answers it, never the item's own directory listing — which asks a
+  different question, where the item's own files are. The one exception is
+  the capture that seeded nothing at all: no units AND no files is a
+  text-or-image-only share, which owes its description and its digest, and
+  an `any()` over no units would call that finished. So an `enriched` item
+  may legitimately carry `enrichment: []` — seeding dedupes by work hash,
+  so a URL shared into two captures is ledgered once and its output lands
+  under the first item only, while the second derives `enriched` on the
+  same landing. The listing stays empty for it deliberately: the field is
+  the item's own directory, its entries are bare filenames every reader
+  resolves against `enrichment/<id>/`, and one file for one unit is named
+  by one item. `enrich status <item>` is where the shared unit shows.
+  Every run reconciles **every** item against
   disk — not just the units it drained — writing only on change, so
   enrichment written outside the drain (media descriptions, cognitive
   heals) converges at the next run; `enrich mark` and `enrich pass`
