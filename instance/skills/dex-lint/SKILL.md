@@ -66,9 +66,13 @@ step 4.
      why this is a finding and not a repair the run makes.
    - **Malformed digests** — the message names what broke (no frontmatter
      fence, a missing or bogus field, an `id` disagreeing with its
-     filename). Repair against `.claude/skills/dex-run/references/state-formats.md`;
-     the wiki layer reads these files, so nothing downstream is trustworthy
-     until they conform.
+     filename). Every one of these predates the digest verb or was
+     hand-edited since, so repair by rewriting the file through the verb:
+     read the facts it already states, write them as the payload in
+     `.claude/skills/dex-run/references/state-formats.md`, and run
+     `bin/dex enrich item digest --file cache/digest.json`. The wiki layer
+     reads these files, so nothing downstream is trustworthy until they
+     conform.
    - **Broken wikilinks** — typo → correct it; genuinely missing target →
      create the page if its members justify one, otherwise de-link.
    - **Bad citations** (id not in corpus) — find the right id or remove

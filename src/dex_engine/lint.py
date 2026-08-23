@@ -32,8 +32,9 @@ Checks:
 
   digests — the shape ``state/digests/<id>.md`` promises: frontmatter with
   ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
-  least one fact bullet. No verb writes digests, so lint is the only thing
-  that verifies them.
+  least one fact bullet. ``enrich item digest`` writes digests and cannot
+  write any of those faults, so this is the backstop for the files that
+  predate the verb and for anything hand-edited since.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -893,8 +894,9 @@ def _unread_note(rel: str, why: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Digest shape. No verb writes digests — `signal` and `topics` are the
-# judgment — so this is the only thing that checks what the session wrote.
+# Digest shape. `enrich item digest` serializes the judgment, so a digest
+# written since it shipped conforms by construction; this reads the ones
+# that predate it, and anything a hand has been through since.
 # ---------------------------------------------------------------------------
 
 
@@ -935,9 +937,9 @@ def _digest_body_fault(body: str) -> str | None:
 def _digest_parts(text: str) -> tuple[dict[str, str | list[str]] | None, str]:
     """A digest's frontmatter fields and body; fields None without a fence.
 
-    The YAML a session actually writes, not a canonical subset of it: no
-    verb writes a digest, nothing tells the session to leave a scalar
-    unquoted, and its only other reader is a session reading YAML. So
+    Any YAML a digest may hold, not the canonical subset the verb emits:
+    the files this reads are the ones written before the verb or edited by
+    hand since, and nothing told that hand to leave a scalar unquoted. So
     quotes come off (the same way every other frontmatter reader takes
     them off), and a list is read in either form — flow (``[a, b]``) or
     block (``- a`` lines under the key). A shape check that failed on a
