@@ -529,7 +529,7 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/digests/<id>.md` | per-item fact indexes, Claude-written; the one markdown corner of `state/` |
+| `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14) |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
@@ -1669,6 +1669,12 @@ src/dex_engine/
                urls.py       canonicalization and the work-key hash — the
                              one place a ledger identity is computed
                capture.py    `enrich item new`: capture file → corpus item
+               digest.py     `enrich item digest`: JSON judgment → the
+                             digest file. The ONE digest write point; the
+                             payload carries `signal`, `topics`, optional
+                             `entities` and the facts, and `date`/`media:`
+                             are read off the corpus item rather than
+                             taken from a caller
                issues.py     the issue filer (§13)
                ownership.py — which live corpus item claims a work unit
                  (its urls:/media: hashed exactly as seeding does), the one
@@ -1719,6 +1725,15 @@ src/dex_engine/
                  carrying `asset:`/`name:` frontmatter is refused loudly —
                  `dex inbox` has not run, and creating a text item would
                  drop the binary's provenance silently)
+               · item digest --file <payload>  (writes the digest: the
+                 session's judgment arrives as JSON, the fence, field
+                 order, list style and bullets are the engine's. Loud
+                 total validation — a missing, unknown or mistyped key, a
+                 `signal` outside the vocabulary, empty `topics` or
+                 `facts`, an id naming no corpus item — and nothing is
+                 written on a refusal. Rewriting is allowed and carries
+                 nothing over: every field is the payload's judgment or
+                 the corpus item's fact)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential
@@ -1730,7 +1745,9 @@ src/dex_engine/
                  asked of the owning item, §4),
                  waiting cohorts, pass records, the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
-                 markers off enrichment frontmatter), and digest shape
+                 markers off enrichment frontmatter), and digest shape —
+                 the backstop for digests written before `item digest`,
+                 and for anything hand-edited since
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 
@@ -1826,14 +1843,16 @@ Skill changes shipping with this:
   running `enrich mark <url> <status>` (the sanctioned ledger-correction
   verb); migration-report review (§12).
 - **Corpus items are created by `item new`, never freehand** — code writes
-  frontmatter, Claude writes prose. The governing line: mechanize where
-  the *values* are mechanical (item provenance comes from the capture
-  file); stay freehand where the values are judgment (digests — `signal`
-  and `topics` are the judgment, so a verb would add ceremony without
-  removing a decision; lint verifies their shape instead). Frontmatter
-  thereby converges on the same guarantee as the ledger: a malformed item
-  can't be written, because structure never passes through freehand
-  writing. Corollary, closing a drift current practice shows: **the item
+  frontmatter, Claude writes prose. The governing line: judgment supplies
+  the values, code writes the shape. It holds even where every value is
+  judgment — **digests go through `item digest` too**: `signal`, `topics`,
+  `entities` and the facts are the session's, and serializing them is not
+  a decision the session should be able to get wrong. Frontmatter thereby
+  converges on the same guarantee as the ledger: a malformed item or
+  digest can't be written, because structure never passes through freehand
+  writing, and lint's digest check becomes the backstop for files that
+  predate the verb rather than the primary guard. Corollary, closing a
+  drift current practice shows: **the item
   body is the owner's note verbatim and stays that way** — Claude's
   interpretive context (what a linked video is, how a thread relates)
   belongs in the digest, not the item body; thread context itself lives in
