@@ -163,6 +163,31 @@ class TestYoutubeDrain:
         assert audio_files(instance) == []
         assert ITEM in report  # the item lands on the cognitive work list
 
+    def test_a_renamed_items_park_file_is_read_from_the_live_items_directory(self, instance):
+        # The transcribe drain composes onto the file the park wrote, and
+        # it finds that file at `enrichment/<item>/<kind>-<hash6>.md`. The
+        # unit comes off the ledger carrying whatever id its line was
+        # written under, so a rename since leaves the drain reading a
+        # directory that is gone — and it would write a transcript with the
+        # description silently dropped, over the park that held it.
+        renamed = "2026-08-19-example-renamed-55ad7b"
+        write_item(instance, renamed, urls=[VIDEO_URL])
+        park = instance.enrichment_dir / renamed / f"youtube-{work_hash(VIDEO_URL)[:6]}.md"
+        park.parent.mkdir(parents=True)
+        park.write_text(
+            f"---\nurl: {VIDEO_URL}\nfetched: '2026-08-01'\n---\n\n"
+            "## Description\n\nRecorded on a phone.\n",
+            encoding="utf-8",
+        )
+        entry = seed_waiting(instance)  # the line still names the old id
+        assert entry.item == ITEM
+        run_mod.run_transcribe(
+            transcribe_ctx(instance, transcriber=FakeTranscriber("whisper-local", text="Words."))
+        )
+        content = park.read_text()
+        assert "Recorded on a phone." in content  # the park's own description stands
+        assert "## Transcript\n\nWords." in content
+
     def _park_through_the_driver(self, instance) -> Path:
         """Park the video the way the real driver does, and return its file."""
         write_item(instance, urls=[VIDEO_URL])

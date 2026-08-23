@@ -389,143 +389,35 @@ class _Drain:
             for repo_path in item.media:
                 self._seed_media_file(item.id, repo_path)
         self.resolve_owners()
-        self._reattribute_dead_items()
 
     def resolve_owners(self) -> None:
         """Re-read which live corpus item owns each unit (one corpus pass)."""
         self.owners = _unit_owners(self.ctx.instance, self.entries, self.ctx.drivers)
 
-    def _reattribute_dead_items(self) -> None:
-        """Move a line naming a dead id onto the live item that owns its work.
+    def owner_of(self, entry: LedgerEntry) -> str:
+        """Which live item owns this unit's work — the corpus's answer.
 
-        Reading ownership off the corpus (:func:`_unit_owners`) is enough
-        for the surfaces, which derive fresh every time — but not for the
-        drain, which carries ``entry.item`` forward into the next line and
-        into the output path it writes. A renamed item's waiting unit
-        drained on the stored string writes its enrichment into
-        ``enrichment/<dead-id>/``, so the string itself has to heal, and
-        seeding is where the corpus has just been read.
+        The single-name form of :func:`_unit_owners`, for the write path.
+        A line's ``item`` is the attribution as of the day it was written,
+        and migration 1 carries a stated item verbatim, so a unit of an
+        item RENAMED since names an id no corpus file answers to — and the
+        drain carries that string into the next line it records and into
+        the ``enrichment/<item>/`` path it writes, filing live work under a
+        dead id. Every reader resolves ownership off the corpus; so does
+        every write, which is the same question asked once more at the
+        moment the answer is committed.
 
-        The status is untouched: a ``manual`` verdict is still ``manual``
-        under its new name, exactly as migration 2's re-key pass holds. So
-        is the output, once found — a renamed item's enrichment directory
-        moves with it, so the recorded path names a directory that is gone
-        while the file sits under the new id. So, for the same reason, is
-        the line's provenance: ``item`` is the one field a re-attribution
-        may rewrite, and ``date``/``engine`` describe work this sweep is
-        not doing (see ``carry_provenance`` below, and
-        :func:`ledger.stamp`).
-
-        One status does move. A ``done`` line whose output is nowhere on
-        disk is not done for the item that owes it: ``exclude`` keeps the
-        line where another live item claims the work, but deletes the
-        enrichment along with the item that produced it — leaving the
-        survivor's URL ``done`` with nothing to show, and seeding's
-        already-a-unit short-circuit means nothing ever fetches it again.
-        That one requeues, and the run it re-enters fetches it under the
-        item that claims it.
-
-        Idempotent by construction: once the line names a live item the
-        first condition stops matching, and once the fetch lands the
-        second does too.
+        The stored string wins wherever it is still one of the owners: a
+        unit two live items share must not migrate between them run to run.
+        It is also the fallback where nothing live claims the work at all,
+        exactly as the read side falls back — an unclaimed unit belongs to
+        whoever the line says, which is lint's ghost-item finding to
+        report, never this to silently reassign. So a stale ``item`` on an
+        old line stays what it is, historical attribution, and no persisted
+        line is ever rewritten to heal it.
         """
-        live = {path.stem for path in self.ctx.instance.corpus_dir.glob("*/*.md")}
-        moved = 0
-        requeued = 0
-        for entry in list(self.entries.values()):
-            if entry.item in live:
-                continue
-            owner = next((item for item in self.owners.get(entry.hash, ()) if item in live), None)
-            if owner is None:
-                continue  # nothing live claims it — lint's ghost-item finding
-            # Only a landing has an output to find: on every other status a
-            # path is a schema violation, not a repair.
-            product = self._unit_product(entry, owner) if entry.status is Status.DONE else None
-            lost = entry.status is Status.DONE and entry.path is not None and product is None
-            self.record(
-                dataclasses.replace(
-                    entry,
-                    item=owner,
-                    status=Status.QUEUED if lost else entry.status,
-                    path=None if lost else (product or entry.path),
-                    title=None if lost else entry.title,
-                ),
-                # A pure re-attribution corrects WHO owns the work; it does
-                # no work, so it carries the line's ``date`` and ``engine``
-                # rather than claiming this run's. ``engine`` is the load-
-                # bearing one: :func:`is_drainable` retries an ``error``
-                # once per newer engine, and this sweep runs before the
-                # drain builds its queue in the same run — stamping the
-                # running engine here spent that retry without running it,
-                # and a renamed item's error line then waited for the NEXT
-                # release. Sharpest after a sync: migration 1 stamps old
-                # lines ``0.0.1``, so the run meant to rescue them was the
-                # run that silently burned their one shot. ``date`` is the
-                # day the enrichment landed, which the digest-staleness
-                # backstop reads.
-                #
-                # A requeue is the exception, and stamps: "this output is
-                # gone, fetch it again" is a verdict THIS engine reached
-                # today, not one carried from the line it supersedes.
-                carry_provenance=not lost,
-            )
-            moved += 1
-            if lost:
-                requeued += 1
-        if not moved:
-            return
-        note = (
-            f"re-attributed {moved} ledger {'entry' if moved == 1 else 'entries'} to the "
-            "live items whose corpus files claim the work"
-        )
-        if requeued:
-            note += (
-                f"; {requeued} queued to re-fetch — the enrichment went with the item "
-                "that produced it"
-            )
-        self.notes.append(note)
-        self.resolve_owners()
-
-    def _unit_product(self, entry: LedgerEntry, item_id: str) -> str | None:
-        """This unit's output on disk — the recorded path, else ``item_id``'s.
-
-        A renamed item's enrichment directory moves with it, so the path
-        the line recorded names a directory that is gone while the file
-        sits under the new id — under the SAME name: the rename moved the
-        directory, never the file in it. So the name is read back off the
-        line rather than re-derived here. The drain writes three shapes —
-        :meth:`_write_output`'s ``<kind>-<hash6>.md``,
-        :meth:`_write_assets`' ``<hash6>-asset-<n>.<ext>`` and
-        :meth:`_download_media`'s ``media-<slot>.<ext>`` — and each of
-        them records the name it chose, so the line is the one place that
-        knows all three. A second copy of the first convention here judged
-        every download and extraction asset lost and requeued it, which
-        for a ``via: extract-asset`` unit puts its repo path (the work key
-        those carry instead of a URL) into the fetch queue, where no
-        transport can ever take it.
-
-        An enrichment candidate must PROVE it is this unit's by the URL it
-        records, the same test :func:`_drop_superseded_outputs` applies
-        before unlinking — ``hash6`` is six hex digits, so a neighbour
-        under one item shares it often enough. A download and an asset are
-        bytes with no frontmatter to ask and need none: their names carry
-        this unit's own identity (the download's slot is its position in
-        the item's media order, the asset's is its parent's hash and
-        index), so a name that exists under the new id is this unit's file.
-        """
-        if entry.path is None:
-            return None  # a landing that recorded no output has none to find
-        if (self.ctx.instance.root / entry.path).is_file():
-            return entry.path
-        name = Path(entry.path).name
-        candidate = self.ctx.instance.enrichment_dir / item_id / name
-        if not candidate.is_file():
-            return None
-        found = f"enrichment/{item_id}/{name}"
-        if entry.via in ("media", "extract-asset"):
-            return found
-        fields, _body = read_enrichment(candidate)
-        return found if fields.get("url") == entry.url else None
+        owners = self.owners.get(entry.hash, ())
+        return entry.item if not owners or entry.item in owners else owners[0]
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
@@ -720,7 +612,7 @@ class _Drain:
             url=entry.url,
             kind=entry.kind,
             format=entry.format,
-            item=entry.item,
+            item=self.owner_of(entry),
             depth=entry.depth or 0,
             parent=entry.parent,
         )
@@ -834,7 +726,7 @@ class _Drain:
         # notes) and both compose the transcript onto what that park wrote,
         # so both acquisitions read the unit's own output file.
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
-        enrichment = self.ctx.instance.enrichment_dir / entry.item / name
+        enrichment = self.ctx.instance.enrichment_dir / self.owner_of(entry) / name
         match entry.kind:
             case Kind.YOUTUBE:
                 return acquire_youtube_audio(
@@ -968,7 +860,7 @@ class _Drain:
             LedgerEntry(
                 hash=entry.hash,
                 url=entry.url,
-                item=entry.item,
+                item=self.owner_of(entry),
                 kind=redetect.kind,
                 format=redetect.format,
                 status=Status.QUEUED,
@@ -1018,16 +910,23 @@ class _Drain:
         of them to lose — its frontmatter carries the thread-completeness
         markers and the re-fetch pointer, and lint's marker scan is the
         only thing that ever opens one.
+
+        The directory is the item the corpus says owns the unit
+        (:meth:`owner_of`), never the line's stored string: a renamed
+        item's waiting unit drained on the string writes its enrichment
+        into ``enrichment/<dead-id>/``, where the item that owes the work
+        cannot list it.
         """
+        owner = self.owner_of(entry)
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
-        out = self.ctx.instance.enrichment_dir / entry.item / name
+        out = self.ctx.instance.enrichment_dir / owner / name
         body = result.body or ""
         content = _render_enrichment(entry.url, self.ctx.today(), result.meta, body)
         existed = out.exists()
         if existed and _mask_fetched(out.read_text(encoding="utf-8")) == _mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))
         if count:
-            outcome = self.outcomes.setdefault(entry.item, _ItemOutcome())
+            outcome = self.outcomes.setdefault(owner, _ItemOutcome())
             if existed:
                 outcome.changed += 1
             else:
@@ -1044,17 +943,22 @@ class _Drain:
         Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
         overwrite, never duplicate; the caps (4 files per item, 10MB per
         file) are shared with the media stage's downloads.
+
+        ``entry`` is the ``done`` line :meth:`_apply_done` just recorded,
+        so its ``item`` is already the owning one — as it is for every
+        other write this success fans out to.
         """
+        owner = entry.item
         for index, asset in enumerate(assets):
             name = f"{entry.hash[:6]}-asset-{index}.{asset.suggested_ext}"
-            out = self.ctx.instance.enrichment_dir / entry.item / name
-            rel = f"enrichment/{entry.item}/{name}"
+            out = self.ctx.instance.enrichment_dir / owner / name
+            rel = f"enrichment/{owner}/{name}"
             if len(asset.data) > MEDIA_MAX_BYTES:
                 self._asset_outcome(
                     entry, rel, status=Status.SKIPPED, reason="asset exceeds 10MB ceiling"
                 )
                 continue
-            if not out.exists() and self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
+            if not out.exists() and self._media_file_count(owner) >= MEDIA_MAX_FILES:
                 self._asset_outcome(
                     entry,
                     rel,
@@ -1066,7 +970,7 @@ class _Drain:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(asset.data)
             if changed:
-                self.outcomes.setdefault(entry.item, _ItemOutcome()).media += 1
+                self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
             self._asset_outcome(entry, rel, status=Status.DONE, path=rel)
 
     def _asset_outcome(
@@ -1210,10 +1114,11 @@ class _Drain:
             # Backstop for servers that lie about (or omit) Content-Length.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
-        out = self.ctx.instance.enrichment_dir / entry.item / f"media-{slot}.{_ext_of(entry.url)}"
+        owner = self.owner_of(entry)
+        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{_ext_of(entry.url)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(response.body)
-        self.outcomes.setdefault(entry.item, _ItemOutcome()).media += 1
+        self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(
             entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))
         )
@@ -1259,11 +1164,12 @@ class _Drain:
         reason. A slot already on disk is this unit's own file, overwritten
         in place, and likewise spends nothing new.
         """
+        owner = self.owner_of(entry)
         slot = self._media_position(entry)
-        item_dir = self.ctx.instance.enrichment_dir / entry.item
+        item_dir = self.ctx.instance.enrichment_dir / owner
         if any(_is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
             return slot
-        if self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
+        if self._media_file_count(owner) >= MEDIA_MAX_FILES:
             return None
         return slot
 
@@ -1273,12 +1179,18 @@ class _Drain:
         Counted regardless of status: the position is an identity, so a
         parked or skipped sibling still holds its place — a position that
         moved as statuses changed would rename files under the item.
+
+        The item is the owning one on both sides of the comparison
+        (:meth:`owner_of`) — the slot names a file in ``enrichment/<owner>/``,
+        so counting the stored string's siblings would let a renamed item's
+        media and its own collide on one index.
         """
+        owner = self.owner_of(entry)
         seen = 0
         for unit_hash, other in self.entries.items():
             if unit_hash == entry.hash:
                 break
-            if other.item == entry.item and other.via == "media":
+            if self.owner_of(other) == owner and other.via == "media":
                 seen += 1
         return seen
 
@@ -1336,15 +1248,12 @@ class _Drain:
 
     # -- recording -------------------------------------------------------
 
-    def record(
-        self, entry: LedgerEntry, *, count: bool = False, carry_provenance: bool = False
-    ) -> LedgerEntry:
+    def record(self, entry: LedgerEntry, *, count: bool = False) -> LedgerEntry:
         stamped = ledger.stamp(
             entry,
             today=self.ctx.today,
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
-            carry_provenance=carry_provenance,
         )
         ledger.append(self.ctx.instance.ledger_path, stamped)
         self.entries[stamped.hash] = stamped
@@ -1368,12 +1277,18 @@ class _Drain:
         error: str | None = None,
         reason: str | None = None,
     ) -> None:
-        """Write the outcome for a drained entry, provenance carried forward."""
+        """Write the outcome for a drained entry, provenance carried forward.
+
+        Everything but the attribution is carried from the drained line;
+        the attribution is asked of the corpus (:meth:`owner_of`), so a
+        renamed item's work is recorded against the item that owes it
+        rather than against the id the line was written under.
+        """
         self.record(
             LedgerEntry(
                 hash=entry.hash,
                 url=entry.url,
-                item=entry.item,
+                item=self.owner_of(entry),
                 kind=entry.kind,
                 format=entry.format,
                 status=status,
@@ -1564,6 +1479,11 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     here — the drain's fetch write, the transcribe drain's landing, and a
     hand-written file closed by ``mark``.
 
+    The directory searched is the replacement's own, not the one the
+    entry's ``item`` names: a unit's outputs all live beside each other by
+    construction, and the stored string is the attribution as of the day
+    the line was written, which a rename since leaves naming nothing.
+
     Candidate names are the closed ``<kind>-<hash6>.md`` set, and each
     candidate must PROVE it belongs to this unit by the URL it records:
     ``hash6`` is six hex digits, so two units under one item share one often
@@ -1574,7 +1494,7 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     """
     if not (instance.root / path).is_file():
         return
-    item_dir = instance.enrichment_dir / entry.item
+    item_dir = (instance.root / path).parent
     current = Path(path).name
     for kind in Kind:
         stale = item_dir / f"{kind.value}-{entry.hash[:6]}.md"
@@ -1646,7 +1566,9 @@ def _unit_owners(
     to, and reading ownership off that string hands the work to a dead id.
     The corpus is the source of truth, so the corpus is asked first
     (:func:`corpus_claims`), exactly as ``exclude``, ``lint`` and migration
-    2 already ask it.
+    2 already ask it — and exactly as the drain asks it on the way OUT
+    (:meth:`_Drain.owner_of`), which is why no line is ever rewritten to
+    correct a stale one.
 
     Three answers, in the order migration 2 established:
 

@@ -2107,6 +2107,10 @@ class TestOwnershipIsTheCorpusAnswer:
     renamed since then has every one of its lines naming an id no corpus
     file answers to, and an ``exclude`` that keeps a line another live item
     claims leaves it naming the purged one.
+
+    Asked on the way in AND on the way out: every reader resolves the work
+    to the live item, and so does every write, so the stored string is
+    never healed. A stale ``item`` on an old line is history.
     """
 
     def _renamed(self, instance, **fields) -> Path:
@@ -2154,23 +2158,23 @@ class TestOwnershipIsTheCorpusAnswer:
         self._waiting(instance)
         assert run_mod.digest_orphans(instance) == []
 
-    def test_the_stale_line_is_moved_onto_the_item_that_owns_the_work(self, instance):
-        # The repair path: `mark` copies the prior line's item and has no
-        # --item flag, `enrich fetch` refuses a URL another item enriches,
-        # and migration 1 never re-derives a stated item — so seeding is
-        # the one place the string can heal.
+    def test_the_stale_line_is_left_exactly_as_it_was_written(self, instance):
+        # Ownership is a question the readers and the write path both ask
+        # of the corpus, so the stored string never has to be healed — and
+        # a run that does no work on a unit writes no line for it. A stale
+        # `item` is historical attribution, and history is not repaired.
         self._waiting(instance)
+        before = instance.ledger_path.read_text(encoding="utf-8")
         ctx = make_ctx(instance, FakeDriver())
-        report = run_mod.run(ctx)
-        entry = entry_for(ctx)
-        assert entry.item == NEW_ITEM
-        assert entry.status is Status.WAITING  # the verdict is untouched
-        assert entry.needs is Need.TRANSCRIBE
-        assert "re-attributed 1 ledger entry" in report
+        run_mod.run(ctx)
+        assert instance.ledger_path.read_text(encoding="utf-8") == before
+        assert entry_for(ctx).item == OLD_ITEM
 
-    def test_the_repaired_unit_drains_into_the_live_items_enrichment(self, instance):
-        # Without the heal `record_outcome` carries the dead id forward and
-        # `_write_output` lands the file in `enrichment/<dead-id>/`.
+    def test_the_renamed_items_unit_drains_into_the_live_items_enrichment(self, instance):
+        # The write path asks the same question the readers ask: without it
+        # `record_outcome` carries the dead id forward and `_write_output`
+        # lands the file in `enrichment/<dead-id>/`, where the item that
+        # owes the work cannot list it.
         self._renamed(instance, status=Status.QUEUED)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
@@ -2179,13 +2183,204 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
 
+    def test_a_renamed_items_child_is_admitted_under_the_live_item(self, instance):
+        # Harvest promotes a child from the parent's line, so the dead id
+        # would propagate onto units written this run, not just carried on
+        # old ones.
+        self._renamed(instance, status=Status.QUEUED)
+        child = "https://example.test/harvested"
+
+        def fetch(unit):
+            if unit.url != URL:
+                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
+            return Result(
+                status=Status.DONE,
+                meta={"title": "t"},
+                body="body " * 30,
+                children=[Child(url=child, via="harvest")],
+            )
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(child)]
+        assert entry.item == NEW_ITEM
+        assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
+
+    def test_a_renamed_items_unit_reaches_its_driver_under_the_live_id(self, instance):
+        # `WorkUnit.item` is what a driver has to reason about the item with
+        # — the thread walk-up and the harvest subject rule both read it —
+        # and a dead id answers no question a driver can ask.
+        self._renamed(instance, status=Status.QUEUED)
+        driver = FakeDriver()
+        run_mod.run(make_ctx(instance, driver))
+        assert [unit.item for unit in driver.fetched] == [NEW_ITEM]
+
+    def test_a_renamed_items_redetected_unit_is_corrected_under_the_live_id(self, instance):
+        # The superseding line a mid-fetch kind discovery writes is a line
+        # like any other, and it is written before any outcome resolves the
+        # attribution for it.
+        self._renamed(instance, status=Status.QUEUED)
+        driver = FakeDriver(
+            fetch_fn=lambda _unit: Result(
+                status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST)
+            )
+        )
+        run_mod.run(make_ctx(instance, driver))
+        sniffed = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line).get("via") == "sniff"
+        ]
+        assert sniffed[0]["status"] == "queued"  # the correction, ahead of its outcome
+        assert sniffed[0]["item"] == NEW_ITEM
+
+    def test_a_unit_two_live_items_share_keeps_the_id_its_line_carries(self, instance):
+        # Both claim the work, so ownership has two answers and the line's
+        # own is one of them. Taking the first would move the output between
+        # two live items run to run, on nothing but id order.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=BRAVO,  # the later id: alpha would win an ordered pick
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == BRAVO
+        assert entry.path == f"enrichment/{BRAVO}/web-{entry.hash[:6]}.md"
+
+    def _media_unit(self, instance, url: str, item_id: str, parent: str) -> None:
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(url),
+                url=url,
+                item=item_id,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                via="media",
+                parent=parent,
+                depth=1,
+            ),
+        )
+
+    def test_a_renamed_items_media_downloads_into_the_live_items_directory(self, instance):
+        # A media unit redrained from a previous run comes off the ledger
+        # carrying whatever id its line was written under, so this is the
+        # one download path the parent's corrected line does not cover.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        hero = "https://example.test/hero.png"
+        self._media_unit(instance, hero, OLD_ITEM, work_hash(URL))
+        transport = FakeTransport(
+            {hero: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(hero)]
+        assert entry.item == NEW_ITEM
+        assert entry.path == f"enrichment/{NEW_ITEM}/media-0.png"
+        assert (instance.root / entry.path).read_bytes() == b"png"
+
+    def _landed_media(self, instance, url: str, item_id: str, slot: int, body: bytes) -> None:
+        """A media unit that landed before the rename, its file moved with it."""
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(url),
+                url=url,
+                item=item_id,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                via="media",
+                parent=work_hash(URL),
+                depth=1,
+                path=f"enrichment/{item_id}/media-{slot}.png",
+            ),
+        )
+        out = instance.enrichment_dir / NEW_ITEM / f"media-{slot}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(body)
+
+    def test_a_new_media_unit_never_takes_a_landed_siblings_slot(self, instance):
+        # The slot is the unit's position among the item's media units, and
+        # the item is the OWNING one on both sides. Counted off the stored
+        # string, a sibling that landed before the rename is invisible to
+        # a unit ledgered after it, which then claims slot 0 and overwrites
+        # the sibling's file in place.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        landed, fresh = "https://example.test/a.png", "https://example.test/b.png"
+        self._landed_media(instance, landed, OLD_ITEM, 0, b"first")
+        self._media_unit(instance, fresh, NEW_ITEM, work_hash(URL))
+        transport = FakeTransport(
+            {fresh: HttpResponse(status=200, content_type="image/png", body=b"second")}
+        )
+        run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
+        item_dir = instance.enrichment_dir / NEW_ITEM
+        assert (item_dir / "media-0.png").read_bytes() == b"first"
+        assert (item_dir / "media-1.png").read_bytes() == b"second"
+
+    def test_the_media_cap_counts_the_live_items_files(self, instance):
+        # The cap counts media-family files that EXIST, in the directory the
+        # download would land in. Counted in the dead id's directory it
+        # finds nothing there, ever, and a renamed item's media budget
+        # becomes unbounded.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        item_dir = instance.enrichment_dir / NEW_ITEM
+        for slot in range(4):  # MEDIA_MAX_FILES, all landed before the rename
+            self._landed_media(instance, f"https://example.test/{slot}.png", OLD_ITEM, slot, b"png")
+        fifth = "https://example.test/fifth.png"
+        self._media_unit(instance, fifth, OLD_ITEM, work_hash(URL))
+        transport = FakeTransport(
+            {fifth: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(fifth)]
+        assert entry.status is Status.SKIPPED
+        assert "media cap" in str(entry.reason)
+        assert sorted(p.name for p in item_dir.glob("media-*")) == [
+            f"media-{slot}.png" for slot in range(4)
+        ]
+
+    def test_mark_drops_a_superseded_output_beside_its_replacement(self, instance):
+        # The stale file leaves from the directory the replacement is in.
+        # Read off the line's stored item instead, the search runs in a
+        # directory a rename left empty and the item keeps two files for
+        # one unit, serving the pre-correction view to the digest forever.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        unit_hash = work_hash(URL)
+        item_dir = instance.enrichment_dir / NEW_ITEM
+        stale = item_dir / f"web-{unit_hash[:6]}.md"
+        stale.write_text(f"---\nurl: {URL}\nfetched: '2026-08-01'\n---\n\nold\n")
+        fresh = item_dir / f"podcast-{unit_hash[:6]}.md"
+        fresh.write_text(f"---\nurl: {URL}\nfetched: '2026-08-02'\n---\n\nnew\n")
+        run_mod.mark(
+            make_ctx(instance, FakeDriver()),
+            URL,
+            Status.DONE,
+            path=f"enrichment/{NEW_ITEM}/podcast-{unit_hash[:6]}.md",
+        )
+        assert not stale.exists()
+        assert fresh.exists()
+
     def _drained_then_renamed(
         self, instance, *, assets=(), media=(), move_enrichment: bool = True
     ) -> FakeTransport:
         """A real drain under the old id, then the rename that moves it all.
 
-        The state the sweep meets after a rename is whatever the drain left
-        — so it is the drain that builds it here, not a hand-written line.
+        The state a run meets after a rename is whatever the drain left —
+        so it is the drain that builds it here, not a hand-written line.
         ``move_enrichment=False`` is the interrupted rename: a rename is
         judgment work a session does in steps, and one interrupted between
         the corpus file and the enrichment directory leaves exactly that.
@@ -2215,70 +2410,90 @@ class TestOwnershipIsTheCorpusAnswer:
             (instance.enrichment_dir / OLD_ITEM).rename(instance.enrichment_dir / NEW_ITEM)
         return transport
 
+    def test_a_rename_carried_through_leaves_nothing_to_repair(self, instance):
+        # Corpus file and enrichment directory both moved. Every line still
+        # names the old id and every one of them is history: the outputs are
+        # under the live item, its listing and status derive from them, and
+        # neither output check has anything to say. Only the ghost row
+        # shows, saying what is true — the id on the line was renamed away.
+        self._drained_then_renamed(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.item == OLD_ITEM
+        assert entry.path == f"enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md"
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{NEW_ITEM}.md")
+        assert item.status == "enriched"
+        assert item.enrichment == [f"web-{entry.hash[:6]}.md"]
+        report = self._lint(instance)
+        assert f"**{OLD_ITEM}** — 1 entry (renamed — {NEW_ITEM} lists this work)" in report
+        assert "done entries whose output file is gone from disk — none" in report
+        assert "done entries whose output sits under another item's directory — none" in report
+
     def test_an_interrupted_rename_does_not_become_invisible(self, instance):
         # The corpus file moved and the enrichment directory did not. The
-        # sweep heals the line's item id — correctly — and that clears the
-        # ghost row this state used to show up as. The item owes nothing, so
-        # it derives `enriched` and is not stuck; but its own directory is
-        # empty and its listing says so, and no run surface says why.
-        # Moving files is not the drain's business; naming the state is
-        # lint's, and the state must stay named.
+        # item owes nothing, so it derives `enriched` and is not stuck; but
+        # its own directory is empty and its listing says so, and no run
+        # surface says why. Moving files is not the drain's business; naming
+        # the state is lint's, and the state must stay named — against the
+        # live id, which is the one with an empty directory.
         self._drained_then_renamed(instance, move_enrichment=False)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
         entry = entry_for(ctx)
-        assert entry.item == NEW_ITEM
+        assert entry.item == OLD_ITEM
         assert entry.status is Status.DONE
         assert entry.path == f"enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md"
         item = corpus.read_item(instance.corpus_dir / "2026" / f"{NEW_ITEM}.md")
         assert item.enrichment == []  # the file is not in its directory
+        report = self._lint(instance)
+        assert f"**{OLD_ITEM}** — 1 entry (renamed — {NEW_ITEM} lists this work)" in report
+        assert "done entries whose output sits under another item's directory — **1**" in report
+        assert f"**{NEW_ITEM}** → `enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md`" in report
+
+    def _lint(self, instance) -> str:
         (instance.state_dir / "taxonomy.json").write_text('{"topics": {}, "entities": {}}')
-        report = run_lint(
+        return run_lint(
             instance, is_cognitive=lambda _need, _fmt=None: False, today=lambda: TODAY, write=False
         ).report
-        assert "ledger items with no corpus file — none" in report  # the ghost row is gone
-        assert "done entries whose output sits under another item's directory — **1**" in report
 
-    def test_an_extraction_asset_that_moved_with_the_item_is_not_judged_lost(self, instance):
-        # `_unit_product` knew ONE output name (`<kind>-<hash6>.md`), so
-        # every asset read as "output is lost" and requeued — and a
-        # `via: extract-asset` unit's work key is a repo path, not a URL, so
-        # the fetch it was queued for can only ever raise. The unit then sat
-        # in `error`, holding the item `raw` out of digest and wiki forever,
-        # with the asset on disk under the new name the whole time.
+    def test_an_extraction_asset_that_moved_with_the_item_is_never_re_fetched(self, instance):
+        # A `via: extract-asset` unit's work key is a repo path, not a URL,
+        # so anything that queues one for a fetch can only ever raise: the
+        # unit sat in `error`, holding the item `raw` out of digest and wiki
+        # forever, with the asset on disk under the new name the whole time.
+        # Nothing re-derives an output name now, so nothing judges it lost.
         self._drained_then_renamed(instance, assets=[Asset(data=b"png-bytes", suggested_ext="png")])
         driver = FakeDriver()
-        report = run_mod.run(make_ctx(instance, driver))
+        run_mod.run(make_ctx(instance, driver))
         asset = next(
             e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"
         )
-        assert asset.item == NEW_ITEM
         assert asset.status is Status.DONE
-        assert asset.path == f"enrichment/{NEW_ITEM}/{work_hash(URL)[:6]}-asset-0.png"
-        assert (instance.root / asset.path).read_bytes() == b"png-bytes"
+        assert (
+            instance.enrichment_dir / NEW_ITEM / f"{work_hash(URL)[:6]}-asset-0.png"
+        ).read_bytes() == b"png-bytes"
         assert driver.fetched == []  # nothing was requeued, so nothing re-fetched
-        assert "queued to re-fetch" not in report
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{NEW_ITEM}.md")
+        assert item.status == "enriched"
 
     def test_a_media_download_that_moved_with_the_item_is_not_re_downloaded(self, instance):
-        # The milder half of the same fault: `media-<slot>.<ext>` is a third
-        # name the sweep did not know, so a file that moved with the item was
-        # re-fetched and reported as new material.
+        # The milder half of the same case: a file that moved with the item
+        # was re-fetched and reported as new material.
         hero = "https://example.test/hero.png"
         transport = self._drained_then_renamed(instance, media=[hero])
         transport.calls.clear()
-        report = run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
+        run_mod.run(make_ctx(instance, FakeDriver(), transport=transport))
         entry = ledger.load(instance.ledger_path)[work_hash(hero)]
-        assert entry.item == NEW_ITEM
         assert entry.status is Status.DONE
-        assert entry.path == f"enrichment/{NEW_ITEM}/media-0.png"
+        assert (instance.enrichment_dir / NEW_ITEM / "media-0.png").is_file()
         assert transport.calls == []
-        assert "queued to re-fetch" not in report
 
-    def test_a_re_attribution_leaves_the_error_lines_engine_alone(self, instance):
-        # `is_drainable` retries an `error` once per newer engine, and this
-        # sweep runs before the drain builds its queue — so stamping the
-        # running engine onto the line spent the retry without running one,
-        # and the unit waited for the NEXT release to try again.
+    def test_a_renamed_items_error_line_keeps_its_retry_on_a_newer_engine(self, instance):
+        # `is_drainable` retries an `error` once per newer engine. Nothing
+        # re-stamps the line before the drain builds its queue, so the run
+        # that meets the rename is the run that rescues the unit — sharpest
+        # right after a sync, where migration 1 stamps old lines `0.0.1`.
         self._renamed(instance, status=Status.ERROR, error="ValueError: boom")
         driver = FakeDriver()
         ctx = make_ctx(instance, driver, engine_version="0.3.0")
@@ -2288,43 +2503,17 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.item == NEW_ITEM
         assert entry.status is Status.DONE
 
-    def test_a_re_attribution_carries_the_date_the_work_landed(self, instance):
-        # `date` answers "when did this land" — `_last_enriched` and the
-        # digest-staleness backstop read it — so a line that did no work
-        # must not restate it as today. `at` is the write timestamp, and a
-        # re-attribution IS a write, so that one is this run's.
-        self._waiting(instance)
+    def test_a_unit_no_live_item_claims_is_written_under_the_id_it_carries(self, instance):
+        # Ownership resolves to a live corpus item or it does not resolve;
+        # nobody gets clever rescuing a dead item's work, so the write path
+        # falls back exactly as the read side does.
+        self._renamed(instance, status=Status.QUEUED)
+        (instance.corpus_dir / "2026" / f"{NEW_ITEM}.md").unlink()
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
         entry = entry_for(ctx)
-        assert entry.date == datetime.date(2026, 8, 1)
-        assert entry.engine == "0.2.0"
-        assert entry.at == NOW
-
-    def test_a_requeue_is_this_engines_verdict_and_stamps(self, instance):
-        # The exception to the rule: "the output is gone, fetch it again" is
-        # a call THIS run made, so the line it writes says so.
-        self._shared_then_excluded(instance)
-        entries = ledger.load(instance.ledger_path)
-        assert entries[work_hash(URL)].engine == "0.2.0"  # the run that excluded alpha
-        run_mod.run(make_ctx(instance, FakeDriver(), engine_version="0.4.0"))
-        requeue = [
-            json.loads(line)
-            for line in instance.ledger_path.read_text().split("\n")
-            if line.strip() and json.loads(line)["status"] == "queued"
-        ][-1]
-        assert requeue["engine"] == "0.4.0"
-        assert requeue["date"] == TODAY.isoformat()
-
-    def test_a_line_no_live_item_claims_is_left_where_it_is(self, instance):
-        # Ownership resolves to a live corpus item or it does not resolve;
-        # nobody gets clever rescuing a dead item's work.
-        self._waiting(instance)
-        (instance.corpus_dir / "2026" / f"{NEW_ITEM}.md").unlink()
-        ctx = make_ctx(instance, FakeDriver())
-        report = run_mod.run(ctx)
-        assert entry_for(ctx).item == OLD_ITEM
-        assert "re-attributed" not in report
+        assert entry.item == OLD_ITEM
+        assert entry.path == f"enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md"
 
     def _shared_then_excluded(self, instance) -> RunContext:
         """Two items on one URL; the one the ledger line names is purged."""
@@ -2332,7 +2521,13 @@ class TestOwnershipIsTheCorpusAnswer:
         write_item(instance, BRAVO)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)  # alpha wins the dedupe, so the line names alpha
-        run_exclude(instance, [{"id": ALPHA, "reason": "out of scope"}])
+        run_exclude(
+            instance,
+            [{"id": ALPHA, "reason": "out of scope"}],
+            today=lambda: TODAY,
+            now=lambda: NOW,
+            version=lambda: "0.2.0",
+        )
         return ctx
 
     def test_the_survivors_url_is_fetched_after_its_twin_is_excluded(self, instance):
@@ -2356,8 +2551,8 @@ class TestOwnershipIsTheCorpusAnswer:
 
     def test_a_live_twin_sharing_the_url_is_not_a_no_source_item(self, instance):
         # The same rule with no exclusion anywhere — the case the survivor
-        # test cannot pin, because there the re-attribution sweep has
-        # already rewritten the line's item to bravo. Here alpha is alive
+        # test cannot pin, because there `exclude` re-queues the stranded
+        # landing and the run rewrites it under bravo. Here alpha is alive
         # and keeps the line, so "has this item any units" can only be
         # answered by the corpus.
         write_item(instance, ALPHA)

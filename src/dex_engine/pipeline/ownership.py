@@ -90,7 +90,8 @@ def corpus_owners(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, str]
     """Map work hash -> the live corpus item that claims it.
 
     The single-claimant view of :func:`corpus_claims`, for the callers that
-    want one name to put on a line — a re-attribution, a report row.
+    want one name to put on a line — a report row, a re-queue, a purge's
+    claim veto.
 
     Args:
         root: The instance root.

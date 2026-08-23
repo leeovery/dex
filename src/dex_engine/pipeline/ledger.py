@@ -463,7 +463,6 @@ def stamp(
     today: Callable[[], datetime.date],
     now: Callable[[], datetime.datetime],
     engine_version: str,
-    carry_provenance: bool = False,
 ) -> LedgerEntry:
     """Return ``entry`` re-stamped with the injected clocks and engine version.
 
@@ -473,15 +472,16 @@ def stamp(
     the write timestamp is what orders this line against another machine's,
     so it is the writer's own clock or nothing.
 
-    ``date`` and ``engine`` answer a different question — WHEN, and by
-    which engine, the work this line records was done — so a write that
-    records no new work must not claim them, and ``carry_provenance``
-    keeps the entry's own. Both are load-bearing, not decoration:
+    There is no carve-out, because nothing writes a line that records no
+    work. ``date`` and ``engine`` answer WHEN, and by which engine, the
+    work this line records was done, and both are load-bearing:
     :func:`dex_engine.pipeline.run.is_drainable` retries an ``error``
-    entry once per newer engine, so re-stamping ``engine`` spends that one
-    retry without ever running it, and ``date`` is the day the enrichment
-    landed, which the digest-staleness backstop reads. ``at`` is stamped
-    either way — it is the write timestamp, and this IS a write.
+    entry once per newer engine, and ``date`` is the day the enrichment
+    landed, which the digest-staleness backstop reads. A line written
+    purely to correct an earlier one's attribution would have to carry
+    both rather than claim them — so the drain asks the corpus who owns a
+    unit at the moment it writes (``run._Drain.owner_of``) instead, and no
+    persisted line is ever re-recorded to change what it says.
 
     Args:
         entry: The entry to stamp.
@@ -489,15 +489,8 @@ def stamp(
         now: Injected instant clock, UTC-aware — the write timestamp that
             orders this line against another machine's after a union merge.
         engine_version: The running engine's version string.
-        carry_provenance: Keep the entry's own ``date`` and ``engine``,
-            for a line that corrects a record rather than making one.
 
     Returns:
         A copy of the entry with ``date``, ``at`` and ``engine`` set.
     """
-    return replace(
-        entry,
-        date=entry.date if carry_provenance else today(),
-        at=now(),
-        engine=entry.engine if carry_provenance else engine_version,
-    )
+    return replace(entry, date=today(), at=now(), engine=engine_version)
