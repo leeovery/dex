@@ -1,9 +1,9 @@
 name: ci
 
-# The suite, ruff and ty on every push and pull request. Formatting is NOT
-# checked: `ruff format` disagrees with ~50 files in this repo and reformatting
-# them would bury the history that makes this code readable, so it is a tool
-# here and never a gate.
+# The suite, ruff, ty and the format check on every push and pull request.
+# The tree is format-clean and pyproject's extend-exclude keeps `ruff format`
+# away from markdown and the vendored `.agents/`, so the check holds the line
+# instead of demanding a historic reformat.
 
 on:
   push:
@@ -65,7 +65,7 @@ jobs:
         run: uv run --no-sync pytest -m "not live"
 
   lint:
-    name: ruff + ty
+    name: ruff + ty + format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,3 +84,5 @@ jobs:
       - run: uv run --no-sync ruff check
 
       - run: uv run --no-sync ty check
+
+      - run: uv run --no-sync ruff format --check .

@@ -50,9 +50,7 @@ def fake_uvx(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def run_shim(
-    shell: str, cwd: Path, fake_bin: Path, *args: str
-) -> subprocess.CompletedProcess[str]:
+def run_shim(shell: str, cwd: Path, fake_bin: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
     return subprocess.run(  # noqa: S603 — test-built args, no shell
         [shell, str(SHIM), *args],

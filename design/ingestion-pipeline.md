@@ -1451,7 +1451,7 @@ file pinned to that sync's own release. Mint
 cuts releases and changelogs — human-invoked, never the engine; the engine
 only consumes releases. A broken push to main reaches nobody until tagged;
 rollback is editing the pin line. **The tag is gated**: `.mint.toml`'s
-`preflight` runs the suite, ruff and ty before Mint does anything else, and a
+`preflight` runs the four gates before Mint does anything else, and a
 failure aborts with no bookkeeping commit and no tag (§15). The live suite is
 excluded — a third party having a bad afternoon must not block a release.
 
@@ -2134,13 +2134,14 @@ old monolith had no seams.
 - **Live tests opt-in** (pytest marker) for real-API drift checks. CI's gating
   run is hermetic only (enforced by the default `-m "not live"`, §14).
 
-**Gates and CI.** The suite, `ruff check` and `ty check` are the three gates.
-They run on every push and pull request (Linux × Python 3.11/3.12/3.13, plus
-one clean macOS box on 3.13; lint and types once, since both are pinned to
-py311 semantics), and again as `.mint.toml`'s release `preflight` so a tag
-cannot exist over a red tree — instances pin tags, and rollback is hand-editing
-pins. Formatting is not a gate: `ruff format` disagrees with ~50 pre-existing
-files, and rewriting them to settle that would cost more history than it buys.
+**Gates and CI.** The suite, `ruff check`, `ty check` and
+`ruff format --check` are the four gates. They run on every push and pull
+request (Linux × Python 3.11/3.12/3.13, plus one clean macOS box on 3.13;
+lint, types and formatting once, since all are pinned to py311 semantics), and
+again as `.mint.toml`'s release `preflight` so a tag cannot exist over a red
+tree — instances pin tags, and rollback is hand-editing pins. The format gate
+holds because the tree is format-clean and pyproject's `extend-exclude` keeps
+the formatter out of markdown and the vendored `.agents/`.
 The live checks run on their own daily schedule, never as a gate, split into a
 notifying job and a `continue-on-error` job for the endpoints (`ci_hostile`
 marker) that answer a datacenter IP differently from a laptop.

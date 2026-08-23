@@ -85,7 +85,7 @@ the engine stays unaware of which ones exist.
 
 ## Development
 
-**The gates.** Three commands, and they are the same three everywhere — on
+**The gates.** Four commands, and they are the same four everywhere — on
 your machine, in CI, and in front of the release tag:
 
 ```
@@ -93,14 +93,15 @@ uv run pytest -m "not live"     # the default suite (`uv run pytest` is the same
                                 #  -m 'not live' is in pyproject's addopts)
 uv run ruff check
 uv run ty check
+uv run ruff format --check .
 ```
 
-**Formatting is deliberately NOT a gate.** `uv run ruff format --check` fails
-on roughly fifty pre-existing files and always has. Reformatting them would
-rewrite blame across the whole tree to settle a question nobody has asked, so
-`ruff format` stays a tool you may point at a file you are already editing, and
-never a check that can fail a build. Do not add it to CI or to `.mint.toml`,
-and do not mass-reformat.
+**Formatting gates because the tree is format-clean.** `ruff format` reaches
+only shipped code: pyproject's `extend-exclude` keeps it away from markdown
+(the design doc's aligned protocol sketches are prose, not code) and the
+vendored `.agents/`. Within that boundary every file satisfies the formatter,
+and the check exists to keep it that way — format what you touch, and never
+reformat files you are not otherwise editing.
 
 **CI** (`.github/workflows/ci.yml`, every push and pull request). The suite on
 Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"` is a
@@ -145,7 +146,7 @@ to the repo, and only emails to say so. A quiet quarter therefore stops the
 drift watch silently — re-enable it from the Actions tab, or fire it once by
 hand with `workflow_dispatch`.
 
-**The release gate** (`.mint.toml`, `[release.hooks] preflight`). The three
+**The release gate** (`.mint.toml`, `[release.hooks] preflight`). The four
 gates run before Mint does anything else — before the AI notes, before the
 review, and long before the tag. A failure aborts with no bookkeeping commit
 and no tag, which is the point: instances pin tags, so a broken tag reaches
@@ -216,11 +217,10 @@ that as two executors. Neither weakens an ordinary run.
   migration when existing state must move.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
-- **The gates move together**: the three commands in Development are named in
+- **The gates move together**: the four commands in Development are named in
   three places — `.github/workflows/ci.yml`, `.mint.toml`'s `preflight`, and
   the Development section itself. Change one and change all three, or CI and
-  the release stop agreeing about what "green" means. Never add
-  `ruff format --check` to either.
+  the release stop agreeing about what "green" means.
 - **A new live check picks a side**: mark it `ci_hostile` (with the reason in a
   comment on the class) if a datacenter IP would be answered differently, or
   leave it unmarked and accept that a failure mails the maintainer at 06:17

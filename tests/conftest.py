@@ -20,9 +20,7 @@ if "MUTANT_UNDER_TEST" in os.environ:
     # it as a correctness health check. Here it is an artifact of the harness,
     # not of the test: the same property passes alone. Only mutmut sets this
     # variable, so the ordinary suite keeps the check.
-    settings.register_profile(
-        "mutmut", suppress_health_check=[HealthCheck.differing_executors]
-    )
+    settings.register_profile("mutmut", suppress_health_check=[HealthCheck.differing_executors])
     settings.load_profile("mutmut")
 
 from dex_engine.pipeline.types import (
