@@ -290,9 +290,11 @@ def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
             "the engine has given up on"
         )
     else:
+        # "retries" never agrees with the count: the subject of the clause
+        # is the engine, one of it however many entries it holds.
         title = (
             f"Waiting on the engine — {kernel.plural(len(rows), 'entry', 'entries')} "
-            f"it {_agree(len(rows), 'retries', 'retry')} by itself"
+            "it retries by itself"
         )
     lines = [kernel.heading(title, level=3), ""]
     for row in rows:

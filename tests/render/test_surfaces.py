@@ -100,6 +100,16 @@ class TestEnrichReport:
         assert "### Waiting on the engine — 1 entry it retries by itself" in out
         assert "- **2026-08-19-example-55ad7b** · `blocked` · attempt 2 of 5" in out
 
+    def test_the_engine_retries_however_many_entries_it_holds(self):
+        # "it retry by itself": the clause's subject is the engine, which is
+        # one of it whether it is holding one entry or twenty.
+        parked = [
+            {"item": "a", "url": "https://a.test", "status": "error", "reason": "reset"},
+            {"item": "b", "url": "https://b.test", "status": "error", "reason": "reset"},
+        ]
+        out = render("enrich-report", {"counts": {}, "items": [], "parked": parked})
+        assert "### Waiting on the engine — 2 entries it retries by itself" in out
+
     def test_the_manual_entry_never_lands_in_the_engines_section(self):
         out = render("enrich-report", ENRICH_PAYLOAD)
         mine = out.split("### Waiting on the engine")[0]
