@@ -386,6 +386,18 @@ class TestVariantExports:
             ("author", "alex", "author is not an object"),
             ("reference", "m1", "reference is not an object"),
             ("content", ["a block", "another"], "content is not text"),
+            # The scalars INSIDE well-shaped containers — the third member
+            # of this family: containers checked, what the emit pass
+            # indexes out of them not.
+            ("id", ["m2"], "id is not text"),
+            ("reference", {"messageId": ["m1"]}, "reference messageId is not text"),
+            ("embeds", [{"url": ["https://x.test/a"], "title": "t"}], "embed url is not text"),
+            (
+                "embeds",
+                [{"url": "https://example.test/other", "title": 12345}],
+                "embed title is not text",
+            ),
+            ("reactions", [{"count": "3"}], "reaction count is not a number"),
         ],
     )
     def test_a_field_of_the_wrong_type_is_skipped_like_a_missing_one(
@@ -437,6 +449,81 @@ class TestVariantExports:
         lines = run_normalize(instance, Config())
         assert "discord/aaa-first: 1 items written, 0 clusters skipped" in lines
         assert "discord/zzz-later: 0 items written, 0 clusters skipped" in lines
+
+    def test_a_wrong_typed_nested_scalar_never_costs_the_run_its_report(self, instance):
+        # The third member of the family: containers were checked, the
+        # scalars the emit pass indexes out of them were not — `sum` over a
+        # text count and `slugify` over a numeric title both died past the
+        # (OSError, ValueError) catch, AFTER items were on disk, taking
+        # every channel's summary with them.
+        write_export(instance, [message("m1", "https://example.test/post")], channel="aaa-first")
+        bad_count = message("m2", SUBSTANTIAL, reactions=[{"count": "3"}])
+        bad_title = message(
+            "m3",
+            "https://example.test/other",
+            timestamp="2026-08-19T12:00:00+00:00",
+            embeds=[{"url": "https://example.test/other", "title": 12345}],
+        )
+        write_export(instance, [bad_count, bad_title], channel="zzz-later")
+        lines = run_normalize(instance, Config())
+        assert "discord/aaa-first: 1 items written, 0 clusters skipped" in lines
+        assert "discord/zzz-later: 0 items written, 0 clusters skipped" in lines
+        assert (
+            "warn: raw/discord/zzz-later: 1 message(s) unreadable "
+            "(reaction count is not a number) — skipped" in lines
+        )
+        assert (
+            "warn: raw/discord/zzz-later: 1 message(s) unreadable "
+            "(embed title is not text) — skipped" in lines
+        )
+
+    def test_an_unhashable_reply_target_is_skipped_in_the_read(self, instance):
+        # The read pass looks a Reply's target up by messageId — a dict-key
+        # lookup, so an unhashable value died inside the clustering, ahead
+        # of every containment: not the emit catch, not the channel guard.
+        reply = message(
+            "m2",
+            "reply text",
+            msg_type="Reply",
+            reference="m1",
+            timestamp="2026-08-19T10:01:00+00:00",
+        )
+        reply["reference"]["messageId"] = ["m1"]
+        write_export(instance, [message("m1", "https://example.test/post"), reply])
+        lines = run_normalize(instance, Config())
+        reason = "reference messageId is not text"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+
+    def test_an_escaped_shape_is_named_channel_incomplete_not_a_crash(self, instance, monkeypatch):
+        # The belt over the braces: should a shape ever slip the read pass
+        # again, the emit catch contains it as the write fault it lands as
+        # — channel incomplete, with the count that landed, the run's
+        # report intact — never a raw traceback over a part-written corpus.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message("m2", "https://example.test/post", timestamp="2026-08-19T12:00:00+00:00"),
+            ],
+        )
+        write_export(instance, [message("n1", "https://example.test/other")], channel="zzz-later")
+        done = []
+        real_write_item = corpus.write_item
+
+        def escaping_write(path, item):
+            if done:
+                raise TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+            done.append(path)
+            real_write_item(path, item)
+
+        monkeypatch.setattr(corpus, "write_item", escaping_write)
+        lines = run_normalize(instance, Config())
+        assert (
+            "discord/general: 1 items written, then write failed "
+            "(unsupported operand type(s) for +: 'int' and 'str') — channel incomplete" in lines
+        )
+        assert any(line.startswith("discord/zzz-later:") for line in lines)  # the run finished
 
     def test_unreadable_messages_are_counted_once_per_reason(self, instance):
         # A conversion that drops a field drops it on every message: the
