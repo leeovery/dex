@@ -85,7 +85,7 @@ class TestEnrichReport:
         assert "### Read these yourself — 1 job the engine cannot do" in out
         assert "- **2026-08-19-scan-77cc88** · `ocr`" in out
         assert "**Reported upstream** — 2 issues filed" in out
-        assert "### Notes" in out
+        assert "### Notes — 1 note" in out
         assert "- first transcription downloads the whisper model once per machine" in out
         assert_no_trailing_whitespace(out)
 
@@ -420,7 +420,9 @@ class TestSyncReport:
                 "machinery_changes": 6,
             },
         )
-        assert out.startswith("## Sync — pin bumped v0.2.1 → v0.3.0\n")
+        assert out.startswith(
+            "## Sync — pin bumped v0.2.1 → v0.3.0 — 1 migration · 6 machinery changes\n"
+        )
         assert "### Migrations applied — 1" in out
         assert "- **migration 1** — renames + status vocabulary" in out
         assert "    - rewrote kinds in 214 items" in out
@@ -461,7 +463,9 @@ class TestSyncReport:
                 "machinery_changes": 0,
             },
         )
-        assert out.startswith("## Sync — MAJOR upgrade v0.9.3 → v1.0.0\n")
+        assert out.startswith(
+            "## Sync — MAJOR upgrade v0.9.3 → v1.0.0 — 0 migrations · 0 machinery changes\n"
+        )
         assert "**MAJOR ENGINE UPGRADE**" in out
         assert "always-migratable commitment" in out
         assert_no_trailing_whitespace(out)
@@ -667,8 +671,8 @@ class TestHealthReport:
         assert "- harvest passes under old rules (re-judge) — **1**" in out
         assert "### Digests — 7 digests" in out
         assert "- digest these (enrichment newer than digest) — **1**" in out
-        assert "### Reconciled by `--write`" in out
-        assert "### Notes" in out
+        assert "### Reconciled by `--write` — 1 repair" in out
+        assert "### Notes — 1 note" in out
         assert_no_trailing_whitespace(out)
 
     def test_cap_fires_lead_with_the_shape_of_the_drift(self):
@@ -716,6 +720,23 @@ class TestHealthReport:
     def test_no_cap_fires_reads_as_none(self):
         out = render("health-report", CLEAN_HEALTH)
         assert "- re-entry cap fires (tuning signal, not an alarm) — none" in out
+
+    def test_the_offenders_listing_says_how_much_it_withheld(self):
+        # §11: a capped listing says it is capped — the worst-offenders
+        # line shows five items and must name how many it did not.
+        payload = dict(HEALTH_PAYLOAD)
+        payload["capped"] = [
+            {
+                "item": f"2026-02-{n:02d}-item-{n:06x}",
+                "url": f"https://example.test/{n}",
+                "reason": "url cap (12 per item)",
+            }
+            for n in range(1, 8)
+        ]
+        out = render("health-report", payload)
+        line = next(part for part in out.splitlines() if "most often:" in part)
+        assert line.count("**2026-02-") == 5
+        assert "… and 2 more items, not listed" in line
 
     def test_incomplete_threads_name_the_file_and_the_gap(self):
         out = render("health-report", HEALTH_PAYLOAD)
@@ -857,7 +878,9 @@ class TestIngestReceipt:
                 "notes": ["thread walk-up found the repo link"],
             },
         )
-        assert out.startswith("## Ingested 2026-08-18-rag-eval-harness-a1b2c3\n")
+        assert out.startswith(
+            "## Ingested 2026-08-18-rag-eval-harness-a1b2c3 — 3 units fetched, 1 outstanding\n"
+        )
         assert "RAG eval harness" in out
         assert "- fetched 3 · outstanding 1" in out
         assert "- signal `high`" in out
@@ -867,7 +890,7 @@ class TestIngestReceipt:
 
     def test_minimal_receipt_is_one_line(self):
         out = render("ingest-receipt", {"item": "2026-08-18-note-a1b2c3"})
-        assert out == "## Ingested 2026-08-18-note-a1b2c3\n"
+        assert out == "## Ingested 2026-08-18-note-a1b2c3 — no units fetched\n"
 
     def test_item_is_required(self):
         with pytest.raises(PayloadError, match="item"):

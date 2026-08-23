@@ -150,7 +150,7 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "1 corpus items · 1 pages · 1 cited" in outcome.report
+        assert "1 corpus item · 1 page · 1 cited" in outcome.report
         assert "broken wikilinks — none" in outcome.report
 
     def test_broken_vs_reserved_wikilinks(self, instance):

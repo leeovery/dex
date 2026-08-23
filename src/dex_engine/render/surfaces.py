@@ -225,7 +225,8 @@ def _agree(count: int, singular: str, plural_form: str) -> str:
 def _note_section(title: str, notes: list[str]) -> list[str]:
     if not notes:
         return []
-    return ["", kernel.heading(title, level=3), "", *(kernel.bullet(note) for note in notes)]
+    scaled = f"{title} — {kernel.plural(len(notes), 'note')}"
+    return ["", kernel.heading(scaled, level=3), "", *(kernel.bullet(note) for note in notes)]
 
 
 def _parked_rows(
@@ -808,7 +809,13 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         head = f"Sync — pin bumped {previous} → {pin}"
     else:
         head = f"Sync — engine pinned at {pin}"
-    blocks = [kernel.heading(head), ""]
+    scale = kernel.inline(
+        [
+            kernel.plural(len(migrations), "migration"),
+            kernel.plural(machinery_changes, "machinery change"),
+        ]
+    )
+    blocks = [kernel.heading(f"{head} — {scale}"), ""]
     if major:
         # A major is an owner-visible event, not a row: the loud line sits
         # above everything else the report has to say.
@@ -919,7 +926,15 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
     pages = _str_list_at(surface, payload, "pages")
     notes = _str_list_at(surface, payload, "notes")
 
-    blocks = [kernel.heading(f"Ingested {item}")]
+    if fetched or parked:
+        scale = f"{kernel.plural(fetched, 'unit')} fetched"
+        if parked:
+            scale += f", {parked} outstanding"
+    else:
+        # A no-source capture (note-only, image-only) has no number to
+        # give, and the heading says so out loud.
+        scale = "no units fetched"
+    blocks = [kernel.heading(f"Ingested {item} — {scale}")]
     if title:
         blocks += ["", title]
     counts = [
@@ -1053,8 +1068,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     )
     scale = kernel.inline(
         [
-            f"{_int_at(surface, summary, 'corpus_items', 'summary.')} corpus items",
-            f"{_int_at(surface, summary, 'pages', 'summary.')} pages",
+            kernel.plural(_int_at(surface, summary, "corpus_items", "summary."), "corpus item"),
+            kernel.plural(_int_at(surface, summary, "pages", "summary."), "page"),
             f"{_int_at(surface, summary, 'cited', 'summary.')} cited",
         ]
     )
@@ -1064,7 +1079,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     blocks += _health_digests(surface, payload)
     reconciled = _str_list_at(surface, payload, "reconciled")
     if reconciled:
-        blocks += ["", kernel.heading("Reconciled by `--write`", level=3), ""]
+        scaled = f"Reconciled by `--write` — {kernel.plural(len(reconciled), 'repair')}"
+        blocks += ["", kernel.heading(scaled, level=3), ""]
         blocks += [kernel.bullet(line) for line in reconciled]
     blocks += _note_section("Notes", _str_list_at(surface, payload, "notes"))
     return kernel.document(blocks)
@@ -1315,15 +1331,12 @@ def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
         ),
     ]
     offenders = sorted(per_item.items(), key=lambda pair: (-pair[1], pair[0]))
-    lines.append(
-        kernel.bullet(
-            "most often: "
-            + kernel.inline(
-                f"{kernel.bold(item)} {count}" for item, count in offenders[:_HEALTH_OFFENDERS]
-            ),
-            depth=1,
-        )
-    )
+    named = [f"{kernel.bold(item)} {count}" for item, count in offenders[:_HEALTH_OFFENDERS]]
+    if len(offenders) > _HEALTH_OFFENDERS:
+        # A capped listing says it is capped — a silently short list lies
+        # about scale.
+        named.append(f"… and {len(offenders) - _HEALTH_OFFENDERS} more items, not listed")
+    lines.append(kernel.bullet("most often: " + kernel.inline(named), depth=1))
     for row in rows[:_HEALTH_LIST_CAP]:
         lines.append(kernel.bullet(kernel.bold(str(row["item"])), depth=1))
         lines.append(kernel.detail(str(row["url"]), depth=1))
