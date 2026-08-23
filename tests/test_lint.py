@@ -610,6 +610,15 @@ DEPTH_CAP = CAP_BOUNDS[Cap.DEPTH]
 URL_CAP = CAP_BOUNDS[Cap.URL]
 
 
+def _cap_fire_block(report: str) -> str:
+    """The cap-fire bullet and its rows, cut from the sections either side.
+
+    Item ids repeat under the ghost-item listing, so an ordering read on the
+    whole report answers about the wrong section.
+    """
+    return report.split("re-entry cap fires", maxsplit=1)[1].split("stored threads", maxsplit=1)[0]
+
+
 class TestCapFires:
     """The ledger records cap fires for this check and no other surface."""
 
@@ -676,13 +685,13 @@ class TestCapFires:
                 instance.ledger_path,
                 capped_entry(f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i}"),
             )
-        # The counts above the listing are ordered their own way; the rows
-        # naming a refused URL are the listing.
-        rows = [line for line in lint(instance).report.split("\n") if " -> " in line]
-        assert rows == [
-            f"  {new_item} -> https://example.test/1",
-            f"  {old_item} -> https://example.test/0",
-        ]
+        # The counts above the listing are ordered their own way, and bare ids
+        # also appear under the ghost-item listing, so the ordering is read
+        # inside the cap-fire block on the URLs the rows name.
+        block = _cap_fire_block(lint(instance).report)
+        assert block.index("https://example.test/1") < block.index("https://example.test/0")
+        assert new_item in block
+        assert old_item in block
 
     def test_a_fire_today_is_listed_even_once_the_listing_is_full(self, instance):
         # The surface caps the listing; the fire stamped today must not be
@@ -698,8 +707,10 @@ class TestCapFires:
                 ),
             )
         report = lint(instance).report
-        assert "re-entry cap fires (tuning signal, not an alarm) — 26 across 26 items" in report
-        assert f"{newest} -> https://example.test/25" in report
+        assert "re-entry cap fires (tuning signal, not an alarm) — **26** across 26 items" in report
+        block = _cap_fire_block(report)
+        assert newest in block
+        assert "https://example.test/25" in block
         # the oldest is what the cap drops (bare ids also appear under the
         # ghost-item listing, so the URL is what this asserts on)
         assert "https://example.test/00" not in report
@@ -1029,7 +1040,7 @@ class TestDigestShape:
         write_digest(instance, ITEM, digest_text(topics=""))
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert f"{ITEM}: frontmatter missing topics" in outcome.report
+        assert f"**{ITEM}** — frontmatter missing topics" in outcome.report
 
     def test_id_must_match_the_filename(self, instance):
         self._bare_wiki(instance)

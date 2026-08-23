@@ -587,7 +587,7 @@ class TestIncompleteItemsOnTheReport:
             }
         ]
         flat = " ".join(report.split())
-        assert f"{ITEM} 11 of 12 units landed — 1 waiting on transcription" in flat
+        assert f"**{ITEM}** ↳ 11 of 12 units landed — 1 waiting on transcription" in flat
 
     def test_the_other_sections_still_render(self, instance):
         waiting = Result(
