@@ -28,30 +28,30 @@ step 4.
    - **Ledger schema failure** — repair before anything else touches
      state; the message names the file, line, and likely missing migration
      (usually: run `bin/dex sync`).
-   - **Ledger entries naming items with no corpus file** / **done entries
-     whose output file is gone** — `bin/dex exclude` purges an item's
-     ledger entries with the item, so these are anomalies now, not
-     leftovers by design. The finding says which of three, and they want
-     different things. **Excluded on record** — ruled out on purpose, so
-     its entries should follow it out; where the row also names a sharer,
-     that is why those lines survived the purge. **Renamed** — a live item
-     already lists the work, nothing is lost, and the next `enrich run`
-     re-attributes the lines itself, so this one needs nothing from you.
-     **Unclaimed** — no file, no record, no live claimant: an owner
-     decision on whether the item comes back. Close the first and third
-     through the verbs, never by editing state files. Instances purged before exclude swept the ledger
-     carry this as historical residue: clearing it is a one-off, not a
-     per-check chore.
-     **The `renamed — <id> lists this work` row is the exception, and it
-     needs nothing from you.** A ledger line's `item` is the attribution as
-     of the day it was written, so an item renamed since keeps lines naming
-     the id it had then, permanently. Nothing heals them and nothing needs
-     to: every reader and every write resolves the work to the item whose
-     corpus file claims it, so the run, the status view, the digest and the
-     item's own frontmatter all already say the live id. Read the row as
-     history, not as a repair — the count only ever grows as items are
-     renamed. If the same rename ALSO shows a misfiled output below, that
-     half is real: see the next entry.
+   - **Ledger items with no corpus file** — one row per item and cause;
+     the row's parenthesis says which of three, and they want different
+     things. **Excluded on record** — ruled out on purpose: re-run
+     `bin/dex exclude` with that id to purge the leftover entries (the
+     recorded exclusion makes a re-run idempotent); where the row also
+     names a sharer, the lines survived because a live item still claims
+     the work — leave those. Instances purged before exclude swept the
+     ledger carry this as historical residue: clearing it is a one-off,
+     not a per-check chore. **Renamed — `<id>` lists this work** —
+     history, not a repair: a ledger line's `item` is the attribution as
+     of the day it was written, no line is ever rewritten, and every
+     reader and every write already resolves the work to the item whose
+     corpus file claims it, so the run, the status view, the digest and
+     the item's own frontmatter all say the live id. The count only ever
+     grows as items are renamed; if the same rename ALSO shows a misfiled
+     output below, that half is real — see that entry. **No exclusions
+     record, no live claimant** — an owner decision on whether the item
+     comes back: restore the corpus file from git history, or rule it out
+     through `bin/dex exclude`. Never edit state files by hand.
+   - **Done entries whose output file is gone from disk** — the ledger
+     claims work whose product is missing. Re-fetch the unit — `bin/dex
+     enrich fetch <item> <url>` requeues a unit the item already owns —
+     or, where you rescue the content by hand, write the enrichment file
+     and close it with `bin/dex enrich mark <url> done --path <file>`.
    - **Done entries whose output sits under another item's directory** —
      the third referential row, and not the one above: nothing is missing
      here, the output is simply filed where its own item cannot see it. An
@@ -92,7 +92,8 @@ step 4.
      digest and append the id to each matching topic's `items` in
      `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
      genuinely low-signal.
-   - **Index drift** — regenerate the affected `wiki/index.md` entries.
+   - **Pages missing from index** / **ghost index entries** — regenerate
+     the affected `wiki/index.md` entries.
    - **Stale pages** (members newer than the page) — fold the newer items
      in via rewrite-not-append; if the new material supersedes old claims,
      move them to the history section marked superseded, never silently
@@ -111,9 +112,12 @@ step 4.
      those items under the current subject rule (dex-run's
      `references/ingest-item.md`), then `bin/dex enrich pass ... --stage
      harvest`.
-   - **Read these yourself** (the engine cannot do them) and **waiting on a
-     capability** — complete them per the same reference (media described
-     with eyes, `enrich mark` closing each).
+   - **Read these yourself** (the engine cannot do them) — complete them
+     per the same reference (media described with eyes, `enrich mark`
+     closing each). **Waiting on a capability** is the engine's cohort,
+     not yours: those units drain when a provider appears (transcription
+     backlogs: `bin/dex enrich transcribe --limit N`), and the ones that
+     resolve to you are already listed under **read these yourself**.
    - **Enrichment newer than digest** — an interrupted session: finish
      digest → place → wiki for each listed item.
 6. Read the standing signals — they are counts, not a queue that drains.
