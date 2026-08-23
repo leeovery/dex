@@ -96,7 +96,7 @@ markers = [
 
 [tool.mutmut]
 # Targeted use only: `uv run --group mutation mutmut run "<module path>.*"`.
-# A whole-repo run mutates thousands of lines against 1300 tests and buries the
+# A whole-repo run mutates thousands of lines against 1800 tests and buries the
 # signal in equivalent mutants — the tool is for auditing ONE module you suspect.
 source_paths = ["src/dex_engine"]
 pytest_add_cli_args_test_selection = ["tests"]

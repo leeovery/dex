@@ -132,8 +132,9 @@ invisible on a Mac and fatal in an instance.
 never a gate). `pytest -m live` watches third parties for drift, which happens
 on their clock and has nothing to do with release timing. The workflow splits
 in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
-lookup, the five GitHub contents/matching-refs checks through an authenticated
-`gh`) fail the run and mail the maintainer, which is
+lookup, the six GitHub contents/matching-refs checks through an authenticated
+`gh`, the Wikipedia page-audio extraction) fail the run and mail the
+maintainer, which is
 GitHub's own default for a failed scheduled workflow and needs no robot in the
 issue tracker. Everything marked `ci_hostile` — fxtwitter, the two YouTube
 root-namespace checks, wayback, the two whisper HuggingFace fetches (the
@@ -155,7 +156,7 @@ every instance at its next sync and the only rollback is hand-editing pins.
 `pre_tag` still builds the wheel. The live suite stays out.
 
 **Mutation testing** (`mutmut`, in the `mutation` dependency group). Not a
-gate, not in CI: a whole-repo run against 1300 tests takes hours and buries
+gate, not in CI: a whole-repo run against 1800 tests takes hours and buries
 the answer. It is an audit you point at ONE module you suspect —
 
 ```
