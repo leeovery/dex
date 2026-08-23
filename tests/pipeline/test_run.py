@@ -2343,6 +2343,68 @@ class TestOwnershipIsTheCorpusAnswer:
         ctx = self._shared_then_excluded(instance)
         assert "no-source item" not in run_mod.run(ctx)
 
+    def test_a_live_twin_sharing_the_url_is_not_a_no_source_item(self, instance):
+        # The same rule with no exclusion anywhere — the case the survivor
+        # test cannot pin, because there the re-attribution sweep has
+        # already rewritten the line's item to bravo. Here alpha is alive
+        # and keeps the line, so "has this item any units" can only be
+        # answered by the corpus.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "no-source item" not in report
+
+    def test_the_shape_of_what_is_missing_counts_a_shared_unit_too(self, instance):
+        # bravo's two units are one line naming bravo and one naming alpha,
+        # and the report's shape has to be read off the same map its `raw`
+        # is — "0 of 1 landed" for an item that owes two says the ledger
+        # holds less of bravo's work than it does.
+        second = "https://example.test/second"
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO, urls=[URL, second])
+
+        def fetch(unit):
+            if unit.url == second:
+                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
+            return Result(
+                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
+            )
+
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        flat = " ".join(report.split())
+        assert f"**{BRAVO}** ↳ 1 of 2 units landed — 1 waiting on transcription" in flat
+
+    def test_the_staleness_backstop_reads_a_renamed_items_landing_date(self, instance):
+        # `_last_enriched` keyed on the stored string files the landing date
+        # under a dead id, so the renamed item has no date to compare and
+        # the interrupted-session backstop — the one surface that catches
+        # "enriched, never digested" — quietly stops naming it.
+        self._renamed(
+            instance,
+            status=Status.DONE,
+            path=f"enrichment/{NEW_ITEM}/web-{work_hash(URL)[:6]}.md",
+        )
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{NEW_ITEM}.md").write_text("digested\n", encoding="utf-8")
+        instance.passes_path.write_text(
+            json.dumps({"stage": "digest", "item": NEW_ITEM, "date": "2026-07-01"}) + "\n",
+            encoding="utf-8",
+        )
+        assert run_mod.digest_orphans(instance) == [NEW_ITEM]
+
+    def test_mark_refreshes_the_item_the_corpus_says_owns_the_unit(self, instance):
+        # `mark` copies the prior line's item, so a heal on a renamed item's
+        # unit refreshed an id with no corpus file — a silent no-op — and
+        # left the live item reading `raw` with its enrichment on disk.
+        path = self._waiting(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.mark(
+            ctx, URL, Status.DONE, path=f"enrichment/{NEW_ITEM}/web-{work_hash(URL)[:6]}.md"
+        )
+        item = corpus.read_item(path)
+        assert item.status == "enriched"
+        assert item.enrichment == [f"web-{work_hash(URL)[:6]}.md"]
+
     def test_a_done_unit_whose_output_stands_is_never_re_fetched(self, instance):
         # The dedupe is the design, not a fault: alpha holds the one file
         # for the shared URL and bravo has none, on 80 hashes in one real
