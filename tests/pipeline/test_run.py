@@ -487,6 +487,23 @@ class TestIncompleteItemsOnTheReport:
 
         return make_ctx(instance, FakeDriver(fetch_fn=fetch))
 
+    def _run_capturing(self, ctx, monkeypatch) -> tuple[str, dict]:
+        """Run, returning the report AND the payload the surface was handed.
+
+        The negative cases assert on the payload: "no row for this item" is
+        the run's behaviour, and a whole-report substring only tests it for
+        as long as the heading happens to spell the same word.
+        """
+        captured: dict[str, dict] = {}
+        rendered = run_mod.surfaces.render
+
+        def spy(surface, payload):
+            captured[surface] = dict(payload)
+            return rendered(surface, payload)
+
+        monkeypatch.setattr(run_mod.surfaces, "render", spy)
+        return run_mod.run(ctx), captured["enrich-report"]
+
     def test_the_report_names_the_shape_of_what_is_missing(self, instance):
         waiting = Result(
             status=Status.WAITING,
@@ -499,25 +516,18 @@ class TestIncompleteItemsOnTheReport:
         assert "incomplete — 1 item still raw until every unit lands" in flat
         assert f"{ITEM} 1 of 2 units landed — 1 waiting on transcription" in flat
 
-    def test_a_complete_item_gets_no_line(self, instance):
+    def test_a_complete_item_gets_no_line(self, instance, monkeypatch):
         dead = Result(status=Status.DEAD, meta={}, reason="404")
-        report = run_mod.run(self._ctx(instance, dead))
-        assert "incomplete" not in report
+        report, payload = self._run_capturing(self._ctx(instance, dead), monkeypatch)
+        assert "incomplete" not in payload  # the key is omitted, not merely empty
+        assert "still raw until every unit lands" not in report
 
     def test_the_payload_carries_the_counts(self, instance, monkeypatch):
         waiting = Result(
             status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
         )
-        captured: dict[str, dict] = {}
-        rendered = run_mod.surfaces.render
-
-        def spy(surface, payload):
-            captured[surface] = dict(payload)
-            return rendered(surface, payload)
-
-        monkeypatch.setattr(run_mod.surfaces, "render", spy)
-        run_mod.run(self._ctx(instance, waiting))
-        assert captured["enrich-report"]["incomplete"] == [
+        _report, payload = self._run_capturing(self._ctx(instance, waiting), monkeypatch)
+        assert payload["incomplete"] == [
             {
                 "item": ITEM,
                 "landed": 1,
@@ -526,7 +536,7 @@ class TestIncompleteItemsOnTheReport:
             }
         ]
 
-    def test_an_untouched_item_is_not_listed(self, instance):
+    def test_an_untouched_item_is_not_listed(self, instance, monkeypatch):
         # The standing view is `enrich status`; the run reports on what it
         # touched, so a long-parked item does not repeat every run.
         waiting = Result(
@@ -534,7 +544,9 @@ class TestIncompleteItemsOnTheReport:
         )
         ctx = self._ctx(instance, waiting)
         run_mod.run(ctx)
-        assert "incomplete" not in run_mod.run(ctx)  # nothing drainable the second time
+        report, payload = self._run_capturing(ctx, monkeypatch)  # nothing drainable now
+        assert "incomplete" not in payload
+        assert "still raw until every unit lands" not in report
 
     def test_the_other_sections_still_render(self, instance):
         waiting = Result(
