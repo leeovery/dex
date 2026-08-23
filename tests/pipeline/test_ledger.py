@@ -381,6 +381,60 @@ class TestFutureDatedWriteTimestamps:
         assert ledger.load(instance.ledger_path)[work_hash(URL)] == healed
 
 
+class TestABackwardsClock:
+    """The other direction: a verb must never report a write that lost.
+
+    The future ceiling bounds a clock that ran ahead; nothing bounds one
+    that ran behind, because there is no reference point for "too old". So
+    a machine whose clock is set back stamps the owner's correction in the
+    past, it loses to the line it was written to supersede, and `compact`
+    deletes it as superseded — worse than the forward case, which at least
+    kept the correction. What a verb owes is the truth about its own write.
+    """
+
+    def behind(self):
+        return lambda: AT - datetime.timedelta(days=1)
+
+    def test_mark_refuses_to_report_a_heal_the_ledger_did_not_take(self, instance: Instance):
+        # The reproduction: `mark` reported success, `status` showed the
+        # unit still done, and `compact` then removed the correction.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        stale = make_ctx(instance, FakeDriver(), now=self.behind())
+        with pytest.raises(ValueError, match="did not take effect") as caught:
+            run_mod.mark(stale, URL, Status.MANUAL, reason="owner ruled: read it myself")
+        message = str(caught.value)
+        assert URL in message  # the unit it did not heal
+        assert "resolves that unit to done" in message  # what it resolves to instead
+        assert "clock" in message  # and why
+        assert ledger.load(instance.ledger_path)[work_hash(URL)].status is Status.DONE
+
+    def test_a_heal_that_lost_never_refreshes_the_item_as_healed(self, instance: Instance):
+        # The frontmatter is derived from the ledger, and the heal is not in
+        # it: refreshing on the strength of the append would have shown the
+        # owner a correction the next `compact` deletes.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        before = (instance.corpus_dir / ITEM[:4] / f"{ITEM}.md").read_text(encoding="utf-8")
+        stale = make_ctx(instance, FakeDriver(), now=self.behind())
+        with pytest.raises(ValueError, match="did not take effect"):
+            run_mod.mark(stale, URL, Status.DEAD, reason="owner ruled: the host is gone")
+        assert (instance.corpus_dir / ITEM[:4] / f"{ITEM}.md").read_text(encoding="utf-8") == before
+
+    def test_a_run_names_the_writes_that_lost_instead_of_reporting_them(self, instance: Instance):
+        # Same hole one layer up: the enrich-report states outcomes on the
+        # strength of having written them, and `enrich fetch` re-fetching a
+        # unit on a backwards clock wrote a `done` line that loses.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        landed = ledger.load(instance.ledger_path)[work_hash(URL)]
+        stale = make_ctx(instance, FakeDriver(), now=self.behind())
+        report = " ".join(run_mod.fetch_urls(stale, ITEM, [URL]).split())
+        assert "did not take effect" in report
+        assert work_hash(URL) in report
+        assert ledger.load(instance.ledger_path)[work_hash(URL)] == landed
+
+
 class TestLoadAppendCompact:
     def test_missing_file_is_an_empty_ledger(self, instance: Instance):
         assert ledger.load(instance.ledger_path) == {}

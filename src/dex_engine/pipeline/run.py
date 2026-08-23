@@ -18,7 +18,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import assert_never
@@ -295,6 +295,10 @@ class _Drain:
 
     ctx: RunContext
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
+    # The last line this run appended per hash — what the ledger must
+    # resolve those hashes to when the run reports its outcomes
+    # (:func:`_writes_that_did_not_land`).
+    written: dict[str, LedgerEntry] = field(default_factory=dict)
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
@@ -1171,7 +1175,7 @@ class _Drain:
 
     # -- recording -------------------------------------------------------
 
-    def record(self, entry: LedgerEntry, *, count: bool = False) -> None:
+    def record(self, entry: LedgerEntry, *, count: bool = False) -> LedgerEntry:
         stamped = ledger.stamp(
             entry,
             today=self.ctx.today,
@@ -1180,6 +1184,7 @@ class _Drain:
         )
         ledger.append(self.ctx.instance.ledger_path, stamped)
         self.entries[stamped.hash] = stamped
+        self.written[stamped.hash] = stamped
         if count:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
@@ -1194,6 +1199,7 @@ class _Drain:
                     or (f"waiting on {stamped.needs}" if stamped.needs else "no reason recorded"),
                 }
             )
+        return stamped
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
         self,
@@ -1488,8 +1494,22 @@ def _finish(drain: _Drain) -> str:
     The filer runs after the drain — it fires only on ``status: error``
     outcomes already ledgered — and its notes/failures land on the same
     report, so the human always knows what was reported.
+
+    The run's own writes are read back first: the report states outcomes on
+    the strength of having written them, so a write the ledger did not
+    resolve to is named here rather than reported as work that landed
+    (:func:`_writes_that_did_not_land`).
     """
     ctx = drain.ctx
+    inert = _writes_that_did_not_land(ctx.instance, drain.written)
+    if inert:
+        drain.notes.append(
+            f"{len(inert)} of this run's ledger writes did not take effect — the ledger "
+            "still resolves those units to an earlier line. Lines are ordered by this "
+            "machine's wall clock, so a clock set BACKWARDS writes work into the past, "
+            "where it loses and `compact` deletes it: check the clock, then re-run. The "
+            f"units are {', '.join(sorted(inert))}."
+        )
     outcome = issues.report_errors(
         drain.error_events,
         enabled=ctx.config.report_issues,
@@ -1887,6 +1907,39 @@ def _last_digested(instance: Instance) -> dict[str, datetime.date]:
     return newest
 
 
+def _writes_that_did_not_land(
+    instance: Instance, written: Mapping[str, LedgerEntry]
+) -> dict[str, LedgerEntry | None]:
+    """The appended lines the ledger does not resolve to, and what it resolves to instead.
+
+    Appending is not landing. ``at`` decides which line of a hash is live
+    and it comes from the writing machine's wall clock: a clock set
+    BACKWARDS — a dead RTC, a container with no NTP, a restored snapshot —
+    stamps the write in the past, where it loses to the very line it was
+    meant to supersede, and ``compact`` then deletes it as superseded with
+    no audit trail. The ledger's cost model for a wrong clock is one line's
+    ordering, never the hash, and it holds only while a verb that reports
+    an outcome reads its own write back rather than trusting the append.
+
+    Args:
+        instance: The instance whose ledger is re-read.
+        written: The lines just appended, keyed by hash.
+
+    Returns:
+        One entry per write that is not live, mapped to the line that is —
+        ``None`` where the hash carries no line at all. Empty is the
+        healthy case.
+    """
+    if not written:
+        return {}
+    live = ledger.load(instance.ledger_path)
+    return {
+        unit_hash: live.get(unit_hash)
+        for unit_hash, entry in written.items()
+        if live.get(unit_hash) != entry
+    }
+
+
 def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     ctx: RunContext,
     url: str,
@@ -1918,13 +1971,18 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         needs: The needed capability, for waiting/blocked heals (defaults
             to the prior entry's).
 
+    The heal is read back before it is reported: a line is only a
+    correction once the ledger resolves its hash to it, and on a machine
+    whose clock runs behind it does not (:func:`_writes_that_did_not_land`).
+
     Returns:
         A one-line confirmation.
 
     Raises:
         ValueError: No ledger entry exists for the URL, ``error`` was
-            requested (errors are engine outcomes, not heals), or the
-            status/field combination violates the ledger schema.
+            requested (errors are engine outcomes, not heals), the
+            status/field combination violates the ledger schema, or the
+            written line did not become the unit's live line.
     """
     if status is Status.ERROR:
         raise ValueError("mark cannot write 'error' — errors are engine outcomes, not heals")
@@ -1969,7 +2027,23 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         error=None,
         reason=reason,
     )
-    drain.record(healed)
+    stamped = drain.record(healed)
+    # Before anything acts on the heal: an append that lost its hash is a
+    # correction that did not happen, and dropping the superseded outputs
+    # or refreshing the item's frontmatter on the strength of it would
+    # write the heal's view of the world over state the ledger disagrees
+    # with. The line stays in the file as the audit trail of the attempt.
+    live = _writes_that_did_not_land(ctx.instance, {stamped.hash: stamped})
+    if stamped.hash in live:
+        resolves = live[stamped.hash]
+        instead = "no line at all" if resolves is None else f"{resolves.status.value}"
+        raise ValueError(
+            f"the {status.value} line for {prior.url} ({prior.hash}) was appended but did "
+            f"not take effect — the ledger still resolves that unit to {instead}. Ledger "
+            "lines are ordered by the writing machine's wall clock, so a clock set BACKWARDS "
+            "stamps the correction in the past, where it loses to the line it was meant to "
+            "supersede and `compact` deletes it. Check this machine's clock, then mark again."
+        )
     if status is Status.DONE and effective_path is not None:
         # A hand-written enrichment closed by mark is one of the unit's own
         # outputs, so it supersedes an earlier kind's exactly as a drained
