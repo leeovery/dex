@@ -129,7 +129,7 @@ class TestEnrichReport:
     def test_empty_run_says_so_once_instead_of_a_list_of_nones(self):
         out = render("enrich-report", {"counts": {}, "items": [], "parked": []})
         assert "## Enrich run — 0 units processed" in out
-        assert "Nothing needs attention" in out
+        assert "Nothing to report from this run" in out
         assert "###" not in out
         assert "Reported upstream" not in out
 
@@ -276,6 +276,46 @@ class TestStatusSurface:
         out = render("status", {"counts": {"done": 1}})
         assert "## Ledger — 1 entry" in out
         assert "Waiting on a capability" not in out
+
+    def test_parked_work_is_named_not_merely_counted(self):
+        # `**manual** 1` told the reader a count and nothing else — no id,
+        # no URL, no reason, on the one surface that holds standing state.
+        out = render(
+            "status",
+            {
+                "counts": {"manual": 1, "waiting": 1},
+                "parked": [
+                    {
+                        "item": "2026-05-19-scanned-pdf-87f21f",
+                        "url": "https://example.test/scan.pdf",
+                        "status": "manual",
+                        "reason": "no extractor for this format",
+                    },
+                    {
+                        "item": "2026-06-01-talk-55ad7b",
+                        "url": "https://example.test/talk",
+                        "status": "waiting",
+                        "reason": "waiting on transcribe",
+                    },
+                ],
+            },
+        )
+        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert "- **2026-05-19-scanned-pdf-87f21f** · `manual`" in out
+        assert "↳ no extractor for this format" in out
+        assert "↳ https://example.test/scan.pdf" in out
+        assert "### Waiting on the engine — 1 entry it retries by itself" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_no_parked_work_renders_no_section(self):
+        out = render("status", {"counts": {"done": 1}, "parked": []})
+        assert "Needs you" not in out
+        assert "Waiting on the engine" not in out
+
+    def test_unparked_status_in_parked_is_loud(self):
+        parked = [{"item": "i", "url": "u", "status": "done", "reason": "r"}]
+        with pytest.raises(PayloadError, match="parked"):
+            render("status", {"counts": {}, "parked": parked})
 
     def test_bad_waiting_need_is_loud(self):
         with pytest.raises(PayloadError, match="summarize"):

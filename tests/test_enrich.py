@@ -74,7 +74,7 @@ class TestMain:
         main(["run"])
         out = capsys.readouterr().out
         assert out.startswith("## Enrich run — 0 units processed")
-        assert "nothing parked" in out
+        assert "nothing newly parked" in out
 
     def test_status_prints_the_surface_and_capability_report(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

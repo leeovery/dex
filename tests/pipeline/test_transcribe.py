@@ -563,7 +563,7 @@ class TestPodcastDrain:
     def test_park_is_not_cognitive_work_yet(self, instance):
         ctx = self.park_via_driver(instance)
         report = run_mod.run(ctx)  # a second run: nothing new
-        assert "Nothing needs attention" in report
+        assert "Nothing to report from this run" in report
 
     def test_park_file_appears_in_the_items_enrichment_listing(self, instance):
         # The frontmatter refresh keys on every write, not only counted

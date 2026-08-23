@@ -812,7 +812,7 @@ class TestRerun:
         self.seed_rerun(ctx)
         report = run_mod.run(ctx)
         assert (out.read_text(), out.stat().st_mtime_ns) == before  # byte-compare held
-        assert "Nothing needs attention" in report
+        assert "Nothing to report from this run" in report
         assert entry_for(ctx).status is Status.DONE
 
     def test_unchanged_rerun_on_a_later_day_still_compares_equal(self, instance):
@@ -828,7 +828,7 @@ class TestRerun:
         later = make_ctx(instance, FakeDriver(), today=lambda: datetime.date(2026, 9, 1))
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
-        assert "Nothing needs attention" in report
+        assert "Nothing to report from this run" in report
 
     def test_a_failed_rewrite_leaves_the_enrichment_whole(self, instance, monkeypatch):
         # A plain write truncates before it writes: an interrupted run left an
@@ -1740,6 +1740,55 @@ class TestStatusReport:
         assert "transcribe" in report
         assert "2026-08-19-orphan-abcdef" in report
         assert "### Digest these" in report
+
+    def test_parked_work_that_outlived_its_run_is_still_named(self, instance):
+        # §1's session-end invariant: the entries that survive a session are
+        # waiting/blocked/error/manual, each parked for a stated reason and
+        # each printed. The run report prints what ITS run parked, so a unit
+        # parked months ago appeared on no surface at all — `**manual** 1`
+        # was the whole of it, while its item sat permanently raw.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.MANUAL,
+                engine="0.2.0",
+                date=datetime.date(2026, 5, 19),
+                reason="no extractor for this format",
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        assert "Nothing to report from this run" in run_mod.run(ctx)  # nothing drainable
+        report = run_mod.status_report(ctx)
+        assert "### Needs you — 1 entry the engine has given up on" in report
+        assert ITEM in report
+        assert URL in report
+        assert "no extractor for this format" in report
+
+    def test_a_parked_unit_is_named_under_the_item_that_owns_it(self, instance):
+        # The standing view asks the corpus who owns the unit, like every
+        # other surface: a renamed item's parked work is the renamed item's.
+        write_item(instance, "2026-08-19-new-slug-55ad7b")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item="2026-08-19-old-slug-55ad7b",
+                kind=Kind.WEB,
+                status=Status.MANUAL,
+                engine="0.2.0",
+                date=datetime.date(2026, 5, 19),
+                reason="rescue by hand",
+            ),
+        )
+        report = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "- **2026-08-19-new-slug-55ad7b** · `manual`" in report
+        assert "old-slug" not in report
 
     def test_item_view_lists_every_unit_with_provenance(self, instance):
         write_item(instance)

@@ -1305,21 +1305,7 @@ class _Drain:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
-            row: dict[str, object] = {
-                "item": stamped.item,
-                "url": stamped.url,
-                "status": stamped.status.value,
-                "reason": stamped.reason
-                or stamped.error
-                or (f"waiting on {stamped.needs}" if stamped.needs else "no reason recorded"),
-            }
-            if stamped.attempts is not None:
-                # The report splits parked entries by who owns the next
-                # action, and for a blocked one the answer is "the engine,
-                # this many more times" — which only the cap makes readable.
-                row["attempts"] = stamped.attempts
-                row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
-            self.parked.append(row)
+            self.parked.append(_parked_row(stamped, stamped.item))
         return stamped
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
@@ -1493,6 +1479,30 @@ class _Drain:
             and entry.needs is not None
             and capabilities.is_cognitive(entry.needs, entry.format)
         ]
+
+
+def _parked_row(entry: LedgerEntry, item_id: str) -> dict[str, object]:
+    """One parked entry as both report surfaces read it.
+
+    The run report says what THIS run parked and the standing view says
+    what is parked now; they are the same shape read at two moments, so
+    they are built here once.
+    """
+    row: dict[str, object] = {
+        "item": item_id,
+        "url": entry.url,
+        "status": entry.status.value,
+        "reason": entry.reason
+        or entry.error
+        or (f"waiting on {entry.needs}" if entry.needs else "no reason recorded"),
+    }
+    if entry.attempts is not None:
+        # The report splits parked entries by who owns the next action, and
+        # for a blocked one the answer is "the engine, this many more
+        # times" — which only the cap makes readable.
+        row["attempts"] = entry.attempts
+        row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
+    return row
 
 
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
@@ -1961,7 +1971,7 @@ def _admit_fetch(
 
 
 def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
-    """Ledger summary, digest backstop, and the capability report.
+    """Ledger summary, parked standing view, digest backstop, capabilities.
 
     With ``item_id``, renders that item's ledger view instead: every unit
     the item owns, with status, provenance, and outputs. "What was fetched
@@ -1980,6 +1990,9 @@ def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
     payload: dict[str, object] = {"counts": counts}
     if waiting:
         payload["waiting"] = waiting
+    parked = _parked_units(ctx, entries)
+    if parked:
+        payload["parked"] = parked
     orphans = digest_orphans(ctx.instance)
     if orphans:
         payload["orphans"] = orphans
@@ -1987,6 +2000,39 @@ def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
     if ctx.capabilities is not None:
         report += "\n" + surfaces.render("capability-report", ctx.capabilities.report_payload())
     return report
+
+
+def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict[str, object]]:
+    """Every unit parked right now — what outlived the run that parked it.
+
+    The session-end invariant (§1) is that the only entries surviving a
+    session are ``waiting`` / ``blocked`` / ``error`` / ``manual``, each
+    parked for a stated reason and each printed. The run report prints what
+    ITS run parked; a unit that outlives that run is untouched standing
+    state, which is this view's job — and it had no view at all. A
+    ``manual`` line three months old rendered as ``**manual** 1`` and
+    nowhere else: no id, no URL, no reason, while its item sat permanently
+    raw, permanently undigestable, and named on no surface.
+
+    A unit is one row however many items list it: the URL is its identity,
+    and the item named is the first that claims it, as seeding's dedupe
+    names it.
+
+    Args:
+        ctx: The run context.
+        entries: The ledger, hash -> latest entry.
+
+    Returns:
+        The parked rows, by item then URL.
+    """
+    owners = _unit_owners(ctx.instance, entries, ctx.drivers)
+    rows = [
+        _parked_row(entry, owners.get(entry.hash, (entry.item,))[0])
+        for entry in entries.values()
+        if entry.status in _PARKED
+    ]
+    rows.sort(key=lambda row: (str(row["item"]), str(row["url"])))
+    return rows
 
 
 def _item_status(ctx: RunContext, entries: dict[str, LedgerEntry], item_id: str) -> str:
