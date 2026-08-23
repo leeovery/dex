@@ -606,6 +606,13 @@ def _referential_integrity(
     asked independently — an item purged by ``dex exclude`` answers both,
     and each finding is still true.
 
+    **The record is asked before the claim.** A hash two live items shared
+    always has another claimant after one of them is excluded, so asking
+    the claim first made every deliberate on-the-record exclusion read as
+    a rename — a cause the check never established, over the one the owner
+    wrote down. The claim still shows, as the reason those lines survived
+    the purge rather than as what became of the item.
+
     Ghost rows are one per (item, finding): an item named by ten entries for
     one reason is one row carrying the count, not ten rows a reader cannot
     tell apart.
@@ -622,10 +629,18 @@ def _referential_integrity(
     counts: dict[tuple[str, str], int] = {}
     for entry in dead:
         owner = owners.get(entry.hash)
-        if owner is not None:
+        if entry.item in excluded:
+            # The record answers first, always: an exclusion is a ruling the
+            # owner made and wrote down, and the claim says only that
+            # `exclude` rightly kept work a survivor shares — which is why
+            # the lines are still here, not what happened to the item.
+            why = (
+                EXCLUDED_ON_RECORD
+                if owner is None
+                else f"{EXCLUDED_ON_RECORD} — {owner} shares this work"
+            )
+        elif owner is not None:
             why = f"renamed — {owner} lists this work"
-        elif entry.item in excluded:
-            why = EXCLUDED_ON_RECORD
         else:
             why = _ITEM_UNCLAIMED
         counts[(entry.item, why)] = counts.get((entry.item, why), 0) + 1

@@ -505,6 +505,23 @@ class TestReferentialIntegrity:
         assert f"**{ITEM}** — 1 entry (renamed — {renamed} lists this work)" in outcome.report
         assert "no live corpus item lists this work" not in outcome.report
 
+    def test_a_deliberate_exclusion_is_never_reported_as_a_rename(self, instance):
+        # `exclude` KEEPS a line whose work a survivor shares, so a purged
+        # item always has another claimant — asking the claim first made
+        # every on-the-record exclusion read as a rename, asserting a cause
+        # lint never established over the one the owner wrote down.
+        self._bare_wiki(instance)
+        url = "https://example.test/shared"
+        other = "2026-08-19-bravo-222222"
+        write_corpus_item(instance, other, urls=[url])
+        (instance.state_dir / "exclusions.tsv").write_text(f"{ITEM}\tout of scope\n")
+        ledger.append(instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url))
+        outcome = lint(instance)
+        assert f"**{ITEM}** — 1 entry (excluded on record — {other} shares this work)" in (
+            outcome.report
+        )
+        assert "renamed" not in outcome.report
+
     def test_one_row_per_item_carries_its_entry_count(self, instance):
         # Two entries of one item rendered as two rows a reader could not
         # tell apart; one row states the multiplicity instead.
