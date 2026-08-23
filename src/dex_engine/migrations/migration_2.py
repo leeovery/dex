@@ -90,7 +90,14 @@ from pathlib import Path
 from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
-from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, stamp, to_line
+from dex_engine.pipeline.ledger import (
+    LedgerSchemaError,
+    append,
+    from_line,
+    resolution_key,
+    stamp,
+    to_line,
+)
 from dex_engine.pipeline.ownership import corpus_owners
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import (
@@ -176,9 +183,7 @@ class IdentityRekeyAndRerunSeed:
         if not path.exists():
             return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
         entries = _rekey_identities(path, actions, skipped)
-        latest: dict[str, LedgerEntry] = {}
-        for entry in entries:
-            latest[entry.hash] = entry
+        latest = _latest_per_hash(entries, now=self._now())
         exclusions = _exclusions(root)
         cohort = [entry for entry in latest.values() if _in_cohort(entry, skipped=skipped)]
         # The corpus scan answers one question — which live item claims this
@@ -361,6 +366,28 @@ def _rekey_action(identity: dict[str, str], reparented: int) -> str:
     if reparented:
         action += f"; {reparented} parent pointer(s) followed to the new hash"
     return action
+
+
+def _latest_per_hash(
+    entries: list[LedgerEntry], *, now: datetime.datetime
+) -> dict[str, LedgerEntry]:
+    """The live line per hash, resolved exactly as ``ledger.load`` resolves it.
+
+    Through ``resolution_key``, never by file position alone: membership is
+    read off the live line, and a re-application runs against state the
+    engine has since written — where a hash's newest line is one another
+    machine's union merge left mid-file, position would name a superseded
+    line and reseed work already settled.
+    """
+    latest: dict[str, LedgerEntry] = {}
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for position, entry in enumerate(entries):
+        key = resolution_key(entry, position, now=now)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        latest[entry.hash] = entry
+        winning[entry.hash] = key
+    return latest
 
 
 def _exclusions(root: Path) -> dict[str, str]:

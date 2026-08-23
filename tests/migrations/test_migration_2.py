@@ -55,7 +55,7 @@ def url_of(tag):
 
 
 def entry(  # noqa: PLR0913 — one keyword per exercised schema slot
-    tag, *, kind, status=Status.DONE, engine="0.0.1", reason=None, error=None
+    tag, *, kind, status=Status.DONE, engine="0.0.1", reason=None, error=None, at=None
 ):
     url = url_of(tag)
     unit_hash = work_hash(url)
@@ -72,6 +72,7 @@ def entry(  # noqa: PLR0913 — one keyword per exercised schema slot
         status=status,
         engine=engine,
         date=datetime.date(2026, 5, 1),
+        at=at,
         path=path,
         reason=reason,
         error=error,
@@ -180,6 +181,31 @@ class TestSeeding:
         )
         migration.apply(tmp_path)
         assert ledger.load(path)[work_hash(url_of("superseded"))].status is Status.DEAD
+
+    def test_membership_resolves_a_hash_exactly_as_load_does(self, tmp_path, migration):
+        # Re-application runs against state the engine has since written,
+        # and a union merge can leave the OLDER line last in the file.
+        # Resolving by file position would read the superseded pre-rewrite
+        # `done` as live and requeue work the owner has since ruled on;
+        # `resolution_key` is the one rule both sides ask.
+        ruling = entry(
+            "post-web",
+            kind=Kind.WEB,
+            status=Status.MANUAL,
+            reason="owner ruled: read it myself",
+            engine=ENGINE,
+            at=datetime.datetime(2026, 8, 20, 7, 0, tzinfo=datetime.UTC),
+        )
+        superseded = entry(
+            "post-web",
+            kind=Kind.WEB,
+            at=datetime.datetime(2026, 8, 20, 6, 0, tzinfo=datetime.UTC),
+        )
+        path = write_entries(tmp_path, [ruling, superseded])
+        report = migration.apply(tmp_path)
+        assert ledger.load(path)[work_hash(url_of("post-web"))] == ruling
+        assert not any("seeded" in action for action in report.actions)
+        assert path.read_text(encoding="utf-8").count("\n") == 2
 
     def test_a_seed_carries_the_writers_own_write_instant(self, tmp_path, migration):
         # `at` is set by the writer seam and never hand-built at a call
