@@ -576,7 +576,7 @@ class TestIncompleteItemsOnTheReport:
         report, payload = self._run_capturing(
             make_ctx(instance, FakeDriver(fetch_fn=fetch)), monkeypatch
         )
-        capped = [e for e in ledger.load(instance.ledger_path).values() if e.capped]
+        capped = [e for e in ledger.load(instance.ledger_path).values() if e.cap is not None]
         assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)  # 4 children refused
         assert payload["incomplete"] == [
             {
