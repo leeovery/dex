@@ -5,6 +5,7 @@ import datetime
 import io
 import json
 import os
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -2077,6 +2078,15 @@ class TestNoSourceItems:
         report = run_mod.run(make_ctx(instance, FakeDriver()))
         assert "no-source item" not in report
 
+    def test_a_capture_that_seeded_nothing_still_derives_raw(self, instance):
+        # The one item the directory listing still answers for: no units and
+        # no files is a text-only share, which owes its description and its
+        # digest — and an `any()` over no units would call it finished.
+        item_id = self._text_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        path = instance.corpus_dir / "2026" / f"{item_id}.md"
+        assert corpus.read_item(path).status == "raw"
+
     def test_only_the_full_run_derives_the_listing(self, instance):
         self._text_item(instance)
         report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
@@ -2208,10 +2218,11 @@ class TestOwnershipIsTheCorpusAnswer:
     def test_an_interrupted_rename_does_not_become_invisible(self, instance):
         # The corpus file moved and the enrichment directory did not. The
         # sweep heals the line's item id — correctly — and that clears the
-        # ghost row this state used to show up as, leaving a `done` unit
-        # nothing drains again and an item that derives `raw` with an empty
-        # listing forever. Moving files is not the drain's business; naming
-        # the state is lint's, and the state must stay named.
+        # ghost row this state used to show up as. The item owes nothing, so
+        # it derives `enriched` and is not stuck; but its own directory is
+        # empty and its listing says so, and no run surface says why.
+        # Moving files is not the drain's business; naming the state is
+        # lint's, and the state must stay named.
         self._drained_then_renamed(instance, move_enrichment=False)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
@@ -2219,8 +2230,8 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.item == NEW_ITEM
         assert entry.status is Status.DONE
         assert entry.path == f"enrichment/{OLD_ITEM}/web-{entry.hash[:6]}.md"
-        new_path = instance.corpus_dir / "2026" / f"{NEW_ITEM}.md"
-        assert corpus.read_item(new_path).status == "raw"  # its listing is empty
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{NEW_ITEM}.md")
+        assert item.enrichment == []  # the file is not in its directory
         (instance.state_dir / "taxonomy.json").write_text('{"topics": {}, "entities": {}}')
         report = run_lint(
             instance, is_cognitive=lambda _need, _fmt=None: False, today=lambda: TODAY, write=False
@@ -2416,6 +2427,63 @@ class TestOwnershipIsTheCorpusAnswer:
         run_mod.run(ctx)
         assert not (instance.enrichment_dir / BRAVO).exists()
         assert entry_for(ctx).item == ALPHA
+
+    def test_a_twin_is_enriched_by_the_landing_under_its_co_claimant(self, instance):
+        # Seeding dedupes by work hash, so bravo's only URL is ledgered and
+        # enriched under alpha. Reading bravo's own empty directory as "not
+        # enriched" left it `raw` permanently, on no surface, with nothing
+        # that could move it: `fetch` refuses a URL another item enriches,
+        # `mark` heals the unit — which was never the thing that was wrong —
+        # and a digest pass cannot lift a status it does not derive.
+        write_item(instance, ALPHA)
+        bravo = write_item(instance, BRAVO)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        item = corpus.read_item(bravo)
+        assert item.status == "enriched"
+        # And its listing stays empty, deliberately: the field is the item's
+        # OWN directory, its entries are bare filenames every reader
+        # resolves against `enrichment/<id>/`, and one file for one unit is
+        # named by one item. `enrich status <item>` is where the shared unit
+        # shows, and it does.
+        assert item.enrichment == []
+        assert URL in run_mod.status_report(make_ctx(instance, FakeDriver()), item_id=BRAVO)
+
+    def test_a_twin_reaches_the_digest_backstop_with_no_directory_of_its_own(self, instance):
+        # The interrupted-session case the backstop exists for: the run
+        # landed the shared URL and the session stopped before digesting
+        # bravo. bravo owes nothing, so it is digestible — and it has no
+        # enrichment directory for a disk walk to find it by.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert not (instance.enrichment_dir / BRAVO).exists()
+        assert run_mod.digest_orphans(instance) == [ALPHA, BRAVO]
+        assert BRAVO in run_mod.status_report(ctx)
+
+    def test_a_digested_twin_leaves_the_backstop(self, instance):
+        # The backstop names an interrupted session, not a standing state:
+        # once the digest pass is recorded, bravo stops being listed.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{BRAVO}.md").write_text("digested\n", encoding="utf-8")
+        run_mod.record_pass(ctx, BRAVO, "digest")
+        assert run_mod.digest_orphans(instance) == [ALPHA]
+
+    def test_a_dead_id_holding_a_landing_is_not_offered_as_digestible(self, instance):
+        # The candidate set gained "the ledger records a landing for it", so
+        # it has to keep the live-item bound the disk walk gave it for free:
+        # a done line naming an id no corpus file answers to is lint's
+        # ghost-item finding, not work anyone can be asked to do.
+        write_item(instance, ALPHA)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        (instance.corpus_dir / "2026" / f"{ALPHA}.md").unlink()
+        shutil.rmtree(instance.enrichment_dir / ALPHA)  # what `exclude` leaves behind
+        assert run_mod.digest_orphans(instance) == []
 
     def test_an_outstanding_shared_unit_holds_every_item_listing_it_raw(self, instance):
         # The line names alpha, but bravo lists the URL too, so bravo owes

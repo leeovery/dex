@@ -1735,18 +1735,35 @@ def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
 def _derived_status(
     item: corpus.CorpusItem, files: list[str], units: list[LedgerEntry] | None
 ) -> str:
-    """``enriched`` iff the item holds enrichment and owes no further work.
+    """``enriched`` iff the item owes no further work.
 
     An item is one unit of knowledge — the post, the thread parents above
     it, the links harvest promoted, the media, the video awaiting its
     transcript — so one outstanding unit keeps the whole item ``raw`` and
     out of digest/wiki. A dead link or a deliberately skipped unit owes
     nothing and holds nothing hostage.
+
+    What it OWES is the whole question, and the ledger answers it through
+    the ownership map (``units``) — never the item's own directory
+    listing. Seeding dedupes by work hash, so a URL shared into two
+    captures is ledgered once and its enrichment lands under the first
+    item only; reading the second item's empty directory as "not
+    enriched" left it ``raw`` permanently, on no surface, with no verb
+    that could move it — ``fetch`` refuses a URL another item enriches,
+    ``mark`` heals the unit, which was never the thing that was wrong,
+    and a digest pass cannot lift a status it does not derive. The
+    listing is where the item's OWN files are, which is a different
+    question from who owes what.
+
+    The listing still answers for one item: the capture that seeded
+    nothing at all. No units and no files is a text/image-only share,
+    which owes its description and its digest — and an ``any()`` over no
+    units would call that finished.
     """
-    if not files:
-        return "raw"
     if units is None:
         return item.status
+    if not units and not files:
+        return "raw"
     return "raw" if any(unit.status in _OUTSTANDING for unit in units) else "enriched"
 
 
@@ -2134,6 +2151,15 @@ def digest_orphans(instance: Instance) -> list[str]:
     engine, a ``blocked`` unit past its attempts and a ``waiting`` unit
     with no provider all sit there indefinitely by design.
 
+    Who is a candidate is asked of the ledger as well as the disk. An
+    enrichment directory holding markdown is one answer — it covers files
+    no ledger line wrote, like a session's media description. A live item
+    the ledger records a landing for is the other, and it is the only
+    answer a co-claimant has: seeding dedupes by work hash, so a URL
+    shared into two captures enriches under the first item, and the
+    second — which derives ``enriched`` on the same landing, and is
+    therefore digestible — has no directory to be found by.
+
     Args:
         instance: The instance.
 
@@ -2150,23 +2176,30 @@ def digest_orphans(instance: Instance) -> list[str]:
     owing = _items_owing_work(entries, owners)
     enriched_on = _last_enriched(entries, owners)
     digested_on = _last_digested(instance)
-    for item_dir in sorted(instance.enrichment_dir.iterdir()):
-        if not item_dir.is_dir():
+    candidates = {
+        item_dir.name
+        for item_dir in instance.enrichment_dir.iterdir()
+        if item_dir.is_dir() and any(item_dir.glob("*.md"))
+    }
+    # A landing counts for the item the corpus says owns it, whether or not
+    # that item has a directory — but only while the item is LIVE: a done
+    # line naming an id no corpus file answers to is lint's ghost-item
+    # finding, never work this backstop can ask anyone to do.
+    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    candidates |= enriched_on.keys() & live
+    for item_id in sorted(candidates):
+        if item_id in owing:
             continue
-        if not any(item_dir.glob("*.md")):
+        if not (instance.digests_dir / f"{item_id}.md").exists():
+            orphans.append(item_id)
             continue
-        if item_dir.name in owing:
-            continue
-        if not (instance.digests_dir / f"{item_dir.name}.md").exists():
-            orphans.append(item_dir.name)
-            continue
-        landed = enriched_on.get(item_dir.name)
-        digested = digested_on.get(item_dir.name)
+        landed = enriched_on.get(item_id)
+        digested = digested_on.get(item_id)
         # No dates on either side is no claim: enrichment written outside
         # the ledger (a media description) and digests older than the pass
         # record are facts about history, not staleness.
         if landed is not None and digested is not None and digested < landed:
-            orphans.append(item_dir.name)
+            orphans.append(item_id)
     return orphans
 
 
