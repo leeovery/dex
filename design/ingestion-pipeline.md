@@ -777,18 +777,29 @@ independently is seven chances to reintroduce it):
 - Providers **raise** a typed `ProviderInputError` for bad inputs (corrupt
   audio, unparseable file); the run loop maps it → `manual`, anything
   uncaught → `error`. Classification judgment lives in one place.
-- Exactly **one** `except Exception` in the whole pipeline: the per-unit
+- **Two** `except Exception` in the whole pipeline, each named where it
+  sits. The first is the per-unit
   loop in `run.py` (→ `error` + issue filing). **Every** dispatch route runs
   inside it — driver fetch, transcribe drain, and media download alike,
   the media stage's own first download included — so no unit's failure can
   escape the drain or be charged to another unit's line.
-  Drivers and providers never
+  The second is the canonicalization seam in `detect.canonical_url`, and it
+  exists because a driver's `canonical` is arbitrary code over data an
+  owner wrote into frontmatter, so what it raises is not a vocabulary any
+  caller can plan for. Its two callers read a fault differently — seeding
+  caught `ValueError` and let anything else abort the run, the ownership
+  map caught everything and keyed the unit on the raw URL's hash — which
+  is one URL holding two identities and two outcomes. The refusal is
+  therefore typed once, at the one place the driver is called: whatever a
+  driver raises leaves as a `ValueError` carrying the original, and each
+  caller's narrow guard does its own right thing — seeding parks the bad
+  seed keyed on the raw URL, which is exactly the identity the ownership
+  fallback resolves to. Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
   keep their cause. Migrations have the one counterpart outside the
-  pipeline, on the same reasoning: canonicalizing one stored URL runs a
-  driver's arbitrary code over owner data, and a migration that dies
-  part-way leaves state half-moved — so the per-entry canonicalization is
-  broad-caught and skipped-with-why (§12). The scrubber feeds the ledger `error` field; issue
+  pipeline, on the same reasoning: a migration that dies part-way leaves
+  state half-moved, so the per-entry canonicalization is caught and
+  skipped-with-why rather than aborting the chain (§12). The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
   section).
 

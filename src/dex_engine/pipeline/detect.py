@@ -107,8 +107,44 @@ def canonical_url(url: str, drivers: Sequence[SourceDriver]) -> str:
     The result keys the ledger hash. Deliberately pattern-based: sniffing
     may reroute a URL's *kind* to ``file``, but never its key — the
     catch-all's canonical is the base canonicalization either way.
+
+    **A refusal is one type, decided here.** A driver's ``canonical`` is
+    arbitrary code over data an owner wrote into frontmatter, and the two
+    callers that key work off it read that differently: seeding guarded
+    this call with ``except ValueError`` and let anything else abort the
+    run, while the ownership map caught everything and quietly keyed the
+    unit on the raw URL's hash — one URL crashing a run on one path and
+    resolving fine on the other, which is the same URL having two
+    identities. So the refusal is typed at the one place the driver is
+    called: whatever a driver raises leaves here as a ``ValueError`` naming
+    the original, and every caller's existing narrow guard then does its
+    own right thing — seeding parks the bad seed keyed on the raw URL,
+    which is exactly the identity the ownership fallback resolves to.
+
+    Args:
+        url: The URL to canonicalize.
+        drivers: The ordered registry (web last, the catch-all).
+
+    Returns:
+        The canonical form that keys this URL's work unit.
+
+    Raises:
+        ValueError: The driver refused the URL, or its ``canonical`` raised
+            anything at all.
     """
-    return _match(url, drivers).canonical(url)
+    driver = _match(url, drivers)
+    try:
+        return driver.canonical(url)
+    except ValueError:
+        raise
+    except Exception as e:
+        # A driver's canonical is arbitrary code over owner data: the catch
+        # is broad because the vocabulary is, and nothing is swallowed —
+        # the original travels on as the cause.
+        raise ValueError(
+            f"{driver.kind} canonicalization failed "
+            f"({type(e).__name__}: {' '.join(str(e).split())})"
+        ) from e
 
 
 def detect(url: str, drivers: Sequence[SourceDriver], *, sniff: Sniff | None = None) -> Detection:

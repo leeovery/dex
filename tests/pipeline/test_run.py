@@ -26,6 +26,7 @@ from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
@@ -210,6 +211,33 @@ class TestSeedAndDone:
         assert "unfetchable capture URL" in (bad.reason or "")
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
         assert "unfetchable capture URL" in report  # parked rows are printed
+
+    def test_a_driver_canonical_that_raises_parks_that_url_never_aborts(self, instance):
+        # Seeding caught only ValueError, so a driver's canonical raising
+        # anything else took the whole run down — while the ownership map
+        # broad-caught the same call and resolved the unit on the raw URL's
+        # hash. One URL, two identities and two outcomes; now both paths
+        # read a refusal the same way and the park keys the raw URL, which
+        # is exactly what `work_identity` falls back to.
+        bad_url = "https://example.test/explodes"
+
+        class Exploding(FakeDriver):
+            def canonical(self, url: str) -> str:
+                if url == bad_url:
+                    raise TypeError("expected str, got tuple")
+                return super().canonical(url)
+
+        write_item(instance, urls=[bad_url, URL])
+        ctx = make_ctx(instance, Exploding())
+        report = run_mod.run(ctx)  # completes — no abort
+        entries = ledger.load(instance.ledger_path)
+        parked = entries[work_hash(bad_url)]
+        assert parked.status is Status.MANUAL
+        assert "unfetchable capture URL" in (parked.reason or "")
+        assert "TypeError" in (parked.reason or "")
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+        assert "unfetchable capture URL" in report
+        assert work_identity(bad_url, [Exploding()]) == parked.hash
 
     def test_one_malformed_corpus_item_is_skipped_and_reported_never_fatal(self, instance):
         write_item(instance)

@@ -44,7 +44,10 @@ def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
     """
     try:
         canonical = canonical_url(url, drivers)
-    except Exception:  # noqa: BLE001 — a driver's canonical is arbitrary code over owner data
+    except ValueError:
+        # Every refusal reaches here as a ValueError, whatever the driver
+        # raised — `canonical_url` types it — so this fallback and the
+        # bad-seed park key the unit identically.
         return work_hash(url)
     return work_hash(canonical)
 

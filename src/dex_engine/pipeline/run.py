@@ -6,9 +6,11 @@ deterministically named outputs (reruns overwrite, never duplicate),
 downloads media, re-enters children with provenance and caps, and
 renders its report through the ``enrich-report`` surface.
 
-Exactly ONE ``except Exception`` exists in the whole pipeline: the per-unit
-loop here. Every ledger write goes through ``ledger.stamp`` with the
-injected clocks and engine version.
+TWO ``except Exception`` exist in the whole pipeline, and both are named
+where they sit: the per-unit loop here, and the canonicalization seam in
+``detect``, which types whatever a driver's ``canonical`` raises as the one
+refusal every caller already handles. Every ledger write goes through
+``ledger.stamp`` with the injected clocks and engine version.
 """
 
 import dataclasses
@@ -587,7 +589,7 @@ class _Drain:
                 self._drive_unit(entry)
         except ProviderInputError as e:
             self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
-        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline
+        except Exception as e:  # noqa: BLE001 — the per-unit broad catch, one of two
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
             self.error_events.append(
                 issues.error_event(
