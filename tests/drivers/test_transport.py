@@ -18,6 +18,7 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.capabilities.transcribe.whisper_api import WhisperApi, urllib_multipart_post
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import (
+    _REQUEST_LINE_FORBIDDEN,
     _ascii_url,
     normalize_httplib_errors,
     urllib_transport,
@@ -140,7 +141,7 @@ class TestThroughADriverFetch:
 
 
 class TestNonAsciiUrls:
-    """A URL with an accent in it is a URL to fetch, not a codec error."""
+    """A URL with an accent — or a space — in it is a URL to fetch, not an error."""
 
     @pytest.mark.parametrize(
         ("path", "wire"),
@@ -160,6 +161,21 @@ class TestNonAsciiUrls:
             response = urllib_transport(base + path)
         assert response.status == 200
         assert seen == [f"GET {wire} HTTP/1.1"]
+
+    def test_a_space_in_the_path_reaches_the_wire_encoded(self):
+        # http.client rejects [\x00-\x20\x7f] in the request line, not
+        # merely non-ASCII: an unencoded space in an href — everyday in a
+        # corpus — raised InvalidURL and parked the item blocked, spending
+        # five attempts and five wayback lookups on a condition no retry
+        # can change. The URL was fetchable all along.
+        with recording_server() as (base, seen):
+            response = urllib_transport(base + "/reports/annual report.pdf")
+        assert response.status == 200
+        assert seen == ["GET /reports/annual%20report.pdf HTTP/1.1"]
+
+    @pytest.mark.parametrize("char", ["\x00", " ", "\x1f", "\x7f"])
+    def test_no_character_the_request_line_forbids_survives_the_encoder(self, char):
+        assert _REQUEST_LINE_FORBIDDEN.search(_ascii_url(f"https://example.com/a{char}b")) is None
 
     def test_an_idn_host_is_punycoded(self):
         assert _ascii_url("https://münchen.example/rathaus") == (
