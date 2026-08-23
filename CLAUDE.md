@@ -131,10 +131,11 @@ never a gate). `pytest -m live` watches third parties for drift, which happens
 on their clock and has nothing to do with release timing. The workflow splits
 in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
 lookup, the five GitHub contents/matching-refs checks through an authenticated
-`gh`, whisper's tokenizer) fail the run and mail the maintainer, which is
+`gh`) fail the run and mail the maintainer, which is
 GitHub's own default for a failed scheduled workflow and needs no robot in the
 issue tracker. Everything marked `ci_hostile` — fxtwitter, the two YouTube
-root-namespace checks, wayback, the whisper model download — runs in a
+root-namespace checks, wayback, the two whisper HuggingFace fetches (the
+~75MB model, the ~2.4MB tokenizer) — runs in a
 `continue-on-error` job that never notifies, because those endpoints answer a
 runner differently from a laptop and a false alarm every morning trains you to
 ignore the real one. Read that job when a driver misbehaves in the field.
