@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import assert_never
 
-from dex_engine import corpus
+from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.transport import Transport, urllib_transport
 from dex_engine.render import surfaces
@@ -866,6 +866,12 @@ class _Drain:
         file (nor report the item as changed). ``count=False`` writes
         without registering an item outcome (a waiting park's partial
         content is not cognitive work yet).
+
+        Atomic, like every other state write: an interrupted run must not
+        leave a half-file behind. A truncated enrichment file is the worst
+        of them to lose — its frontmatter carries the thread-completeness
+        markers and the re-fetch pointer, and lint's marker scan is the
+        only thing that ever opens one.
         """
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / entry.item / name
@@ -881,7 +887,7 @@ class _Drain:
             else:
                 outcome.new += 1
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(content, encoding="utf-8")
+        atomic.write_text(out, content)
         return str(out.relative_to(self.ctx.instance.root))
 
     # -- extraction assets ----------------------------------------

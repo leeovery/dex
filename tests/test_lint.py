@@ -880,6 +880,24 @@ class TestThreadCompleteness:
         assert f"enrichment/{ITEM}/x-abc123.md: unreadable (UnicodeDecodeError)" in flat
         assert "thread completeness unknown" in flat
 
+    def test_an_unclosed_frontmatter_fence_is_reported(self, instance):
+        # What an interrupted write leaves: a marker stamped inside a
+        # frontmatter block that never closes. Read as no fields at all, it
+        # was indistinguishable from a clean file and vanished from the
+        # report — the half-thread with it.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '---\nurl: https://x.com/i/status/1\nchain_incomplete: "true"\n'
+            'chain_note: "parent fetch failed after 3 post(s): 404"\n'
+        )
+        outcome = lint(instance)
+        flat = " ".join(outcome.report.split())  # the surface wraps notes
+        assert f"enrichment/{ITEM}/x-abc123.md: unterminated frontmatter" in flat
+        assert "thread completeness unknown" in flat
+        assert outcome.exit_code == 0
+
     def test_an_unreadable_enrichment_file_never_fails_the_check(self, instance):
         self._bare_wiki(instance)
         path = instance.enrichment_dir / ITEM / "x-abc123.md"

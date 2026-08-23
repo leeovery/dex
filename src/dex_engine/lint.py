@@ -765,8 +765,11 @@ def _incomplete_threads(instance: Instance) -> _ThreadScan:
     A file this scan cannot read is reported as a note rather than skipped:
     no other check in lint opens an enrichment file, so a dropped one is
     invisible to every check, and the half-thread inside it is invisible
-    forever. It stays a note, never a failure — the markers are a caution
-    to the session, not a broken contract downstream.
+    forever. Unreadable covers both shapes — bytes no decoder accepts, and
+    a frontmatter block that opens and never closes, which is what a run
+    interrupted mid-write leaves behind. It stays a note, never a failure —
+    the markers are a caution to the session, not a broken contract
+    downstream.
 
     Newest first, and read as a standing count rather than a work list.
     Nothing clears a marker — a parent that 404s stays unfetchable — so
@@ -781,10 +784,10 @@ def _incomplete_threads(instance: Instance) -> _ThreadScan:
         try:
             fields = read_enrichment_fields(path)
         except (OSError, UnicodeDecodeError) as e:
-            scan.notes.append(
-                f"{rel}: unreadable ({e.__class__.__name__}) — thread completeness "
-                "unknown, and no other check reads enrichment files"
-            )
+            scan.notes.append(_unread_note(rel, f"unreadable ({e.__class__.__name__})"))
+            continue
+        except ValueError as e:
+            scan.notes.append(_unread_note(rel, str(e)))
             continue
         markers = [marker for marker in THREAD_MARKERS if fields.get(marker) == "true"]
         if not markers:
@@ -799,6 +802,11 @@ def _incomplete_threads(instance: Instance) -> _ThreadScan:
             }
         )
     return scan
+
+
+def _unread_note(rel: str, why: str) -> str:
+    """One note for an enrichment file the marker scan got no markers out of."""
+    return f"{rel}: {why} — thread completeness unknown, and no other check reads enrichment files"
 
 
 # ---------------------------------------------------------------------------

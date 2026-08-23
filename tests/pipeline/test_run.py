@@ -58,6 +58,7 @@ from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeGh as FakeGhApi
 from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
 from tests.pipeline.test_issues import FakeGh
+from tests.test_atomic import failing_fdopen
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
@@ -827,6 +828,27 @@ class TestRerun:
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
         assert "cognitive work — none" in report
+
+    def test_a_failed_rewrite_leaves_the_enrichment_whole(self, instance, monkeypatch):
+        # A plain write truncates before it writes: an interrupted run left an
+        # enrichment file whose frontmatter fence never closes, taking its
+        # thread markers and its re-fetch pointer with it.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        out = instance.root / str(entry_for(ctx).path)
+        intact = out.read_text()
+
+        self.seed_rerun(ctx)
+        rewritten = FakeDriver(
+            fetch_fn=lambda _unit: Result(
+                status=Status.DONE, meta={"title": "t"}, body="a different body " * 30
+            )
+        )
+        failing_fdopen(monkeypatch)
+        run_mod.run(make_ctx(instance, rewritten))
+        assert out.read_text() == intact
+        assert [p.name for p in out.parent.iterdir()] == [out.name]  # no temp orphan
 
     @given(
         pages=st.dictionaries(

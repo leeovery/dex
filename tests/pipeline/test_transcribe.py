@@ -1318,10 +1318,14 @@ class TestReadEnrichmentFields:
         record.write_text("just text\n")
         assert read_enrichment_fields(record) == {}
 
-    def test_unterminated_fence_has_no_fields(self, tmp_path):
+    def test_an_unterminated_fence_is_loud(self, tmp_path):
+        # The shape an interrupted write leaves. Empty fields would read as
+        # "opened fine, no markers" — indistinguishable from a clean file,
+        # and lint's marker scan is the only reader an enrichment file has.
         record = tmp_path / "x.md"
         record.write_text("---\nurl: https://x.test\nand then the file just ends\n")
-        assert read_enrichment_fields(record) == {}
+        with pytest.raises(ValueError, match="no closing '---' fence"):
+            read_enrichment_fields(record)
 
     def test_the_file_is_never_slurped(self, tmp_path, monkeypatch):
         # The reason this function exists: enrichment bodies are whole

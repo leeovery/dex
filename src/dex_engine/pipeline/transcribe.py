@@ -538,8 +538,14 @@ def read_enrichment_fields(path: Path) -> dict[str, str]:
         path: The enrichment markdown file.
 
     Returns:
-        The fields (JSON-quoted values unquoted); empty for a file with no
-        complete frontmatter fence.
+        The fields (quoted values unquoted); empty for a file that opens
+        with no frontmatter fence at all.
+
+    Raises:
+        ValueError: The file opens a fence and never closes it — the shape
+            an interrupted write leaves behind. Empty fields would say
+            "read fine, no markers", and the caller cannot tell the
+            difference it has to report.
     """
     head: list[str] = []
     with path.open(encoding="utf-8") as f:
@@ -549,7 +555,7 @@ def read_enrichment_fields(path: Path) -> dict[str, str]:
             if line.rstrip("\n") == "---":
                 return _frontmatter_fields(head)
             head.append(line.rstrip("\n"))
-    return {}
+    raise ValueError("unterminated frontmatter: no closing '---' fence")
 
 
 def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
