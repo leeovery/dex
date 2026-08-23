@@ -13,9 +13,10 @@ Checks:
   state — ledger schema validation (via ``ledger.load``), ledger↔tree
   referential integrity (items with no corpus file, one row per finding
   with its entry count — excluded-on-record told apart from renamed and
-  from unclaimed; ``done`` entries whose output path is missing on disk,
-  and ``done`` entries whose output is on disk under a DIFFERENT item's
-  enrichment directory, where the item that owns it cannot list it),
+  from unclaimed; ``done`` entries whose output is nowhere on disk, and
+  ``done`` entries whose output is on disk under a DIFFERENT item's
+  enrichment directory, where the item that owns it cannot list it —
+  both asked of the item the corpus says owns the unit),
   waiting cohorts and cognitive-job
   summary, harvest passes recorded under old rules, and the
   enrichment-newer-than-digest orphan listing (the interrupted-session
@@ -52,7 +53,7 @@ import difflib
 import json
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -623,13 +624,23 @@ def _referential_integrity(
     item's frontmatter ``enrichment:`` listing, and therefore its derived
     ``raw``/``enriched`` status, is the markdown IN ``enrichment/<item>/`` —
     so a ``done`` output filed under a DIFFERENT item is invisible to the
-    item that owns it, which stays ``raw`` with an empty listing while the
-    unit is ``done`` and never drainable again. A rename done in steps and
+    item that owns it, which shows an empty listing while the unit is
+    ``done`` and never drainable again. A rename done in steps and
     interrupted between the corpus file and the enrichment directory leaves
-    exactly that, and the seed-time re-attribution sweep then heals the
-    line's item id — correctly, but that clears the ghost row this state
-    used to show up as. Moving files is not the drain's business; naming the
-    state is this check's.
+    exactly that. Moving files is not the drain's business; naming the state
+    is this check's.
+
+    **Both are asked of the item the corpus says owns the unit**
+    (:func:`_owner`), never of the line's stored ``item``, because both
+    resolve a path under ``enrichment/<id>/`` and the stored string is the
+    attribution as of the day the line was written. A rename carried
+    through moves the corpus file AND the enrichment directory, leaving a
+    recorded path that names a directory that is gone while the file sits
+    under the new id, under the same name — the rename moved the directory,
+    never the file in it. So the owner's directory is the second place each
+    check looks, and a completed rename answers neither: nothing is
+    missing, nothing is misfiled, and the ghost row alone says what
+    happened, which is that the id on the line is history.
 
     **The record is asked before the claim.** A hash two live items shared
     always has another claimant after one of them is excluded, so asking
@@ -651,7 +662,11 @@ def _referential_integrity(
     """
     excluded = _excluded_items(instance)
     dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
-    owners = corpus_owners(instance.root, DRIVERS) if dead else {}
+    # One corpus pass, for the ghost rows AND the two path checks below —
+    # asked unconditionally, so :func:`_owner` decides between the stored
+    # string and the claim on its own rather than on whether this call was
+    # made at all.
+    owners = corpus_owners(instance.root, DRIVERS)
     counts: dict[tuple[str, str], int] = {}
     for entry in dead:
         owner = owners.get(entry.hash)
@@ -674,21 +689,40 @@ def _referential_integrity(
         {"item": item, "why": why, "entries": count}
         for (item, why), count in sorted(counts.items())
     ]
-    missing: list[dict[str, str]] = [
-        {"item": entry.item, "path": entry.path}
+    landed = [
+        (entry.path, _owner(entry, owners, corpus_ids))
         for entry in entries.values()
-        if entry.path is not None and not (instance.root / entry.path).exists()
+        if entry.path is not None
+    ]
+    missing: list[dict[str, str]] = [
+        {"item": owner, "path": path}
+        for path, owner in landed
+        if not (instance.root / path).exists()
+        and not (instance.enrichment_dir / owner / Path(path).name).exists()
     ]
     missing.sort(key=lambda row: (row["item"], row["path"]))
     misfiled: list[dict[str, str]] = [
-        {"item": entry.item, "path": entry.path}
-        for entry in entries.values()
-        if entry.path is not None
-        and (instance.root / entry.path).exists()
-        and Path(entry.path).parent != Path("enrichment") / entry.item
+        {"item": owner, "path": path}
+        for path, owner in landed
+        if (instance.root / path).exists()
+        and Path(path).parent != Path("enrichment") / owner
     ]
     misfiled.sort(key=lambda row: (row["item"], row["path"]))
     return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
+
+
+def _owner(entry: LedgerEntry, owners: Mapping[str, str], corpus_ids: set[str]) -> str:
+    """The live item that owns this unit — the corpus's answer, else the line's.
+
+    The same rule the engine's readers and its write path apply
+    (``run._Drain.owner_of``): the stored string wins while it is still
+    live, the corpus answers for a unit whose item was renamed away, and a
+    unit nothing live claims keeps the id it was written under — which is
+    the ghost finding above, not something to resolve here.
+    """
+    if entry.item in corpus_ids:
+        return entry.item
+    return owners.get(entry.hash) or entry.item
 
 
 def _excluded_items(instance: Instance) -> set[str]:

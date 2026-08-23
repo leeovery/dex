@@ -569,13 +569,9 @@ class TestReferentialIntegrity:
         path.write_text("the fetched page\n")
 
     def test_an_output_under_another_items_directory_is_flagged(self, instance):
-        # A rename done in steps and interrupted between the corpus file and
-        # the enrichment directory: the line names the live item, its output
-        # is on disk, and the item's derived `enrichment:` listing — the
-        # markdown in ITS directory — is empty, so it stays `raw` while the
-        # unit is `done` and never drainable again. Nothing else says so:
-        # the seed-time sweep heals the item id, which is right and which is
-        # what cleared the ghost row this used to show up as.
+        # The output is on disk and the item's derived `enrichment:` listing
+        # — the markdown in ITS directory — is empty, so it shows nothing
+        # while the unit is `done` and never drainable again.
         self._bare_wiki(instance)
         write_corpus_stub(instance)
         self._output(instance, "2026-08-19-old-slug-55ad7b")
@@ -584,7 +580,6 @@ class TestReferentialIntegrity:
             done_entry("73bd784849", path="enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md"),
         )
         outcome = lint(instance)
-        assert "ledger items with no corpus file — none" in outcome.report  # the sweep healed it
         assert "done entries whose output file is gone from disk — none" in outcome.report
         assert (
             "done entries whose output sits under another item's directory — **1**"
@@ -593,6 +588,75 @@ class TestReferentialIntegrity:
         assert (
             f"**{ITEM}** → `enrichment/2026-08-19-old-slug-55ad7b/web-73bd78.md`" in outcome.report
         )
+
+    def _renamed(self, instance, *, move_output: bool) -> tuple[str, str]:
+        """A rename: the corpus file moved, the output either followed or not.
+
+        The ledger line is untouched by design — its `item` is the
+        attribution as of the day it was written and nothing heals it — so
+        both checks have to resolve the owner off the corpus to say
+        anything true about the path it records.
+        """
+        self._bare_wiki(instance)
+        url = "https://example.test/moved"
+        renamed = "2026-08-19-example-renamed-55ad7b"
+        write_corpus_item(instance, renamed, urls=[url])
+        unit_hash = work_identity(url, DRIVERS)
+        name = f"web-{unit_hash[:6]}.md"
+        self._output(instance, renamed if move_output else ITEM, name)
+        ledger.append(
+            instance.ledger_path,
+            done_entry(unit_hash, url=url, path=f"enrichment/{ITEM}/{name}"),
+        )
+        return renamed, name
+
+    def test_a_shared_units_output_answers_to_the_item_its_line_names(self, instance):
+        # Two live items claim one URL, and the output is under the one the
+        # line names — which is where the drain put it. Reading ownership
+        # off the corpus alone would pick the first claimant by id and
+        # report a misfiled output that is exactly where it belongs.
+        self._bare_wiki(instance)
+        url = "https://example.test/shared"
+        first = "2026-08-19-alpha-111111"
+        write_corpus_item(instance, first, urls=[url])
+        write_corpus_item(instance, ITEM, urls=[url])
+        unit_hash = work_identity(url, DRIVERS)
+        name = f"web-{unit_hash[:6]}.md"
+        self._output(instance, ITEM, name)
+        ledger.append(
+            instance.ledger_path,
+            done_entry(unit_hash, url=url, path=f"enrichment/{ITEM}/{name}"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output sits under another item's directory — none" in (
+            outcome.report
+        )
+
+    def test_a_rename_carried_through_answers_neither_output_check(self, instance):
+        # The directory moved with the corpus file, so the recorded path
+        # names a directory that is gone while the file sits under the new
+        # id, under the same name. Nothing is missing and nothing is
+        # misfiled; the ghost row alone says the id on the line is history.
+        renamed, _name = self._renamed(instance, move_output=True)
+        outcome = lint(instance)
+        assert f"**{ITEM}** — 1 entry (renamed — {renamed} lists this work)" in outcome.report
+        assert "done entries whose output file is gone from disk — none" in outcome.report
+        assert "done entries whose output sits under another item's directory — none" in (
+            outcome.report
+        )
+
+    def test_a_rename_interrupted_before_the_directory_is_flagged_misfiled(self, instance):
+        # The other half: the file stayed behind, so the live item's own
+        # directory is empty and the row names the live item, which is the
+        # one that cannot see its output.
+        renamed, name = self._renamed(instance, move_output=False)
+        outcome = lint(instance)
+        assert (
+            "done entries whose output sits under another item's directory — **1**"
+            in outcome.report
+        )
+        assert f"**{renamed}** → `enrichment/{ITEM}/{name}`" in outcome.report
+        assert "done entries whose output file is gone from disk — none" in outcome.report
 
     def test_an_output_under_its_own_item_is_never_flagged(self, instance):
         self._bare_wiki(instance)
