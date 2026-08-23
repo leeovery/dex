@@ -39,6 +39,19 @@ step 4.
      editing state files. Instances purged before exclude swept the ledger
      carry this as historical residue: clearing it is a one-off, not a
      per-check chore.
+   - **Done entries whose output sits under another item's directory** —
+     the third referential row, and not the one above: nothing is missing
+     here, the output is simply filed where its own item cannot see it. An
+     item's `enrichment:` listing is the markdown in `enrichment/<item>/`,
+     so that item shows an empty listing and stays `raw` while the unit is
+     `done` and never drainable again. It is what a rename done in steps
+     leaves when it is interrupted between the corpus file and the
+     enrichment directory. The repair is judgment, and it is one of two:
+     finish the rename — move `enrichment/<old-id>/` onto the live id, and
+     the listing and status follow at the next run — or, where the old
+     directory is not this item's work to take, re-fetch the unit and let
+     the drain file it. Moving files is not the engine's business, which is
+     why this is a finding and not a repair the run makes.
    - **Malformed digests** — the message names what broke (no frontmatter
      fence, a missing or bogus field, an `id` disagreeing with its
      filename). Repair against `.claude/skills/dex-run/references/state-formats.md`;
