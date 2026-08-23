@@ -276,6 +276,39 @@ class TestBadIdsAreRefused:
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
 
 
+class TestADuplicateIdInsideOneBatch:
+    """The same id twice is one exclusion, and the counts say so."""
+
+    def test_the_permanent_record_is_written_once(self, instance):
+        # `state/exclusions.tsv` is a permanent record: the second copy of
+        # an id appended an identical row because the existing-ids set was
+        # read before the loop and never updated inside it.
+        write_item_stub(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}, {"id": ITEM, "reason": "meme"}])
+        lines = (instance.state_dir / "exclusions.tsv").read_text().splitlines()
+        assert lines == [f"{ITEM}\tmeme"]
+
+    def test_the_counts_tell_the_truth_about_what_was_gone(self, instance):
+        # The summary is the batch's only signal, and it read "1 already
+        # gone" for an item the same batch had just removed: the second
+        # copy found the file the first copy had deleted.
+        write_item_stub(instance)
+        summary = run_exclude(instance, [{"id": ITEM}, {"id": ITEM}])
+        assert summary == (
+            "excluded 1 (1 duplicate id(s) collapsed): removed 1 items (0 already gone), "
+            "0 ledger entries dropped, 0 kept (work another live corpus item still claims)"
+        )
+
+    def test_a_genuinely_absent_item_is_still_counted_gone(self, instance):
+        # The other half: collapsing copies must not stop `already gone`
+        # meaning what it says for an id whose file really is missing.
+        write_item_stub(instance)
+        summary = run_exclude(instance, [{"id": ITEM}, {"id": OTHER}, {"id": OTHER}])
+        assert summary.startswith(
+            "excluded 2 (1 duplicate id(s) collapsed): removed 1 items (1 already gone), "
+        )
+
+
 class TestTheBatchIsRefusedWhole:
     """One bad entry refuses the batch: a half-applied one is worse than none."""
 

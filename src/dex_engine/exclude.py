@@ -24,6 +24,12 @@ id is a corpus item id, never a path, every value is checked for its type,
 and the batch is refused whole. A half-applied batch is worse than none —
 its first entry is recorded in ``state/exclusions.tsv`` permanently, with
 its ledger purge unrun and the entries after it silently lost.
+
+One id twice in a batch is not a refusal — the operation is idempotent, so
+the second copy asks for what the first already did. The copies collapse to
+one entry (:func:`_deduplicated`) and the summary states how many, because
+applied twice they wrote the permanent record twice and reported the second
+pass as an item already gone.
 """
 
 import argparse
@@ -79,7 +85,7 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
             or has a non-string ``reason``. The whole batch is refused
             before anything is written or deleted.
     """
-    validated = [_validated(instance, entry) for entry in entries]
+    validated = _deduplicated([_validated(instance, entry) for entry in entries])
     exclusions = instance.state_dir / "exclusions.tsv"
     existing: set[str] = set()
     if exclusions.exists():
@@ -106,7 +112,11 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
     # Scanned after the deletions above, so a purged item cannot claim its
     # own work — what remains is what the surviving corpus still lists.
     purged = {exclusion.item_id for exclusion in validated}
-    summary = f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
+    collapsed = len(entries) - len(validated)
+    counted = f"{len(validated)}"
+    if collapsed:
+        counted += f" ({collapsed} duplicate id(s) collapsed)"
+    summary = f"excluded {counted}: removed {removed} items ({missing} already gone), "
     if not instance.ledger_path.exists():
         return summary + _purge_counts(0, 0)
     unreadable = _unreadable_corpus_items(instance.root)
@@ -125,6 +135,26 @@ def run_exclude(instance: Instance, entries: list[dict[str, object]]) -> str:
     claimed = corpus_owners(instance.root, DRIVERS)
     dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
     return summary + _purge_counts(dropped, kept)
+
+
+def _deduplicated(validated: list[_Exclusion]) -> list[_Exclusion]:
+    """One entry per id, the first occurrence winning.
+
+    The exclusions file is LLM-authored and runs in bulk, so the same id
+    twice is a realistic input — and it is not an error: excluding an item
+    is idempotent by construction (the TSV record is exactly what makes a
+    re-run safe), so the second copy asks for what the first already did.
+    Applied twice it wrote the id to ``state/exclusions.tsv`` twice — a
+    permanent record — and counted the second pass as ``already gone``,
+    reporting an item nothing had removed on the batch's only signal line.
+
+    A second reason for an id is dropped with it; the batch states how many
+    copies it collapsed so the count is never silently short.
+    """
+    by_id: dict[str, _Exclusion] = {}
+    for exclusion in validated:
+        by_id.setdefault(exclusion.item_id, exclusion)
+    return list(by_id.values())
 
 
 def _purge_counts(dropped: int, kept: int) -> str:
