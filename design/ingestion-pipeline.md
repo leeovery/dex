@@ -141,7 +141,7 @@ The report that prints them is the report of the run that parked them. A
 unit that outlives that run is untouched standing state, so it is `enrich
 status` that names it — id, URL, status and stated reason, split by who owns
 the next action, exactly as the run report splits its own. Counts alone
-(`**manual** 1`) left a months-old park on no surface at all while its
+(`**manual** 1`) left a long-standing park on no surface at all while its
 item sat permanently raw and permanently undigestable. Sourcing the run
 report from every surviving entry instead would reinstate what this section
 already refuses: the same parked item listed as work to do on every run,
