@@ -526,7 +526,7 @@ display text: reports render it, nothing matches on it, and rewording one
 can never change routing. The two signals that once looked reason-shaped
 are §5 fields instead: a blocked audio-acquisition retry carries
 `needs: transcribe` (routing it back through the transcribe drain, not the
-driver), and a cap-fire marker line carries `cap: depth|url|url-requested`
+driver), and a cap-fire marker line carries `cap: depth|url-requested`
 plus `forced` when `--force` waived the bound. Both are typed for the same
 reason: the health check counts the fires nobody overrode, by bound, and
 counting either off `reason` split one bound across every wording of it —
@@ -667,11 +667,12 @@ files is judgment work, not the drain's.
                                // signal back to the capability drain
   "attempts": 3,               // blocked only (error's retry gate is the
                                // engine field — once per newer engine)
-  "cap": "url",                // skipped only: a cap-fire marker — refused
+  "cap": "url-requested",      // skipped only: a cap-fire marker — refused
                                // work, not an admitted unit — naming the
-                               // bound (depth | url | url-requested, the
-                               // last being what an `enrich fetch` refusal
-                               // at the URL bound writes)
+                               // bound (depth | url-requested, the latter
+                               // being what an `enrich fetch` refusal at
+                               // the URL bound writes — the one road into
+                               // the queue besides a capture)
   "forced": true,              // cap-fire markers only: `--force` waived
                                // that bound, so the unit entered anyway and
                                // this line is the audit trail behind the

@@ -108,7 +108,6 @@ MAX_URLS_PER_ITEM = 12
 # reader takes its wording from here, so one bound can never read as two.
 CAP_BOUNDS: dict[Cap, str] = {
     Cap.DEPTH: f"depth cap ({MAX_DEPTH})",
-    Cap.URL: f"url cap ({MAX_URLS_PER_ITEM} per item)",
     Cap.URL_REQUESTED: f"url cap ({MAX_URLS_PER_ITEM} per item)",
 }
 

@@ -103,16 +103,16 @@ class Cap(StrEnum):
     """Which bound refused a work unit.
 
     Typed because the health check aggregates on it: prose that says the
-    same bound three ways splits one bound across three readings. ``DEPTH``
+    same bound two ways splits one bound across two readings. ``DEPTH``
     is the hard bound on how far the queue may walk from a shared URL;
-    ``URL`` and ``URL_REQUESTED`` are one bound — the item's fetched-page
-    budget — under two spellings, ``URL_REQUESTED`` being what an
-    ``enrich fetch`` refusal writes. Whether a fire is drift to read is
-    decided by ``LedgerEntry.forced``, not by which of these it names.
+    ``URL_REQUESTED`` is the item's fetched-page budget, written by an
+    ``enrich fetch`` refusal — the one road into the queue besides a
+    capture, so the one place the budget can fire. Whether a fire is
+    drift to read is decided by ``LedgerEntry.forced``, not by which of
+    these it names.
     """
 
     DEPTH = "depth"
-    URL = "url"
     URL_REQUESTED = "url-requested"
 
 
