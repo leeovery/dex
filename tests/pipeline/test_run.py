@@ -2032,6 +2032,85 @@ class TestNoSourceItems:
         assert "no-source item" not in report
 
 
+ALPHA = "2026-08-19-alpha-111111"
+BRAVO = "2026-08-19-bravo-222222"
+OLD_ITEM = "2026-08-19-old-slug-55ad7b"
+NEW_ITEM = "2026-08-19-new-slug-55ad7b"
+
+
+class TestOwnershipIsTheCorpusAnswer:
+    """Who owns a unit is asked of the corpus, never of the stored string.
+
+    A ledger line's ``item`` is the attribution as of the day it was
+    written, and migration 1 carries a stated item verbatim — so an item
+    renamed since then has every one of its lines naming an id no corpus
+    file answers to, and an ``exclude`` that keeps a line another live item
+    claims leaves it naming the purged one.
+    """
+
+    def _renamed(self, instance, **fields) -> Path:
+        """One item, renamed since its only ledger line was written."""
+        path = write_item(instance, NEW_ITEM)
+        out = instance.enrichment_dir / NEW_ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(f"---\nurl: {URL}\nfetched: '2026-08-01'\n---\n\nthe body\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                **fields,
+            ),
+        )
+        return path
+
+    def _waiting(self, instance) -> Path:
+        return self._renamed(
+            instance, status=Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions"
+        )
+
+    def test_a_renamed_item_owing_work_is_never_written_enriched(self, instance):
+        # The whole point of deriving status from the ledger: an item
+        # holding a waiting unit is raw, whatever id the line spells.
+        path = self._waiting(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        assert corpus.read_item(path).status == "raw"
+
+    def test_the_renamed_items_work_shows_on_its_own_status_view(self, instance):
+        self._waiting(instance)
+        report = run_mod.status_report(make_ctx(instance, FakeDriver()), item_id=NEW_ITEM)
+        assert "No ledger work units" not in report  # it has one, under a dead id
+        assert URL in report
+        assert "no captions" in report
+
+    def test_a_renamed_item_owing_work_is_not_a_digest_orphan(self, instance):
+        # It derives raw, and a raw item is one the ingest procedure
+        # forbids digesting — listing it names work nobody may do.
+        self._waiting(instance)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_an_outstanding_shared_unit_holds_every_item_listing_it_raw(self, instance):
+        # The line names alpha, but bravo lists the URL too, so bravo owes
+        # the work — and an item owing work is out of digest and wiki.
+        second = "https://example.test/second"
+        write_item(instance, ALPHA)
+        bravo_path = write_item(instance, BRAVO, urls=[URL, second])
+
+        def fetch(unit):
+            if unit.url == second:
+                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
+            return Result(
+                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
+            )
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        assert corpus.read_item(bravo_path).status == "raw"
+
+
 class TestRerunPacing:
     """Reruns pace themselves: fresh work first, then at most 50 per run."""
 

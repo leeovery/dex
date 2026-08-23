@@ -24,7 +24,7 @@ from .detect import canonical_url
 from .types import SourceDriver
 from .urls import work_hash
 
-__all__ = ["corpus_owners", "work_identity"]
+__all__ = ["corpus_claims", "corpus_owners", "work_identity"]
 
 
 def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
@@ -49,8 +49,15 @@ def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
     return work_hash(canonical)
 
 
-def corpus_owners(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, str]:
-    """Map work hash -> the live corpus item that claims it.
+def corpus_claims(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, tuple[str, ...]]:
+    """Map work hash -> EVERY live corpus item that claims it.
+
+    One work unit is keyed by URL, so two items listing one URL share it —
+    80 hashes in dex-engineering are claimed by more than one live item.
+    Seeding hands the enrichment file to the first of them and the ledger
+    line names only that one, but both items genuinely owe the work: an
+    outstanding unit holds every item that lists it out of digest, not just
+    the one whose name the line happens to carry.
 
     Unreadable items are skipped silently: every caller of this map already
     reports malformed corpus files through its own pass, and one bad
@@ -61,20 +68,36 @@ def corpus_owners(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, str]
         drivers: The driver registry that owns canonicalization.
 
     Returns:
-        Work hash -> owning item id. Where two items list one URL the
-        first by id wins, as seeding's two-items dedupe does.
+        Work hash -> the claiming item ids, in id order.
     """
-    owners: dict[str, str] = {}
+    claims: dict[str, list[str]] = {}
     corpus_dir = root / "corpus"
     if not corpus_dir.is_dir():
-        return owners
+        return {}
     for path in sorted(corpus_dir.glob("*/*.md")):
         try:
             item = corpus.read_item(path)
         except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
             continue
         for url in item.urls:
-            owners.setdefault(work_identity(url, drivers), item.id)
+            claims.setdefault(work_identity(url, drivers), []).append(item.id)
         for repo_path in item.media:
-            owners.setdefault(work_hash(f"file:{repo_path}"), item.id)
-    return owners
+            claims.setdefault(work_hash(f"file:{repo_path}"), []).append(item.id)
+    return {unit_hash: tuple(sorted(set(ids))) for unit_hash, ids in claims.items()}
+
+
+def corpus_owners(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, str]:
+    """Map work hash -> the live corpus item that claims it.
+
+    The single-claimant view of :func:`corpus_claims`, for the callers that
+    want one name to put on a line — a re-attribution, a report row.
+
+    Args:
+        root: The instance root.
+        drivers: The driver registry that owns canonicalization.
+
+    Returns:
+        Work hash -> owning item id. Where two items list one URL the
+        first by id wins, as seeding's two-items dedupe does.
+    """
+    return {unit_hash: ids[0] for unit_hash, ids in corpus_claims(root, drivers).items() if ids}
