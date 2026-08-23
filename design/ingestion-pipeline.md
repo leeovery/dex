@@ -485,7 +485,7 @@ vocabulary only and never become work units:
 | `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment. Channel addresses (`/@handle` and its tabs, percent-encoded `/%40handle` included, `/user/…`, `/c/…`, `/channel/…`, and the legacy bare vanity name `/veritasium`), hashtag feeds and search-result pages park `manual` the same way and **before the probe**: yt-dlp answers those URLs by enumerating every video the channel holds, and the transcribe drain would then pull every one of those audio files over a single filename. The vanity form has no marker at all — youtube.com's root namespace belongs to channels — so the driver names youtube.com's own **functional first segments** (`/watch`, `/playlist`, `/results`, `/feed`, `/embed`, `/live`, `/shorts`, `/v`, plus the product and account surfaces) and reads every other bare root segment as a channel. The list errs one way on purpose: a functional segment missing from it parks `manual`, one recoverable ledger line, while a channel mistaken for a functional path reaches the probe and enumerates thousands of videos. A channel's `/live` path is one video and still fetches |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
 | `github` | ✓ | repos / profiles / gists / issues / blobs. Every route goes through the authenticated `gh` CLI, blobs included — `raw.githubusercontent.com` is unauthenticated, so it 404s every private-repo blob however the machine is signed in, and that 404 classified live content `dead`. That route is a **shared seam** (`drivers/gh.py`), not this driver's property: the file driver reads blob bytes through the same module, so neither driver imports the other and the ref boundary below is resolved one way for both. Losing raw.githubusercontent.com costs the **ref/path boundary**, which that host resolved server-side and the contents API cannot: branch names hold slashes (`blob/automation/bors/auto/README.md`), and the `blob/refs/heads/<branch>/` permalink form spends two segments before the name even begins, so splitting at the first segment sent a wrong `?ref=` with a wrong path and 404'd live files into `dead`. The seam guesses the shortest ref the URL's shape allows — free, and right for nearly every link — and only when that 404s asks `git/matching-refs/<heads|tags>/<first segment>` which of the repo's own refs the path starts with, matching segment-wise (`automation/bors` must not claim a URL whose branch is `automation/bors-next`) and taking the longest. A repo with thousands of branches costs the same one page as a repo with three. When no ref re-splits the URL, or the lookup itself fails, the original classification stands: a genuinely missing path is still `dead`, never unclassifiable. A blob too large for the contents API to serve inline parks `manual`, never `dead`. github.com's **reserved first segments** (`/features`, `/topics`, `/sponsors`, `/orgs`, `/collections`, `/marketplace`, `/trending`, `/about`, `/pricing`, `/settings`, `/explore`, …) can be neither user nor repo, so the driver declines them and registry order hands them to `web`, which extracts them like any page — driving them as repo work 404'd pages that render fine in a browser into `dead`. Only the first segment is screened: `acme/topics` is an ordinary repo. **Blob bytes are sniffed — by filename — before they are fenced**: a document committed to a repo re-detects to `file` work rather than being fenced as source (a code fence full of replacement characters, ledgered `done`, was the incident), and any other binary parks `manual` naming what it is. The re-detection is only safe because the file driver shares the seam: fetching the blob URL over plain HTTP would find the HTML viewer page and re-detect straight back (a loop park on a public repo, `dead` on a private one), while HTML arriving from the contents API is a committed HTML file and never bounces. The **name** is what catches the two extractable shapes that carry no byte signature: a CSV, and an unsmudged **Git-LFS pointer**, whose 130 bytes of `oid sha256:…` decode as clean UTF-8 and fenced `done` as though they were the document they stand for (the contents API serves the pointer, never the object). Both re-detect to `file` like every other document — a committed CSV reaches an extractor as a real table instead of a fence truncated at 40k characters, and a pointer meets the file driver's LFS guard, which parks it `manual` before any extractor is handed 130 bytes of stand-in text |
-| `paper` | ✓ | arxiv / openreview / hf-papers |
+| `paper` | ✓ | arxiv / openreview / hf-papers. A paper's identity is its arxiv id: every spelling — `/abs`, `/pdf` (with or without the `.pdf` tail), `/html`, a `v<n>` version suffix, a `?context=` listing tail — keys to `https://arxiv.org/abs/<id>`, one work unit per paper. **The version is dropped because the fetch is versionless**: the export API is queried by bare id and the HTML rendering is read from the bare id too, so both return whatever arxiv currently calls latest — keying `v5` separately would give one paper two ledger entries, two enrichment files and two copies of one abstract, all fetching the same bytes. Non-arxiv paper hosts keep the generic canonical: openreview and hf-papers pages fetch as articles through the web driver's fetch, the ledger kind staying `paper` |
 | `podcast` | ✓ | new — Apple/Spotify/RSS episode links (§9) |
 | `web` | ✓ | renamed from `blog`; registry catch-all, always last |
 | `file` | ✓ | URL-served, repo-committed (github blobs, through the shared `drivers/gh.py` seam) or captured binaries; routes by Format |
@@ -1001,12 +1001,14 @@ One body shape per kind, whichever route produced it — the transcript is
 always its own `## Transcript` section, so the drain can split a stored
 body on that heading and compose onto what is already there. **The
 frontmatter, not the heading, says whether a body holds a transcript at
-all**: the transcriber stamps `via`, neither park does, so a park's body is
-notes end to end — a description or show notes that name `## Transcript`
-themselves were otherwise truncated at the author's own line and the
-truncation written back to disk. Once a body does hold a transcript, the
-split takes the LAST such section, because that is the one the drain
-appended.
+all.** Three writers compose that body and two stamp `via`: the drain
+stamps the provider's name on the transcript it appends, and the captions
+route stamps `via: captions` on the transcript it fetches; neither park
+stamps, so a park's body is notes end to end — a description or show notes
+that name `## Transcript` themselves were otherwise truncated at the
+author's own line and the truncation written back to disk. Once a body
+does hold a transcript, the split takes the LAST such section, because
+that is the one the drain appended.
 
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
@@ -1115,7 +1117,14 @@ a download beyond the cap and beside a description of something else.
   `manual` park applies, because a post ledgered `done` on a shortlink and
   nothing else is thin garbage the digest layer cannot tell from real
   capture.
-- Chain media pooled, captured post's first, media-stage cap applies.
+- Chain media pooled, captured post's first — **photos and videos alike**:
+  both are URL downloads, and the media stage's caps apply. A media-only
+  post is `done` with a minimal attributed body, whatever the media is; an
+  oversize video meets the media stage's own outcome (`skipped — media
+  exceeds 10MB ceiling`, charged to the media unit), never a manual park.
+  "no text or media" is said only when it is true: reading photos alone
+  made a video-only post park `manual` over a payload holding media, and
+  dropped the video the media stage would have fetched.
 - **Incomplete chains are recorded, never silently presented as complete**
   (learned from a 2026-08-20 production run — a thread's root promised a
   numbered list and not all of it existed publicly): a parent fetch failing
