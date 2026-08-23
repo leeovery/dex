@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -224,6 +226,56 @@ class TestLedgerPurge:
             f.write("{torn\n")
         run_exclude(instance, [{"id": ITEM}])
         assert instance.ledger_path.read_text() == "{torn\n"
+
+
+class TestBadIdsAreRefused:
+    """An id is a corpus item id, never a path — `exclude` deletes recursively."""
+
+    def victim(self, tmp_path_factory) -> Path:
+        outside = tmp_path_factory.mktemp("outside") / "VICTIM"
+        outside.mkdir()
+        (outside / "keepsake.txt").write_text("not this instance's to delete")
+        return outside
+
+    def test_an_absolute_path_id_is_refused_and_removes_nothing(self, instance, tmp_path_factory):
+        # `Path / "/abs/path"` discards the left operand: the id would have
+        # been rmtree'd where it points, and recorded verbatim in the TSV.
+        victim = self.victim(tmp_path_factory)
+        with pytest.raises(ValueError, match="not a corpus item id"):
+            run_exclude(instance, [{"id": str(victim), "reason": "out of scope"}])
+        assert (victim / "keepsake.txt").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+    def test_a_traversal_id_is_refused_and_removes_nothing(self, instance, tmp_path_factory):
+        victim = self.victim(tmp_path_factory)
+        climb = os.path.relpath(victim, instance.enrichment_dir)
+        with pytest.raises(ValueError, match="not a corpus item id"):
+            run_exclude(instance, [{"id": climb, "reason": "out of scope"}])
+        assert (victim / "keepsake.txt").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+    def test_an_enrichment_symlink_out_of_the_instance_is_refused(
+        self, instance, tmp_path_factory
+    ):
+        # The id is a perfectly well-formed one; the directory it names is
+        # not inside the instance. Resolving both sides is what sees that.
+        victim = self.victim(tmp_path_factory)
+        write_item_stub(instance)
+        (instance.enrichment_dir / ITEM).symlink_to(victim, target_is_directory=True)
+        with pytest.raises(ValueError, match="outside the instance"):
+            run_exclude(instance, [{"id": ITEM, "reason": "out of scope"}])
+        assert (victim / "keepsake.txt").exists()
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+    def test_a_well_formed_id_still_removes_its_enrichment(self, instance):
+        write_item_stub(instance)
+        enrichment = instance.enrichment_dir / ITEM
+        enrichment.mkdir(parents=True)
+        (enrichment / "web-abc123.md").write_text("fetched")
+        run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert not enrichment.exists()
+        assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
 
 
 class TestCli:

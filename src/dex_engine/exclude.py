@@ -15,22 +15,48 @@ entry that names only one of them; purging on the name alone would delete
 a history the survivor still owns. The summary states both counts — this
 runs in bulk from the scope-filter pass, so that line is the owner's only
 signal.
+
+The exclusions file is LLM-authored and this deletes recursively, so every
+id is validated before anything is written or removed: it names one file in
+the corpus tree, never a path, and it must resolve inside this instance's
+root. A refused id reaches neither the disk nor ``state/exclusions.tsv``,
+where the record would be permanent.
 """
 
 import argparse
 import json
+import re
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
 from .pipeline.types import Instance
+from .pipeline.urls import resolve_repo_path
 
 __all__ = ["build_parser", "main", "run_exclude"]
 
 _DEFAULT_REASON = "out of scope"
+
+# An item id names one file in the corpus tree — the normalizer mints
+# `<date>-<slug>-<shortid>`, a single path component. Anything with a
+# separator in it is not an id, and `corpus_dir / item_id[:4] /
+# f"{item_id}.md"` would follow it out of the instance: an absolute path
+# replaces the root outright, `..` climbs above it.
+_ITEM_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Exclusion:
+    """One validated entry: the item id, its reason, and the paths it removes."""
+
+    item_id: str
+    reason: str
+    item_path: Path
+    enrichment_path: Path
 
 
 def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
@@ -44,8 +70,11 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
         The one-line summary.
 
     Raises:
-        ValueError: An entry has no ``id``.
+        ValueError: An entry has no ``id``, or an ``id`` that is not a
+            corpus item id or resolves outside the instance. The whole
+            batch is refused before anything is written or deleted.
     """
+    validated = [_validated(instance, entry) for entry in entries]
     exclusions = instance.state_dir / "exclusions.tsv"
     existing: set[str] = set()
     if exclusions.exists():
@@ -55,38 +84,66 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
             if line.strip()
         }
     removed = missing = 0
-    purged: set[str] = set()
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            item_id = entry.get("id")
-            if not item_id:
-                raise ValueError(f"exclusion entry has no id: {entry!r}")
-            purged.add(item_id)
-            # The reason is LLM-authored free text: collapse every
-            # whitespace run (tabs and newlines included) so the TSV stays
-            # one record per line, tab-delimited, by construction.
-            reason = " ".join(entry.get("reason", _DEFAULT_REASON).split()) or _DEFAULT_REASON
-            if item_id not in existing:
-                f.write(f"{item_id}\t{reason}\n")
-            item_path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
-            if item_path.exists():
-                item_path.unlink()
+        for exclusion in validated:
+            if exclusion.item_id not in existing:
+                f.write(f"{exclusion.item_id}\t{exclusion.reason}\n")
+            if exclusion.item_path.exists():
+                exclusion.item_path.unlink()
                 removed += 1
             else:
                 missing += 1
-            shutil.rmtree(instance.enrichment_dir / item_id, ignore_errors=True)
+            shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
     # One rewrite for the whole batch, after the TSV record lands: an
     # interruption before it leaves the entries in place, and the re-run
     # (which the TSV makes idempotent) purges them.
     # Scanned after the deletions above, so a purged item cannot claim its
     # own work — what remains is what the surviving corpus still lists.
+    purged = {exclusion.item_id for exclusion in validated}
     claimed = corpus_owners(instance.root, DRIVERS) if instance.ledger_path.exists() else {}
     dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
     return (
         f"excluded {len(entries)}: removed {removed} items ({missing} already gone), "
         f"{dropped} ledger entries dropped, {kept} kept (work another live corpus item "
         "still claims)"
+    )
+
+
+def _validated(instance: Instance, entry: dict[str, str]) -> _Exclusion:
+    """One entry's id checked and its paths resolved inside the instance.
+
+    The id is checked for shape AND its paths resolved under the root: the
+    shape catches an id that is a path, the resolution catches a corpus
+    file or enrichment directory symlinked out of the instance.
+
+    Raises:
+        ValueError: Either check fails, naming the offending entry.
+    """
+    item_id = entry.get("id")
+    if not item_id:
+        raise ValueError(f"exclusion entry has no id: {entry!r}")
+    if not _ITEM_ID_RE.fullmatch(item_id):
+        raise ValueError(
+            f"exclusion id is not a corpus item id: {item_id!r} (in {entry!r}) — an id "
+            "names one file in the corpus tree, never a path"
+        )
+    raw_reason = entry.get("reason", _DEFAULT_REASON)
+    item_path = resolve_repo_path(instance.root, f"corpus/{item_id[:4]}/{item_id}.md")
+    enrichment_path = resolve_repo_path(instance.root, f"enrichment/{item_id}")
+    if item_path is None or enrichment_path is None:
+        raise ValueError(
+            f"exclusion id {item_id!r} resolves outside the instance — an operation "
+            "writes only inside this instance's root, so the batch is refused"
+        )
+    return _Exclusion(
+        item_id=item_id,
+        # The reason is LLM-authored free text: collapse every whitespace
+        # run (tabs and newlines included) so the TSV stays one record per
+        # line, tab-delimited, by construction.
+        reason=" ".join(raw_reason.split()) or _DEFAULT_REASON,
+        item_path=item_path,
+        enrichment_path=enrichment_path,
     )
 
 
