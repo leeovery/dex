@@ -1421,9 +1421,13 @@ machinery change. Copying alone is not enough: a retired skill left on disk
 keeps loading its stale procedure into every session, describing verbs that
 no longer exist — which is worse than having no skill, because the session
 believes it. (`dex-ingest`, split into `dex-capture` + `dex-run`, is the
-case this exists for.) A symlinked skill directory is unlinked rather than
-recursed into, so whatever it pointed at is left alone. Nothing outside the
-`dex-` prefix is ever touched — an owner's own skills are instance-owned.
+case this exists for.) The same holds INSIDE a live skill: a synced `dex-*`
+directory mirrors the template exactly, so a reference file the template
+dropped is removed too, reported the same way — copy-only sync left it
+loading its stale procedure in every instance forever. A symlinked skill
+directory is unlinked rather than recursed into, so whatever it pointed at
+is left alone. Nothing outside the `dex-` prefix is ever touched — an
+owner's own skills are instance-owned.
 
 Majors also auto-apply (the always-migratable commitment) but announce
 loudly twice: in session before the re-exec (the echo of the process about
