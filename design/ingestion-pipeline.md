@@ -2146,8 +2146,10 @@ The live checks run on their own daily schedule, never as a gate, split into a
 notifying job and a `continue-on-error` job for the endpoints (`ci_hostile`
 marker) that answer a datacenter IP differently from a laptop.
 
-**Mutation testing** is tooling, not a gate: `mutmut`, in the `mutation`
-dependency group, pointed at one module at a time. It is the only instrument
+**Mutation testing** is tooling, not an automatic gate: `mutmut`, in the
+`mutation` dependency group, invoked through `./mutate` at the repo root and
+pointed at one module at a time — the manual audit step before tagging a
+release that touched pipeline logic. It is the only instrument
 that catches a test which passes with the code it claims to protect reverted,
 and it has already found real gaps here. A survivor is a candidate, not a
 verdict — an equivalent mutant that rewrites a `reason` string changes no

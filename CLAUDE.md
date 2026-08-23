@@ -153,16 +153,21 @@ gates run before Mint does anything else — before the AI notes, before the
 review, and long before the tag. A failure aborts with no bookkeeping commit
 and no tag, which is the point: instances pin tags, so a broken tag reaches
 every instance at its next sync and the only rollback is hand-editing pins.
-`pre_tag` still builds the wheel. The live suite stays out.
+`pre_tag` still builds the wheel. The live suite stays out, and so does
+mutation testing — hours, not seconds — but the latter is still part of
+releasing: before tagging a release that touched pipeline logic, audit the
+modules you changed with `./mutate` (below) and read the survivors.
 
-**Mutation testing** (`mutmut`, in the `mutation` dependency group). Not a
-gate, not in CI: a whole-repo run against 1800 tests takes hours and buries
-the answer. It is an audit you point at ONE module you suspect —
+**Mutation testing** (`mutmut`, in the `mutation` dependency group; `./mutate`
+at the repo root is its entry point). Not an automatic gate, not in CI: a
+whole-repo run against 1800 tests takes hours and buries the answer. It is an
+audit you point at ONE module you suspect, and the manual step before a
+release that touched pipeline logic —
 
 ```
-uv run --group mutation mutmut run "dex_engine.pipeline.classify.*"
-uv run --group mutation mutmut results | grep -v "not checked"
-uv run --group mutation mutmut show dex_engine.pipeline.classify.x_classify_http__mutmut_2
+./mutate run "dex_engine.pipeline.classify.*"
+./mutate results | grep -v "not checked"
+./mutate show dex_engine.pipeline.classify.x_classify_http__mutmut_2
 ```
 
 A module takes a minute or two. Reading the result is the part that matters:
@@ -180,10 +185,12 @@ A module takes a minute or two. Reading the result is the part that matters:
 
 `mutants/` is a scratch copy of the tree; it is gitignored and safe to delete.
 Two accommodations make a run possible at all, and both are commented where
-they live: two tests in `tests/pipeline/test_issues.py` are deselected in
-`[tool.mutmut]`, because mutmut instruments by renaming functions and those
-two assert a traceback frame's function name; and `tests/conftest.py` relaxes
-one hypothesis health check when `MUTANT_UNDER_TEST` is in the environment,
+they live: three tests are deselected in `[tool.mutmut]`, because mutmut
+instruments by renaming functions and writing mutant copies beside them, and
+those three assert on a traceback frame's function name
+(`tests/pipeline/test_issues.py`) or count a call in the module's source text
+(`tests/pipeline/test_ledger.py`); and `tests/conftest.py` relaxes one
+hypothesis health check when `MUTANT_UNDER_TEST` is in the environment,
 because mutmut calls every property twice in one process and hypothesis reads
 that as two executors. Neither weakens an ordinary run.
 

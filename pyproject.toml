@@ -100,15 +100,19 @@ markers = [
 # signal in equivalent mutants — the tool is for auditing ONE module you suspect.
 source_paths = ["src/dex_engine"]
 pytest_add_cli_args_test_selection = ["tests"]
-# mutmut instruments by renaming every function to `x_<name>__mutmut_orig` and
-# dispatching, so a test asserting a traceback frame's function name cannot pass
-# under it. Two do; deselecting them costs nothing (they pin the issue filer's
-# frame formatting, not any mutable branch).
+# mutmut instruments by renaming every function to `x_<name>__mutmut_orig`,
+# generating mutant copies beside it and dispatching, so a test asserting on a
+# traceback frame's function name or on the module's source text cannot pass
+# under it. Three do; deselecting them costs nothing (two pin the issue filer's
+# frame formatting, one counts `datetime.now(` occurrences in ledger.py's
+# source — meta-properties, not mutable branches).
 pytest_add_cli_args = [
     "--deselect",
     "tests/pipeline/test_issues.py::TestErrorEvent::test_engine_frames_are_package_relative",
     "--deselect",
     "tests/pipeline/test_issues.py::TestSanitization::test_engine_frames_survive_sanitization",
+    "--deselect",
+    "tests/pipeline/test_ledger.py::TestStamp::test_stamping_never_calls_the_ambient_clock",
 ]
 # mutmut runs the suite from a copied `mutants/` tree; tests/ and pyproject.toml
 # come for free, but tests/test_shim.py reaches out to instance/dex.
