@@ -1,9 +1,9 @@
 # Instance state formats
 
 Everything under `state/` that the pipeline reads or writes, plus the
-ephemeral `cache/`. All ids are corpus item ids. Claude-written files
-(digests, taxonomy, entity members) follow these shapes exactly — lint and
-the wiki layer depend on them. The standing rule: state you reason over is
+ephemeral `cache/`. All ids are corpus item ids. The files you write
+(taxonomy, entity members) and the digests the verb writes follow these
+shapes exactly — lint and the wiki layer depend on them. The standing rule: state you reason over is
 markdown; state machinery processes is JSONL/JSON; nothing binary in
 `state/`.
 
@@ -88,8 +88,9 @@ Topic and entity names are kebab-case and define the wikilink namespace: a
 }
 ```
 
-- Every corpus item must appear in at least one topic's `items` or in
-  `uncategorized-shares` — that's the coverage invariant lint enforces.
+- The coverage invariant lint enforces has two faces: every corpus item
+  is cited by a page or ledgered in `uncategorized-shares`, and every
+  cited item appears in at least one topic's `items`.
 - `entities.<name>.kind`: tool | company | person | model | concept (extend
   with judgment). `raw` lists the aliases folded into the canonical name.
 
@@ -164,8 +165,8 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, cap?, engine, date, at?, via?, parent?, depth?, rerun?,
-  path?, title?, error?, reason?}`. The latest line per hash wins, and
+  attempts?, cap?, forced?, engine, date, at?, via?, parent?, depth?,
+  rerun?, path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
   concatenates their lines in git's order, not in write order. Lines
@@ -176,8 +177,10 @@ a malformed record impossible:
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `cap` marks a skip that records
   cap-refused work, not an admitted unit, and names the bound that refused
-  it (`depth`, or `url-requested` for a URL you asked for yourself
-  and were refused without `--force`). Heals and manual resolutions:
+  it (`depth`, or `url-requested` — the per-item URL budget an `enrich
+  fetch` may exceed with `--force`); `forced` marks the fire `--force`
+  waived — the unit still entered, and the health check's drift reading
+  skips it. Heals and manual resolutions:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
   `via: media` line), so pass the URL as the ledger shows it and the heal
@@ -195,8 +198,10 @@ a malformed record impossible:
   issue filer; the owner's visible record.
 - `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
   stay excluded across re-normalization. The verb purges the item
-  completely — corpus file, `enrichment/<id>/`, and the item's ledger
-  entries — and states the entry count it dropped; git history keeps them.
+  completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
+  and the item's ledger entries — and states both the entry count it
+  dropped and the count it kept because another live item still claims
+  the work; git history keeps them.
 
 ## `cache/` — ephemeral, gitignored
 
