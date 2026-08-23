@@ -6,9 +6,8 @@ import pytest
 
 from dex_engine.render.surfaces import SURFACES, PayloadError, render
 
-# Shaped like the owner's real data: ids average 58 characters and the
-# longest real URL in a live instance is 375. Both are identity, and no
-# surface may shorten either.
+# Shaped like real instance data, where ids run long and URLs run longer
+# still. Both are identity, and no surface may shorten either.
 LONG_ID = "2026-08-19-laravel-read-through-filesystem-migrations-with-real-drivers-14bf49"
 LONG_URL = "https://example.test/watch?v=abcdefghijk&" + "&".join(
     f"utm_source=partner-{n}&utm_campaign=very-long-campaign-name-{n}" for n in range(9)
