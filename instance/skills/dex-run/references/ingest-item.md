@@ -155,8 +155,16 @@ last unit lands.
 
 ## 7. Place (judgment)
 
+Placement always writes `state/taxonomy.json`. On the first placement
+pass of a fresh instance, create the file (shape in `state-formats.md`,
+this directory) and place the item in it: early items may land in
+`uncategorized-shares` until pages are justified. A corpus with no
+taxonomy is the state lint reads as BROKEN MID-INGEST and fails on, so
+the file exists from the first placed item onward.
+
 Taxonomy exists → append the id to each matching topic's `items`. Create a
-new topic only once several items justify a page. When you do create one,
+new topic only once several items justify a page; the several-items rule
+governs page creation, never taxonomy existence. When you do create one,
 sweep the existing digests (`state/digests/`) for items that belong to
 it — including `uncategorized-shares` — and move them in: a new topic
 usually reveals items that were previously overlooked or coarsely filed.
