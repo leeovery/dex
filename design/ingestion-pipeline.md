@@ -2124,7 +2124,9 @@ src/dex_engine/
                  the backstop for digests written before `item digest`,
                  and for anything hand-edited since. A broken state
                  file renders as a failure row naming the offending
-                 file (a malformed `entity-members.json`, a torn
+                 file (a malformed `entity-members.json` — any shape
+                 violation fires it, the value shapes included, not
+                 just a file that fails to parse — a torn
                  `passes.jsonl` or `enrichment-ledger.jsonl` line —
                  named by file and line, since later appends or a
                  union merge can leave the tear mid-file) rather than
