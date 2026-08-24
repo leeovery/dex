@@ -2121,7 +2121,11 @@ src/dex_engine/
                  waiting cohorts, pass records, ghost taxonomy members
                  (a topic's `items` id naming no live corpus item — the
                  one leftover an exclusion's purge leaves, a finding
-                 with the removal repair), the judgment-drift signals
+                 with the removal repair), a parked-item exemption on
+                 the coverage rows (an item whose units are still
+                 non-terminal, with no digest owed yet, is not yet
+                 expected on a page or in the taxonomy),
+                 the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,

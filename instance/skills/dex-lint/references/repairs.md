@@ -86,7 +86,10 @@ other repairs need):
 - **Items no page cites and the taxonomy does not record** — read the
   digest: cite it on
   the best existing page, or ledger it into `uncategorized-shares` in
-  `state/taxonomy.json` if genuinely low-signal.
+  `state/taxonomy.json` if genuinely low-signal. The row exempts an
+  item still parked short of its digest — units non-terminal, no
+  digest owed yet: coverage is owed once the item is digestible, not
+  while it waits.
 - **Items a page cites but no taxonomy topic records** — the other face
   of the coverage invariant: a citation is not a placement. Read the
   digest and append the id to each matching topic's `items` in
