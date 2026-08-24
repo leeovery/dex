@@ -29,7 +29,8 @@ in order:
    still-dirty tree means a previous session died mid-work — stop and
    report; do not build on its state.
 
-4. **Pull.** `git pull` — captures arrive as commits.
+4. **Pull.** `git pull` — captures arrive as commits, and other
+   machines' commits arrive with them.
 
 5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports

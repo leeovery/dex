@@ -80,6 +80,6 @@ render their own reports — reproduce those verbatim too.
 
 ## Backfills (exports in raw/)
 
-Exports land in `raw/` and go through `bin/dex normalize`. Read
-`references/backfills.md` now — where exports come from, the
-converted-export contract, and the flow at scale.
+Exports land in `raw/` and go through `bin/dex normalize`. When exports
+are waiting there, read `references/backfills.md` — where exports come
+from, the converted-export contract, and the flow at scale.
