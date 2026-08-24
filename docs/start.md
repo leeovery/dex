@@ -153,12 +153,17 @@ environment. The task:
 
 ## Step 6: Phone Capture
 
+Skip this step if the owner declined the shortcut, or the instance has no
+GitHub repo. Otherwise fetch the shortcut guide — it lives in the engine
+repo, which is never cloned, so fetch it raw:
+https://raw.githubusercontent.com/leeovery/dex/main/docs/shortcut.md
+
 Each person captures with their own token. Walk them through, concretely:
 
-1. GitHub → Settings → Developer settings → Fine-grained tokens → new token
+1. The token, per the guide's **Before you begin** section: fine-grained,
    scoped to ONLY this instance repo, permissions: Contents R/W.
-2. Install the shortcut from the link pinned at the top of
-   `docs/shortcut.md` — on import it asks for their instances and token.
+2. Install the shortcut from the iCloud link at the top of the guide — on
+   import it asks for their instances and token.
 3. Using it: share anything from any app and pick **Send To Dex**. If it
    isn't in the share sheet, scroll to the very bottom, tap **Edit
    Actions**, add Send To Dex, and drag it to the top so it's always in
