@@ -907,6 +907,61 @@ class TestLedgerTranslation:
         assert report.skipped == []
         assert ledger.load(path)["7777777777"].at == at
 
+    def test_current_schema_job_lines_survive_a_re_apply_byte_identically(
+        self, tmp_path, migration
+    ):
+        # The same exposure again, both halves: `job` missing from the
+        # tolerated list dropped every media/asset line the running engine
+        # wrote (an EMPTY ledger after the second apply), and tolerating it
+        # without carrying it through translation would silently strip the
+        # routing instead — a media child re-driven as page work.
+        parent = LedgerEntry(
+            hash="2222222222",
+            url="https://a.test/page",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            path="enrichment/2026-05-01-item-a1b2c3/web-222222.md",
+        )
+        media = LedgerEntry(
+            hash="3333333333",
+            url="https://cdn.a.test/img.png?sig=abc",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            job=Job.MEDIA,
+            parent="2222222222",
+            depth=1,
+            path="enrichment/2026-05-01-item-a1b2c3/media-0.png",
+        )
+        asset = LedgerEntry(
+            hash="4444444444",
+            url="enrichment/2026-05-01-item-a1b2c3/222222-asset-0.png",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            job=Job.ASSET,
+            parent="2222222222",
+            depth=1,
+            path="enrichment/2026-05-01-item-a1b2c3/222222-asset-0.png",
+        )
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        for entry in (parent, media, asset):
+            ledger.append(path, entry)
+        original = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == original
+        assert report.skipped == []
+        loaded = ledger.load(path)
+        assert loaded["3333333333"].job is Job.MEDIA
+        assert loaded["4444444444"].job is Job.ASSET
+
     @pytest.mark.parametrize(
         "junk",
         [

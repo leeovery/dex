@@ -120,6 +120,7 @@ _TOLERATED_KEYS = frozenset(
         "engine",
         "date",
         "at",
+        "job",
         "via",
         "parent",
         "depth",
@@ -764,13 +765,25 @@ _JOB_VIA = {"media": Job.MEDIA, "extract-asset": Job.ASSET}
 def _translate_provenance(
     raw: dict[str, object], *, unit_hash: str, notes: list[str]
 ) -> tuple[str | None, Job | None]:
+    # A current-schema `job` is carried, not re-derived: a re-apply reads
+    # lines the running engine wrote, and dropping the field would strip
+    # the routing off every media download and asset write it re-reads.
+    job = None
+    if "job" in raw:
+        text = _expect_str(raw, "job")
+        try:
+            job = Job(text)
+        except ValueError as e:
+            raise _UntranslatableError(f"unknown job {text!r}") from e
     if "via" not in raw:
-        return None, None
+        return None, job
     text = _expect_str(raw, "via")
     if text in _CURRENT_VIA or _CURRENT_VIA_MIGRATION.match(text):
-        return text, None
+        return text, job
     if text in _JOB_VIA:
-        return None, _JOB_VIA[text]
+        # The typed field wins where a line somehow carries both spellings
+        # — no writer produces that shape, and the field is the newer word.
+        return None, job if job is not None else _JOB_VIA[text]
     # The old engine stamped fetcher names here ('whisper', 'fxtwitter', …).
     # Any value outside the current vocabulary is pre-migration provenance:
     # dropped, never skipped-over — the enrichment file frontmatter records
@@ -779,7 +792,7 @@ def _translate_provenance(
         f"ledger {unit_hash}: via {text!r} dropped — pre-migration provenance "
         "vocabulary; the enrichment file frontmatter still records it"
     )
-    return None, None
+    return None, job
 
 
 # ---------------------------------------------------------------------------
