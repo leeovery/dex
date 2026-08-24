@@ -1135,13 +1135,13 @@ rules), oversize `skipped` with reason. Media downloads do **not** count
 toward the item's 12-URL cap (that cap bounds fetched pages). The old
 silent `except: pass` dies here.
 
-**`media_fetch: none` means none on every path.** It gates the emit site —
-a driver's media URLs are not ledgered at all — and the redrain alike: a
-media unit already ledgered by a run under `lead` (parked `blocked`, or
-`queued` from a crash window) rests exactly where it is, the way a
-`waiting` unit rests under an absent provider — not fetched, no attempts
-burned, no outcome written — and drains again when the owner turns media
-back on. The run report notes the withheld cohort once.
+**`media_fetch: none` gates the fetch, never the emit.** A driver's media
+URLs are always ledgered at emit, whatever the config says — the work is
+recorded even when it is withheld, so no media unit is invisible. Under
+`none` every media unit rests exactly where it is, the way a `waiting`
+unit rests under an absent provider: not fetched, no attempts burned, no
+outcome written. The run report notes the withheld cohort once, and the
+rested units drain when the owner turns media back on.
 
 **Media URLs are validated before they are ledgered.** The stage fetches
 what a driver hands it verbatim, so a value that could never be a request —
