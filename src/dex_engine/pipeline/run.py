@@ -2055,10 +2055,14 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
 
     Never re-parents (re-fetching the item's primary URL must not nest it
     under itself) and never re-spends the URL cap — the unit is already
-    counted.
+    counted. The attribution is asked of the corpus
+    (:meth:`_Drain.owner_of`), like every write: carried from the held
+    line it spells a renamed item's dead id, and a run dying between this
+    line and the drain's outcome leaves that spelling standing.
     """
     requeued = dataclasses.replace(
         existing,
+        item=drain.owner_of(existing),
         status=Status.QUEUED,
         needs=None,
         attempts=None,
