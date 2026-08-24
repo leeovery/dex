@@ -309,8 +309,9 @@ class Extraction:
 def _validate_evidence(evidence: str) -> None:
     # An outcome whose whole content is evidence must state it: these
     # variants park or close a unit, and an unexplained park is exactly
-    # the stated-reason contract's forbidden state.
-    if not evidence:
+    # the stated-reason contract's forbidden state. Whitespace-only is the
+    # same absence with padding.
+    if not evidence.strip():
         raise ValueError("a failure outcome must state its evidence")
 
 

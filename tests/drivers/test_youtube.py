@@ -566,6 +566,18 @@ class TestProbeClassification:
         assert isinstance(result, Refused)
         assert "github.com" not in result.evidence  # the message URL was scrubbed
 
+    @pytest.mark.parametrize("message", ["", "   \t "])
+    def test_a_messageless_probe_failure_still_states_blocked_shaped_evidence(self, message):
+        # An empty (or whitespace-only) yt-dlp message scrubs to "": without
+        # the classifier's stated fallback the Refused it becomes would fail
+        # evidence validation inside the driver, and the broad catch would
+        # ledger an engine error — a filed issue and a release-gated retry —
+        # where the baseline gave blocked with the attempts lifecycle.
+        result = driver_for(ProbeError(message)).fetch(make_unit(URL, Kind.YOUTUBE))
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert result.evidence == "probe failed with no message from yt-dlp"
+
     def test_geo_block_is_manual_with_reason(self):
         failure = ProbeError(
             "ERROR: Video unavailable. The uploader has not made this video "

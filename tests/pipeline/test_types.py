@@ -167,6 +167,10 @@ class TestOutcomeUnion:
     def test_a_failure_outcome_must_state_its_evidence(self, variant):
         with pytest.raises(ValueError, match="evidence"):
             variant(evidence="")
+        # Whitespace-only is the same absence with padding — the design's
+        # "required and non-empty" claim, not merely "truthy".
+        with pytest.raises(ValueError, match="evidence"):
+            variant(evidence="   ")
 
     def test_refused_is_transient_unless_the_driver_knows_better(self):
         assert Refused(evidence="HTTP 429").permanent is False
