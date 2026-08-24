@@ -121,7 +121,7 @@ class PaperDriver:
     def _fetch_arxiv(self, arxiv_id: str) -> Result:
         entry = self._fetch_feed_entry(arxiv_id)
         if isinstance(entry, Classification):
-            return Result(status=entry.status, meta={}, reason=entry.reason)
+            return entry.to_result()
         meta: dict[str, str | int | None] = {
             "title": entry.title,
             "published": entry.published,

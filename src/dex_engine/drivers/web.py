@@ -35,7 +35,7 @@ import json
 import re
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dex_engine.pipeline.classify import (
     MIN_SUBSTANTIAL_CHARS,
@@ -187,8 +187,11 @@ class WebDriver:
                 note = "wayback snapshot extraction was thin"
             else:
                 note = f"wayback fetch failed: {page.reason}"
-        reason = failure.reason if note is None else f"{failure.reason}; {note}"
-        return Result(status=failure.status, meta={}, reason=reason)
+        if note is not None:
+            # The rescue's fate is appended context on the direct truth —
+            # the classification's own status and reason still decide.
+            failure = replace(failure, reason=f"{failure.reason}; {note}")
+        return failure.to_result()
 
     def _wayback_snapshot(self, url: str) -> tuple[str | None, str | None]:
         """The closest snapshot URL, or (None, why the lookup yielded nothing)."""

@@ -157,7 +157,7 @@ class GitHubDriver:
             )
         payload = self._api(f"gists/{gist_id}")
         if isinstance(payload, Classification):
-            return _classified(payload)
+            return payload.to_result()
         files = payload.get("files") or {}
         body = "\n\n".join(
             f"### {name}\n```\n{(file or {}).get('content', '')[:_MAX_GIST_FILE_CHARS]}\n```"
@@ -171,7 +171,7 @@ class GitHubDriver:
     def _fetch_profile(self, user: str) -> Result:
         payload = self._api(f"users/{user}")
         if isinstance(payload, Classification):
-            return _classified(payload)
+            return payload.to_result()
         repos = gh_api_list(self._gh, f"users/{user}/repos?sort=pushed&per_page=100")
         listing = _repo_listing(repos)
         meta = {"title": payload.get("name") or user, "followers": payload.get("followers")}
@@ -184,7 +184,7 @@ class GitHubDriver:
     def _fetch_blob(self, ref: BlobRef) -> Result:
         blob = fetch_blob(self._gh, ref)
         if isinstance(blob, Classification):
-            return _classified(blob)
+            return blob.to_result()
         meta: dict[str, str | int | None] = {"file": blob.path}
         # Named, because a signature is not always there to find: an
         # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
@@ -216,7 +216,7 @@ class GitHubDriver:
     def _fetch_issue(self, owner: str, repo: str, number: str) -> Result:
         payload = self._api(f"repos/{owner}/{repo}/issues/{number}")
         if isinstance(payload, Classification):
-            return _classified(payload)
+            return payload.to_result()
         return Result(
             status=Status.DONE,
             meta={"title": payload.get("title")},
@@ -226,7 +226,7 @@ class GitHubDriver:
     def _fetch_repo(self, owner: str, repo: str) -> Result:
         payload = self._api(f"repos/{owner}/{repo}")
         if isinstance(payload, Classification):
-            return _classified(payload)
+            return payload.to_result()
         meta: dict[str, str | int | None] = {
             "title": payload.get("full_name"),
             "description": payload.get("description") or None,
@@ -251,10 +251,6 @@ def _gist_id(segments: list[str]) -> str | None:
     if len(segments) == 1 and _GIST_ID_RE.fullmatch(segments[0]):
         return segments[0]
     return None
-
-
-def _classified(failure: Classification) -> Result:
-    return Result(status=failure.status, meta={}, reason=failure.reason)
 
 
 def _repo_listing(repos: list) -> str:

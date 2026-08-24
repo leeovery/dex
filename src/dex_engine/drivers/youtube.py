@@ -191,8 +191,7 @@ class YouTubeDriver:
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
-            failure = classify_probe_failure(str(e))
-            return Result(status=failure.status, meta={}, reason=failure.reason)
+            return classify_probe_failure(str(e)).to_result()
         meta = _video_meta(info)
         track_url = _caption_track_url(info)
         if track_url is None:

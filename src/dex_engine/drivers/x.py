@@ -131,7 +131,7 @@ class XDriver:
         # and that 404 would misread as a dead post.
         captured = self._fetch_post(f"status/{status_id}")
         if isinstance(captured, Classification):
-            return Result(status=captured.status, meta={}, reason=captured.reason)
+            return captured.to_result()
         posts, walk_meta = self._walk_up(captured)
         return _render(captured, posts, walk_meta)
 

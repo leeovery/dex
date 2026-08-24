@@ -2233,6 +2233,11 @@ and the outcome union settles several of these on its way past.
   is `urls.ext_of`, its per-family default (`jpg` media, `mp3` audio)
   stated by the caller.
 - **Six spellings of Classification→Result.** One conversion, once.
+  **Done**: `Classification.to_result()` in `classify.py`, where the
+  classification layer meets the driver-result layer; every former
+  spelling calls it, and the wayback fallback appends its rescue note
+  onto the classification's reason before converting through the same
+  method.
 - **One enrichment-frontmatter module owning render and parse.** The writer
   lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
   contract and belongs to one module. **Done**: `pipeline/enrichment.py`

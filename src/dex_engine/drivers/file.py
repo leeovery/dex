@@ -148,7 +148,7 @@ class FileDriver:
         """
         blob = fetch_blob(self._gh, ref)
         if isinstance(blob, Classification):
-            return Result(status=blob.status, meta={}, reason=blob.reason)
+            return blob.to_result()
         return blob.data, blob.path.rsplit("/", 1)[-1] or None
 
     def _read_local(self, repo_path: str) -> tuple[bytes, str | None] | Result:
@@ -177,8 +177,7 @@ class FileDriver:
     def _download(self, url: str) -> tuple[bytes, str | None] | Result:
         outcome = fetch_classified(self._transport, url)
         if isinstance(outcome, FetchFailure):
-            failure = outcome.classification
-            return Result(status=failure.status, meta={}, reason=failure.reason)
+            return outcome.classification.to_result()
         tail = unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
         return outcome.body, tail
 

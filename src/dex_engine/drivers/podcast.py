@@ -27,7 +27,6 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
-from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
@@ -265,7 +264,7 @@ class PodcastDriver:
     def _transport_result(self, url: str) -> "str | Result":
         outcome = fetch_classified(self._transport, url)
         if isinstance(outcome, FetchFailure):
-            return _classified(outcome.classification)
+            return outcome.classification.to_result()
         return outcome.text()
 
     def _json(self, url: str) -> "dict | Result":
@@ -518,7 +517,3 @@ def _html_to_markdown(fragment: str) -> str:
 
 def _manual(reason: str) -> Result:
     return Result(status=Status.MANUAL, meta={}, reason=reason)
-
-
-def _classified(classification: Classification) -> Result:
-    return Result(status=classification.status, meta={}, reason=classification.reason)
