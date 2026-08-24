@@ -1401,11 +1401,14 @@ builder, the one place the config is in hand (payloads stay
 self-contained), marks the row `resting`, and it renders under **Needs
 you** with a reason naming what unblocks it and no retry framing.
 
-**Open question — where `error` entries belong.** They sit under **Waiting
-on the engine** today, on the rule above: `error` retries by itself, once
-per newer engine (§5). The counter-argument is that the retry needs a
-release to happen at all, so an `error` is closer to work the owner owns
-than to work the engine will get to unasked. Undecided.
+**Settled — where `error` entries belong** (owner ruling, 2026-08-24):
+under **Waiting on the engine**, where they already sit. The split's rule
+is who owns the next action, and an error's next action is the engine's:
+the issue is already filed (§13) and the unit retries itself on the next
+release (§5) — the reader has nothing to do but wait. A **Needs you** row
+with no procedure attached would be noise, and the counter-argument (the
+retry needs a release to happen at all) describes how long the engine
+takes, not who acts next.
 
 **A marker rides inside the bullet text, never in the prefix.** A restated
 fact is `- ~ the fact`, not a `~` gutter applied to the entry. This is the
