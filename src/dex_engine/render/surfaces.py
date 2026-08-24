@@ -1325,8 +1325,9 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
         blocks.append(
             kernel.bullet(
                 f"{kernel.bold('PASSES FAILURE')} — repair `state/passes.jsonl`: delete "
-                "the torn trailing line (a half-written line is not a record); the pass "
-                "readings below ran without the broken record"
+                "the torn line named below, and only that line (a half-written line is "
+                "not a record; every intact line is); the pass readings below ran "
+                "without the broken record"
             )
         )
         blocks.append(kernel.bullet(_str_at(surface, payload, "passes_error"), depth=1))

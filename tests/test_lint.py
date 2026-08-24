@@ -163,7 +163,29 @@ class TestTornPassRecord:
         assert "Health check" in outcome.report  # the report rendered
         assert "PASSES FAILURE" in outcome.report
         assert "passes.jsonl:2" in outcome.report  # file AND line
-        assert "delete the torn trailing line" in outcome.report
+        assert "delete the torn line named below" in outcome.report
+
+    def test_a_mid_file_tear_names_its_own_line_and_never_says_trailing(self, instance):
+        # later appends (or a union merge) land after a torn line, so the
+        # tear the row names can sit mid-file — the advice must point at
+        # the named line, or it directs deleting an intact record
+        write_taxonomy(instance)
+        good = {"stage": "harvest", "item": ITEM, "rules": 0, "date": "2026-08-01"}
+        later = {"stage": "wiki", "item": ITEM, "date": "2026-08-02"}
+        instance.passes_path.write_text(
+            json.dumps(good)
+            + "\n"
+            + '{"stage": "digest", "item"'
+            + "\n"
+            + json.dumps(later)
+            + "\n",
+            encoding="utf-8",
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "passes.jsonl:2" in outcome.report
+        assert "delete the torn line named below" in outcome.report
+        assert "trailing" not in outcome.report
 
     def test_the_parseable_records_still_feed_their_checks(self, instance):
         self._passes_with_torn_tail(instance)

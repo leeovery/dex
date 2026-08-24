@@ -786,12 +786,14 @@ def _excluded_items(instance: Instance) -> set[str]:
 def _stale_passes(instance: Instance) -> tuple[list[dict[str, object]], str | None]:
     """Items whose latest harvest pass predates the current rules, and the file's fault.
 
-    A record no reader can parse — the torn trailing line an interrupted
-    append leaves — is the file's finding, never a bare crash: the report
-    gets a failure row naming ``state/passes.jsonl`` and the line, with
-    the sanctioned repair (delete the torn line — a half-written line is
-    not a record). The stale readings computed from the parseable records
-    still render; the first broken line is the one named.
+    A record no reader can parse — the torn line an interrupted append
+    leaves, trailing at first but relocatable mid-file by later appends
+    or a union merge — is the file's finding, never a bare crash: the
+    report gets a failure row naming ``state/passes.jsonl`` and the line,
+    with the sanctioned repair (delete the named torn line — a
+    half-written line is not a record). The stale readings computed from
+    the parseable records still render; the first broken line is the one
+    named.
     """
     path = instance.passes_path
     if not path.exists():
