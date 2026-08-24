@@ -2125,10 +2125,15 @@ src/dex_engine/
                  and for anything hand-edited since. A broken state
                  file renders as a failure row naming the offending
                  file (a malformed `entity-members.json`, a torn
-                 `passes.jsonl` line — named by file and line, since
-                 later appends or a union merge can leave the tear
-                 mid-file) rather than dying bare, so the report
-                 survives to name the repair. Exit 1 is the
+                 `passes.jsonl` or `enrichment-ledger.jsonl` line —
+                 named by file and line, since later appends or a
+                 union merge can leave the tear mid-file) rather than
+                 dying bare, so the report survives to name the
+                 repair. The advice splits by fault: a line that is
+                 not JSON at all is a torn write and carries the
+                 delete-the-named-line sanction, while a valid-JSON
+                 line that violates the schema keeps the
+                 likely-missing-migration hint (run sync). Exit 1 is the
                  hard-failure set: broken wikilinks, bad citations, a
                  ledger schema error, a malformed taxonomy, a malformed
                  `entity-members.json`, an unparseable pass record, a

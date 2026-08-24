@@ -4,10 +4,14 @@ Fix, in order (state before wiki — a broken ledger blocks the verbs the
 other repairs need):
 
 - **Ledger schema failure** — repair before anything else touches
-  state; the message names the file, line, and likely missing migration
-  (usually: run `bin/dex sync`).
+  state; the advice splits by fault. A line that is valid JSON but
+  violates the schema is stale vocabulary: the message names the file,
+  line, and likely missing migration (usually: run `bin/dex sync`). A
+  line that does not parse as JSON at all is a torn write, and takes
+  the torn-line sanction below: delete exactly the named line.
 - **Torn state file** — the failure row (or sync's error) names the
-  offending file AND line. A torn line in `state/passes.jsonl` or
+  offending file AND line. A torn line in
+  `state/enrichment-ledger.jsonl`, `state/passes.jsonl` or
   `state/migrations.jsonl` is an interrupted write (it starts trailing,
   but later appends or a union merge can leave it mid-file), and the
   sanctioned repair is deleting exactly the line the row names: a
