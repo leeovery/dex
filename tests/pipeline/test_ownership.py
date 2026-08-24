@@ -1,8 +1,10 @@
 """Tests for pipeline/ownership.py: which live corpus item claims a work unit."""
 
 from dex_engine.pipeline.ownership import corpus_owners, work_identity
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.urls import work_hash
+
+DRIVERS = default_drivers()
 
 X_SHARED = "https://x.com/carol/status/300"  # a share spelling
 X_KEYED = "https://x.com/i/status/300"  # its id-keyed identity

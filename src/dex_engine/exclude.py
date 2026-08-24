@@ -55,7 +55,7 @@ from pathlib import Path
 from . import corpus
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
-from .pipeline.registry import DRIVERS
+from .pipeline.registry import default_drivers
 from .pipeline.types import Instance, LedgerEntry, Status
 from .pipeline.urls import resolve_repo_path
 from .version import engine_version
@@ -149,7 +149,7 @@ def run_exclude(
             + f"; {unreadable} corpus file(s) could not be read, so no ledger entries "
             "were purged — repair them (dex-lint names them) and re-run"
         )
-    claimed = corpus_owners(instance.root, DRIVERS)
+    claimed = corpus_owners(instance.root, default_drivers())
     dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
     summary += _purge_counts(dropped, kept)
 

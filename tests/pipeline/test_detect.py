@@ -9,10 +9,12 @@ from dex_engine.pipeline.detect import (
     detect_kind,
     sniff_format,
 )
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Format, Kind
 from tests.capabilities.conftest import fixture_bytes
 from tests.conftest import FakeDriver
+
+DRIVERS = default_drivers()
 
 
 class RecordingSniff:

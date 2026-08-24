@@ -2262,7 +2262,13 @@ and the outcome union settles several of these on its way past.
   messages are byte-identical.
 - **The import-time `DRIVERS` registry.** A module-level list against the
   no-import-time-state rule (§14); the typed registry literal is still the
-  Protocol-conformance point (§2), just not at import.
+  Protocol-conformance point (§2), just not at import. **Done**:
+  `registry.default_drivers()` builds the default list on demand and the
+  entry points call it — `run._unit_owners`'s standing-report callers,
+  normalize (threaded once per run), lint, exclude, and migration 2 (once
+  per apply) — so importing `registry` constructs nothing; the typed
+  literal in `build_drivers` remains the conformance point, and the web
+  catch-all stays last in the one place the order is defined.
 - **Streaming transport reads.** An unbounded `response.read()` buffers a
   whole enclosure in memory; enforce the §7 media cap in-stream instead, so
   an oversize download is refused while it arrives rather than after.

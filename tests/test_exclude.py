@@ -11,8 +11,10 @@ from dex_engine.exclude import main, run_exclude
 from dex_engine.normalize import load_exclusions
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Status
+
+DRIVERS = default_drivers()
 
 ITEM = "2026-08-19-example-55ad7b"
 OTHER = "2026-08-19-other-11ff22"

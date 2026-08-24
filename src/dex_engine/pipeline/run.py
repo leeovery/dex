@@ -51,7 +51,7 @@ from .enrichment import (
     youtube_body,
 )
 from .ownership import corpus_claims
-from .registry import DRIVERS, driver_for
+from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
@@ -1756,7 +1756,7 @@ def _refresh_item_frontmatter(
 def _unit_owners(
     instance: Instance,
     entries: Mapping[str, LedgerEntry],
-    drivers: Sequence[SourceDriver] = DRIVERS,
+    drivers: Sequence[SourceDriver] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Which live corpus items each work unit belongs to.
 
@@ -1785,13 +1785,15 @@ def _unit_owners(
     Args:
         instance: The instance.
         entries: The ledger, hash -> latest entry.
-        drivers: The driver registry that owns canonicalization.
+        drivers: The driver registry that owns canonicalization; built
+            fresh when the caller has none in hand (the standing-report
+            paths hold no RunContext).
 
     Returns:
         Work hash -> the owning item ids, in id order. Every hash in
         ``entries`` has an answer; none is ever empty.
     """
-    claims = corpus_claims(instance.root, drivers)
+    claims = corpus_claims(instance.root, drivers if drivers is not None else default_drivers())
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     owners: dict[str, tuple[str, ...]] = {}
 

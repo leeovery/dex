@@ -2,16 +2,18 @@
 
 No auto-discovery. Specialized drivers first, ``web`` last as the
 catch-all; :func:`~dex_engine.pipeline.detect.detect` treats a match on the
-final entry as inconclusive and may sniff. The typed literal below is the
-Protocol-conformance point: the type checker verifies every driver against
-:class:`~dex_engine.pipeline.types.SourceDriver` at this one assignment.
+final entry as inconclusive and may sniff. The typed literal in
+:func:`build_drivers` is the Protocol-conformance point: the type checker
+verifies every driver against
+:class:`~dex_engine.pipeline.types.SourceDriver` at that one return.
 
-Two construction paths: :data:`DRIVERS` is the default list — pattern
-matching and ``normalize`` need nothing more — and :func:`build_drivers`
-rebuilds the same order wired to a real instance (config-ordered
-capabilities, the instance root for local-file work). The order is defined
-once, in :func:`build_drivers`; the literal is that function applied to
-defaults.
+Two construction paths: :func:`default_drivers` builds the default list —
+pattern matching and ``normalize`` need nothing more — and
+:func:`build_drivers` builds the same order wired to a real instance
+(config-ordered capabilities, the instance root for local-file work). The
+order is defined once, in :func:`build_drivers`; the default is that
+function applied to defaults. Both are functions the entry points call:
+importing this module constructs nothing.
 """
 
 from collections.abc import Sequence
@@ -28,7 +30,7 @@ from dex_engine.drivers.youtube import YouTubeDriver
 
 from .types import Config, Kind, SourceDriver
 
-__all__ = ["DRIVERS", "build_drivers", "driver_for"]
+__all__ = ["build_drivers", "default_drivers", "driver_for"]
 
 
 def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> list[SourceDriver]:
@@ -54,10 +56,15 @@ def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> li
     ]
 
 
-# The default registry: default provider order, no instance root. The typed
-# literal is the Protocol-conformance point. Constructing providers
-# reads no ambient state — credentials resolve lazily at availability time.
-DRIVERS: list[SourceDriver] = build_drivers(capabilities=Capabilities.build(Config()))
+def default_drivers() -> list[SourceDriver]:
+    """The default registry: default provider order, no instance root.
+
+    A function, not a module-level list — the entry points build the
+    registry they use, and importing this module constructs nothing.
+    Constructing providers reads no ambient state — credentials resolve
+    lazily at availability time.
+    """
+    return build_drivers(capabilities=Capabilities.build(Config()))
 
 
 def driver_for(kind: Kind, drivers: Sequence[SourceDriver]) -> SourceDriver | None:

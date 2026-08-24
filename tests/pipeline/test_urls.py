@@ -5,8 +5,10 @@ import urllib.parse
 from hypothesis import given
 from hypothesis import strategies as st
 
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.urls import base_canonical, ext_of, host_of, resolve_repo_path, work_hash
+
+DRIVERS = default_drivers()
 
 
 class TestHostOf:

@@ -92,7 +92,7 @@ never seeds twice.
 """
 
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -109,12 +109,13 @@ from dex_engine.pipeline.ledger import (
     to_line,
 )
 from dex_engine.pipeline.ownership import corpus_owners
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import (
     Kind,
     LedgerEntry,
     MigrationReport,
     Skipped,
+    SourceDriver,
     Status,
     parse_version,
 )
@@ -192,7 +193,8 @@ class IdentityRekeyAndRerunSeed:
         path = root / "state" / "enrichment-ledger.jsonl"
         if not path.exists():
             return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
-        entries = _rekey_identities(root, path, actions, skipped)
+        drivers = default_drivers()
+        entries = _rekey_identities(root, path, actions, skipped, drivers=drivers)
         latest = _latest_per_hash(entries, now=self._now())
         exclusions = _exclusions(root)
         cohort = [entry for entry in latest.values() if _in_cohort(entry, skipped=skipped)]
@@ -200,7 +202,7 @@ class IdentityRekeyAndRerunSeed:
         # work — and only entries whose stored item is already gone need to
         # ask it, so a run with nothing missing never pays for it.
         owners = (
-            corpus_owners(root, DRIVERS)
+            corpus_owners(root, drivers)
             if any(not (root / _item_path(entry.item)).exists() for entry in cohort)
             else {}
         )
@@ -264,7 +266,12 @@ class _Line:
 
 
 def _rekey_identities(
-    root: Path, path: Path, actions: list[str], skipped: list[Skipped]
+    root: Path,
+    path: Path,
+    actions: list[str],
+    skipped: list[Skipped],
+    *,
+    drivers: Sequence[SourceDriver],
 ) -> list[LedgerEntry]:
     """Rewrite every entry whose identity moved; return readable entries in file order.
 
@@ -301,7 +308,11 @@ def _rekey_identities(
             records.append(_Line(text=line))
             continue
         records.append(
-            _Line(text=line, entry=entry, key=_current_key(entry, lineno=lineno, skipped=skipped))
+            _Line(
+                text=line,
+                entry=entry,
+                key=_current_key(entry, lineno=lineno, skipped=skipped, drivers=drivers),
+            )
         )
     identity = {
         record.entry.hash: record.key[0]
@@ -426,7 +437,7 @@ def _rekey_outputs(
 
 
 def _current_key(
-    entry: LedgerEntry, *, lineno: int, skipped: list[Skipped]
+    entry: LedgerEntry, *, lineno: int, skipped: list[Skipped], drivers: Sequence[SourceDriver]
 ) -> tuple[str, str] | None:
     """The identity the engine computes for this entry today, or None to leave it.
 
@@ -438,7 +449,7 @@ def _current_key(
     if entry.via in _VERBATIM_VIA or not entry.url.startswith(_ABSOLUTE_HTTP):
         return None
     try:
-        canonical = canonical_url(entry.url, DRIVERS)
+        canonical = canonical_url(entry.url, drivers)
     except Exception as e:  # noqa: BLE001 — a driver's canonical is arbitrary code over owner data
         skipped.append(
             Skipped(

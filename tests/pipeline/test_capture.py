@@ -7,8 +7,10 @@ import pytest
 
 from dex_engine import corpus, inbox
 from dex_engine.pipeline.capture import item_new, parse_capture
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from tests.capabilities.conftest import fixture_bytes
+
+DRIVERS = default_drivers()
 
 TODAY = datetime.date(2026, 8, 20)
 
