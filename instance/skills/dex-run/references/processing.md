@@ -17,10 +17,12 @@ directory).
    image captures — nothing to fetch, everything to describe and digest)
    — plus everything under **Read these yourself**. Items you created
    this session always get the full per-item procedure whether or not the
-   report names them. **Needs you** holds the entries the engine has
-   given up on, each with a stated reason: judge them per the reference's
-   heal procedure. **Waiting on the engine** is the engine's own retry
-   queue — read it, act on nothing.
+   report names them. **Needs you** holds the entries only you can move,
+   each with a stated reason: judge them per the reference's heal
+   procedure, which exempts rows tagged `resting` — those owe no heal, and
+   the engine redrains them once the owner turns media back on. **Waiting
+   on the engine** is the engine's own retry queue — read it, act on
+   nothing.
 
 3. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
    these** is an interrupted previous session: complete its remaining
