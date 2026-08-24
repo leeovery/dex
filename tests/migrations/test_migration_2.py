@@ -12,7 +12,7 @@ from dex_engine.migrations import MigrationError
 from dex_engine.migrations.migration_2 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.transcribe import read_enrichment
+from dex_engine.pipeline.enrichment import read_enrichment
 from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver

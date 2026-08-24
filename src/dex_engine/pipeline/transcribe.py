@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from dex_engine import atomic, frontmatter
+from dex_engine import atomic
 from dex_engine.drivers.transport import HttpResponse, Transport
 from dex_engine.drivers.ytdlp import (
     DownloadAudio,
@@ -29,6 +29,7 @@ from dex_engine.drivers.ytdlp import (
 
 from .classify import Classification, classify_connection, classify_http
 from .detect import looks_like_html
+from .enrichment import read_enrichment
 from .types import LedgerEntry, Status
 
 __all__ = [
@@ -42,8 +43,6 @@ __all__ = [
     "keep_first_tokens",
     "keep_last_tokens",
     "podcast_body",
-    "read_enrichment",
-    "read_enrichment_fields",
     "youtube_body",
 ]
 
@@ -406,78 +405,3 @@ def podcast_body(show_notes: str, transcript: str) -> str:
     if show_notes:
         return f"{show_notes}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
     return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
-
-
-# ---------------------------------------------------------------------------
-# Enrichment reads. The inverse of run.py's renderer — enrichment files are
-# machine-written, so the simple shape is guaranteed. Two entry points over
-# one parser: the drain wants fields plus the pre-transcript body, lint's
-# marker scan wants fields alone and must not pull whole transcripts into
-# memory to get them.
-# ---------------------------------------------------------------------------
-
-
-def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
-    """Parse one enrichment file into (frontmatter fields, body).
-
-    Args:
-        path: The enrichment markdown file.
-
-    A fence that opens and never closes yields no fields, not the whole
-    file read as frontmatter — every caller decides on a field it looks up,
-    and transcript prose parsed as fields answers those lookups with
-    nonsense. ``read_enrichment_fields`` raises on the same shape instead,
-    because a scan that exists to report an unreadable file has to tell it
-    apart from a clean one; a drain that only has to avoid being fooled
-    does not.
-
-    Returns:
-        The fields (JSON-quoted values unquoted) and the stripped body.
-    """
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---\n"):
-        return {}, text.strip()
-    head, sep, body = text[4:].partition("\n---\n")
-    if not sep:
-        return {}, text.strip()
-    return _frontmatter_fields(head.split("\n")), body.strip()
-
-
-def read_enrichment_fields(path: Path) -> dict[str, str]:
-    """Parse one enrichment file's frontmatter without reading its body.
-
-    Bodies run to whole transcripts; a scan that only wants the
-    frontmatter stops at the closing fence.
-
-    Args:
-        path: The enrichment markdown file.
-
-    Returns:
-        The fields (quoted values unquoted); empty for a file that opens
-        with no frontmatter fence at all.
-
-    Raises:
-        ValueError: The file opens a fence and never closes it — the shape
-            an interrupted write leaves behind. Empty fields would say
-            "read fine, no markers", and the caller cannot tell the
-            difference it has to report.
-    """
-    head: list[str] = []
-    with path.open(encoding="utf-8") as f:
-        if f.readline().rstrip("\n") != "---":
-            return {}
-        for line in f:
-            if line.rstrip("\n") == "---":
-                return _frontmatter_fields(head)
-            head.append(line.rstrip("\n"))
-    raise ValueError("unterminated frontmatter: no closing '---' fence")
-
-
-def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
-    fields: dict[str, str] = {}
-    for line in lines:
-        if ":" not in line:
-            continue
-        key, _, raw = line.partition(":")
-        fields[key.strip()] = frontmatter.unquote(raw.strip())
-    return fields

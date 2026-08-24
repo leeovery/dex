@@ -26,6 +26,7 @@ from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SNIFF_PREFIX_BYTES,
@@ -34,13 +35,10 @@ from dex_engine.pipeline.run import (
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
-    _render_enrichment,
     _sniff_bytes,
-    _yaml_value,
     is_drainable,
     no_providers,
 )
-from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
     Cap,
@@ -3419,7 +3417,7 @@ class TestRedetection:
         # The session reads the PDF with its eyes and closes the unit.
         hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"
         hand_written.write_text(
-            _render_enrichment(URL, TODAY, {"title": "t"}, "read by hand " * 40),
+            render_enrichment(URL, TODAY, {"title": "t"}, "read by hand " * 40),
             encoding="utf-8",
         )
         run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{hand_written.name}")
@@ -3523,7 +3521,7 @@ class TestYamlValue:
 
     def test_retyping_and_indicator_values_round_trip(self, tmp_path):
         for value in self.RETYPED:
-            text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
+            text = render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
             record = tmp_path / "web-abc123.md"
             record.write_text(text)
             fields, _ = read_enrichment(record)
@@ -3558,7 +3556,7 @@ class TestYamlValue:
     def test_the_url_line_is_a_value_like_any_other(self, url, tmp_path):
         # A work key carrying a colon-space made the whole block unparseable
         # — and the url line is the one field that used to bypass quoting.
-        text = _render_enrichment(url, TODAY, {"title": "t"}, "body")
+        text = render_enrichment(url, TODAY, {"title": "t"}, "body")
         record = tmp_path / "file-abc123.md"
         record.write_text(text)
         head = text[4:].partition("\n---\n")[0]
@@ -3568,7 +3566,7 @@ class TestYamlValue:
 
     def test_tabbed_value_leaves_the_block_parseable_by_a_real_yaml_reader(self, tmp_path):
         value = "col1\tcol2"
-        text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
+        text = render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
         record = tmp_path / "web-abc123.md"
         record.write_text(text)
         fields, _ = read_enrichment(record)

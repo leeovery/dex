@@ -1823,6 +1823,9 @@ src/dex_engine/
                classify.py   the ONE failure classifier (§5) + the scrubber
                transcribe.py the transcribe drain: audio acquisition,
                              prompt budgeting, chunking (§6, §9)
+               enrichment.py the ONE enrichment-file format point: the
+                             renderer and its two readers, inverses over
+                             frontmatter.py's scalar unquoting rule
                urls.py       canonicalization and the work-key hash — the
                              one place a ledger identity is computed
                capture.py    `enrich item new`: capture file → corpus item
@@ -2216,7 +2219,12 @@ and the outcome union settles several of these on its way past.
 - **Six spellings of Classification→Result.** One conversion, once.
 - **One enrichment-frontmatter module owning render and parse.** The writer
   lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
-  contract and belongs to one module.
+  contract and belongs to one module. **Done**: `pipeline/enrichment.py`
+  renders the file and parses it back as inverses over the one scalar
+  unquoting rule (`frontmatter.py`, whose digest-side readers are
+  untouched), keeping both readers' deliberately different
+  unterminated-fence contracts — the drain's quiet no-fields answer and
+  the scan's loud raise.
 - **Hoist the yt-dlp seam out of `drivers/youtube.py`** so
   `pipeline/transcribe.py` stops importing a driver — the standing
   violation of the driver-isolation rule (§2) inside the engine's own

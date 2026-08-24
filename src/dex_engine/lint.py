@@ -64,10 +64,10 @@ from pathlib import Path
 from . import frontmatter
 from .capabilities import Capabilities
 from .pipeline import ledger
+from .pipeline.enrichment import read_enrichment_fields
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
 from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
-from .pipeline.transcribe import read_enrichment_fields
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
