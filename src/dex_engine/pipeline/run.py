@@ -387,10 +387,11 @@ class _Drain:
     # children exist to be attributed.
     owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
-    # Live items whose every ledger unit landed dead and whose digest is
-    # not yet recorded — like the no-source items, owed description +
-    # digest from the owner's note, and derived on demand for the report.
-    all_dead_items: list[str] = field(default_factory=list)
+    # Live items whose every ledger unit closed without content (dead or
+    # skipped) and whose digest is not yet recorded — like the no-source
+    # items, owed description + digest from the owner's note, and derived
+    # on demand for the report.
+    closed_unenriched_items: list[str] = field(default_factory=list)
     # Items this run wrote an outcome for — the report's incompleteness
     # section covers exactly these (an item nothing happened to this run has
     # nothing new to say; `enrich status` holds the standing view).
@@ -1633,10 +1634,11 @@ class _Drain:
         """List the items the unit-driven report cannot see, or misstates.
 
         Two families, one owed job. A no-source capture seeded nothing, so
-        it never appears among the drained units; an all-dead item's units
-        all appear, but only as a count that says nothing about what the
-        item still owes. Both owe description + digest from the owner's
-        note, and both are named on the report until the digest lands.
+        it never appears among the drained units; an item whose every unit
+        closed without content has units that all appear, but only as a
+        count that says nothing about what the item still owes. Both owe
+        description + digest from the owner's note, and both are named on
+        the report until the digest lands.
 
         A capture with no URLs and no document media seeds nothing, so it
         never appears among the drained units — yet its description and
@@ -1659,14 +1661,17 @@ class _Drain:
             for item_id, status in sorted(self.item_status.items())
             if status == "raw" and item_id not in sourced and item_id not in digested
         ]
-        # The all-dead sibling: every unit landed `dead`, so the engine owes
-        # nothing further and no enrichment exists — the owed work is the
-        # same description + digest, from the owner's note. Same shared
-        # reading as the digest backstop (:func:`_all_dead_items`), and it
+        # The closed-without-content sibling: every unit landed `dead` or
+        # was deliberately ruled out, so the engine owes nothing further
+        # and no enrichment exists — the owed work is the same description
+        # + digest, from the owner's note. Same shared reading as the
+        # digest backstop (:func:`_terminal_no_content_items`), and it
         # drops off the moment the item's digest is recorded.
-        self.all_dead_items = [
+        self.closed_unenriched_items = [
             item_id
-            for item_id in _all_dead_items(self.entries, self.owners, set(self.item_status))
+            for item_id in _terminal_no_content_items(
+                self.entries, self.owners, set(self.item_status)
+            )
             if item_id not in digested
         ]
 
@@ -1683,9 +1688,11 @@ class _Drain:
         items += [
             {
                 "id": item_id,
-                "reason": "every source dead — awaiting description + digest from the note",
+                "reason": (
+                    "every source dead or ruled out — awaiting description + digest from the note"
+                ),
             }
-            for item_id in self.all_dead_items
+            for item_id in self.closed_unenriched_items
         ]
         payload: dict[str, object] = {
             "counts": {status.value: n for status, n in self.counts.items()},
@@ -2364,7 +2371,8 @@ def digest_orphans(instance: Instance) -> list[str]:
     shared into two captures enriches under the first item, and the
     second — which derives ``enriched`` on the same landing, and is
     therefore digestible — has no directory to be found by. A live item
-    whose every unit landed ``dead`` is the third (:func:`_all_dead_items`):
+    whose every unit closed without content — ``dead``, or deliberately
+    ruled out ``skipped`` — is the third (:func:`_terminal_no_content_items`):
     nothing landed and nothing owes, so neither of the first two answers
     finds it, yet its description and digest — from the owner's note —
     are exactly the work still owed.
@@ -2410,13 +2418,14 @@ def digest_orphans(instance: Instance) -> list[str]:
     # line naming an id no corpus file answers to is lint's ghost-item
     # finding, never work this backstop can ask anyone to do.
     candidates |= enriched_on.keys() & live
-    # The third answer: an item whose every unit landed dead. It has no
-    # enrichment directory and no done line, so neither route above finds
-    # it — yet it owes exactly what a no-source capture owes, description
-    # and digest from the owner's note, and the no-digest branch below is
-    # what lists it. Once its digest pass is recorded it drops off like
-    # any other item (nothing ever landed, so nothing is ever stale).
-    candidates.update(_all_dead_items(entries, owners, live))
+    # The third answer: an item whose every unit closed without content
+    # (dead, or ruled out skipped). It has no enrichment directory and no
+    # done line, so neither route above finds it — yet it owes exactly
+    # what a no-source capture owes, description and digest from the
+    # owner's note, and the no-digest branch below is what lists it. Once
+    # its digest pass is recorded it drops off like any other item
+    # (nothing ever landed, so nothing is ever stale).
+    candidates.update(_terminal_no_content_items(entries, owners, live))
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
@@ -2504,25 +2513,36 @@ def _items_owing_work(
     }
 
 
-def _all_dead_items(
+# The statuses that close a unit without producing content: confirmed gone,
+# or deliberately ruled out (a cap-free skip — the skills' own heal marks a
+# dead unit's sibling skipped with the reason stated). `done` landed
+# content; everything else is outstanding.
+_TERMINAL_NO_CONTENT = frozenset({Status.DEAD, Status.SKIPPED})
+
+
+def _terminal_no_content_items(
     entries: Mapping[str, LedgerEntry] | None,
     owners: Mapping[str, tuple[str, ...]],
     live: set[str],
 ) -> list[str]:
-    """The live items whose every ledger unit landed ``dead``, sorted.
+    """The live items whose every ledger unit closed without content, sorted.
 
     One shared reading for the surfaces that owe such an item a listing —
-    the run report and the digest backstop: every source confirmed gone
-    means the engine owes nothing further and no enrichment exists, so
-    the item derives ``enriched`` with nothing to digest FROM but the
-    owner's note — which is exactly its owed work, description + digest,
-    and neither surface could see it as more than a count.
+    the run report and the digest backstop: every source confirmed gone or
+    deliberately ruled out means the engine owes nothing further and no
+    enrichment exists, so the item derives ``enriched`` with nothing to
+    digest FROM but the owner's note — which is exactly its owed work,
+    description + digest, and neither surface could see it as more than a
+    count. Dead-only was the first spelling of this predicate, and it let
+    the mixed item vanish: the skills' own heal marks a dead unit's
+    sibling ``skipped`` with a reason, and that item owes exactly the same
+    note-digest.
 
     Ownership is the corpus's answer, like every other reading off these
     maps. Cap-fire markers are not units — they record refused work — so
-    they neither make an item all-dead nor break the reading. An item
-    with no units at all is the no-source capture, a different listing.
-    An unreadable ledger claims nothing.
+    they neither close an item nor break the reading. An item with no
+    units at all is the no-source capture, a different listing. An
+    unreadable ledger claims nothing.
     """
     if not entries:
         return []
@@ -2533,7 +2553,9 @@ def _all_dead_items(
         for item_id in owners.get(entry.hash, (entry.item,)):
             statuses.setdefault(item_id, set()).add(entry.status)
     return sorted(
-        item_id for item_id, seen in statuses.items() if item_id in live and seen == {Status.DEAD}
+        item_id
+        for item_id, seen in statuses.items()
+        if item_id in live and seen <= _TERMINAL_NO_CONTENT
     )
 
 
@@ -2595,9 +2617,10 @@ def never_harvested(instance: Instance) -> list[str]:
     step. An item still owing a unit derives ``raw`` and has not reached
     harvest, so it is never listed, however long it stays parked — the same
     rule :func:`digest_orphans` applies. An item with no fetched page at
-    all — a no-source capture, or one whose every unit died unfetched — has
-    no pages to read the subject rule over; its work is description and
-    digest, and it owes no pass. A fetched page is a ``done`` unit that is
+    all — a no-source capture, or one whose every unit closed without
+    content (dead, or ruled out skipped) — has no pages to read the
+    subject rule over; its work is description and digest, and it owes no
+    pass. A fetched page is a ``done`` unit that is
     not a media download or an extracted asset, the same reading the URL
     cap counts (:meth:`_Drain.fetched_count`).
 

@@ -2553,10 +2553,10 @@ class TestNoSourceItems:
         assert "no-source item" not in report
 
 
-class TestAllDeadItems:
-    """Every unit dead — the item owes description + digest from the note."""
+class TestClosedWithoutContentItems:
+    """Every unit dead or ruled out — the item owes its digest from the note."""
 
-    ALL_DEAD_REASON = "every source dead — awaiting description + digest from the note"
+    ALL_DEAD_REASON = "every source dead or ruled out — awaiting description + digest from the note"
 
     def _dead_ctx(self, instance):
         write_item(instance)
@@ -2594,6 +2594,31 @@ class TestAllDeadItems:
 
         report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         assert self.ALL_DEAD_REASON not in report
+
+    def test_a_dead_and_skipped_item_owes_the_same_note_digest(self, instance):
+        # The skills' own heal: a dead unit's sibling is marked skipped
+        # with the reason stated. The item owes exactly what an all-dead
+        # one owes — dead-only as the predicate made it vanish from the
+        # report and the backstop while its digest stayed owed.
+        write_item(instance, urls=[URL, "https://example.test/sibling"])
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _u: Missing(evidence="HTTP 404")))
+        run_mod.run(ctx)
+        run_mod.mark(
+            ctx,
+            "https://example.test/sibling",
+            Status.SKIPPED,
+            reason="sibling of a dead link — ruled out",
+        )
+        report = run_mod.run(ctx)
+        assert self.ALL_DEAD_REASON in report
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_an_all_skipped_item_owes_the_same_note_digest(self, instance):
+        write_item(instance)
+        nothing_there = Unusable(evidence="a site root — no content unit", rescuable=False)
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _u: nothing_there)))
+        assert self.ALL_DEAD_REASON in report
+        assert run_mod.digest_orphans(instance) == [ITEM]
 
     def test_a_dead_ghost_item_is_never_listed(self, instance):
         # A dead unit whose item has no corpus file is lint's ghost-item
