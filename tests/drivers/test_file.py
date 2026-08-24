@@ -8,7 +8,16 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
-from dex_engine.pipeline.types import Config, Format, Kind, Need, Status
+from dex_engine.pipeline.types import (
+    Config,
+    Content,
+    Format,
+    Kind,
+    Need,
+    Redetected,
+    Refused,
+    Unusable,
+)
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
 from tests.drivers.conftest import (
     FakeGh,
@@ -18,7 +27,7 @@ from tests.drivers.conftest import (
     gh_matching_refs,
     gh_ok,
     make_unit,
-    reason_of,
+    needs_of,
 )
 
 PDF_URL = "https://example.test/whitepaper"
@@ -42,7 +51,7 @@ class TestLocalFiles:
         (media / "report.docx").write_bytes(fixture_bytes("report.docx"))
         d = FileDriver(capabilities=Capabilities.build(Config()), root=tmp_path)
         result = d.fetch(make_unit("file:media/abc123/report.docx", Kind.FILE))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.body is not None
         assert "Intro text before the figure." in result.body
         assert result.meta == {"title": "report.docx", "format": "docx", "via": "anydoc"}
@@ -56,14 +65,14 @@ class TestLocalFiles:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), root=tmp_path)
         result = d.fetch(make_unit("file:doc.bin", Kind.FILE, fmt=Format.DOCX))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert extractor.calls[0][1] is Format.PDF
 
     def test_missing_file_is_manual_with_the_pull_hint(self, tmp_path):
         d = FileDriver(capabilities=caps(FakeExtractor()), root=tmp_path)
         result = d.fetch(make_unit("file:media/gone/doc.pdf", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "not in the working tree" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "not in the working tree" in result.evidence
 
     def test_unsmudged_lfs_pointer_is_manual(self, tmp_path):
         (tmp_path / "deck.pptx").write_bytes(
@@ -71,15 +80,15 @@ class TestLocalFiles:
         )
         d = FileDriver(capabilities=caps(FakeExtractor()), root=tmp_path)
         result = d.fetch(make_unit("file:deck.pptx", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "git lfs pull" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "git lfs pull" in result.evidence
 
     def test_unrecognized_bytes_are_manual(self, tmp_path):
         (tmp_path / "photo.jpg").write_bytes(b"\xff\xd8\xff\xe0 jpeg bytes")
         d = FileDriver(capabilities=caps(FakeExtractor()), root=tmp_path)
         result = d.fetch(make_unit("file:photo.jpg", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "unrecognized file format" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "unrecognized file format" in result.evidence
 
     def test_rootless_local_work_is_an_engine_bug(self):
         d = FileDriver(capabilities=caps(FakeExtractor()))
@@ -99,16 +108,16 @@ class TestPathContainment:
         outside = tmp_path / "secret.pdf"
         outside.write_bytes(fixture_bytes("paper.pdf"))
         result = self._driver(root).fetch(make_unit(f"file:{outside}", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "outside the instance root" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "outside the instance root" in result.evidence
 
     def test_dotdot_escape_is_manual_never_read(self, tmp_path):
         root = tmp_path / "instance"
         root.mkdir()
         (tmp_path / "secret.pdf").write_bytes(fixture_bytes("paper.pdf"))
         result = self._driver(root).fetch(make_unit("file:../secret.pdf", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "outside the instance root" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "outside the instance root" in result.evidence
 
     def test_symlink_pointing_outside_the_root_is_manual_never_read(self, tmp_path):
         root = tmp_path / "instance"
@@ -118,8 +127,8 @@ class TestPathContainment:
         outside.write_bytes(fixture_bytes("paper.pdf"))
         (media / "doc.pdf").symlink_to(outside)
         result = self._driver(root).fetch(make_unit("file:media/doc.pdf", Kind.FILE))
-        assert result.status is Status.MANUAL
-        assert "outside the instance root" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "outside the instance root" in result.evidence
 
     def test_nested_path_staying_inside_the_root_keeps_working(self, tmp_path):
         media = tmp_path / "media" / "abc123"
@@ -128,7 +137,7 @@ class TestPathContainment:
         # Dot segments that RESOLVE inside the root are legitimate.
         unit = make_unit("file:media/abc123/../abc123/doc.pdf", Kind.FILE)
         result = self._driver(tmp_path).fetch(unit)
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
 
 
 class TestUrlServedBinaries:
@@ -143,7 +152,7 @@ class TestUrlServedBinaries:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert extractor.calls[0][1] is Format.PDF
         assert result.meta["title"] == "whitepaper"
 
@@ -153,14 +162,14 @@ class TestUrlServedBinaries:
         )
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.BLOCKED  # the regression pin's class: never dead
-        assert reason_of(result) == "HTTP 403"
+        assert isinstance(result, Refused)  # the regression pin's class: never Missing
+        assert result.evidence == "HTTP 403"
 
     def test_connection_failures_classify(self):
         transport = FakeTransport({PDF_URL: OSError("connection refused")})
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
 
     def test_server_lied_bytes_still_route_by_signature(self):
         # HEAD said PDF; the body is a docx — the sniff corrects the route.
@@ -174,7 +183,7 @@ class TestUrlServedBinaries:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert extractor.calls[0][1] is Format.DOCX
 
 
@@ -192,7 +201,7 @@ class TestGithubBlobs:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert extractor.calls[0][1] is Format.PDF
         assert result.meta["title"] == "whitepaper.pdf"
 
@@ -200,14 +209,15 @@ class TestGithubBlobs:
         gh = FakeGh({self.CONTENTS: gh_fail("gh: API rate limit exceeded (HTTP 403)")})
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
 
     def test_an_oversize_blob_is_manual_with_the_clone_route(self):
         gh = FakeGh({self.CONTENTS: gh_ok(json.dumps({"encoding": "none", "content": ""}))})
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.MANUAL
-        assert "read it from a clone" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent
+        assert "read it from a clone" in result.evidence
 
     def test_a_slashed_branch_resolves_on_the_way_back_in(self):
         # The github driver hands this URL over verbatim after re-detection,
@@ -233,7 +243,7 @@ class TestGithubBlobs:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(url, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         # The name comes from the resolved split, not the guessed one.
         assert result.meta["title"] == "paper.pdf"
 
@@ -248,7 +258,7 @@ class TestGithubBlobs:
         extractor = FakeExtractor("csv-builtin", formats=frozenset({Format.CSV}))
         d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(url, Kind.FILE))  # no declared format to fall back on
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert extractor.calls[0][1] is Format.CSV
 
     def test_an_lfs_pointer_blob_parks_rather_than_extracting_its_stand_in_text(self):
@@ -264,8 +274,8 @@ class TestGithubBlobs:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(self.URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.MANUAL
-        assert "git lfs pull" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "git lfs pull" in result.evidence
         assert extractor.calls == []
 
     def test_html_committed_to_a_repo_never_bounces_back_to_web(self):
@@ -278,9 +288,8 @@ class TestGithubBlobs:
         gh = FakeGh({args: gh_contents(html)})
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=self.refuse_transport, gh=gh)
         result = d.fetch(make_unit(url, Kind.FILE))
-        assert result.redetect is None
-        assert result.status is Status.MANUAL
-        assert "unrecognized file format" in reason_of(result)
+        assert isinstance(result, Unusable)  # never a Redetected bounce
+        assert "unrecognized file format" in result.evidence
 
 
 class TestRedetection:
@@ -292,10 +301,7 @@ class TestRedetection:
         )
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.status is Status.QUEUED
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.WEB
-        assert result.redetect.format is None
+        assert result == Redetected(kind=Kind.WEB)
 
     def test_html_lead_bytes_redetect_even_with_a_lying_content_type(self):
         transport = FakeTransport(
@@ -303,8 +309,7 @@ class TestRedetection:
         )
         d = FileDriver(capabilities=caps(FakeExtractor()), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.WEB
+        assert result == Redetected(kind=Kind.WEB)
 
     def test_signature_less_bytes_under_a_lying_html_content_type_extract(self):
         # Bytes decide, never the content type alone: real CSV bytes served
@@ -320,8 +325,7 @@ class TestRedetection:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.CSV))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)  # never a Redetected bounce
         assert extractor.calls[0][1] is Format.CSV
 
     def test_real_document_magic_beats_an_html_content_type(self):
@@ -337,8 +341,7 @@ class TestRedetection:
         extractor = FakeExtractor()
         d = FileDriver(capabilities=caps(extractor), transport=transport)
         result = d.fetch(make_unit(PDF_URL, Kind.FILE, fmt=Format.PDF))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)  # never a Redetected bounce
 
     def test_local_files_never_redetect(self, tmp_path):
         # A captured HTML file is not a page to fetch — local work parks
@@ -348,8 +351,7 @@ class TestRedetection:
         (media / "saved.bin").write_bytes(self.HTML)
         d = FileDriver(capabilities=caps(FakeExtractor()), root=tmp_path)
         result = d.fetch(make_unit("file:media/abc123/saved.bin", Kind.FILE))
-        assert result.redetect is None
-        assert result.status is Status.MANUAL
+        assert isinstance(result, Unusable)  # parks honestly, never a Redetected bounce
 
 
 class TestExtractRouting:
@@ -357,27 +359,24 @@ class TestExtractRouting:
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
         csv_only = FakeExtractor("csv-builtin", formats=frozenset({Format.CSV}))
         d = FileDriver(capabilities=caps(csv_only), root=tmp_path)
-        result = d.fetch(make_unit("file:doc.pdf", Kind.FILE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.EXTRACT
-        assert "cognitive floor" in reason_of(result)
+        result = needs_of(d.fetch(make_unit("file:doc.pdf", Kind.FILE)))
+        assert result.need is Need.EXTRACT
+        assert "cognitive floor" in (result.reason or "")
 
     def test_unavailable_provider_parks_waiting_with_its_reason(self, tmp_path):
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
         broken = FakeExtractor("anydoc", ok=False, reason="wheel broken on this platform")
         d = FileDriver(capabilities=caps(broken), root=tmp_path)
-        result = d.fetch(make_unit("file:doc.pdf", Kind.FILE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.EXTRACT
-        assert "wheel broken" in reason_of(result)
+        result = needs_of(d.fetch(make_unit("file:doc.pdf", Kind.FILE)))
+        assert result.need is Need.EXTRACT
+        assert "wheel broken" in (result.reason or "")
 
     def test_scanned_document_takes_the_ocr_path(self, tmp_path):
         (tmp_path / "scan.pdf").write_bytes(fixture_bytes("scanned.pdf"))
         d = FileDriver(capabilities=Capabilities.build(Config()), root=tmp_path)
-        result = d.fetch(make_unit("file:scan.pdf", Kind.FILE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.OCR
-        assert "OCR" in reason_of(result)
+        result = needs_of(d.fetch(make_unit("file:scan.pdf", Kind.FILE)))
+        assert result.need is Need.OCR
+        assert "OCR" in (result.reason or "")
 
     def test_a_call_time_availability_failure_re_parks_waiting(self, tmp_path):
         # available() said yes and the call said otherwise (a rate-limited
@@ -388,10 +387,9 @@ class TestExtractRouting:
         (tmp_path / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
         flaky = FakeExtractor(raise_=ProviderUnavailableError("extract API returned HTTP 429"))
         d = FileDriver(capabilities=caps(flaky), root=tmp_path)
-        result = d.fetch(make_unit("file:doc.pdf", Kind.FILE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.EXTRACT
-        assert "HTTP 429" in reason_of(result)
+        result = needs_of(d.fetch(make_unit("file:doc.pdf", Kind.FILE)))
+        assert result.need is Need.EXTRACT
+        assert "HTTP 429" in (result.reason or "")
 
     def test_provider_input_errors_propagate_for_the_run_loop(self, tmp_path):
         # The driver never swallows bad-input raises: the run loop owns the
@@ -408,6 +406,6 @@ class TestExtractRouting:
         first = FakeExtractor("csv-builtin", formats=frozenset({Format.CSV}))
         d = FileDriver(capabilities=caps(first, second), root=tmp_path)
         result = d.fetch(make_unit("file:stars.csv", Kind.FILE))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert first.calls
         assert not second.calls

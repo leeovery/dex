@@ -26,7 +26,7 @@ from dex_engine.drivers.transport import (
     urllib_transport,
 )
 from dex_engine.pipeline.classify import ProviderInputError, classify_connection, classify_http
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Kind, Refused, Status
 from tests.drivers.conftest import make_unit, truncating_server
 
 
@@ -138,8 +138,9 @@ class TestThroughADriverFetch:
         )
         with truncating_server() as url:
             result = driver.fetch(make_unit(url, Kind.FILE))
-        assert result.status is Status.BLOCKED
-        assert "truncated response body" in (result.reason or "")
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert "truncated response body" in result.evidence
 
 
 class TestNonAsciiUrls:
