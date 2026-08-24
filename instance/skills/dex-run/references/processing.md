@@ -13,9 +13,11 @@ directory).
    work list**. It is markdown, and its sections say who owns the next
    action. Complete the per-item cognitive work for *everything* under
    **Needs writing up** — fresh captures, drained reruns, rewritten
-   items, newly drained waiting cohorts, and no-source items (text or
-   image captures — nothing to fetch, everything to describe and digest)
-   — plus everything under **Read these yourself**. Items you created
+   items, newly drained waiting cohorts, no-source items (text or
+   image captures — nothing to fetch, everything to describe and digest),
+   and items whose every unit died (nothing fetchable remains, so the
+   description and digest come from the owner's note) — plus everything
+   under **Read these yourself**. Items you created
    this session always get the full per-item procedure whether or not the
    report names them. **Needs you** holds the entries only you can move,
    each with a stated reason: judge them per the reference's heal

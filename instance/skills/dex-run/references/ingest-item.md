@@ -158,6 +158,12 @@ names each such item and what it is still owed ("3 of 4 units landed — 1
 waiting on transcription"), and the item stays `status: raw` until the
 last unit lands.
 
+An item whose every unit died is not parked: a dead unit owes nothing,
+so the item owes only its description and digest, and both come from the
+owner's note (plus anything that did land). The run report and the
+digest backstop name it until its digest pass is recorded; recording
+that pass is what clears it.
+
 ## 7. Place (judgment)
 
 Placement always writes `state/taxonomy.json`. On the first placement
