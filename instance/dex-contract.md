@@ -66,7 +66,9 @@ never state, never synced.
   is append-only and verb-written: ledger heals via `bin/dex enrich mark`,
   stage records via `bin/dex enrich pass`. Digests too: the judgment goes
   in as JSON and `bin/dex enrich item digest --file <payload>` writes the
-  file, recording the digest pass in the same call. A hand-appended line
+  file, recording the digest pass in the same call. Engine-defect reports
+  the same way: `bin/dex issue --file <payload>` files upstream and writes
+  the `issue-reports.jsonl` record. A hand-appended line
   is how state and reality diverge; the verbs are what make a malformed
   record impossible.
 - `wiki/` is a build artifact: regenerable, never the only home of a fact. Pages cite
