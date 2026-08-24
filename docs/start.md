@@ -116,10 +116,10 @@ desktop app (Code tab → Routines → New routine → Local), which runs the
 instance's dex-run skill on the owner's machine with their full
 environment. The task:
 
-- Name `<instance>-run`; the chosen frequency; instructions exactly:
-  "Work in the folder <absolute path to {instance}>.
+- Name `{name}-run`; the chosen frequency; instructions exactly:
+  "Work in the folder {instance}.
   This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
-  and perform its Every-run procedure exactly. Never ask the owner
+  and perform its Every run section exactly. Never ask the owner
   questions; report what was done."
   The first line is load-bearing: task creation from a session cannot set
   the task's folder (no folder parameter), so the prompt must carry it.
@@ -144,7 +144,10 @@ environment. The task:
   trigger is theirs then — a cron or launchd entry that starts a session
   in the instance, or nothing at all, since asking for a run does the
   same work. Record what they chose and move on: an unscheduled instance
-  is a supported state, not a failed setup.
+  is a supported state, not a failed setup. Then do the first run
+  yourself, in this session — read
+  `{instance}/.claude/skills/dex-run/SKILL.md` and perform its Every run
+  section — so setup still ends with the instance current.
 
 ---
 
