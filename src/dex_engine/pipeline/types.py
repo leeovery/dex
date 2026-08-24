@@ -215,6 +215,25 @@ def _validate_depth(depth: int) -> None:
         raise ValueError(f"depth must be >= 0, got {depth}")
 
 
+def _validate_lineage(parent: str | None, spawn_depth: int | None) -> None:
+    """The one parent/depth pairing rule, shared by WorkUnit and LedgerEntry.
+
+    A spawned unit carries a parent and a depth of at least 1 together; an
+    original carries neither. The two shapes spell "original" differently —
+    a WorkUnit's depth 0, a LedgerEntry's absent depth — and both normalize
+    to None before this check, so a state one type accepts and the other
+    refuses cannot exist: every legal ledger entry converts to a legal work
+    unit.
+    """
+    if (parent is None) != (spawn_depth is None):
+        raise ValueError(
+            "parent and depth travel together: an original has neither (depth 0 is the "
+            "shared URL); spawned units carry both"
+        )
+    if spawn_depth is not None and spawn_depth < 1:
+        raise ValueError("a spawned unit's depth starts at 1 — depth 0 is the shared URL")
+
+
 # ---------------------------------------------------------------------------
 # Work-unit dataclasses. All frozen, slots, kw_only.
 # ---------------------------------------------------------------------------
@@ -253,11 +272,7 @@ class WorkUnit:
             unit_format=self.format,
         )
         _validate_depth(self.depth)
-        if (self.parent is None) != (self.depth == 0):
-            raise ValueError(
-                "parent and depth travel together: depth 0 is the shared URL (no "
-                "parent); spawned units carry both"
-            )
+        _validate_lineage(self.parent, self.depth or None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -618,8 +633,7 @@ def _validate_entry_provenance(entry: LedgerEntry) -> None:
         _validate_via(entry.via)
     if entry.depth is not None:
         _validate_depth(entry.depth)
-    if (entry.parent is None) != (entry.depth is None):
-        raise ValueError("parent and depth are paired provenance — both or neither")
+    _validate_lineage(entry.parent, entry.depth)
 
 
 # ---------------------------------------------------------------------------

@@ -342,12 +342,28 @@ class TestLedgerEntryInvariants:
             entry(parent="a1b2c3d4e5", depth=True)
 
     def test_parent_and_depth_are_paired_provenance(self):
-        with pytest.raises(ValueError, match="both or neither"):
+        with pytest.raises(ValueError, match="parent and depth"):
             entry(parent="a1b2c3d4e5")
-        with pytest.raises(ValueError, match="both or neither"):
+        with pytest.raises(ValueError, match="parent and depth"):
             entry(depth=2)
         child = entry(parent="a1b2c3d4e5", depth=2)
         assert (child.parent, child.depth) == ("a1b2c3d4e5", 2)
+
+    def test_a_spawned_entrys_depth_starts_at_one(self):
+        # One rule with WorkUnit, stated once: an entry pairing a parent
+        # with depth 0 was legal here and refused there, so a whole class
+        # of ledger states could never convert to work units.
+        with pytest.raises(ValueError, match="starts at 1"):
+            entry(parent="a1b2c3d4e5", depth=0)
+        with pytest.raises(ValueError, match="parent and depth"):
+            WorkUnit(
+                hash="73bd784849",
+                url="https://example.test",
+                kind=Kind.WEB,
+                item="2026-08-19-example-55ad7b",
+                depth=0,
+                parent="a1b2c3d4e5",
+            )
 
 
 class TestLedgerEntryReason:

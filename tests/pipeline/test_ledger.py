@@ -651,7 +651,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     status = draw(st.sampled_from(list(Status)))
     kind = draw(st.sampled_from(_WORK_KINDS))
     provenance = draw(
-        st.none() | st.tuples(st.sampled_from(_HASHES), st.integers(min_value=0, max_value=4))
+        st.none() | st.tuples(st.sampled_from(_HASHES), st.integers(min_value=1, max_value=4))
     )
     parent, depth = provenance if provenance is not None else (None, None)
     path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
