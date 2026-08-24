@@ -699,15 +699,20 @@ migration 1 carries a stated item verbatim — so every line of an item
 RENAMED since names an id no corpus file answers to, and an `exclude` that
 keeps a line a surviving co-claimant shares leaves it naming the purged
 one. The corpus is the source of truth, so the corpus is asked
-(`pipeline/ownership.py`): the live items listing the URL, failing that
-the parent's owners (a harvest-promoted child, a media download and an
-extracted asset are in no frontmatter), failing that the stored string as
-written. Every reader routes through it — the item's derived
+(`pipeline/ownership.py`): the live items listing the URL; failing that
+the parent chain's owners — an entry carrying `parent` resolves up its
+chain of parents, however deep, to the hash some live item's frontmatter
+claims (a harvest-promoted child, a media download and an extracted
+asset are in no frontmatter, and a promoted child's own children are two
+hops from one); failing that the stored string as written. Every reader
+routes through it — the item's derived
 `status`/`enrichment:` refresh, `enrich status`, the run report's parked
 and incompleteness rows, the digest-staleness backstop (its landing
 dates, and the candidates it derives from enrichment directory names: a
 directory an interrupted rename left under the old id resolves to the
-live item, so the backstop asks the right item for the digest),
+live item, so the backstop asks the right item for the digest; an
+orphaned `state/digests/<old-id>.md` resolves by trailing shortid to the
+live item the same way, so a finished rename keeps its digest),
 `mark`'s post-heal refresh, `exclude`'s claim veto, and lint's ghost and
 output rows.
 
@@ -722,7 +727,9 @@ stands, exactly as the read side falls back. Nothing rewrites a persisted
 line to correct it: a stale `item` on an old line is historical
 attribution, every reader and every writer resolves the work to the live
 item anyway, and a session that renames an item has nothing to do about
-its ledger. What a rename CAN leave behind is the enrichment directory,
+its ledger — a rename carried all the way through leaves only lint's
+ghost "renamed" row, which is history, not work. What a rename CAN leave
+behind is the enrichment directory,
 if the session moved the corpus file and stopped — lint names that as a
 `done` output filed where the item that owns it cannot list it, and moving
 files is judgment work, not the drain's.
@@ -2091,8 +2098,9 @@ src/dex_engine/
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential
                  integrity (items with no corpus file — excluded-on-record
-                 told apart from renamed, whose URLs a live item still
-                 lists, and from unclaimed; one row per item and finding
+                 told apart from renamed, whose work a live item still
+                 claims by URL or up the parent chain, and from
+                 unclaimed; one row per item and finding
                  with its entry count; done outputs missing on disk, and
                  done outputs filed under another item's directory — both
                  asked of the owning item, §4),

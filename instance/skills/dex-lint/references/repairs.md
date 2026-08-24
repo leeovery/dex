@@ -31,9 +31,10 @@ other repairs need):
   not a per-check chore. **Renamed — `<id>` lists this work** —
   history, not a repair: a ledger line's `item` is the attribution as
   of the day it was written, no line is ever rewritten, and every
-  reader and every write already resolves the work to the item whose
-  corpus file claims it, so the run, the status view, the digest and
-  the item's own frontmatter all say the live id. The count only ever
+  reader and every write already resolves the work — children, media
+  and assets included, up the parent chain — to the item whose corpus
+  file claims it, so the run, the status view, the digest and the
+  item's own frontmatter all say the live id. The count only ever
   grows as items are renamed; if the same rename ALSO shows a misfiled
   output below, that half is real — see that entry. **No exclusions
   record, no live claimant** — an owner decision on whether the item
@@ -57,8 +58,11 @@ other repairs need):
   finish the rename — move `enrichment/<old-id>/` onto the live id, and
   the listing and status follow at the next run — or, where the old
   directory is not this item's work to take, re-fetch the unit and let
-  the drain file it. Moving files is not the engine's business, which is
-  why this is a finding and not a repair the run makes.
+  the drain file it. Finishing the rename settles everything: a digest
+  left under the old id in `state/digests/` needs no move, because the
+  backstop resolves it by shortid to the live item. Moving files is not
+  the engine's business, which is why this is a finding and not a
+  repair the run makes.
 - **Malformed digests** — the message names what broke (no frontmatter
   fence, a missing or bogus field, an `id` disagreeing with its
   filename). Every one of these predates the digest verb or was
