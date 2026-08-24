@@ -1052,6 +1052,73 @@ class TestHttpOnlySources:
         assert [unit.url for unit in driver.fetched] == [self.CANONICAL]
         assert entry_for(ctx, self.CANONICAL).status is Status.BLOCKED
 
+    def test_a_promoted_http_url_falls_back_and_lands(self, instance):
+        # A promotion never lives in frontmatter, so the frontmatter
+        # license can never cover it: the http-share fact is recorded on
+        # the ledger line at the admission door, and it is what lets the
+        # TLS fallback fire — unrecorded, the unit parked blocked→manual
+        # forever.
+        write_item(instance)  # the capture itself is ordinary https
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url == self.CANONICAL:
+                return self.tls_refusal()
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        driver = FakeDriver(fetch_fn=fetch)
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        report = run_mod.fetch_urls(ctx, ITEM, [self.HTTP_URL])
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DONE
+        assert entry.http_shared is True
+        assert self.HTTP_URL in [unit.url for unit in driver.fetched]
+        assert "refetched over http" in report
+
+    def test_a_promoted_https_url_never_downgrades_on_tls_failure(self, instance):
+        write_item(instance)
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url == self.CANONICAL:
+                return self.tls_refusal()
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        driver = FakeDriver(fetch_fn=fetch)
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, [self.CANONICAL])
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.BLOCKED
+        assert entry.http_shared is False
+        assert self.HTTP_URL not in [unit.url for unit in driver.fetched]
+
+    def test_the_promotion_flag_licenses_the_redrain(self, instance):
+        # The flag survives on every superseding line, so a blocked retry
+        # in a LATER run — where nothing rebuilds the promotion — is still
+        # licensed to downgrade.
+        write_item(instance)
+        healed = {"up": False}
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url == self.CANONICAL:
+                return self.tls_refusal()
+            if unit.url == self.HTTP_URL and not healed["up"]:
+                return self.tls_refusal()
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        driver = FakeDriver(fetch_fn=fetch)
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, [self.HTTP_URL])  # both schemes down: parks blocked
+        blocked = entry_for(ctx, self.CANONICAL)
+        assert blocked.status is Status.BLOCKED
+        assert blocked.http_shared is True
+        healed["up"] = True
+        run_mod.run(make_ctx(instance, driver))  # a fresh run's redrain
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DONE
+        assert entry.http_shared is True
+
     def test_the_fallback_fetch_takes_the_normal_outcome_road(self, instance):
         # An http retry that ALSO fails classifies exactly as a normal
         # fetch would — same outcomes, same statuses.

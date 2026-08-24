@@ -379,8 +379,12 @@ class _Drain:
     item_status: dict[str, str] = field(default_factory=dict)
     # Unit hashes whose URL some live item's frontmatter shares as http.
     # Canonicalization forces https (identity and hashing are unchanged),
-    # so this is the one record that the owner actually shared the source
-    # over http — what licenses the TLS-failure fallback to refetch it so.
+    # so this records that the owner actually shared the source over http
+    # — one of the TLS-failure fallback's two licenses, covering captured
+    # lines however old. The other is the entry's own typed `http_shared`
+    # flag, stamped at the admission door: the only record a PROMOTED
+    # http URL has (promotions never live in frontmatter), and the one
+    # that keeps a redrain licensed.
     http_shared: set[str] = field(default_factory=set)
     # Which live corpus items own each unit — the corpus's answer, never the
     # ledger line's stored string. Rebuilt after the drain, when this run's
@@ -679,6 +683,13 @@ class _Drain:
                 kind=detection.kind,
                 format=detection.format,
                 status=Status.QUEUED,
+                # The admission door is the ONE place the pre-canonical
+                # spelling is in hand, so the http-share fact is recorded
+                # here — captured or promoted alike. It licenses the
+                # TLS-failure http fallback, and riding the line it
+                # survives redrains, which frontmatter cannot cover for a
+                # promotion (promoted URLs live in the ledger only).
+                http_shared=url.startswith("http://"),
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
                 via=via,
@@ -888,7 +899,7 @@ class _Drain:
         )
         try:
             fetched = driver.fetch(unit)
-            retry = self._http_retry_unit(unit, fetched)
+            retry = self._http_retry_unit(entry, unit, fetched)
             if retry is not None:
                 self.notes.append(
                     f"{unit.url}: https refused at the TLS layer — refetched over "
@@ -901,23 +912,32 @@ class _Drain:
             # Politeness holds even when the fetch failed.
             self.ctx.sleep(driver.sleep)
 
-    def _http_retry_unit(self, unit: WorkUnit, fetched: Outcome) -> WorkUnit | None:
+    def _http_retry_unit(
+        self, entry: LedgerEntry, unit: WorkUnit, fetched: Outcome
+    ) -> WorkUnit | None:
         """The http-variant retry for a TLS-refused fetch, or None.
 
         Canonicalization forces https, so an http-only source is asked for
         over a TLS it does not speak and parks blocked forever. When the
         https fetch failed at the TLS layer (the typed ``Refused.tls``
-        marker, never the evidence prose) AND the owner actually shared
-        the source as http (:attr:`http_shared`, read off live corpus
-        frontmatter at seeding), the same unit is refetched over http —
-        identity, hashing and the ledger URL all unchanged; only the wire
-        request downgrades. A TLS failure on a genuinely https-shared URL
-        never downgrades: it stays blocked, exactly as before. The check
-        lives here, at the run/fetch seam, so drivers stay ignorant of it.
+        marker, never the evidence prose) AND the source was actually
+        shared as http, the same unit is refetched over http — identity,
+        hashing and the ledger URL all unchanged; only the wire request
+        downgrades. A TLS failure on a genuinely https-shared URL never
+        downgrades: it stays blocked, exactly as before. The check lives
+        here, at the run/fetch seam, so drivers stay ignorant of it.
+
+        Two licenses, either one enough: a live frontmatter listing the
+        http variant (:attr:`http_shared`, read at seeding — it covers
+        every captured line, however old), or the entry's own typed
+        ``http_shared`` flag, stamped at the admission door — the only
+        record a PROMOTED http URL has, since promoted URLs never live in
+        frontmatter, and the record that keeps a redrain licensed.
         """
         if not (isinstance(fetched, Refused) and fetched.tls):
             return None
-        if unit.hash not in self.http_shared or not unit.url.startswith("https://"):
+        licensed = unit.hash in self.http_shared or entry.http_shared
+        if not licensed or not unit.url.startswith("https://"):
             return None
         return dataclasses.replace(unit, url="http://" + unit.url.removeprefix("https://"))
 
@@ -1177,6 +1197,7 @@ class _Drain:
                 kind=redetect.kind,
                 format=redetect.format,
                 status=Status.QUEUED,
+                http_shared=entry.http_shared,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
                 via="sniff",
@@ -1616,6 +1637,7 @@ class _Drain:
                 status=status,
                 needs=needs,
                 attempts=attempts,
+                http_shared=entry.http_shared,
                 engine="seed",  # stamped in _record
                 date=datetime.date.min,
                 job=entry.job,
@@ -2834,6 +2856,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # dropped.
         needs=(needs or prior.needs) if status in (Status.WAITING, Status.BLOCKED) else needs,
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
+        http_shared=prior.http_shared,
         engine="seed",  # stamped in record
         date=datetime.date.min,
         job=prior.job,

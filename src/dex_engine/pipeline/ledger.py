@@ -81,6 +81,7 @@ _ALL_KEYS = frozenset(
         "attempts",
         "cap",
         "forced",
+        "http_shared",
         "at",
         "job",
         "via",
@@ -152,6 +153,7 @@ def from_line(line: str) -> LedgerEntry:
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
             cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
             forced=_expect_bool(raw, "forced") if "forced" in raw else False,
+            http_shared=_expect_bool(raw, "http_shared") if "http_shared" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             at=None if "at" not in raw else _expect_datetime(raw, "at"),
@@ -205,9 +207,9 @@ def _expect_bool(raw: dict[str, object], key: str) -> bool:
 def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
-    ``None`` fields are dropped; ``rerun`` and ``forced`` appear only when
-    true — the written line carries exactly the ledger schema, in schema
-    order.
+    ``None`` fields are dropped; ``rerun``, ``forced`` and ``http_shared``
+    appear only when true — the written line carries exactly the ledger
+    schema, in schema order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -220,6 +222,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("attempts", entry.attempts),
         ("cap", entry.cap.value if entry.cap is not None else None),
         ("forced", entry.forced or None),
+        ("http_shared", entry.http_shared or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("at", entry.at.isoformat() if entry.at is not None else None),
