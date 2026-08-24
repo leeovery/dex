@@ -12,7 +12,7 @@ import pytest
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.pipeline.detect import detect_kind
 from dex_engine.pipeline.registry import default_drivers
-from dex_engine.pipeline.types import Format, Kind, Status
+from dex_engine.pipeline.types import Content, Format, Kind, Missing, Redetected, Refused, Unusable
 from tests.drivers.conftest import (
     FakeGh,
     body_of,
@@ -21,7 +21,6 @@ from tests.drivers.conftest import (
     gh_fail,
     gh_ok,
     make_unit,
-    reason_of,
 )
 
 DRIVERS = default_drivers()
@@ -101,7 +100,7 @@ class TestRepo:
             }
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["title"] == "acme/pipeline-kit"
         assert result.meta["stars"] == 2481
         assert result.meta["archived"] is None  # not archived -> omitted from frontmatter
@@ -116,20 +115,21 @@ class TestRepo:
             }
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert body_of(result) == "(no README)"
 
     def test_deleted_repo_is_dead(self):
         driver = driver_for({("api", "repos/acme/gone"): gh_fail("gh: Not Found (HTTP 404)")})
         result = driver.fetch(make_unit("https://github.com/acme/gone", Kind.GITHUB))
-        assert result.status is Status.DEAD
+        assert isinstance(result, Missing)
 
     def test_rate_limited_api_is_blocked(self):
         driver = driver_for(
             {("api", "repos/acme/pipeline-kit"): gh_fail("gh: API rate limit exceeded (HTTP 403)")}
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
+        assert not result.permanent
 
     def test_gh_timeout_shape_classifies_blocked(self):
         # run_gh converts TimeoutExpired to this GhResult shape — a hung gh
@@ -137,8 +137,8 @@ class TestRepo:
         timeout = gh_fail("gh timed out after 120s")
         driver = driver_for({("api", "repos/acme/pipeline-kit"): timeout})
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.BLOCKED
-        assert "timed out" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "timed out" in result.evidence
 
     def test_gh_failure_without_a_code_is_blocked_with_scrubbed_reason(self):
         driver = driver_for(
@@ -149,8 +149,8 @@ class TestRepo:
             }
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.BLOCKED
-        assert "/Users/owner" not in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "/Users/owner" not in result.evidence
 
 
 class TestProfile:
@@ -164,7 +164,7 @@ class TestProfile:
             }
         )
         result = driver.fetch(make_unit("https://github.com/octomaint", Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["title"] == "Octo Maintainer"
         assert result.meta["followers"] == 512
         body = body_of(result)
@@ -180,7 +180,7 @@ class TestProfile:
             }
         )
         result = driver.fetch(make_unit("https://github.com/octomaint", Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "(repo listing unavailable)" in body_of(result)
 
 
@@ -191,17 +191,18 @@ class TestGist:
         )
         url = "https://gist.github.com/octomaint/abc123def456"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["title"] == "ledger compaction one-liner"
         body = body_of(result)
         assert "### compact.py" in body
         assert "### notes.md" in body
         assert "Last-per-hash wins" in body
 
-    def test_gist_index_is_skipped_with_reason(self):
+    def test_gist_index_is_unusable_with_nothing_to_rescue(self):
         result = driver_for().fetch(make_unit("https://gist.github.com/octomaint", Kind.GITHUB))
-        assert result.status is Status.SKIPPED
-        assert "gist index" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert not result.rescuable  # an index addresses no unit; nothing for judgment either
+        assert "gist index" in result.evidence
 
     @pytest.mark.parametrize(
         "gist_id",
@@ -217,7 +218,7 @@ class TestGist:
         gist = gh_ok(fixture_text("github", "gist.json"))
         driver = driver_for({("api", f"gists/{gist_id}"): gist})
         result = driver.fetch(make_unit(f"https://gist.github.com/{gist_id}", Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "### compact.py" in body_of(result)
 
 
@@ -227,7 +228,7 @@ class TestIssue:
         driver = driver_for({("api", "repos/acme/pipeline-kit/issues/42"): issue})
         url = "https://github.com/acme/pipeline-kit/issues/42"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["title"] == "enricher ledgers 403 challenges as dead"
         assert "Cloudflare 403" in body_of(result)
 
@@ -236,7 +237,7 @@ class TestIssue:
         gh = FakeGh({("api", "repos/acme/pipeline-kit/issues/7"): issue})
         driver = GitHubDriver(gh=gh)
         url = "https://github.com/acme/pipeline-kit/pull/7"
-        assert driver.fetch(make_unit(url, Kind.GITHUB)).status is Status.DONE
+        assert isinstance(driver.fetch(make_unit(url, Kind.GITHUB)), Content)
 
 
 class TestBlob:
@@ -249,7 +250,7 @@ class TestBlob:
         # classified live content as dead. gh carries the auth.
         driver = driver_for({self.CONTENTS: gh_contents(b"def detect(): ...")})
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["file"] == "src/detect.py"
         assert body_of(result) == "```\ndef detect(): ...\n```"
 
@@ -265,7 +266,7 @@ class TestBlob:
                 ("api", "repos/acme/pipeline-kit/git/matching-refs/tags/main"): gh_ok("[]"),
             }
         )
-        assert driver.fetch(make_unit(self.URL, Kind.GITHUB)).status is Status.DEAD
+        assert isinstance(driver.fetch(make_unit(self.URL, Kind.GITHUB)), Missing)
 
     def test_a_document_blob_redetects_to_file_work(self):
         # A real ledger PDF blob fenced 40k characters of
@@ -274,22 +275,18 @@ class TestBlob:
         # through the same authenticated API.
         driver = driver_for({self.CONTENTS: gh_contents(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj")})
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.QUEUED
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.FILE
-        assert result.redetect.format is Format.PDF
+        assert result == Redetected(kind=Kind.FILE, format=Format.PDF)
 
     def test_an_unrecognized_binary_blob_parks_manual_never_fenced(self):
         driver = driver_for({self.CONTENTS: gh_contents(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")})
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "binary, not UTF-8 text" in reason_of(result)
-        assert result.body is None
+        assert isinstance(result, Unusable)  # fenced output is unrepresentable on it
+        assert "binary, not UTF-8 text" in result.evidence
 
     def test_utf8_source_with_non_ascii_still_fences(self):
         driver = driver_for({self.CONTENTS: gh_contents("# naïve — résumé\n".encode())})
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "naïve — résumé" in body_of(result)
 
     def test_an_lfs_pointer_is_never_fenced_as_the_document_it_stands_for(self):
@@ -308,9 +305,7 @@ class TestBlob:
         driver = driver_for({args: gh_contents(pointer)})
         url = "https://github.com/acme/pipeline-kit/blob/main/docs/sicp.pdf"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.body is None
-        assert result.redetect is not None
-        assert result.redetect.format is Format.PDF
+        assert result == Redetected(kind=Kind.FILE, format=Format.PDF)  # identity only
 
     def test_a_committed_csv_goes_to_the_extractor_rather_than_fencing(self):
         # A CSV has no signature either, so only the name catches it — and
@@ -323,10 +318,7 @@ class TestBlob:
         driver = driver_for({args: gh_contents(b"run,status\n1,done\n2,dead\n")})
         url = "https://github.com/acme/pipeline-kit/blob/main/data/runs.csv"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.QUEUED
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.FILE
-        assert result.redetect.format is Format.CSV
+        assert result == Redetected(kind=Kind.FILE, format=Format.CSV)
 
     @pytest.mark.parametrize("path", ["src/detect.py", "README.md", "Makefile", "docs/notes.txt"])
     def test_source_and_prose_extensions_still_fence(self, path):
@@ -336,7 +328,7 @@ class TestBlob:
         driver = driver_for({args: gh_contents(b"def detect(): ...")})
         url = f"https://github.com/acme/pipeline-kit/blob/main/{path}"
         result = driver.fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert body_of(result) == "```\ndef detect(): ...\n```"
 
     def test_oversize_blob_parks_manual_never_dead(self):
@@ -346,18 +338,21 @@ class TestBlob:
             {self.CONTENTS: gh_ok(json.dumps({"encoding": "none", "content": "", "size": 4645520}))}
         )
         result = driver.fetch(make_unit(self.URL, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "larger than the contents API serves inline" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent  # the API will refuse it inline every time
+        assert "larger than the contents API serves inline" in result.evidence
 
 
 class TestEdges:
-    def test_github_root_is_skipped_with_reason(self):
+    def test_github_root_is_unusable_with_nothing_to_rescue(self):
         result = driver_for().fetch(make_unit("https://github.com", Kind.GITHUB))
-        assert result.status is Status.SKIPPED
-        assert "root" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert not result.rescuable
+        assert "root" in result.evidence
 
     def test_unparseable_api_json_is_blocked(self):
         driver = driver_for({("api", "repos/acme/pipeline-kit"): gh_ok("<html>oops</html>")})
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert result.status is Status.BLOCKED
-        assert "unparseable JSON" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert "unparseable JSON" in result.evidence

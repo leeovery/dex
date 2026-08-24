@@ -22,7 +22,7 @@ import urllib.parse
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.detect import sniff_format
-from dex_engine.pipeline.types import Kind, Redetection, Result, Status, WorkUnit
+from dex_engine.pipeline.types import Content, Kind, Outcome, Redetected, Unusable, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .gh import BlobRef, Gh, blob_ref, fetch_blob, gh_api, gh_api_list, run_gh
@@ -127,16 +127,16 @@ class GitHubDriver:
         """The generic canonical form."""
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Dispatch on the URL shape."""
         parts = urllib.parse.urlsplit(unit.url)
         segments = [segment for segment in parts.path.split("/") if segment]
         if host_of(unit.url) == "gist.github.com":
             return self._fetch_gist(segments)
         if not segments:
-            return Result(
-                status=Status.SKIPPED, meta={}, reason="github root url — nothing to fetch"
-            )
+            # The root addresses no content unit, and no judgment could
+            # pull one out of it either.
+            return Unusable(evidence="github root url — nothing to fetch", rescuable=False)
         if len(segments) == 1:
             return self._fetch_profile(segments[0])
         owner, repo = segments[0], segments[1]
@@ -149,29 +149,26 @@ class GitHubDriver:
 
     # -- routes ----------------------------------------------------------
 
-    def _fetch_gist(self, segments: list[str]) -> Result:
+    def _fetch_gist(self, segments: list[str]) -> Outcome:
         gist_id = _gist_id(segments)
         if gist_id is None:
-            return Result(
-                status=Status.SKIPPED, meta={}, reason="gist index page — no single gist to fetch"
-            )
+            return Unusable(evidence="gist index page — no single gist to fetch", rescuable=False)
         payload = self._api(f"gists/{gist_id}")
         if isinstance(payload, Classification):
-            return payload.to_result()
+            return payload.to_outcome()
         files = payload.get("files") or {}
         body = "\n\n".join(
             f"### {name}\n```\n{(file or {}).get('content', '')[:_MAX_GIST_FILE_CHARS]}\n```"
             for name, file in files.items()
         )
-        meta = {"title": payload.get("description") or "gist"}
         if not body:
-            return Result(status=Status.MANUAL, meta=meta, reason="gist has no files")
-        return Result(status=Status.DONE, meta=meta, body=body)
+            return Unusable(evidence="gist has no files")
+        return Content(meta={"title": payload.get("description") or "gist"}, body=body)
 
-    def _fetch_profile(self, user: str) -> Result:
+    def _fetch_profile(self, user: str) -> Outcome:
         payload = self._api(f"users/{user}")
         if isinstance(payload, Classification):
-            return payload.to_result()
+            return payload.to_outcome()
         repos = gh_api_list(self._gh, f"users/{user}/repos?sort=pushed&per_page=100")
         listing = _repo_listing(repos)
         meta = {"title": payload.get("name") or user, "followers": payload.get("followers")}
@@ -179,13 +176,12 @@ class GitHubDriver:
             f"## Profile\n\n{payload.get('bio') or '(no bio)'}\n\n## Top repos\n\n"
             f"{listing or '(repo listing unavailable)'}"
         )
-        return Result(status=Status.DONE, meta=meta, body=body)
+        return Content(meta=meta, body=body)
 
-    def _fetch_blob(self, ref: BlobRef) -> Result:
+    def _fetch_blob(self, ref: BlobRef) -> Outcome:
         blob = fetch_blob(self._gh, ref)
         if isinstance(blob, Classification):
-            return blob.to_result()
-        meta: dict[str, str | int | None] = {"file": blob.path}
+            return blob.to_outcome()
         # Named, because a signature is not always there to find: an
         # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
         # for a document, and a CSV has no signature at all. Unnamed, both
@@ -198,35 +194,30 @@ class GitHubDriver:
             # the refusal that used to park this manual ("no other driver
             # can re-fetch a blob URL") no longer holds. An LFS pointer that
             # sniffs by name is caught there, before any extractor sees it.
-            return Result(
-                status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.FILE, format=fmt)
-            )
+            return Redetected(kind=Kind.FILE, format=fmt)
         try:
             text = blob.data.decode("utf-8")
         except UnicodeDecodeError:
             # Decoding with errors="replace" fenced 40k characters of
             # replacement-character soup and ledgered it done.
-            return Result(
-                status=Status.MANUAL,
-                meta=meta,
-                reason=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence",
+            return Unusable(
+                evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
             )
-        return Result(status=Status.DONE, meta=meta, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
+        return Content(meta={"file": blob.path}, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
 
-    def _fetch_issue(self, owner: str, repo: str, number: str) -> Result:
+    def _fetch_issue(self, owner: str, repo: str, number: str) -> Outcome:
         payload = self._api(f"repos/{owner}/{repo}/issues/{number}")
         if isinstance(payload, Classification):
-            return payload.to_result()
-        return Result(
-            status=Status.DONE,
+            return payload.to_outcome()
+        return Content(
             meta={"title": payload.get("title")},
             body=payload.get("body") or "(no body)",
         )
 
-    def _fetch_repo(self, owner: str, repo: str) -> Result:
+    def _fetch_repo(self, owner: str, repo: str) -> Outcome:
         payload = self._api(f"repos/{owner}/{repo}")
         if isinstance(payload, Classification):
-            return payload.to_result()
+            return payload.to_outcome()
         meta: dict[str, str | int | None] = {
             "title": payload.get("full_name"),
             "description": payload.get("description") or None,
@@ -238,7 +229,7 @@ class GitHubDriver:
             ["api", f"repos/{owner}/{repo}/readme", "-H", "Accept: application/vnd.github.raw+json"]
         )
         body = readme.stdout if readme.returncode == 0 else "(no README)"
-        return Result(status=Status.DONE, meta=meta, body=body[:_MAX_README_CHARS])
+        return Content(meta=meta, body=body[:_MAX_README_CHARS])
 
     def _api(self, endpoint: str) -> dict | Classification:
         return gh_api(self._gh, endpoint)

@@ -22,7 +22,7 @@ from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import urllib_transport
 from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
-from dex_engine.pipeline.types import Format, Kind, Need, Status
+from dex_engine.pipeline.types import Format, Kind, Missing, Need, Redetected, Status
 from tests.drivers.conftest import body_of, content_of, make_unit
 
 pytestmark = pytest.mark.live
@@ -70,19 +70,17 @@ class TestGitHubContentsShape:
     def test_a_public_blob_still_arrives_base64_through_gh(self):
         # octocat/Hello-World's README, stable since 2011.
         result = GitHubDriver().fetch(make_unit(self.BLOB + "README", Kind.GITHUB))
-        assert result.status is Status.DONE
         assert "Hello World!" in body_of(result)
 
     def test_a_path_that_does_not_exist_is_still_a_gh_404(self):
         result = GitHubDriver().fetch(make_unit(self.BLOB + "no-such-file.txt", Kind.GITHUB))
-        assert result.status is Status.DEAD
+        assert isinstance(result, Missing)
 
     def test_the_contents_api_still_accepts_a_fully_qualified_ref(self):
         # The `blob/refs/heads/<branch>/` permalink form is passed through as
         # `?ref=refs/heads/master`; the driver's free split depends on the
         # API continuing to take a qualified ref, not just a bare name.
         result = GitHubDriver().fetch(make_unit(self.QUALIFIED_BLOB + "README", Kind.GITHUB))
-        assert result.status is Status.DONE
         assert "Hello World!" in body_of(result)
 
     def test_an_lfs_tracked_blob_still_arrives_as_its_pointer(self):
@@ -103,16 +101,13 @@ class TestGitHubContentsShape:
         # document they stand for.
         url = "https://github.com/sarabander/sicp-pdf/blob/master/sicp.pdf"
         result = GitHubDriver().fetch(make_unit(url, Kind.GITHUB))
-        assert result.body is None
-        assert result.redetect is not None
-        assert result.redetect.format is Format.PDF
+        assert result == Redetected(kind=Kind.FILE, format=Format.PDF)  # identity, no body
 
     def test_a_slashed_branch_resolves_through_matching_refs(self):
         # rust-lang/rust's bors branches are the routine slashed-name shape.
         # The ref/path boundary is unrecoverable from the URL, so this pins
         # `git/matching-refs` answering `refs/heads/automation/bors/auto`.
-        result = GitHubDriver().fetch(make_unit(self.SLASHED_BLOB, Kind.GITHUB))
-        assert result.status is Status.DONE
+        result = content_of(GitHubDriver().fetch(make_unit(self.SLASHED_BLOB, Kind.GITHUB)))
         assert result.meta["file"] == "README.md"
         assert "Rust" in body_of(result)
 
