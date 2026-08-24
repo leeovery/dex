@@ -68,7 +68,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from dex_engine import atomic, corpus
-from dex_engine.pipeline.ledger import to_line
+from dex_engine.pipeline.ledger import RENAMED_KINDS, RETIRED_STATUSES, to_line
 from dex_engine.pipeline.types import (
     Cap,
     Format,
@@ -94,9 +94,11 @@ INTENT = (
 # engine semantics and giving migration 2 its pre-rewrite marker.
 PRE_REWRITE_ENGINE = "0.0.1"
 
-_KIND_RENAMES = {"tweet": "x", "blog": "web"}
-_FILENAME_RENAMES = (("tweet-", "x-"), ("blog-", "web-"))
-_RETIRED_STATUSES = frozenset({"nocaptions", "toolong"})
+# The vocabulary this migration translates is the ledger boundary's own
+# hint tables — one spelling, so the loud pre-migration error and this
+# translation cannot drift apart. The filename prefixes follow the kind
+# renames because outputs are named `<kind>-<hash6>.md`.
+_FILENAME_RENAMES = tuple((f"{old}-", f"{new}-") for old, new in RENAMED_KINDS.items())
 
 # Keys a pre-migration OR current-schema line may carry (`note` is the one
 # wild extra). Anything else is a hand-healed shape this code cannot judge.
@@ -231,7 +233,7 @@ def _rewrite_corpus(
         # sorted+deduped, exactly as normalize derives kinds — otherwise the
         # first regeneration after the migration rewrites these files again
         # for ordering alone, and the migration's own commit reads as noise.
-        kinds = sorted({_KIND_RENAMES.get(kind, kind) for kind in item.kinds})
+        kinds = sorted({RENAMED_KINDS.get(kind, kind) for kind in item.kinds})
         enrichment = [
             name if (item.id, name) in collisions else _rename_basename(name)
             for name in item.enrichment
@@ -536,7 +538,7 @@ def _translate_record(
 
 def _translate_kind(raw: dict[str, object]) -> Kind:
     text = _expect_str(raw, "kind")
-    text = _KIND_RENAMES.get(text, text)
+    text = RENAMED_KINDS.get(text, text)
     try:
         return Kind(text)
     except ValueError as e:
@@ -545,7 +547,7 @@ def _translate_kind(raw: dict[str, object]) -> Kind:
 
 def _translate_status(raw: dict[str, object]) -> tuple[Status, Need | None]:
     text = _expect_str(raw, "status")
-    if text in _RETIRED_STATUSES:
+    if text in RETIRED_STATUSES:
         # Both retired statuses meant "cannot transcribe" — whisper-local and
         # chunking removed those limits, so the cohort is drainable again.
         return Status.WAITING, Need.TRANSCRIBE

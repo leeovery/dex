@@ -37,6 +37,8 @@ from .types import Cap, Format, Kind, LedgerEntry, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
+    "RENAMED_KINDS",
+    "RETIRED_STATUSES",
     "LedgerSchemaError",
     "append",
     "compact",
@@ -57,10 +59,13 @@ class LedgerSchemaError(ValueError):
     """
 
 
-# Pre-rename vocabulary, translated by migration 1. Recognized here only
-# to name that migration in the error; never silently accepted (no aliases).
-_RENAMED_KINDS = {"tweet": "x", "blog": "web"}
-_RETIRED_STATUSES = {"nocaptions", "toolong"}
+# Pre-rename vocabulary — the one spelling of what the old engine wrote.
+# Migration 1 translates FROM these tables and this boundary hints off the
+# same objects, so the loud error can never name a word the migration does
+# not fix, nor miss one it does. Recognized here only to name that
+# migration in the error; never silently accepted (no aliases).
+RENAMED_KINDS = {"tweet": "x", "blog": "web"}
+RETIRED_STATUSES = frozenset({"nocaptions", "toolong"})
 
 _MIGRATION_HINT = (
     "migration 1 (renames + status vocabulary) has likely not been applied — run `bin/dex sync`"
@@ -108,13 +113,13 @@ def from_line(line: str) -> LedgerEntry:
         raise LedgerSchemaError(f"ledger line is not a JSON object: {line!r}")
 
     kind = raw.get("kind")
-    if kind in _RENAMED_KINDS:
+    if kind in RENAMED_KINDS:
         raise LedgerSchemaError(
-            f"kind {kind!r} is pre-rename vocabulary (now {_RENAMED_KINDS[kind]!r}); "
+            f"kind {kind!r} is pre-rename vocabulary (now {RENAMED_KINDS[kind]!r}); "
             f"{_MIGRATION_HINT}"
         )
     status = raw.get("status")
-    if status in _RETIRED_STATUSES:
+    if status in RETIRED_STATUSES:
         raise LedgerSchemaError(
             f"status {status!r} is retired vocabulary (now 'waiting' + needs: 'transcribe'); "
             f"{_MIGRATION_HINT}"

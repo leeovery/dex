@@ -2253,7 +2253,13 @@ and the outcome union settles several of these on its way past.
   failure vocabulary, the audio-cache scan) serves the youtube driver and
   the transcribe drain from the lib layer; outside `registry.py` — the
   conformance point (§14) — no pipeline module imports a driver.
-- **`ledger.py`'s per-word legacy-vocabulary hint tables.**
+- **`ledger.py`'s per-word legacy-vocabulary hint tables.** **Done**: the
+  tables are the boundary's public `RENAMED_KINDS` / `RETIRED_STATUSES`,
+  and migration 1 translates from those same objects (its filename
+  prefixes derived from the kind renames), so the loud pre-migration
+  error and the translation are one spelling — the hint can never name a
+  word the migration does not fix, nor miss one it does. The pinned error
+  messages are byte-identical.
 - **The import-time `DRIVERS` registry.** A module-level list against the
   no-import-time-state rule (§14); the typed registry literal is still the
   Protocol-conformance point (§2), just not at import.
