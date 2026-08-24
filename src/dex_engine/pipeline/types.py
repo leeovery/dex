@@ -215,6 +215,16 @@ def _validate_depth(depth: int) -> None:
         raise ValueError(f"depth must be >= 0, got {depth}")
 
 
+class LineageError(ValueError):
+    """A parent/depth pairing violation — the one schema refusal no migration owns.
+
+    Its own class so the ledger loader can report it as what it is: no
+    engine, old or new, ever wrote a line this shape and no migration
+    produces or repairs one, so the loader's usual run-the-migration hint
+    would misattribute it.
+    """
+
+
 def _validate_lineage(parent: str | None, spawn_depth: int | None) -> None:
     """The one parent/depth pairing rule, shared by WorkUnit and LedgerEntry.
 
@@ -226,12 +236,12 @@ def _validate_lineage(parent: str | None, spawn_depth: int | None) -> None:
     unit.
     """
     if (parent is None) != (spawn_depth is None):
-        raise ValueError(
+        raise LineageError(
             "parent and depth travel together: an original has neither (depth 0 is the "
             "shared URL); spawned units carry both"
         )
     if spawn_depth is not None and spawn_depth < 1:
-        raise ValueError("a spawned unit's depth starts at 1 — depth 0 is the shared URL")
+        raise LineageError("a spawned unit's depth starts at 1 — depth 0 is the shared URL")
 
 
 # ---------------------------------------------------------------------------

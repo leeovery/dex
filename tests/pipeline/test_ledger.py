@@ -198,6 +198,18 @@ class TestFromLine:
         with pytest.raises(LedgerSchemaError, match="attempts"):
             ledger.from_line(json.dumps(record))
 
+    def test_a_lineage_violation_states_the_rule_without_the_migration_hint(self):
+        # No engine ever wrote a spawned line at depth 0 and no migration
+        # produces or repairs one — the usual "migration 1 has likely not
+        # been applied" hint would misattribute the fault, so this one
+        # refusal carries the rule alone.
+        record = json.loads(ledger.to_line(entry()))
+        record["parent"] = "a1b2c3d4e5"
+        record["depth"] = 0
+        with pytest.raises(LedgerSchemaError, match="depth starts at 1") as exc:
+            ledger.from_line(json.dumps(record))
+        assert "migration" not in str(exc.value)
+
 
 class TestWriteTimestampResolution:
     """The union-merge fix: latest-per-hash is by write time, not file order."""

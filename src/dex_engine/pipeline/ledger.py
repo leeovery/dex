@@ -35,7 +35,7 @@ from typing import TextIO
 
 from dex_engine import atomic
 
-from .types import Cap, Format, Job, Kind, LedgerEntry, Need, Status
+from .types import Cap, Format, Job, Kind, LedgerEntry, LineageError, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
@@ -165,6 +165,10 @@ def from_line(line: str) -> LedgerEntry:
             error=None if "error" not in raw else _expect_str(raw, "error"),
             reason=None if "reason" not in raw else _expect_str(raw, "reason"),
         )
+    except LineageError as e:
+        # No engine ever wrote this shape and no migration repairs it — the
+        # rule itself is the whole story, and the hint would misattribute.
+        raise LedgerSchemaError(f"nonconforming ledger line ({e})") from e
     except ValueError as e:
         raise LedgerSchemaError(f"nonconforming ledger line ({e}); {_MIGRATION_HINT}") from e
 
