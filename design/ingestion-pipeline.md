@@ -825,8 +825,10 @@ independently is seven chances to reintroduce it):
   decentralize exactly what this centralizes). Mapping: 403/429/5xx →
   `blocked`, 404/410/NXDOMAIN → `dead`, **401/402 → `manual`**
   (login-walls/paywalls — x.com answers 402; retrying never resolves
-  payment-required), and **any other status the transport surfaces
-  (3xx redirect loops included) → `blocked` with "unexpected HTTP <n>"** —
+  payment-required), and **any other status the transport surfaces →
+  `blocked`**: a surfaced 1xx/3xx (a redirect loop's final 30x, an
+  out-of-place informational response) reads "unexpected HTTP <n>", an
+  unlisted 4xx reads plain "HTTP <n>" —
   the classifier is total; no HTTP outcome is unclassifiable. Routed
   through by every driver's HTTP path. The §15 regression pin tests the
   classifier once and holds for all drivers.
