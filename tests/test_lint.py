@@ -123,6 +123,61 @@ class TestMalformedTaxonomy:
         assert "TAXONOMY FAILURE" in outcome.report
         assert "invalid JSON" in outcome.report
 
+
+class TestMalformedEntityMembers:
+    """A broken state/entity-members.json is a lint FINDING, never a bare exit."""
+
+    def test_unparseable_entity_members_is_a_loud_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text("{not json")
+        outcome = lint(instance)  # pre-fix: a bare `Expecting value…` exit naming nothing
+        assert outcome.exit_code == 1
+        assert "Health check" in outcome.report  # the report rendered
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "entity-members.json" in outcome.report
+        assert "invalid JSON" in outcome.report
+
+    def test_non_object_entity_members_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('["not", "an", "object"]')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "expected an object of entity -> item list, got list" in outcome.report
+
+
+class TestTornPassRecord:
+    """A torn trailing line in state/passes.jsonl is a lint FINDING, never a bare exit."""
+
+    def _passes_with_torn_tail(self, instance):
+        write_taxonomy(instance)
+        good = {"stage": "harvest", "item": ITEM, "rules": 0, "date": "2026-08-01"}
+        instance.passes_path.write_text(
+            json.dumps(good) + "\n" + '{"stage": "digest", "item"', encoding="utf-8"
+        )
+
+    def test_a_torn_trailing_record_is_a_loud_finding(self, instance):
+        self._passes_with_torn_tail(instance)
+        outcome = lint(instance)  # pre-fix: a bare ValueError exit, no report
+        assert outcome.exit_code == 1
+        assert "Health check" in outcome.report  # the report rendered
+        assert "PASSES FAILURE" in outcome.report
+        assert "passes.jsonl:2" in outcome.report  # file AND line
+        assert "delete the torn trailing line" in outcome.report
+
+    def test_the_parseable_records_still_feed_their_checks(self, instance):
+        self._passes_with_torn_tail(instance)
+        outcome = lint(instance)
+        assert f"**{ITEM}** — rules v0" in outcome.report  # the good line still read
+
+    def test_a_non_object_record_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        instance.passes_path.write_text("[1]\n", encoding="utf-8")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "PASSES FAILURE" in outcome.report
+        assert "passes.jsonl:1" in outcome.report
+
     def test_non_dict_topics_never_crashes_the_uncategorized_ledger(self, instance):
         write_corpus_stub(instance)
         (instance.state_dir / "taxonomy.json").write_text(
@@ -472,10 +527,14 @@ class TestStateChecks:
         assert "harvest passes under old rules (re-judge) — none" in outcome.report
 
     def test_torn_pass_record_is_loud(self, instance):
+        # Loud means a failure row on the report — never a bare raise past
+        # every other check (TestTornPassRecord pins the row's content).
         self._bare_wiki(instance)
         instance.passes_path.write_text('{"stage": "har\n')
-        with pytest.raises(ValueError, match=r"passes\.jsonl:1"):
-            lint(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "PASSES FAILURE" in outcome.report
+        assert "passes.jsonl:1" in outcome.report
 
     def test_digest_orphans_listed(self, instance):
         self._bare_wiki(instance)
