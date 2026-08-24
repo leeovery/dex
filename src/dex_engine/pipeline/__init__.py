@@ -13,7 +13,6 @@ Ledger persistence and the other submodules are used as modules:
 
 from .ledger import LedgerSchemaError
 from .types import (
-    DRIVER_STATUSES,
     Asset,
     Availability,
     Config,
@@ -31,9 +30,7 @@ from .types import (
     NeedsCapability,
     Outcome,
     Redetected,
-    Redetection,
     Refused,
-    Result,
     Skipped,
     SourceDriver,
     Status,
@@ -45,7 +42,6 @@ from .types import (
 )
 
 __all__ = [
-    "DRIVER_STATUSES",
     "Asset",
     "Availability",
     "Config",
@@ -64,9 +60,7 @@ __all__ = [
     "NeedsCapability",
     "Outcome",
     "Redetected",
-    "Redetection",
     "Refused",
-    "Result",
     "Skipped",
     "SourceDriver",
     "Status",

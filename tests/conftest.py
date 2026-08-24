@@ -25,13 +25,12 @@ if "MUTANT_UNDER_TEST" in os.environ:
 
 from dex_engine.pipeline.types import (
     Availability,
+    Content,
     Format,
     Instance,
     Kind,
     Need,
     Outcome,
-    Result,
-    Status,
     WorkUnit,
 )
 from dex_engine.pipeline.urls import base_canonical
@@ -46,8 +45,8 @@ def instance(tmp_path: Path) -> Instance:
     return inst
 
 
-def _default_fetch(_unit: WorkUnit) -> Result:
-    return Result(status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30)
+def _default_fetch(_unit: WorkUnit) -> Content:
+    return Content(meta={"title": "t"}, body="substantial body " * 30)
 
 
 class FakeDriver:
@@ -61,7 +60,7 @@ class FakeDriver:
         self,
         kind: Kind = Kind.WEB,
         *,
-        fetch_fn: Callable[[WorkUnit], Result | Outcome] | None = None,
+        fetch_fn: Callable[[WorkUnit], Outcome] | None = None,
         sleep: float = 0.0,
     ) -> None:
         self.kind = kind
@@ -75,7 +74,7 @@ class FakeDriver:
     def canonical(self, url: str) -> str:
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result | Outcome:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         self.fetched.append(unit)
         return self._fetch_fn(unit)
 

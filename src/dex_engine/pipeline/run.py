@@ -73,9 +73,7 @@ from .types import (
     NeedsCapability,
     Outcome,
     Redetected,
-    Redetection,
     Refused,
-    Result,
     SourceDriver,
     Status,
     Transcriber,
@@ -1010,7 +1008,7 @@ class _Drain:
             case _:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
-    def _apply(self, entry: LedgerEntry, fetched: Result | Outcome) -> None:
+    def _apply(self, entry: LedgerEntry, fetched: Outcome) -> None:
         """Map what the driver FOUND onto the unit's lifecycle — the one total match.
 
         The driver states its finding as a typed outcome; what that means
@@ -1019,9 +1017,6 @@ class _Drain:
         a new outcome variant is a type error at this site until an arm
         says what it means.
         """
-        if isinstance(fetched, Result):
-            self._apply_result(entry, fetched)
-            return
         match fetched:
             case Content():
                 self._apply_content(entry, fetched)
@@ -1046,52 +1041,6 @@ class _Drain:
                 self._apply_redetection(entry, fetched)
             case _:
                 assert_never(fetched)
-
-    def _apply_result(self, entry: LedgerEntry, result: Result) -> None:
-        # Transitional: the pre-union Result path, deleted with the last
-        # Result-returning driver.
-        if result.redetect is not None:
-            self._apply_redetection(entry, result.redetect)
-            return
-        match result.status:
-            case Status.DONE:
-                self._apply_done(entry, result)
-            case Status.WAITING:
-                if result.body is not None or result.meta.get("enclosure") is not None:
-                    self._write_output(entry, result.meta, result.body, count=False)
-                self.record_outcome(
-                    entry, status=Status.WAITING, needs=result.needs, reason=result.reason
-                )
-            case Status.BLOCKED:
-                self._apply_blocked(entry, result.reason)
-            case Status.DEAD | Status.SKIPPED | Status.MANUAL:
-                self.record_outcome(entry, status=result.status, reason=result.reason)
-            case Status.QUEUED | Status.ERROR:
-                # Result.__post_init__ forbids both here: queued travels
-                # only with a redetection (routed above); errors are
-                # raised, never returned.
-                raise RuntimeError(
-                    f"unreachable: Result validation rejects {result.status.value!r}"
-                )
-            case _:
-                assert_never(result.status)
-
-    def _apply_done(self, entry: LedgerEntry, result: Result) -> None:
-        path = None
-        if result.body is not None:
-            path = self._write_output(entry, result.meta, result.body)
-            _drop_superseded_outputs(self.ctx.instance, entry, path)
-        title = result.meta.get("title")
-        self.record_outcome(
-            entry,
-            status=Status.DONE,
-            path=path,
-            title=title if isinstance(title, str) and path is not None else None,
-        )
-        if result.assets:
-            self._write_assets(self.entries[entry.hash], result.assets)
-        if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
-            self._media_stage(self.entries[entry.hash], result.media)
 
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
         path = None
@@ -1123,7 +1072,7 @@ class _Drain:
             self._write_output(entry, needs.meta, needs.body, count=False)
         self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
 
-    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection | Redetected) -> None:
+    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
 
         The corrected unit has the SAME URL and therefore the same hash — a
@@ -1174,18 +1123,15 @@ class _Drain:
         corrected = redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
-    def _apply_blocked(
-        self, entry: LedgerEntry, reason: str | None, *, needs: Need | None = None
-    ) -> None:
+    def _apply_blocked(self, entry: LedgerEntry, reason: str, *, needs: Need | None = None) -> None:
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
-            # Escalation appends attempt context to what the driver knew —
+            # Escalation appends attempt context to what was found —
             # it never invents a reason.
-            detail = reason or "no reason recorded"
             self.record_outcome(
                 entry,
                 status=Status.MANUAL,
-                reason=f"still blocked after {attempts} attempts — {detail}",
+                reason=f"still blocked after {attempts} attempts — {reason}",
             )
             return
         self.record_outcome(

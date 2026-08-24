@@ -54,9 +54,7 @@ from dex_engine.pipeline.types import (
     NeedsCapability,
     Outcome,
     Redetected,
-    Redetection,
     Refused,
-    Result,
     Status,
     Unusable,
 )
@@ -231,7 +229,7 @@ class TestSeedAndDone:
             fetched.append(unit.url)
             if len(fetched) == 2:
                 ledger.compact(instance.ledger_path)  # another terminal's compact
-            return Result(status=Status.DONE, meta={}, body="b" * 400)
+            return Content(meta={}, body="b" * 400)
 
         report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         loaded = ledger.load(instance.ledger_path)
@@ -369,9 +367,7 @@ class TestSeedAndDone:
 
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
-        fetch = lambda _unit: Result(  # noqa: E731
-            status=Status.DONE, meta={"title": "Ledgers: a Field Report"}, body="b" * 400
-        )
+        fetch = lambda _unit: Content(meta={"title": "Ledgers: a Field Report"}, body="b" * 400)  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         content = (instance.root / entry_for(ctx).path).read_text()
@@ -402,7 +398,7 @@ class TestFrontmatterRefresh:
 
     def test_mark_refreshes_the_owning_item_in_the_same_call(self, instance):
         path = write_item(instance)
-        fetch = lambda _unit: Result(status=Status.MANUAL, meta={}, reason="paywalled")  # noqa: E731
+        fetch = lambda _unit: Unusable(evidence="paywalled")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         assert corpus.read_item(path).status == "raw"
@@ -450,7 +446,7 @@ class TestFrontmatterRefresh:
 
     def test_mark_still_heals_when_the_listing_cannot_refresh(self, instance):
         write_item(instance)
-        fetch = lambda _unit: Result(status=Status.MANUAL, meta={}, reason="paywalled")  # noqa: E731
+        fetch = lambda _unit: Unusable(evidence="paywalled")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         item_dir = instance.enrichment_dir / ITEM
@@ -463,24 +459,23 @@ class TestFrontmatterRefresh:
 
     VIDEO_URL = "https://example.test/video"
 
-    def _mixed_item(self, instance, second: Result):
+    def _mixed_item(self, instance, second: Outcome):
         """An item whose blog unit lands and whose video unit gets ``second``."""
         path = write_item(instance, urls=[URL, self.VIDEO_URL])
 
         def fetch(unit):
             if unit.url == self.VIDEO_URL:
                 return second
-            return Result(status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30)
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
 
         return path, make_ctx(instance, FakeDriver(fetch_fn=fetch))
 
-    def _waiting_video(self) -> Result:
-        return Result(
-            status=Status.WAITING,
+    def _waiting_video(self) -> NeedsCapability:
+        return NeedsCapability(
+            need=Need.TRANSCRIBE,
             meta={"title": "v"},
-            needs=Need.TRANSCRIBE,
-            reason="no captions available",
             body="## Description\n\nwhat the video covers",
+            reason="no captions available",
         )
 
     def test_an_outstanding_unit_keeps_the_whole_item_raw(self, instance):
@@ -499,13 +494,13 @@ class TestFrontmatterRefresh:
         assert corpus.read_item(path).status == "enriched"
 
     def test_a_dead_unit_never_holds_the_item_hostage(self, instance):
-        dead = Result(status=Status.DEAD, meta={}, reason="404")
+        dead = Missing(evidence="404")
         path, ctx = self._mixed_item(instance, dead)
         run_mod.run(ctx)
         assert corpus.read_item(path).status == "enriched"  # confirmed gone owes nothing
 
     def test_skipped_and_manual_units_differ(self, instance):
-        skipped = Result(status=Status.SKIPPED, meta={}, reason="deliberately not fetched")
+        skipped = Unusable(evidence="deliberately not fetched", rescuable=False)
         path, ctx = self._mixed_item(instance, skipped)
         run_mod.run(ctx)
         assert corpus.read_item(path).status == "enriched"
@@ -520,8 +515,8 @@ class TestFrontmatterRefresh:
         assert confirmation.endswith("skipped")
         assert corpus.read_item(path).status == "raw"  # the video is still waiting
 
-    def _landed_video(self) -> Result:
-        return Result(status=Status.DONE, meta={"title": "v"}, body="the video body " * 30)
+    def _landed_video(self) -> Content:
+        return Content(meta={"title": "v"}, body="the video body " * 30)
 
     def test_a_capped_run_leaves_the_item_raw_with_work_still_queued(self, instance):
         # --limit drains part of the cohort (as does a cap-deferred rerun):
@@ -560,13 +555,13 @@ class TestIncompleteItemsOnTheReport:
 
     VIDEO_URL = "https://example.test/video"
 
-    def _ctx(self, instance, second: Result):
+    def _ctx(self, instance, second: Outcome):
         write_item(instance, urls=[URL, self.VIDEO_URL])
 
         def fetch(unit):
             if unit.url == self.VIDEO_URL:
                 return second
-            return Result(status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30)
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
 
         return make_ctx(instance, FakeDriver(fetch_fn=fetch))
 
@@ -600,11 +595,8 @@ class TestIncompleteItemsOnTheReport:
         return run_mod.fetch_urls(ctx, ITEM, urls), captured["enrich-report"]
 
     def test_the_report_names_the_shape_of_what_is_missing(self, instance):
-        waiting = Result(
-            status=Status.WAITING,
-            meta={"title": "v"},
-            needs=Need.TRANSCRIBE,
-            reason="no captions available",
+        waiting = NeedsCapability(
+            need=Need.TRANSCRIBE, meta={"title": "v"}, reason="no captions available"
         )
         report = run_mod.run(self._ctx(instance, waiting))
         flat = " ".join(report.split())
@@ -612,15 +604,13 @@ class TestIncompleteItemsOnTheReport:
         assert f"**{ITEM}** ↳ 1 of 2 units landed — 1 waiting on transcription" in flat
 
     def test_a_complete_item_gets_no_line(self, instance, monkeypatch):
-        dead = Result(status=Status.DEAD, meta={}, reason="404")
+        dead = Missing(evidence="404")
         report, payload = self._run_capturing(self._ctx(instance, dead), monkeypatch)
         assert "incomplete" not in payload  # the key is omitted, not merely empty
         assert "still raw until every unit lands" not in report
 
     def test_the_payload_carries_the_counts(self, instance, monkeypatch):
-        waiting = Result(
-            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
-        )
+        waiting = NeedsCapability(need=Need.TRANSCRIBE, reason="no captions available")
         _report, payload = self._run_capturing(self._ctx(instance, waiting), monkeypatch)
         assert payload["incomplete"] == [
             {
@@ -634,9 +624,7 @@ class TestIncompleteItemsOnTheReport:
     def test_an_untouched_item_is_not_listed(self, instance, monkeypatch):
         # The standing view is `enrich status`; the run reports on what it
         # touched, so a long-parked item does not repeat every run.
-        waiting = Result(
-            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
-        )
+        waiting = NeedsCapability(need=Need.TRANSCRIBE, reason="no captions available")
         ctx = self._ctx(instance, waiting)
         run_mod.run(ctx)
         report, payload = self._run_capturing(ctx, monkeypatch)  # nothing drainable now
@@ -652,13 +640,8 @@ class TestIncompleteItemsOnTheReport:
 
         def fetch(unit):
             if unit.url == captured[0]:
-                return Result(
-                    status=Status.WAITING,
-                    meta={},
-                    needs=Need.TRANSCRIBE,
-                    reason="no captions available",
-                )
-            return Result(status=Status.DONE, meta={}, body="b" * 400)
+                return NeedsCapability(need=Need.TRANSCRIBE, reason="no captions available")
+            return Content(meta={}, body="b" * 400)
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
@@ -678,9 +661,7 @@ class TestIncompleteItemsOnTheReport:
         assert f"**{ITEM}** ↳ 11 of 12 units landed — 1 waiting on transcription" in flat
 
     def test_the_other_sections_still_render(self, instance):
-        waiting = Result(
-            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions available"
-        )
+        waiting = NeedsCapability(need=Need.TRANSCRIBE, reason="no captions available")
         report = run_mod.run(self._ctx(instance, waiting))
         assert "### Needs writing up — 1 item has new material" in report
         assert "### Waiting on the engine — 1 entry it retries by itself" in report
@@ -775,13 +756,8 @@ class TestParking:
         def fetch(_unit):
             calls["n"] += 1
             if calls["n"] == 1:
-                return Result(
-                    status=Status.WAITING,
-                    meta={},
-                    needs=Need.EXTRACT,
-                    reason="no extractor for this format",
-                )
-            return Result(status=Status.DONE, meta={}, body="b" * 400)
+                return NeedsCapability(need=Need.EXTRACT, reason="no extractor for this format")
+            return Content(meta={}, body="b" * 400)
 
         driver = FakeDriver(fetch_fn=fetch)
         ctx = make_ctx(instance, driver, provider_available=flippable_provider)
@@ -801,7 +777,7 @@ class TestParking:
 
     def test_blocked_retries_then_escalates_to_manual_at_five_attempts(self, instance):
         write_item(instance)
-        fetch = lambda _unit: Result(status=Status.BLOCKED, meta={}, reason="HTTP 403")  # noqa: E731
+        fetch = lambda _unit: Refused(evidence="HTTP 403")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         for expected_attempts in range(1, MAX_BLOCKED_ATTEMPTS):
             run_mod.run(ctx)
@@ -1047,9 +1023,7 @@ class TestRerun:
 
         self.seed_rerun(ctx)
         rewritten = FakeDriver(
-            fetch_fn=lambda _unit: Result(
-                status=Status.DONE, meta={"title": "t"}, body="a different body " * 30
-            )
+            fetch_fn=lambda _unit: Content(meta={"title": "t"}, body="a different body " * 30)
         )
         failing_fdopen(monkeypatch)
         run_mod.run(make_ctx(instance, rewritten))
@@ -1083,7 +1057,7 @@ class TestRerun:
         write_item(instance, urls=list(urls))
 
         def fetch(unit):
-            return Result(status=Status.DONE, meta={"title": "t"}, body=urls[unit.url])
+            return Content(meta={"title": "t"}, body=urls[unit.url])
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
@@ -1116,7 +1090,7 @@ class TestRerun:
     def test_changed_rerun_overwrites_in_place_never_duplicates(self, instance):
         write_item(instance)
         body = {"text": "first body " * 40}
-        fetch = lambda _unit: Result(status=Status.DONE, meta={}, body=body["text"])  # noqa: E731
+        fetch = lambda _unit: Content(meta={}, body=body["text"])  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
 
@@ -1136,7 +1110,7 @@ class TestMediaStage:
 
     def media_fetch(self, urls):
         def fetch(_unit):
-            return Result(status=Status.DONE, meta={}, body="b" * 400, media=list(urls))
+            return Content(meta={}, body="b" * 400, media=list(urls))
 
         return fetch
 
@@ -1581,7 +1555,7 @@ class TestMediaStage:
 
         def fetch(unit):
             media = [self.IMG1] if unit.depth == 0 else []
-            return Result(status=Status.DONE, meta={}, body="b" * 400, media=media)
+            return Content(meta={}, body="b" * 400, media=media)
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport)
         run_mod.run(ctx)
@@ -1670,7 +1644,7 @@ class TestFetchedCountStaysARecount:
 class TestExtractAssets:
     def asset_fetch(self, assets):
         def fetch(_unit):
-            return Result(status=Status.DONE, meta={}, body="b" * 400, assets=list(assets))
+            return Content(meta={}, body="b" * 400, assets=list(assets))
 
         return fetch
 
@@ -1979,7 +1953,7 @@ class TestVerbs:
 
     def test_mark_heals_through_the_verb(self, instance):
         write_item(instance)
-        fetch = lambda _unit: Result(status=Status.BLOCKED, meta={}, reason="HTTP 403")  # noqa: E731
+        fetch = lambda _unit: Refused(evidence="HTTP 403")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         confirmation = run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-000000.md")
@@ -2070,9 +2044,7 @@ class TestVerbs:
         # so the canonical hash of one can never meet its stored key.
         signed = "https://cdn.example.test/hero.png?si=abc123"
         write_item(instance)
-        fetch = lambda _unit: Result(  # noqa: E731
-            status=Status.DONE, meta={}, body="b" * 400, media=[signed]
-        )
+        fetch = lambda _unit: Content(meta={}, body="b" * 400, media=[signed])  # noqa: E731
         outage = HttpResponse(status=503, content_type="image/png", body=b"")
         ctx = make_ctx(
             instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({signed: outage})
@@ -2087,9 +2059,7 @@ class TestVerbs:
     def test_mark_prefers_the_canonical_match_when_both_keys_exist(self, instance):
         raw = f"{URL}?si=abc123"  # canonicalizes to URL; ledgered verbatim as media
         write_item(instance)
-        fetch = lambda _unit: Result(  # noqa: E731
-            status=Status.DONE, meta={}, body="b" * 400, media=[raw]
-        )
+        fetch = lambda _unit: Content(meta={}, body="b" * 400, media=[raw])  # noqa: E731
         image = HttpResponse(status=200, content_type="image/png", body=b"png")
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image}))
         run_mod.run(ctx)
@@ -2148,9 +2118,7 @@ class TestVerbs:
 class TestStatusReport:
     def test_counts_waiting_cohorts_and_orphans(self, instance):
         write_item(instance)
-        fetch = lambda _unit: Result(  # noqa: E731
-            status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
-        )
+        fetch = lambda _unit: NeedsCapability(need=Need.TRANSCRIBE, reason="no captions")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
         orphan_dir = instance.enrichment_dir / "2026-08-19-orphan-abcdef"
@@ -2216,12 +2184,8 @@ class TestStatusReport:
 
         def fetch(unit):
             if unit.depth == 0:
-                return Result(
-                    status=Status.DONE, meta={"title": "t"}, body="substantial body " * 30
-                )
-            return Result(
-                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
-            )
+                return Content(meta={"title": "t"}, body="substantial body " * 30)
+            return NeedsCapability(need=Need.TRANSCRIBE, reason="no captions")
 
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         run_mod.run(ctx)
@@ -2433,7 +2397,7 @@ class TestIssueFiling:
     def test_world_failures_never_file(self, instance):
         write_item(instance)
         gh = FakeGh()
-        fetch = lambda _unit: Result(status=Status.BLOCKED, meta={})  # noqa: E731
+        fetch = lambda _unit: Refused(evidence="HTTP 503")  # noqa: E731
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
         assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs
 
@@ -2737,11 +2701,7 @@ class TestOwnershipIsTheCorpusAnswer:
         # like any other, and it is written before any outcome resolves the
         # attribution for it.
         self._renamed(instance, status=Status.QUEUED)
-        driver = FakeDriver(
-            fetch_fn=lambda _unit: Result(
-                status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST)
-            )
-        )
+        driver = FakeDriver(fetch_fn=lambda _unit: Redetected(kind=Kind.PODCAST))
         run_mod.run(make_ctx(instance, driver))
         sniffed = [
             json.loads(line)
@@ -2908,12 +2868,8 @@ class TestOwnershipIsTheCorpusAnswer:
         )
 
         def fetch(_unit):
-            return Result(
-                status=Status.DONE,
-                meta={"title": "t"},
-                body="b" * 400,
-                assets=list(assets),
-                media=list(media),
+            return Content(
+                meta={"title": "t"}, body="b" * 400, media=list(media), assets=list(assets)
             )
 
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport))
@@ -3088,10 +3044,8 @@ class TestOwnershipIsTheCorpusAnswer:
 
         def fetch(unit):
             if unit.url == second:
-                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
-            return Result(
-                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
-            )
+                return Content(meta={"title": "t"}, body="body " * 30)
+            return NeedsCapability(need=Need.TRANSCRIBE, reason="no captions")
 
         report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         flat = " ".join(report.split())
@@ -3206,10 +3160,8 @@ class TestOwnershipIsTheCorpusAnswer:
 
         def fetch(unit):
             if unit.url == second:
-                return Result(status=Status.DONE, meta={"title": "t"}, body="body " * 30)
-            return Result(
-                status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions"
-            )
+                return Content(meta={"title": "t"}, body="body " * 30)
+            return NeedsCapability(need=Need.TRANSCRIBE, reason="no captions")
 
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         assert corpus.read_item(bravo_path).status == "raw"
@@ -3552,17 +3504,13 @@ class TestRedetection:
 
         def web_fetch(_unit):
             if mode["redetect"]:
-                return Result(
-                    status=Status.QUEUED,
-                    meta={},
-                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
-                )
-            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+                return Redetected(kind=Kind.FILE, format=Format.PDF)
+            return Content(meta={"title": "t"}, body="b" * 400)
 
         def file_fetch(_unit):
             if mode["extract"]:
-                return Result(status=Status.DONE, meta={"title": "t"}, body="extracted " * 40)
-            return Result(status=Status.MANUAL, meta={}, reason="no extractor for pdf here")
+                return Content(meta={"title": "t"}, body="extracted " * 40)
+            return Unusable(evidence="no extractor for pdf here")
 
         web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
         files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
@@ -3638,15 +3586,11 @@ class TestRedetection:
 
         def web_fetch(_unit):
             if mode["redetect"]:
-                return Result(
-                    status=Status.QUEUED,
-                    meta={},
-                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
-                )
-            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+                return Redetected(kind=Kind.FILE, format=Format.PDF)
+            return Content(meta={"title": "t"}, body="b" * 400)
 
         def file_fetch(_unit):
-            return Result(status=Status.MANUAL, meta={}, reason="scanned pdf — no extractor")
+            return Unusable(evidence="scanned pdf — no extractor")
 
         web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
         files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)

@@ -21,7 +21,6 @@ from dex_engine.pipeline.types import (
     Missing,
     NeedsCapability,
     Refused,
-    Result,
     Unusable,
     WorkUnit,
 )
@@ -48,11 +47,6 @@ def make_unit(  # noqa: PLR0913 — a test-data builder mirrors the WorkUnit fie
     )
 
 
-def reason_of(result: Result) -> str:
-    assert result.reason is not None
-    return result.reason
-
-
 def content_of(outcome: object) -> Content:
     """The outcome as ``Content`` — the fetch found something, or the test fails."""
     assert isinstance(outcome, Content), f"expected Content, got {outcome!r}"
@@ -74,7 +68,7 @@ def evidence_of(outcome: object) -> str:
 
 
 def body_of(outcome: object) -> str:
-    assert isinstance(outcome, Result | Content | NeedsCapability), (
+    assert isinstance(outcome, Content | NeedsCapability), (
         f"expected an outcome carrying a body, got {outcome!r}"
     )
     assert outcome.body is not None

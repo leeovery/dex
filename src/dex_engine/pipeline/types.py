@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Protocol
 
 __all__ = [
-    "DRIVER_STATUSES",
     "Asset",
     "Availability",
     "Cap",
@@ -32,9 +31,7 @@ __all__ = [
     "NeedsCapability",
     "Outcome",
     "Redetected",
-    "Redetection",
     "Refused",
-    "Result",
     "Skipped",
     "SourceDriver",
     "Status",
@@ -130,15 +127,6 @@ class MediaFetch(StrEnum):
     LEAD = "lead"
 
 
-# `queued` is a birth state, not a driver outcome, and `error` is RAISED,
-# never returned — a Result has no error channel, so a returned `error`
-# could only carry a fabricated message; the run loop's single broad except
-# is the one place errors are made. ONE exception: a Result carrying a
-# `redetect` returns `queued`, because a mid-fetch kind correction IS a
-# re-birth — the unit re-enters the queue under its corrected identity.
-DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
-
-
 # ---------------------------------------------------------------------------
 # Provenance vocabulary. `via` stays a documented string, not an enum:
 # `migration-<n>` is parameterized and provenance is descriptive, never
@@ -161,18 +149,16 @@ def _validate_via(via: str) -> None:
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
 
-# The stated-reason contract, shared by Result and LedgerEntry:
-# manual and skipped exist only by deliberate decision, so the decision must
-# be recorded; waiting/blocked/dead may carry one; done/queued need none, and
-# error carries the scrubbed `error` field instead (ledger) or no reason at
-# all (results) — reason and error never coexist.
+# The ledger's stated-reason contract: manual and skipped exist only by
+# deliberate decision, so the decision must be recorded; waiting/blocked/
+# dead may carry one; done/queued need none, and error carries the scrubbed
+# `error` field instead — reason and error never coexist.
 _REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
 _REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
-# Where `needs` may ride (LedgerEntry only — a driver Result stays
-# waiting-only): a waiting park names the missing capability; a blocked
-# acquisition retry keeps `needs` so the run loop routes it back through
-# the capability drain, never the driver.
+# Where `needs` may ride: a waiting park names the missing capability; a
+# blocked acquisition retry keeps `needs` so the run loop routes it back
+# through the capability drain, never the driver.
 _NEEDS_STATUSES = frozenset({Status.WAITING, Status.BLOCKED})
 
 # sha1(work key)[:10] — the ledger key format.
@@ -254,92 +240,6 @@ class WorkUnit:
                 "parent and depth travel together: depth 0 is the shared URL (no "
                 "parent); spawned units carry both"
             )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Redetection:
-    """A mid-fetch kind correction: the content is not what detection said.
-
-    The canonical case: detection said web (a HEAD lied or was
-    inconclusive), the GET returned a PDF. The unit re-enters the queue
-    under the corrected identity — same URL, same hash — with
-    ``via: "sniff"`` provenance; the run layer enforces once-only.
-    """
-
-    kind: Kind
-    format: Format | None = None
-
-    def __post_init__(self) -> None:
-        if self.kind in _NON_WORK_KINDS:
-            raise ValueError(
-                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
-                "never becomes a work unit"
-            )
-        if self.format is not None and self.kind is not Kind.FILE:
-            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Result:
-    """What a driver's ``fetch`` returns.
-
-    ``reason`` mirrors the ledger's stated-reason contract: required
-    when a driver returns ``manual``/``skipped`` (the driver knows why),
-    optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
-    run layer may append classifier context to it but never invents what the
-    driver knew.
-
-    ``redetect`` is the mid-fetch kind-correction signal: the fetched bytes
-    are a different kind of content than detection assigned. It travels
-    with ``status: queued`` and nothing else — a redetection carries the
-    corrected identity only; outputs belong to the driver that owns the
-    corrected kind.
-    """
-
-    status: Status
-    meta: dict[str, str | int | None]
-    body: str | None = None
-    media: list[str] = field(default_factory=list)
-    # Extraction assets: embedded images have no URL, so bytes are the
-    # only possible form — and drivers never touch the disk, so the
-    # Result is the one channel through which they can reach the run layer's
-    # asset-writing step.
-    assets: list["Asset"] = field(default_factory=list)
-    needs: Need | None = None
-    reason: str | None = None
-    redetect: Redetection | None = None
-
-    def __post_init__(self) -> None:
-        if self.redetect is not None:
-            if self.status is not Status.QUEUED:
-                raise ValueError(
-                    f"a redetection travels with status 'queued' (a re-birth under the "
-                    f"corrected kind), got {self.status!r}"
-                )
-            if self.meta or self.body or self.media or self.assets or self.needs or self.reason:
-                raise ValueError(
-                    "a redetection carries the corrected identity only — outputs belong "
-                    "to the driver that owns the corrected kind"
-                )
-            return
-        if self.status not in DRIVER_STATUSES:
-            raise ValueError(
-                f"drivers may not return status {self.status!r} — 'queued' is a birth "
-                "state (returnable only as a redetection) and 'error' is raised, never "
-                "returned"
-            )
-        if self.status is Status.WAITING and self.needs is None:
-            raise ValueError("status 'waiting' requires needs")
-        if self.needs is not None and self.status is not Status.WAITING:
-            raise ValueError(
-                f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
-            )
-        if self.status in _REASON_REQUIRED and not self.reason:
-            raise ValueError(f"a driver returning status {self.status!r} must state its reason")
-        if self.status in _REASON_FORBIDDEN and self.reason is not None:
-            raise ValueError(f"reason is forbidden on a {self.status!r} result")
-        if self.assets and self.status is not Status.DONE:
-            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r}")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -572,12 +472,11 @@ class SourceDriver(Protocol):
         """The canonical form of ``url`` — it keys the ledger hash."""
         ...
 
-    def fetch(self, unit: WorkUnit) -> Result | Outcome:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Fetch one unit of work; never touches the ledger or the disk.
 
         Returns what the fetch FOUND (:data:`Outcome`); the run layer
-        decides what that means for the unit's lifecycle. ``Result`` is
-        accepted while the drivers convert and dies with the transition.
+        decides what that means for the unit's lifecycle.
         """
         ...
 
