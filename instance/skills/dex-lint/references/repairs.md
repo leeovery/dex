@@ -6,6 +6,16 @@ other repairs need):
 - **Ledger schema failure** — repair before anything else touches
   state; the message names the file, line, and likely missing migration
   (usually: run `bin/dex sync`).
+- **Torn state file** — the failure row (or sync's error) names the
+  offending file. A torn trailing line in `state/passes.jsonl` or
+  `state/migrations.jsonl` is an interrupted write, and the sanctioned
+  repair is deleting that trailing line: a half-written line is not a
+  record, so removing it is healing, not hand-writing state. The
+  sanction is that narrow — the torn TRAILING line only, never an
+  intact record and never a rewrite. A malformed
+  `state/entity-members.json` is different: that file is one of the two
+  you write directly, so repair it by rewriting it to the shape in
+  dex-run's `references/state-formats.md`.
 - **Ledger items with no corpus file** — one row per item and cause;
   the row's parenthesis says which of three, and they want different
   things. **Excluded on record** — ruled out on purpose: write the id as

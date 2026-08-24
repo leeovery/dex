@@ -2092,14 +2092,23 @@ src/dex_engine/
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,
-                 and for anything hand-edited since. Exit 1 is the
-                 hard-failure set: broken wikilinks, bad citations, a
-                 ledger schema error, a malformed taxonomy, a malformed
-                 digest, and the pre-taxonomy broken-mid-ingest state
-                 (corpus items on disk with no `state/taxonomy.json`,
-                 placement never having run); everything else is a
-                 finding for the report
-  sync.py      grows: pin resolution, re-exec, migration runner, sync report
+                 and for anything hand-edited since. A broken state
+                 file renders as a failure row naming the offending
+                 file (a malformed `entity-members.json`, a torn
+                 trailing `passes.jsonl` line) rather than dying bare,
+                 so the report survives to name the repair. Exit 1 is
+                 the hard-failure set: broken wikilinks, bad citations,
+                 a ledger schema error, a malformed taxonomy, a
+                 malformed digest, and the pre-taxonomy
+                 broken-mid-ingest state (corpus items on disk with no
+                 `state/taxonomy.json`, placement never having run);
+                 everything else is a finding for the report
+  sync.py      grows: pin resolution, re-exec, migration runner, sync
+                 report. A torn trailing `migrations.jsonl` line fails
+                 with an error naming the sanctioned repair: delete
+                 that trailing line — a half-written line is not a
+                 record, so removing it is healing, not hand-writing
+                 state, and intact records are never edited
 ```
 
 Dependencies: `trafilatura` (extraction only), `yt-dlp`, **`firecrawl-anydoc`**
