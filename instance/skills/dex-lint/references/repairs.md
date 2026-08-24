@@ -95,10 +95,13 @@ other repairs need):
   digest and append the id to each matching topic's `items` in
   `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
   genuinely low-signal.
-- **Ghost taxonomy members** (a topic lists an id no live corpus item
-  answers) — exclusion's leftover: the purge removes the corpus file,
-  enrichment, digest and ledger entries, and the taxonomy entry is the
-  one thing it leaves, because `state/taxonomy.json` is yours to write.
+- **Ghost members** (a topic or an entity lists an id no live corpus
+  item answers) — exclusion's leftover: the purge removes the corpus
+  file, enrichment, digest and ledger entries, and leaves the id
+  wherever `state/taxonomy.json` or `state/entity-members.json` lists
+  it, because those two files are yours to write. The row names the
+  list; remove the id from it — for an excluded item, that is the
+  whole repair.
   Remove the id from each topic's `items`; `lint --write` reconciles
   the page counts after.
 - **Pages missing from index** / **ghost index entries** — regenerate

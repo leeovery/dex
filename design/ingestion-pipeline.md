@@ -2120,10 +2120,12 @@ src/dex_engine/
                  with its entry count; done outputs missing on disk, and
                  done outputs filed under another item's directory — both
                  asked of the owning item, §4),
-                 waiting cohorts, pass records, ghost taxonomy members
-                 (a topic's `items` id naming no live corpus item — the
-                 one leftover an exclusion's purge leaves, a finding
-                 with the removal repair), a parked-item exemption on
+                 waiting cohorts, pass records, ghost members (an id in
+                 a taxonomy topic's `items` or an entity-members list
+                 naming no live corpus item — the leftovers an
+                 exclusion's purge leaves in the two session-written
+                 files, a finding with the removal repair), a
+                 parked-item exemption on
                  the coverage rows (an item whose units are still
                  non-terminal, with no digest owed yet, is not yet
                  expected on a page or in the taxonomy),

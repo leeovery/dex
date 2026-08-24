@@ -73,6 +73,16 @@ in order:
    - `wiki/*` is a build artifact: rewrite each conflicted page whole
      from the merged state (digests and taxonomy), rather than splicing
      around markers.
+   - A conflicted `state/exclusions.tsv` means both machines excluded
+     since the last sync: keep both sides' rows, one line per id,
+     markers removed. An exclusion is never lost in a merge.
+   - A conflicted corpus file is two machines' engine refreshes
+     deriving different `status`/`enrichment:` fields. The body is
+     verbatim forever and identical on both sides; keep either side's
+     frontmatter, and the next run's refresh re-derives it from disk.
+   - Anything else that conflicts is resolved the same way in spirit:
+     understand what each side added, merge by judgment, and never
+     leave a marker in a committed file.
 
    Then commit the resolution with a message that says what it merged,
    and continue the run.
