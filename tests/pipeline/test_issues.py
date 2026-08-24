@@ -163,6 +163,13 @@ class TestFiling:
         outcome = _report(events, gh, tmp_path)
         assert outcome.filed == MAX_NEW_ISSUES_PER_RUN
         assert len(gh.of("create")) == MAX_NEW_ISSUES_PER_RUN
+        # The two capped observations are NOT lost: recorded locally as
+        # deferred (filed: false), named on the notes.
+        assert outcome.deferred == 2
+        deferred = [r for r in _memory(tmp_path) if r["action"] == "deferred"]
+        assert len(deferred) == 2
+        assert all(r["filed"] is False for r in deferred)
+        assert sum("rate limit reached" in note for note in outcome.notes) == 2
 
     def test_disabled_config_makes_no_gh_calls(self, tmp_path):
         gh = FakeGh()
@@ -207,11 +214,15 @@ class TestGateRecordsLocally:
         assert outcome.recorded == 0
         assert len(_memory(tmp_path)) == 1
 
-    def test_gate_off_records_spend_the_per_run_budget(self, tmp_path):
+    def test_gate_off_records_never_rate_limit(self, tmp_path):
+        # The cap protects the shared tracker, and a gate-off run touches
+        # no tracker: capping the local record silently dropped every
+        # observation past the third.
         events = [_event(function=f"fn_{i}") for i in range(MAX_NEW_ISSUES_PER_RUN + 2)]
         outcome = _report(events, FakeGh(), tmp_path, enabled=False)
-        assert outcome.recorded == MAX_NEW_ISSUES_PER_RUN
-        assert len(_memory(tmp_path)) == MAX_NEW_ISSUES_PER_RUN
+        assert outcome.recorded == MAX_NEW_ISSUES_PER_RUN + 2
+        assert outcome.filed == 0
+        assert len(_memory(tmp_path)) == MAX_NEW_ISSUES_PER_RUN + 2
 
     def test_records_predating_the_filed_field_still_suppress(self, tmp_path):
         fp = fingerprint(_event())
@@ -225,6 +236,46 @@ class TestGateRecordsLocally:
         outcome = _report([_event()], gh, tmp_path)
         assert gh.calls == []
         assert outcome.filed == 0
+
+
+class TestRateLimitDefers:
+    """The cap binds upstream filings; a capped observation stays eligible.
+
+    Refile-suppression tells the two ``filed: false`` records apart by
+    what they MEAN: ``recorded`` is the owner's standing choice not to
+    file (never refiled — TestGateRecordsLocally), ``deferred`` is one
+    run's rate limit (files the next time the observation is seen).
+    """
+
+    def _five(self):
+        return [_event(function=f"fn_{i}") for i in range(MAX_NEW_ISSUES_PER_RUN + 2)]
+
+    def test_a_deferred_observation_files_when_next_observed(self, tmp_path):
+        _report(self._five(), FakeGh(), tmp_path)
+        gh = FakeGh()
+        outcome = _report(self._five(), gh, tmp_path)  # the same errors recur
+        assert outcome.filed == 2  # exactly the two the cap turned away
+        assert outcome.deferred == 0
+        filed = [r for r in _memory(tmp_path) if r["action"] == "filed"]
+        assert len(filed) == MAX_NEW_ISSUES_PER_RUN + 2
+
+    def test_an_observation_that_never_recurs_stays_a_local_record(self, tmp_path):
+        _report(self._five(), FakeGh(), tmp_path)
+        gh = FakeGh()
+        outcome = _report([], gh, tmp_path)  # a clean next run
+        assert outcome.filed == 0
+        assert gh.calls == []  # nothing auto-refiles from memory alone
+        assert len([r for r in _memory(tmp_path) if r["action"] == "deferred"]) == 2
+
+    def test_a_repeat_deferral_never_duplicates_the_record(self, tmp_path):
+        events = self._five()
+        _report(events, FakeGh(), tmp_path)
+        fresh = [_event(function=f"new_{i}") for i in range(MAX_NEW_ISSUES_PER_RUN)]
+        outcome = _report(fresh + events[MAX_NEW_ISSUES_PER_RUN:], FakeGh(), tmp_path)
+        assert outcome.filed == MAX_NEW_ISSUES_PER_RUN  # the fresh cohort spent the cap
+        assert outcome.deferred == 2
+        deferred = [r for r in _memory(tmp_path) if r["action"] == "deferred"]
+        assert len(deferred) == 2  # one per fingerprint, not one per run
 
 
 class TestDedup:

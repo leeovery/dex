@@ -281,7 +281,9 @@ def _render_outcome(outcome: issues.FilerOutcome, *, fp: str, note: str | None) 
             "upstream — no new record written"
         )
     text = "; ".join(outcome.notes)
-    if note is not None and (outcome.filed or outcome.commented or outcome.recorded):
+    if note is not None and (
+        outcome.filed or outcome.commented or outcome.recorded or outcome.deferred
+    ):
         text += " · note kept in state/issue-reports.jsonl (local only — the owner forwards it)"
     return text
 

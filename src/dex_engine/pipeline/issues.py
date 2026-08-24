@@ -11,7 +11,10 @@ go through :func:`file_reports`: the same repo, dedup arithmetic, local
 memory, rate limit and soft edge. The ``report_issues`` gate stops
 upstream filing only — a gated report still lands in the local memory as
 a ``filed: false`` record, which dedupe treats like any other, so turning
-the gate on later never auto-refiles old observations.
+the gate on later never auto-refiles old observations. The rate limit
+likewise caps upstream filings only: a capped report is recorded locally
+as ``action: deferred`` — the one record the re-spam guard ignores, so
+the observation is never lost and files the next time it is seen.
 
 Everything the exception path sends is allowlisted: engine version,
 command, kind/format enums, error class, errno where present,
@@ -62,7 +65,10 @@ __all__ = [
 ENGINE_REPO = "leeovery/dex"
 
 # Rate limit: a run that suddenly errors everywhere must not flood the
-# tracker — three distinct new bugs is signal enough for one run.
+# tracker — three distinct new bugs is signal enough for one run. It caps
+# UPSTREAM filings only: local memory records always write (per-run and
+# per-engine fingerprint dedupe already bounds their growth), because a
+# cap on the local record silently dropped every observation past it.
 MAX_NEW_ISSUES_PER_RUN = 3
 
 # Local memory: what this instance filed or commented — re-spam
@@ -142,12 +148,15 @@ class FilerOutcome:
     """What the filer did this run — feeds the run report.
 
     ``recorded`` counts the gate-off outcomes: reports written to the
-    local memory only, with nothing sent upstream.
+    local memory only, with nothing sent upstream. ``deferred`` counts
+    the rate-limited ones — recorded locally this run, eligible to file
+    the next time they are observed.
     """
 
     filed: int = 0
     commented: int = 0
     recorded: int = 0
+    deferred: int = 0
     notes: list[str] = field(default_factory=list)
 
 
@@ -210,10 +219,21 @@ def fingerprint(event: ErrorEvent) -> str:
 # ---------------------------------------------------------------------------
 
 
+# The one action that never suppresses a future filing. "recorded" is the
+# owner's choice not to file (report_issues: false) and suppresses forever;
+# "deferred" is THIS RUN's rate limit, so the observation stays eligible
+# the next time it is seen. Distinguished by action, not by a second flag:
+# both are `filed: false`, and the difference is what the record MEANS.
+_DEFERRED = "deferred"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _MemoryRecord:
     fingerprint: str
-    action: str  # "filed" | "commented" | "recorded" (gate off: local only)
+    # "filed" | "commented" | "recorded" (gate off: local only, never
+    # refiled) | "deferred" (rate-limited this run: local only, refiles
+    # when the observation recurs)
+    action: str
     engine: str
     date: str
     # Whether anything reached GitHub for this record. False is the
@@ -396,15 +416,21 @@ class _Filer:
     filed: int = 0
     commented: int = 0
     recorded: int = 0
+    deferred: int = 0
     notes: list[str] = field(default_factory=list)
 
     def handle(self, filable: Filable) -> None:
         fp = filable.fingerprint
         if any(
-            record.fingerprint == fp and record.engine == self.engine_version
+            record.fingerprint == fp
+            and record.engine == self.engine_version
+            and record.action != _DEFERRED
             for record in self.memory
         ):
-            return  # already reported at this engine version (the re-spam guard)
+            # Already reported at this engine version — the re-spam guard.
+            # A deferred record is the one exception: it says "rate-limited
+            # that run", never "settled", so the observation stays eligible.
+            return
         if not self.enabled:
             self._record_local(filable)
             return
@@ -459,7 +485,8 @@ class _Filer:
 
     def _file(self, filable: Filable, *, regression_of: int | None) -> None:
         if self._rate_limited():
-            return  # the rate limit; the fingerprint retries next run
+            self._defer(filable)
+            return
         out = self.gh(
             [
                 "issue",
@@ -479,9 +506,12 @@ class _Filer:
         self.notes.append(f"filed engine issue {label}: {filable.summary}")
 
     def _record_local(self, filable: Filable) -> None:
-        """The gate-off outcome: the memory record, and nothing upstream."""
-        if self._rate_limited():
-            return  # any record spends the per-run budget; the rest retry next run
+        """The gate-off outcome: the memory record, and nothing upstream.
+
+        Never rate-limited: the cap protects the shared tracker, and a
+        local record costs nobody anything — capping it silently dropped
+        every observation past the third in a gate-off run.
+        """
         self.recorded += 1
         self._remember(filable, action="recorded", issue=None, filed=False)
         self.notes.append(
@@ -489,9 +519,32 @@ class _Filer:
             "(report_issues: false), nothing filed upstream"
         )
 
+    def _defer(self, filable: Filable) -> None:
+        """The rate-limited outcome: recorded locally, eligible again next run.
+
+        The record is ``action: deferred`` — the one action the re-spam
+        guard ignores — so the observation is not lost AND not settled: it
+        files the next time it is seen, budget allowing. At most one
+        deferred record per (fingerprint, engine): a second deferral of
+        the same observation adds nothing but a line.
+        """
+        self.deferred += 1
+        already = any(
+            record.fingerprint == filable.fingerprint
+            and record.engine == self.engine_version
+            and record.action == _DEFERRED
+            for record in self.memory
+        )
+        if not already:
+            self._remember(filable, action=_DEFERRED, issue=None, filed=False)
+        self.notes.append(
+            f"rate limit reached ({MAX_NEW_ISSUES_PER_RUN} new issues per run) — "
+            f"{filable.summary} recorded locally; it files when next observed"
+        )
+
     def _rate_limited(self) -> bool:
-        """Whether this run's new-report budget is spent — any record counts."""
-        return self.filed + self.recorded >= MAX_NEW_ISSUES_PER_RUN
+        """Whether this run's upstream budget is spent — filings alone count."""
+        return self.filed >= MAX_NEW_ISSUES_PER_RUN
 
     def _remember(
         self, filable: Filable, *, action: str, issue: int | None, filed: bool = True
@@ -529,7 +582,9 @@ def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
 
     Dedup'd (local memory first, then a title search; open issues take a
     seen-again comment, closed ones stay silent unless the recurrence is
-    on a newer engine), rate-limited, remembered in
+    on a newer engine), rate-limited upstream — a capped filing is
+    recorded locally as deferred and stays eligible for the next run it
+    is observed on; local records themselves always write — remembered in
     ``state/issue-reports.jsonl``, and never fatal.
 
     The gate stops UPSTREAM filing only: with ``enabled`` false, ``gh``
@@ -571,7 +626,11 @@ def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
         # memory line. Never fatal — noted, and the run continues.
         filer.notes.append(f"issue filing failed ({scrub(str(e))}) — run continues")
     return FilerOutcome(
-        filed=filer.filed, commented=filer.commented, recorded=filer.recorded, notes=filer.notes
+        filed=filer.filed,
+        commented=filer.commented,
+        recorded=filer.recorded,
+        deferred=filer.deferred,
+        notes=filer.notes,
     )
 
 
