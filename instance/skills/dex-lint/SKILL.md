@@ -43,7 +43,11 @@ reference at the step that names it, not before.
 7. **Re-apply `wiki/pins.md`** (the owner's hand-corrections) after any
    regeneration — pins always win.
 
-8. **Log, push, report.** Append a `wiki/log.md` line — `## [YYYY-MM-DD]
+8. **Compact.** `bin/dex enrich compact` — the ledger is append-only,
+   so compact is what settles superseded lines and union merges, and
+   the health check is its home: no other operating surface runs it.
+
+9. **Log, push, report.** Append a `wiki/log.md` line — `## [YYYY-MM-DD]
    lint | <what the check found>`. The op word is `lint` exactly: dex-run
    reads this line to decide whether a health check is due. Commit and
    push (a local-only instance, with no origin remote, commits without

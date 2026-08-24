@@ -636,7 +636,10 @@ Files:
 
 Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
-union merges). Superseded lines until then are the audit trail.
+union merges). Superseded lines until then are the audit trail. Compaction's
+operating home is the health check: the dex-lint skill runs `enrich compact`
+as a step, because no other operating surface ever schedules it and an
+instance would otherwise never compact.
 
 **Latest is by write time, not by file position.** Git's union driver
 concatenates ours-then-theirs, so after two machines merge, the last line of a
