@@ -2272,6 +2272,19 @@ and the outcome union settles several of these on its way past.
 - **Streaming transport reads.** An unbounded `response.read()` buffers a
   whole enclosure in memory; enforce the §7 media cap in-stream instead, so
   an oversize download is refused while it arrives rather than after.
+  **Done**: the transport takes the caller's byte ceiling (`limit`) and
+  reads the body in chunks to at most one byte past it, so `len(body) >
+  limit` still fires while the rest is never drawn; `fetch_classified`
+  carries the ceiling through, and the media stage passes the §7 10MB cap
+  on its GET — an oversize body behind a lying or absent Content-Length
+  now costs ~10MB of memory, not the body. Under-ceiling bodies are
+  byte-identical and the over-ceiling outcome is the same `skipped` with
+  the same reason. The ceiling applies exactly where one exists: the
+  transcribe drain's enclosure GET stays whole-body by design (a 150MB
+  episode is the work, and its bytes go to the audio cache), as do
+  inbox's asset download (size known from the API and verified after; the
+  capture must materialize whole) and the JSON API reads — none of these
+  has a ceiling to enforce.
 - **A per-item fetched-count cache.** The cap check recounts the item's
   entries per admission, which is quadratic in the item's ledger.
 - **One long-lived append handle for the ledger.**

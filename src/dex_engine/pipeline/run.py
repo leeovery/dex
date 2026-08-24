@@ -1300,7 +1300,7 @@ class _Drain:
                 reason="media exceeds 10MB ceiling (declared Content-Length)",
             )
             return
-        outcome = fetch_classified(self.ctx.transport, entry.url)
+        outcome = fetch_classified(self.ctx.transport, entry.url, limit=MEDIA_MAX_BYTES)
         if isinstance(outcome, FetchFailure):
             failure = outcome.classification
             self._media_failure(entry, failure.status, failure.reason)
@@ -1308,6 +1308,8 @@ class _Drain:
         response = outcome
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
+            # The ceiling rides the fetch, so the transport stopped reading
+            # one byte past it — the over-ceiling body was never held whole.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
         owner = self.owner_of(entry)

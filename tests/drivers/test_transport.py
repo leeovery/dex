@@ -10,7 +10,9 @@ import contextlib
 import http.client
 import socket
 import threading
+import urllib.request
 from collections.abc import Iterator
+from typing import Self
 
 import pytest
 
@@ -208,3 +210,66 @@ class TestNonAsciiUrls:
         # containment can park on, never the codec's own words.
         with pytest.raises(ValueError, match="is not encodable for DNS"):
             urllib_transport("https://" + "ü" * 200 + ".example/")
+
+
+class _ChunkedResponse:
+    """A 200 body served in chunks, counting every byte the caller draws.
+
+    ``read(n)`` answers short (at most one chunk), the way a socket does;
+    ``read()`` with no argument serves everything left in one buffer — the
+    whole-body regression this fake exists to expose.
+    """
+
+    status = 200
+
+    def __init__(self, total: int, chunk: int = 8192) -> None:
+        self.total = total
+        self.chunk = chunk
+        self.served = 0
+        self.headers = {"Content-Type": "audio/mpeg", "Content-Length": str(total)}
+
+    def read(self, n: int | None = None) -> bytes:
+        left = self.total - self.served
+        take = left if n is None else min(n, self.chunk, left)
+        self.served += take
+        return b"m" * take
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class TestBoundedBodyRead:
+    """A caller's ceiling bounds what the transport ever draws or holds."""
+
+    LIMIT = 1_000
+
+    def _serve(self, monkeypatch, total: int) -> _ChunkedResponse:
+        response = _ChunkedResponse(total)
+        monkeypatch.setattr(
+            urllib.request,
+            "urlopen",
+            lambda request, timeout: response,  # noqa: ARG005 — one canned response
+        )
+        return response
+
+    def test_an_over_ceiling_body_stops_one_byte_past_the_limit(self, monkeypatch):
+        response = self._serve(monkeypatch, total=self.LIMIT * 40)
+        fetched = urllib_transport("https://cdn.example.test/huge.mp3", limit=self.LIMIT)
+        # One byte past the ceiling: len(body) > limit still fires for the
+        # caller's check, and the other 39,000 bytes were never requested —
+        # the memory cost of an oversize body is the ceiling, not the body.
+        assert len(fetched.body) == self.LIMIT + 1
+        assert response.served == self.LIMIT + 1
+
+    def test_a_body_at_the_ceiling_arrives_byte_identical(self, monkeypatch):
+        self._serve(monkeypatch, total=self.LIMIT)
+        fetched = urllib_transport("https://cdn.example.test/ok.mp3", limit=self.LIMIT)
+        assert fetched.body == b"m" * self.LIMIT
+
+    def test_no_ceiling_still_reads_the_body_whole(self, monkeypatch):
+        self._serve(monkeypatch, total=self.LIMIT * 3)
+        fetched = urllib_transport("https://cdn.example.test/page")
+        assert fetched.body == b"m" * (self.LIMIT * 3)

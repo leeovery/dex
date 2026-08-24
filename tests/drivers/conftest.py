@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import dataclasses
 import json
 import re
 import socket
@@ -58,14 +59,21 @@ def json_response(payload: object, *, status: int = 200) -> HttpResponse:
 
 
 class FakeTransport:
-    """URL -> canned response (or exception to raise). Unknown URLs are loud."""
+    """URL -> canned response (or exception to raise). Unknown URLs are loud.
+
+    A caller's ``limit`` is honored the way the real transport honors it —
+    the body truncated one byte past the ceiling — and recorded per call in
+    ``limits`` so a test can pin which fetches carried one.
+    """
 
     def __init__(self, responses: Mapping[str, HttpResponse | Exception]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, str]] = []
+        self.limits: list[int | None] = []
 
-    def __call__(self, url: str, *, method: str = "GET") -> HttpResponse:
+    def __call__(self, url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
         self.calls.append((method, url))
+        self.limits.append(limit)
         if url not in self.responses:
             if method == "HEAD":
                 # Detection's sniff HEADs unknown catch-all URLs; an
@@ -75,6 +83,8 @@ class FakeTransport:
         outcome = self.responses[url]
         if isinstance(outcome, Exception):
             raise outcome
+        if limit is not None and len(outcome.body) > limit:
+            return dataclasses.replace(outcome, body=outcome.body[: limit + 1])
         return outcome
 
 

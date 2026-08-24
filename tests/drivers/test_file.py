@@ -184,7 +184,7 @@ class TestGithubBlobs:
     URL = "https://github.com/acme/pipeline-kit/blob/main/docs/whitepaper.pdf"
     CONTENTS = ("api", "repos/acme/pipeline-kit/contents/docs/whitepaper.pdf?ref=main")
 
-    def refuse_transport(self, url, *, method="GET"):
+    def refuse_transport(self, url, *, method="GET", limit=None):  # noqa: ARG002 — refuses whatever the bound
         raise AssertionError(f"a blob URL must never be fetched over HTTP ({method} {url})")
 
     def test_a_blob_pdf_extracts_through_the_gh_seam(self):

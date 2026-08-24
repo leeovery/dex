@@ -1164,6 +1164,24 @@ class TestMediaStage:
         assert entry.status is Status.SKIPPED
         assert entry.reason == "media exceeds 10MB ceiling"
 
+    def test_the_media_get_carries_the_byte_ceiling(self, instance):
+        # The ceiling rides the fetch so the transport stops reading one
+        # byte past it — a GET without it buffers a lying server's whole
+        # body before the size check ever runs.
+        write_item(instance)
+        img = HttpResponse(status=200, content_type="image/png", body=b"p")
+        transport = FakeTransport({self.IMG1: img})
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=self.media_fetch([self.IMG1])), transport=transport
+        )
+        run_mod.run(ctx)
+        bounded = [
+            limit
+            for (method, url), limit in zip(transport.calls, transport.limits, strict=True)
+            if url == self.IMG1 and method == "GET"
+        ]
+        assert bounded == [run_mod.MEDIA_MAX_BYTES]
+
     def test_transient_media_failure_is_blocked_and_redrains_without_a_driver(self, instance):
         write_item(instance)
         outage = HttpResponse(status=503, content_type="text/html", body=b"")
@@ -3170,7 +3188,7 @@ class TestRedetection:
         blocked = HttpResponse(status=403, content_type="text/html", body=b"")
 
         class MethodAware:
-            def __call__(self, url, *, method="GET"):  # noqa: ARG002 — routes on method alone
+            def __call__(self, url, *, method="GET", limit=None):  # noqa: ARG002 — routes on method alone
                 return blocked if method == "HEAD" else pdf
 
         write_item(instance, urls=[self.PDF_URL])
