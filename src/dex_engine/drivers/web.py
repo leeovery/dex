@@ -8,7 +8,7 @@ it matches everything, canonicalizes by the generic rules, and reads every
 page it is handed as an article.
 """
 
-from dex_engine.pipeline.types import Kind, Result, WorkUnit
+from dex_engine.pipeline.types import Kind, Outcome, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
 from .article import HtmlExtract, fetch_article, trafilatura_extract
@@ -46,6 +46,6 @@ class WebDriver:
         """The generic canonical form (pipeline/urls.py rules)."""
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Fetch and extract one page, wayback fallback on fetch failure."""
         return fetch_article(self._transport, self._extract, unit.url)

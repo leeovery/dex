@@ -22,7 +22,7 @@ from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import urllib_transport
 from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
-from dex_engine.pipeline.types import Format, Kind, Missing, Need, Redetected, Status
+from dex_engine.pipeline.types import Content, Format, Kind, Missing, Need, Redetected
 from tests.drivers.conftest import body_of, content_of, make_unit, needs_of
 
 pytestmark = pytest.mark.live
@@ -42,8 +42,7 @@ class TestFxtwitterShape:
 class TestArxivShape:
     def test_the_export_api_still_speaks_atom(self):
         driver = PaperDriver(transport=urllib_transport)
-        result = driver.fetch(make_unit("https://arxiv.org/abs/1706.03762", Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver.fetch(make_unit("https://arxiv.org/abs/1706.03762", Kind.PAPER)))
         assert "Attention" in str(result.meta["title"])
         assert "## Abstract" in body_of(result)
 
@@ -138,8 +137,7 @@ class TestPageAudioIsNotAnEpisode:
         # Real markup, because this is exactly what a fixture cannot pin.
         driver = WebDriver(transport=urllib_transport)
         result = driver.fetch(make_unit("https://en.wikipedia.org/wiki/Podcast", Kind.WEB))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)  # extracted, never a Redetected bounce
         assert len(body_of(result)) > 10_000
 
 

@@ -18,8 +18,8 @@ demoted to extraction only, with ``include_links=True`` because the old
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
-``manual`` (reason ``thin-extraction``), never ``dead`` — our tooling can't
-read it; that doesn't mean it's gone.
+``Unusable`` (evidence ``thin-extraction``), never ``Missing`` — our
+tooling can't read it; that doesn't mean it's gone.
 
 A 200 whose BODY is a document (magic bytes say PDF/OOXML/…, or the
 content type maps to an extractable format) is neither thin nor article
@@ -30,11 +30,11 @@ redetection to ``file`` work and the run layer re-routes the unit — never
 The same mid-fetch discovery carries indie podcast episode pages to the
 ``podcast`` driver, decided on content rather than on URL patterns that
 cannot tell ``/feed`` the blog from ``/feed`` the show. What counts as
-evidence is narrow, because the two mistakes cost differently: handing an
-article to the podcast driver parks it ``waiting: transcribe`` with an
-EMPTY body — the article is never extracted and its links are never
-harvested — while handing an episode page to ``web`` merely stores its show
-notes. So an episode is a page whose ``og:audio`` names the audio as the
+an episode signal is narrow, because the two mistakes cost differently:
+handing an article to the podcast driver parks it awaiting transcription
+with an EMPTY body — the article is never extracted and its links are
+never harvested — while handing an episode page to ``web`` merely stores
+its show notes. So an episode is a page whose ``og:audio`` names the audio as the
 page's own object, or one carrying a player and no body worth extracting.
 An ``<audio>`` element beside a real article is a read-aloud widget or a
 media sample, and the article wins.
@@ -53,7 +53,7 @@ from dex_engine.pipeline.classify import (
     Classification,
 )
 from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
-from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status
+from dex_engine.pipeline.types import Content, Format, Kind, Outcome, Redetected, Unusable
 
 from .audio import audio_enclosure
 from .fetch import FetchFailure, fetch_classified
@@ -106,7 +106,7 @@ class _Page:
     content_type: str = ""
 
 
-def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Result:
+def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outcome:
     """Fetch and extract one page as an article, wayback fallback on failure.
 
     Args:
@@ -115,24 +115,21 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Resul
         url: The page URL.
 
     Returns:
-        The article result: done with body and media, a re-detection for a
-        body that is not web content, a thin-extraction park, or the
-        classified fetch failure with the wayback rescue's fate noted.
+        What the fetch found: Content with body and media, a Redetected
+        for a body that is not web content, a thin-extraction Unusable,
+        or the classified fetch failure with the wayback rescue's fate
+        noted on its evidence.
     """
     page = _fetch_page(transport, url)
     if isinstance(page, _Page):
         fmt = _document_format(page)
         if fmt is not None:
             # Detection said web but the body is a document — a HEAD
-            # lied or was inconclusive. Re-route, never thin-manual.
-            return Result(
-                status=Status.QUEUED,
-                meta={},
-                redetect=Redetection(kind=Kind.FILE, format=fmt),
-            )
+            # lied or was inconclusive. Re-route, never thin-unusable.
+            return Redetected(kind=Kind.FILE, format=fmt)
         enclosure = audio_enclosure(page.html, url)
         if enclosure is not None and enclosure.declared:
-            return _podcast_redetection()
+            return Redetected(kind=Kind.PODCAST)
         extracted = _extracted(extract, page.html, base_url=url, allow_media=True)
         if extracted is not None:
             return extracted
@@ -140,12 +137,8 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Resul
             # A player and nothing worth extracting: the audio is what
             # the page is. Ordering is the whole rule — an article's
             # read-aloud widget was reached above, by its own body.
-            return _podcast_redetection()
-        return Result(
-            status=Status.MANUAL,
-            meta=_title_meta(page.html),
-            reason=THIN_EXTRACTION_REASON,
-        )
+            return Redetected(kind=Kind.PODCAST)
+        return Unusable(evidence=THIN_EXTRACTION_REASON)
     return _wayback_fallback(transport, extract, url, page)
 
 
@@ -158,18 +151,18 @@ def _fetch_page(transport: Transport, url: str) -> _Page | Classification:
 
 def _extracted(
     extract: HtmlExtract, html: str, *, base_url: str, allow_media: bool
-) -> Result | None:
-    """A done Result when extraction is substantial, else None."""
+) -> Content | None:
+    """The page as Content when extraction is substantial, else None."""
     body = extract(html)
     if body is None or len(body) < MIN_SUBSTANTIAL_CHARS:
         return None
     media = [image] if allow_media and (image := _og_image(html, base_url)) else []
-    return Result(status=Status.DONE, meta=_title_meta(html), body=body, media=media)
+    return Content(meta=_title_meta(html), body=body, media=media)
 
 
 def _wayback_fallback(
     transport: Transport, extract: HtmlExtract, url: str, failure: Classification
-) -> Result:
+) -> Outcome:
     """Try the wayback machine; on any rescue failure, the direct truth stands."""
     snapshot_url, note = _wayback_snapshot(transport, url)
     if snapshot_url is not None:
@@ -181,15 +174,15 @@ def _wayback_fallback(
                 meta = dict(rescued.meta)
                 meta["via"] = "wayback"
                 meta["snapshot"] = snapshot_url
-                return Result(status=Status.DONE, meta=meta, body=rescued.body)
+                return Content(meta=meta, body=rescued.body)
             note = "wayback snapshot extraction was thin"
         else:
             note = f"wayback fetch failed: {page.reason}"
     if note is not None:
         # The rescue's fate is appended context on the direct truth —
-        # the classification's own status and reason still decide.
+        # the classification's own finding and evidence still decide.
         failure = replace(failure, reason=f"{failure.reason}; {note}")
-    return failure.to_result()
+    return failure.to_outcome()
 
 
 def _wayback_snapshot(transport: Transport, url: str) -> tuple[str | None, str | None]:
@@ -211,11 +204,6 @@ def _wayback_snapshot(transport: Transport, url: str) -> tuple[str | None, str |
     if not isinstance(closest, dict) or not closest.get("available") or not closest.get("url"):
         return None, "no wayback snapshot"
     return closest["url"], None
-
-
-def _podcast_redetection() -> Result:
-    """Hand the unit to the podcast driver — identity only, no outputs."""
-    return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST))
 
 
 def _document_format(page: _Page) -> Format | None:

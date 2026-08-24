@@ -5,9 +5,9 @@ from hypothesis import strategies as st
 
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Content, Kind, Missing, Refused
 from dex_engine.pipeline.urls import work_hash
-from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
+from tests.drivers.conftest import FakeTransport, body_of, content_of, fixture_text, make_unit
 
 ABS_URL = "https://arxiv.org/abs/2408.12345"
 API_URL = "https://export.arxiv.org/api/query?id_list=2408.12345"
@@ -219,8 +219,7 @@ class TestArxiv:
             extract=long_extract,
         )
         canonical = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
-        result = driver.fetch(make_unit(canonical, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver.fetch(make_unit(canonical, Kind.PAPER)))
         assert result.meta["arxiv_id"] == "2408.12345"
 
     def test_an_old_style_id_fetches_through_the_api_not_the_article_route(self):
@@ -235,14 +234,12 @@ class TestArxiv:
             extract=long_extract,
         )
         canonical = driver.canonical("https://arxiv.org/abs/math.NA/0309285v2")
-        result = driver.fetch(make_unit(canonical, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver.fetch(make_unit(canonical, Kind.PAPER)))
         assert result.meta["arxiv_id"] == "math/0309285"
 
     def test_abstract_and_full_text_sections(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
-        result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER)))
         body = body_of(result)
         assert body.startswith("## Abstract")
         assert "the work queue rather than a receipt log" in body
@@ -251,7 +248,7 @@ class TestArxiv:
 
     def test_meta_title_collapsed_published_date_and_id(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("x")}
-        meta = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER)).meta
+        meta = content_of(driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))).meta
         assert meta["title"] == (
             "Ledger-Driven Ingestion: Honest Failure Classification for Long-Lived Corpora"
         )
@@ -265,7 +262,7 @@ class TestArxiv:
             AR5IV_URL: html_page("<html>rendered</html>"),
         }
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "## Full text" in body_of(result)
 
     def test_thin_full_text_degrades_to_abstract_only_with_note(self):
@@ -274,27 +271,28 @@ class TestArxiv:
             HTML_URL: html_page("<html>chrome</html>"),
             AR5IV_URL: html_page("<html>chrome</html>"),
         }
-        result = driver_for(responses, extract=thin_extract).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(
+            driver_for(responses, extract=thin_extract).fetch(make_unit(ABS_URL, Kind.PAPER))
+        )
         assert result.meta["note"] == "abstract only"
         assert "## Full text" not in body_of(result)
 
     def test_unknown_id_is_dead(self):
         responses = {API_URL: xml_response(EMPTY_FEED)}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DEAD
-        assert "no such id" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "no such id" in result.evidence
 
     def test_api_failures_are_classified(self):
         responses = {API_URL: xml_response("busy", status=503)}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
 
     def test_unparseable_feed_is_blocked(self):
         responses = {API_URL: xml_response("<feed><unclosed")}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.BLOCKED
-        assert "unparseable XML" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "unparseable XML" in result.evidence
 
 
 class TestArticleRoute:
@@ -306,4 +304,4 @@ class TestArticleRoute:
         driver = PaperDriver(transport=transport, extract=long_extract)
         result = driver.fetch(make_unit(url, Kind.PAPER))
         assert ("GET", url) in transport.calls
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)

@@ -33,8 +33,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from dex_engine.pipeline.classify import Classification
-from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
+from dex_engine.pipeline.types import Content, Kind, Missing, Outcome, Refused, Unusable, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .article import HtmlExtract, fetch_article, trafilatura_extract
@@ -108,17 +107,17 @@ class PaperDriver:
             return f"https://{_ARXIV_HOST}/abs/{arxiv_id}"
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Arxiv ids go through the API; everything else reads as an article."""
         arxiv_id = _arxiv_id(unit.url)
         if arxiv_id is None:
             return fetch_article(self._transport, self._extract, unit.url)
         return self._fetch_arxiv(arxiv_id)
 
-    def _fetch_arxiv(self, arxiv_id: str) -> Result:
+    def _fetch_arxiv(self, arxiv_id: str) -> Outcome:
         entry = self._fetch_feed_entry(arxiv_id)
-        if isinstance(entry, Classification):
-            return entry.to_result()
+        if not isinstance(entry, _Entry):
+            return entry
         meta: dict[str, str | int | None] = {
             "title": entry.title,
             "published": entry.published,
@@ -131,24 +130,20 @@ class PaperDriver:
         else:
             meta["note"] = "abstract only"
         if not body:
-            return Result(
-                status=Status.MANUAL, meta=meta, reason="arxiv entry had no abstract or full text"
-            )
-        return Result(status=Status.DONE, meta=meta, body=body)
+            return Unusable(evidence="arxiv entry had no abstract or full text")
+        return Content(meta=meta, body=body)
 
-    def _fetch_feed_entry(self, arxiv_id: str) -> "_Entry | Classification":
+    def _fetch_feed_entry(self, arxiv_id: str) -> "_Entry | Outcome":
         outcome = fetch_classified(self._transport, _ARXIV_API + arxiv_id)
         if isinstance(outcome, FetchFailure):
-            return outcome.classification
+            return outcome.classification.to_outcome()
         try:
             feed = ET.fromstring(outcome.text())  # noqa: S314 — arxiv's own API; no DTD/entity risk in Atom
         except ET.ParseError:
-            return Classification(
-                status=Status.BLOCKED, reason="arxiv API returned unparseable XML"
-            )
+            return Refused(evidence="arxiv API returned unparseable XML")
         entry = feed.find(f"{_ATOM}entry")
         if entry is None:
-            return Classification(status=Status.DEAD, reason=f"arxiv: no such id ({arxiv_id})")
+            return Missing(evidence=f"arxiv: no such id ({arxiv_id})")
         published = entry.findtext(f"{_ATOM}published") or ""
         return _Entry(
             title=_collapse(entry.findtext(f"{_ATOM}title")),

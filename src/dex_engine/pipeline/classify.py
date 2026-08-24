@@ -18,7 +18,7 @@ import ssl
 import urllib.error
 from dataclasses import dataclass
 
-from .types import Missing, Refused, Result, Status
+from .types import Missing, Refused, Status
 
 __all__ = [
     "MIN_SUBSTANTIAL_CHARS",
@@ -87,17 +87,6 @@ class Classification:
 
     status: Status
     reason: str
-
-    def to_result(self) -> Result:
-        """This classification as the driver result it means — the ONE conversion.
-
-        Where the classification layer meets the driver-result layer:
-        exactly the classified status and its stated reason, nothing
-        invented, nothing dropped. Seven call sites used to spell this out
-        by hand, which is six places a future change to what a
-        classification means as a result would have to land.
-        """
-        return Result(status=self.status, meta={}, reason=self.reason)
 
     def to_outcome(self) -> Missing | Refused:
         """This classification as the driver outcome it reports — the ONE conversion.
