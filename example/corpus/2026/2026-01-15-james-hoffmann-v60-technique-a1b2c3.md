@@ -8,7 +8,7 @@ urls:
   - https://www.youtube.com/watch?v=example
 kinds: [youtube]
 status: enriched
-enrichment: [youtube-a1b2c3.md]
+enrichment: [youtube-4f80d1.md]
 ---
 
 **<owner>** (2026-01-15):
