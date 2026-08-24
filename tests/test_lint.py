@@ -181,6 +181,47 @@ class TestMalformedEntityMembers:
         assert "ENTITY MEMBERS FAILURE" not in outcome.report
 
 
+class TestGhostMembers:
+    """A member id no corpus file answers for is drift the report names.
+
+    `bin/dex exclude` deletes the item and its state, but the taxonomy
+    and entity-members lists are session-owned judgment no verb edits —
+    the excluded id sat in them forever, unreported.
+    """
+
+    def test_an_excluded_id_in_uncategorized_is_a_row(self, instance):
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": [ITEM]}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0  # drift, not a hard failure
+        assert "ghost members" in outcome.report
+        assert f"**{ITEM}** — in topic 'uncategorized-shares'" in outcome.report
+
+    def test_an_excluded_id_in_a_topic_is_a_row(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"**{ITEM}** — in topic 'brewing'" in outcome.report
+
+    def test_an_entity_member_with_no_corpus_file_is_a_row(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+        (instance.state_dir / "entity-members.json").write_text(f'{{"anthropic": ["{ITEM}"]}}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"**{ITEM}** — in entity 'anthropic'" in outcome.report
+
+    def test_live_ids_are_silent(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_index(instance, "")
+        (instance.state_dir / "entity-members.json").write_text(f'{{"anthropic": ["{ITEM}"]}}')
+        outcome = lint(instance)
+        assert "ghost members (id has no corpus file" in outcome.report  # the check ran
+        assert f"**{ITEM}** — in" not in outcome.report
+
+
 class TestTornPassRecord:
     """A torn trailing line in state/passes.jsonl is a lint FINDING, never a bare exit."""
 

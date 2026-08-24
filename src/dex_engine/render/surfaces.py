@@ -999,6 +999,7 @@ _HEALTH_OPTIONAL = frozenset(
         "shortid_citations",
         "orphans",
         "unplaced",
+        "ghost_members",
         "unindexed",
         "ghost_index",
         "stale_pages",
@@ -1058,6 +1059,9 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "shortid_citations": [{"page": str, "token": str}],
           "orphans": [str],
           "unplaced": [str],   # cited, but in no topic's items and unledgered
+          # a taxonomy topic's or entity's member id with no corpus file —
+          # `where` names the list holding it
+          "ghost_members": [{"item": str, "where": str}],
           "unindexed": [str],
           "ghost_index": [str],
           "stale_pages": [{"page": str, "newer": int}],
@@ -1208,6 +1212,15 @@ def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> lis
     )
     blocks += _health_names(
         surface, payload, "unplaced", "items a page cites but no taxonomy topic records"
+    )
+    blocks += _health_pairs(
+        surface,
+        payload,
+        "ghost_members",
+        "ghost members (id has no corpus file — remove it from the named list; "
+        "for an excluded item, that is the whole repair)",
+        ("item", "where"),
+        lambda i, w: f"{kernel.bold(i)} — in {w}",
     )
     blocks += _health_names(surface, payload, "unindexed", "pages missing from index")
     blocks += _health_names(surface, payload, "ghost_index", "ghost index entries")

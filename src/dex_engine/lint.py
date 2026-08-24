@@ -5,8 +5,10 @@ Checks:
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
   citation everywhere, index included), coverage orphans and their cited
-  complement (items pages cite that no taxonomy topic records), index
-  consistency,
+  complement (items pages cite that no taxonomy topic records), ghost
+  members (a taxonomy topic's or entity's member id with no corpus file —
+  ``exclude`` never edits the session-owned lists, so the id lingers),
+  index consistency,
   stale pages, page item-count drift (frontmatter ``items:`` vs the page's
   MEMBER count — its taxonomy topic's items, or its entity-members list;
   never its citation count), and difflib sentence similarity ("possible restated
@@ -164,6 +166,7 @@ def run_lint(
     scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
 
     ledgered = _uncategorized_items(taxonomy)
+    ghost_members = _ghost_members(taxonomy, entity_members, corpus_ids)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
     # The coverage invariant's other face: a citation is not a placement,
     # so a cited item can still be in no topic's items and off the
@@ -194,6 +197,7 @@ def run_lint(
         "shortid_citations": scan.shortid_citations,
         "orphans": orphans,
         "unplaced": unplaced,
+        "ghost_members": ghost_members,
         "unindexed": unindexed,
         "ghost_index": ghost_index,
         "stale_pages": scan.stale_pages,
@@ -253,6 +257,48 @@ def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     if not isinstance(items, list):
         return set()
     return {item for item in items if isinstance(item, str)}
+
+
+def _ghost_members(
+    taxonomy: dict[str, object],
+    entity_members: dict[str, list[str]],
+    corpus_ids: set[str],
+) -> list[dict[str, str]]:
+    """Member ids in the session-owned lists that no corpus file answers for.
+
+    ``bin/dex exclude`` deletes the item, its enrichment, its digest and
+    its ledger lines — but ``state/taxonomy.json`` and
+    ``state/entity-members.json`` are session-maintained judgment, which
+    no verb edits, so the excluded id sits in a topic's ``items`` (or an
+    entity's member list) forever: counted by every member-count check,
+    read by staleness, resolvable by nothing. One row per (id, list),
+    naming both, so the repair needs no hunt.
+
+    A finding, not a failure: nothing downstream crashes on a ghost
+    member — it is drift. The repair is the session's: remove the id from
+    the named list, and where the item was excluded that is the whole
+    repair. Malformed shapes contribute nothing here — they are their own
+    loud findings.
+    """
+    rows: list[dict[str, str]] = []
+    topics = taxonomy.get("topics", {})
+    if isinstance(topics, dict):
+        for name, topic in sorted(topics.items()):
+            items = topic.get("items", []) if isinstance(topic, dict) else []
+            if not isinstance(items, list):
+                continue
+            rows += [
+                {"item": item, "where": f"topic {name!r}"}
+                for item in items
+                if isinstance(item, str) and item not in corpus_ids
+            ]
+    for name, members in sorted(entity_members.items()):
+        rows += [
+            {"item": member, "where": f"entity {name!r}"}
+            for member in members
+            if member not in corpus_ids
+        ]
+    return rows
 
 
 def _placed_items(taxonomy: dict[str, object]) -> set[str]:
