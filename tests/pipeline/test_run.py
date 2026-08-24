@@ -1940,7 +1940,7 @@ class TestStatusReport:
         ctx = make_ctx(instance, FakeDriver())
         assert "Nothing to report from this run" in run_mod.run(ctx)  # nothing drainable
         report = run_mod.status_report(ctx)
-        assert "### Needs you — 1 entry the engine has given up on" in report
+        assert "### Needs you — 1 entry only you can move" in report
         assert ITEM in report
         assert URL in report
         assert "no extractor for this format" in report

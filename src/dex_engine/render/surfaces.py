@@ -301,9 +301,10 @@ def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
     if not rows:
         return ""
     if mine:
-        title = (
-            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} the engine has given up on"
-        )
+        # Not "given up on": a resting row is here because the owner's
+        # config paused it, not because the engine surrendered. What is
+        # true of every row in this section is the ownership itself.
+        title = f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} only you can move"
     else:
         # "retries" never agrees with the count: the subject of the clause
         # is the engine, one of it however many entries it holds.

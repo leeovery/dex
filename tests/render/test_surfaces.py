@@ -91,7 +91,7 @@ class TestEnrichReport:
 
     def test_parked_splits_by_who_owns_the_next_action(self):
         out = render("enrich-report", ENRICH_PAYLOAD)
-        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert "### Needs you — 1 entry only you can move" in out
         assert (
             "- **2026-08-18-google-developer-documentation-style-guide-87f21f** · `manual`"
         ) in out
@@ -315,7 +315,7 @@ class TestStatusSurface:
                 ],
             },
         )
-        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert "### Needs you — 1 entry only you can move" in out
         assert "- **2026-05-19-scanned-pdf-87f21f** · `manual`" in out
         assert "↳ no extractor for this format" in out
         assert "↳ https://example.test/scan.pdf" in out
@@ -341,7 +341,7 @@ class TestStatusSurface:
             }
         ]
         out = render("status", {"counts": {"blocked": 1}, "parked": parked})
-        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert "### Needs you — 1 entry only you can move" in out
         assert "Waiting on the engine" not in out
         assert "  ↳ media_fetch is `none` — stays parked until it is turned back on" in out
 
