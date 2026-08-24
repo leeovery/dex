@@ -99,8 +99,9 @@ forward by hand.
 
 Dedup, the `report_issues` gate and failure behaviour match the crash
 filer: the same defect files once and then comments or stays silent;
-`gh` trouble is a stated line in the verb's output and never stops the
-run.
+the gate stops only the upstream filing, and the local record still
+lands (marked `filed: false`) so nothing observed is lost; `gh` trouble
+is a stated line in the verb's output and never stops the run.
 
 ## `bin/dex exclude` — purging out-of-scope items
 
@@ -200,7 +201,7 @@ this file — they propose changes in the run report.
 | `media_fetch` | `none` \| `lead` — media-stage URL downloads |
 | `transcribe_model` | whisper-local size (default `medium`) |
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
-| `report_issues` | file engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`) |
+| `report_issues` | gate on filing engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`). Gates the filing only: the `state/issue-reports.jsonl` record is written either way, `filed` saying which |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
@@ -255,10 +256,14 @@ a malformed record impossible:
   digest` remains the manual re-record).
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
-- `state/issue-reports.jsonl` — what this instance filed/commented
-  upstream `{fingerprint, action, engine, date, issue?, note?}`.
+- `state/issue-reports.jsonl` — what this instance observed and reported
+  `{fingerprint, action, filed, engine, date, issue?, note?}`.
   Written by the issue filer (crash reports) and by `bin/dex issue`
-  (session-observed reports, above); the owner's visible record.
+  (session-observed reports, above); the owner's visible record. The
+  record is written whether or not `report_issues` let the report file
+  upstream — `filed: true|false` says which — and dedupe treats any
+  record as seen, so turning the gate on later never auto-refiles what
+  was observed while it was off.
   `note` exists only on records the issue verb wrote and is the local
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what
