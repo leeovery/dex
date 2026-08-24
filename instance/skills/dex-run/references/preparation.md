@@ -35,6 +35,32 @@ in order:
    same reading `bin/dex inbox` gives its release checks — and skip the
    run's later push steps the same way.
 
+   **A conflicted pull is resolved in this session, never left.** Two
+   machines that both ran since they last synced can conflict, and a
+   tree left mid-merge trips the next run's guard forever, so finish
+   the merge before any other work touches the instance. Resolution is
+   judgment, which is exactly what a session is for: an unattended run
+   performs it the same way, and never stops to ask. Per file class:
+
+   - `state/*.jsonl` merge as a union automatically. Verify no conflict
+     markers remain in them; if any do, the union driver did not run,
+     and the resolution is still the union: keep both sides' lines,
+     markers removed.
+   - `state/taxonomy.json` and `state/entity-members.json` are the two
+     files sessions write directly, so merge them by judgment: the
+     union of both sides' topics, entities and member lists,
+     deduplicated.
+   - A conflicted `state/digests/<id>.md` is re-derived, never
+     hand-spliced: the verb is the writer, so read both sides, write
+     the merged judgment as the payload, and run `bin/dex enrich item
+     digest --file cache/digest.json`.
+   - `wiki/*` is a build artifact: rewrite each conflicted page whole
+     from the merged state (digests and taxonomy), rather than splicing
+     around markers.
+
+   Then commit the resolution with a message that says what it merged,
+   and continue the run.
+
 5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports
    missing auth or any FAIL line, stop and report — in an attended
