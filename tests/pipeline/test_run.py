@@ -1914,6 +1914,28 @@ class TestVerbs:
         child = ledger.load(instance.ledger_path)[work_hash("https://example.test/docs")]
         assert child.parent == work_hash(URL)
 
+    def test_fetch_urls_serves_every_co_claimant_of_a_shared_unit(self, instance):
+        # Seeding hands a shared URL's unit to the first item and the line
+        # names only that one, but every item listing the URL owns it:
+        # resolved as equality with the stored name, only the first
+        # claimant could ever `enrich fetch`, and the second was told it
+        # had no primary work unit — both implied causes false.
+        write_item(instance, ALPHA)
+        write_item(instance, BRAVO)  # lists the same URL; alpha wins the dedupe
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        promotions = (
+            (ALPHA, "https://example.test/a-doc"),
+            (BRAVO, "https://example.test/b-doc"),
+        )
+        for item_id, url in promotions:
+            run_mod.fetch_urls(ctx, item_id, [url])
+            child = ledger.load(instance.ledger_path)[work_hash(url)]
+            assert child.item == item_id
+            assert child.parent == work_hash(URL)  # the shared unit, defaulted
+            assert child.depth == 1
+            assert child.status is Status.DONE
+
     def test_fetch_urls_unknown_item_is_loud(self, instance):
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="unknown corpus item"):

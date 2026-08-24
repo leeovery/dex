@@ -517,8 +517,20 @@ class _Drain:
         old line stays what it is, historical attribution, and no persisted
         line is ever rewritten to heal it.
         """
-        owners = self.owners.get(entry.hash, ())
-        return entry.item if not owners or entry.item in owners else owners[0]
+        owners = self.owners_of(entry)
+        return entry.item if entry.item in owners else owners[0]
+
+    def owners_of(self, entry: LedgerEntry) -> tuple[str, ...]:
+        """Every item the corpus resolves this unit to — never empty.
+
+        The multi-claimant face of :meth:`owner_of`, for membership
+        questions: a URL two items list is owed by BOTH, so "is this item
+        among the unit's claimants" must be asked of the whole tuple —
+        compared against the single-name form it always answered for the
+        first claimant alone, and the second claimant of every shared
+        unit read as owning nothing.
+        """
+        return self.owners.get(entry.hash) or (entry.item,)
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
@@ -2151,11 +2163,18 @@ def fetch_urls(
 def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEntry:
     """The stated parent, or the item's primary unit — the corpus's answer.
 
-    Which units are the item's is asked of the corpus (:meth:`_Drain.owner_of`),
-    never of the line's stored string: a renamed item's primary unit sits in
-    the ledger under the dead id, and scanning the string told its owner the
-    item had no primary work unit — both implied causes false — while
-    demanding a ``--parent`` hash for a unit the ledger held all along.
+    Which units are the item's is asked of the corpus
+    (:meth:`_Drain.owners_of`), never of the line's stored string: a
+    renamed item's primary unit sits in the ledger under the dead id, and
+    scanning the string told its owner the item had no primary work unit —
+    both implied causes false — while demanding a ``--parent`` hash for a
+    unit the ledger held all along.
+
+    The question is MEMBERSHIP among the unit's claimants, not equality
+    with one name: seeding hands a shared URL's unit to the first claimant
+    and the line names only that one, but every item listing the URL owns
+    the unit — asked as equality, only the first claimant could ever
+    ``enrich fetch``, and the second was told the same two false causes.
     """
     if parent is not None:
         entry = drain.entries.get(parent)
@@ -2163,7 +2182,7 @@ def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEn
             raise ValueError(f"--parent {parent!r} is not a ledger entry")
         return entry
     for entry in drain.entries.values():
-        if drain.owner_of(entry) == item_id and (entry.depth or 0) == 0:
+        if item_id in drain.owners_of(entry) and (entry.depth or 0) == 0:
             return entry
     raise ValueError(f"item {item_id!r} has no primary work unit — pass --parent <hash> explicitly")
 
