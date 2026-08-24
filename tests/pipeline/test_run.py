@@ -240,6 +240,20 @@ class TestSeedAndDone:
         assert all(loaded[work_hash(url)].status is Status.DONE for url in urls)
         assert "did not take effect" not in report
 
+    def test_a_failed_output_write_is_never_counted_as_new_material(self, instance):
+        # A file squatting where the enrichment directory belongs: the
+        # mkdir raises, the unit ledgers `error` — and the report must not
+        # say "1 new enrichment file" and list the item under Needs
+        # writing up for a write that never landed.
+        write_item(instance)
+        (instance.enrichment_dir / ITEM).write_text("a file where the directory belongs")
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.ERROR
+        assert "new enrichment file" not in report
+        assert "Needs writing up" not in report
+
     def test_two_items_sharing_a_url_dedupe_by_hash(self, instance):
         write_item(instance, "2026-08-19-first-aaaaaa")
         write_item(instance, "2026-08-19-second-bbbbbb")

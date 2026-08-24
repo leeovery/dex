@@ -1234,14 +1234,19 @@ class _Drain:
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        atomic.write_text(out, content)
+        # Counted AFTER the write lands: the mkdir and the write can both
+        # raise (a file squatting where the directory belongs), the unit
+        # then ledgers `error` — and an outcome registered first had the
+        # report claiming a new enrichment file while listing the same
+        # item under Needs writing up, with nothing on disk to write up.
         if count:
             outcome = self.outcomes.setdefault(owner, _ItemOutcome())
             if existed:
                 outcome.changed += 1
             else:
                 outcome.new += 1
-        out.parent.mkdir(parents=True, exist_ok=True)
-        atomic.write_text(out, content)
         return str(out.relative_to(self.ctx.instance.root))
 
     # -- extraction assets ----------------------------------------
