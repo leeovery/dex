@@ -1685,14 +1685,13 @@ Shipping migrations for this rewrite:
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
 
-   **Open question — a guard on an absent or empty corpus.** Migration 1
-   reads the corpus to attribute ledger lines, so it could refuse to run
-   where the corpus is missing or empty rather than dropping every line it
-   cannot attribute. The recommendation is no guard: corpus and ledger live
-   in the same repo and arrive together, so an empty corpus beside a
-   populated ledger is not a state a checkout produces — and a guard teaches
-   a migration to distrust its own repo, which is the ghost-item sweep's
-   mistake in a different costume. Not ruled on.
+   No guard on an absent or empty corpus — settled. Migration 1 reads the
+   corpus to attribute ledger lines, and it runs without checking the
+   corpus is populated first: corpus and ledger live in the same repo and
+   arrive together, so an empty corpus beside a populated ledger is not a
+   state a checkout produces — and a guard would teach a migration to
+   distrust its own repo, which is the ghost-item sweep's mistake in a
+   different costume. The dress rehearsal drives the real states.
 2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
    this order. First, identities: the rewrite moved canonical identity
    for two kinds (x posts are keyed by status id; youtube's single-video
