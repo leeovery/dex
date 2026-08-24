@@ -79,10 +79,11 @@ creates it), and the capture file points at it:
    the note
    ```
 
-At the next run, `bin/dex inbox` downloads the asset into `media/<id>/`
-(where LFS applies), rewrites the capture's frontmatter to `media:`, and
-deletes the asset. End state: media in LFS, git history text-only, release
-empty.
+At the next run, `bin/dex inbox` downloads the asset into `media/<id>/`,
+verifies it staged under LFS, deletes the asset, and rewrites the capture's
+frontmatter to `media:` — in that order, so a binary that failed to stage
+never loses its only remote copy. End state: media in LFS, git history
+text-only, release empty.
 
 ## curl reference implementation
 
