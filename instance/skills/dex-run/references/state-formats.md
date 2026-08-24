@@ -267,14 +267,15 @@ a malformed record impossible:
   Written by the issue filer (crash reports) and by `bin/dex issue`
   (session-observed reports, above); the owner's visible record.
   `action` is what the filing pass did: `filed` (a new upstream issue),
-  `commented` (seen again on an open issue), or `recorded` (local
-  record only, the gate off). The
-  record is written whether or not `report_issues` let the report file
-  upstream — `filed: true|false` says which — and a gate-off record is
-  seen for good: turning the gate on later never auto-refiles what was
-  observed while it was off. The per-run filing cap is different: a
-  rate-limited report still writes its record and stays eligible to
-  file on a later run — deferred, not gated.
+  `commented` (seen again on an open issue), `recorded` (local record
+  only, the gate off), or `deferred` (local record only, the per-run
+  filing cap reached). The record is written whether or not the report
+  filed upstream — `filed: true|false` says which — and the two local
+  actions mean different things: a gate-off `recorded` is seen for
+  good, so turning the gate on later never auto-refiles what was
+  observed while it was off, while a `deferred` report stays eligible
+  and files the next time the observation recurs, budget allowing. At
+  most one deferred record lands per fingerprint and engine.
   `note` exists only on records the issue verb wrote and is the local
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what
