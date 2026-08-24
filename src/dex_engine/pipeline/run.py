@@ -50,7 +50,7 @@ from .enrichment import (
     render_enrichment,
     youtube_body,
 )
-from .ownership import corpus_claims
+from .ownership import unit_owners
 from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
@@ -95,6 +95,7 @@ __all__ = [
     "RERUN_DRAIN_CAP",
     "RunContext",
     "digest_orphans",
+    "digested_items",
     "fetch_urls",
     "head_sniffer",
     "is_drainable",
@@ -1649,12 +1650,14 @@ class _Drain:
         the opposite of what its frontmatter says.
         """
         sourced = {item_id for items in self.owners.values() for item_id in items}
+        # Digest coverage is filename-resolved (:func:`digested_items`): a
+        # renamed item's digest sits under the old id, and asking for the
+        # live id's file re-listed the item as owing work it recorded.
+        digested = digested_items(self.ctx.instance, set(self.item_status))
         self.no_source_items = [
             item_id
             for item_id, status in sorted(self.item_status.items())
-            if status == "raw"
-            and item_id not in sourced
-            and not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+            if status == "raw" and item_id not in sourced and item_id not in digested
         ]
         # The all-dead sibling: every unit landed `dead`, so the engine owes
         # nothing further and no enrichment exists — the owed work is the
@@ -1664,7 +1667,7 @@ class _Drain:
         self.all_dead_items = [
             item_id
             for item_id in _all_dead_items(self.entries, self.owners, set(self.item_status))
-            if not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+            if item_id not in digested
         ]
 
     def report_payload(self) -> dict[str, object]:
@@ -1908,67 +1911,26 @@ def _unit_owners(
 ) -> dict[str, tuple[str, ...]]:
     """Which live corpus items each work unit belongs to.
 
-    A ledger line's ``item`` is the attribution as of the day it was
-    written, and migration 1 carries a stated item verbatim forever — so a
-    unit of an item RENAMED since then names an id no corpus file answers
-    to, and reading ownership off that string hands the work to a dead id.
-    The corpus is the source of truth, so the corpus is asked first
-    (:func:`corpus_claims`), exactly as ``exclude``, ``lint`` and migration
-    2 already ask it — and exactly as the drain asks it on the way OUT
-    (:meth:`_Drain.owner_of`), which is why no line is ever rewritten to
-    correct a stale one.
-
-    Three answers, in the order migration 2 established:
-
-    1. Every live item that lists the URL — plus the entry's own item where
-       its corpus file exists, which answers first for a unit an owner has
-       since removed from the frontmatter it was seeded from.
-    2. Failing that, the parent's owners: a harvest-promoted child, a media
-       download and an extracted asset are never listed in any frontmatter,
-       so the only corpus answer they have is the one their parent gets.
-    3. Failing that, the stored string as written. A unit no live item
-       claims belongs to whoever the line says — which is lint's ghost-item
-       finding to report, not this map's to silently reassign.
+    The one resolution is :func:`dex_engine.pipeline.ownership.unit_owners`
+    — frontmatter claims first, the ``parent`` chain for the units no
+    frontmatter names, the stored string last — shared with lint so every
+    reader and every write answers ownership identically. This wrapper only
+    supplies the driver registry for the standing-report paths that hold no
+    RunContext.
 
     Args:
         instance: The instance.
         entries: The ledger, hash -> latest entry.
         drivers: The driver registry that owns canonicalization; built
-            fresh when the caller has none in hand (the standing-report
-            paths hold no RunContext).
+            fresh when the caller has none in hand.
 
     Returns:
         Work hash -> the owning item ids, in id order. Every hash in
         ``entries`` has an answer; none is ever empty.
     """
-    claims = corpus_claims(instance.root, drivers if drivers is not None else default_drivers())
-    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
-    owners: dict[str, tuple[str, ...]] = {}
-
-    def resolve(unit_hash: str, seen: frozenset[str]) -> tuple[str, ...]:
-        cached = owners.get(unit_hash)
-        if cached is not None:
-            return cached
-        entry = entries.get(unit_hash)
-        if entry is None:
-            return claims.get(unit_hash, ())
-        claimants = set(claims.get(unit_hash, ()))
-        if entry.item in live:
-            claimants.add(entry.item)
-        if claimants:
-            resolved = tuple(sorted(claimants))
-        elif entry.parent is not None and entry.parent not in seen:
-            # Cycle-guarded: a hand-edited `parent` pointing back into its
-            # own chain must cost a lookup, never the run.
-            resolved = resolve(entry.parent, seen | {unit_hash}) or (entry.item,)
-        else:
-            resolved = (entry.item,)
-        owners[unit_hash] = resolved
-        return resolved
-
-    for unit_hash in entries:
-        resolve(unit_hash, frozenset())
-    return owners
+    return unit_owners(
+        instance.root, entries, drivers if drivers is not None else default_drivers()
+    )
 
 
 def _item_units(
@@ -2422,8 +2384,16 @@ def digest_orphans(instance: Instance) -> list[str]:
     owners = _unit_owners(instance, entries) if entries is not None else {}
     owing = _items_owing_work(entries, owners)
     enriched_on = _last_enriched(entries, owners)
-    digested_on = _last_digested(instance)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    recorded = digested_items(instance, live)
+    # A digest pass record names the item as of the day it was recorded,
+    # like the file it covers: resolved the same way, so a pre-rename pass
+    # still dates the live item's digest and the staleness comparison
+    # survives the rename.
+    digested_on: dict[str, datetime.date] = {}
+    for recorded_item, date in _last_digested(instance).items():
+        item_id = _dir_owner(recorded_item, live)
+        digested_on[item_id] = max(digested_on.get(item_id, date), date)
     # A directory's name is the attribution as of the day it was written,
     # like a ledger line's item: a rename interrupted between the corpus
     # file and the enrichment directory leaves the directory under the
@@ -2450,7 +2420,7 @@ def digest_orphans(instance: Instance) -> list[str]:
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
-        if not (instance.digests_dir / f"{item_id}.md").exists():
+        if item_id not in recorded:
             orphans.append(item_id)
             continue
         landed = enriched_on.get(item_id)
@@ -2464,22 +2434,51 @@ def digest_orphans(instance: Instance) -> list[str]:
 
 
 def _dir_owner(name: str, live: set[str]) -> str:
-    """The live item an enrichment directory belongs to, else its own name.
+    """The live item an id-named artifact belongs to, else the name itself.
 
-    A directory named for a live item answers for itself. One named for
-    no live item is resolved by its trailing shortid — a rename keeps the
-    shortid and rewrites the slug, the same trailing-id match the
-    exclusions and the harvest-pass reader use across renames — and
-    attributes to the one live item carrying it. No live match, or two
-    (six hex digits can collide), resolves nothing: the name stands, as
-    it always did, and what it means is a finding, not an attribution to
-    guess at.
+    A name matching a live item answers for itself. One matching no live
+    item is resolved by its trailing shortid — a rename keeps the shortid
+    and rewrites the slug, the same trailing-id match the exclusions and
+    the harvest-pass reader use across renames — and attributes to the one
+    live item carrying it. No live match, or two (six hex digits can
+    collide), resolves nothing: the name stands, as it always did, and
+    what it means is a finding, not an attribution to guess at.
+
+    The names resolved this way are the id-keyed leftovers a rename can
+    strand: an enrichment directory, a ``state/digests/<id>.md`` file
+    (:func:`digested_items`), and a digest pass record's item.
     """
     if name in live:
         return name
     shortid = name.rsplit("-", 1)[-1]
     matches = [item_id for item_id in live if item_id.rsplit("-", 1)[-1] == shortid]
     return matches[0] if len(matches) == 1 else name
+
+
+def digested_items(instance: Instance, live: set[str]) -> set[str]:
+    """The item each recorded digest answers for — filenames ownership-resolved.
+
+    A digest file's name is the attribution as of the day it was written,
+    like an enrichment directory's: the rename procedure moves the corpus
+    file and the enrichment directory, and ``state/digests/<old-id>.md``
+    stays behind. Resolved by the same trailing-shortid rule
+    (:func:`_dir_owner`), the renamed item keeps the digest it already
+    recorded — asking for the live id's filename instead re-listed the
+    item as owing a digest, and the re-digest that answered it left a
+    ninth digest beside eight items, named on no surface, forever. A stem
+    that resolves to nothing live stands as itself: the digest covers no
+    live item, and the item missing one is still surfaced.
+
+    Args:
+        instance: The instance.
+        live: The live corpus item ids.
+
+    Returns:
+        The resolved owner of every ``state/digests/*.md`` file.
+    """
+    if not instance.digests_dir.is_dir():
+        return set()
+    return {_dir_owner(path.stem, live) for path in instance.digests_dir.glob("*.md")}
 
 
 def _items_owing_work(
@@ -2710,8 +2709,11 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
 
     A heal never erases what it does not correct: done heals carry the
     prior entry's path/title forward unless a new ``path`` overrides them.
-    The owning item's derived frontmatter is refreshed in the same call, so
-    a hand-written enrichment file is listed the moment its heal lands.
+    The attribution is the corpus's answer (:meth:`_Drain.owner_of`), like
+    every other write's — a renamed item's heal lands under the live id,
+    never the dead string the prior line spells. The owning item's derived
+    frontmatter is refreshed in the same call, so a hand-written enrichment
+    file is listed the moment its heal lands.
 
     A unit is found by its canonical identity, or — failing that — by the
     exact key it was stored under: bad seeds and every media line
@@ -2760,11 +2762,16 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         prior = drain.entries.get(work_hash(url))
     if prior is None:
         raise ValueError(f"no ledger entry for {canonical!r} — mark heals existing state")
+    # The attribution is asked of the corpus before the write, like every
+    # other write path: a heal carried on the stored string re-records a
+    # renamed item's unit under the dead id, and the superseded-output drop
+    # below then searches a directory the rename moved away.
+    drain.resolve_owners()
     effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
     healed = LedgerEntry(
         hash=prior.hash,
         url=prior.url,
-        item=prior.item,
+        item=drain.owner_of(prior),
         kind=prior.kind,
         format=prior.format,
         status=status,

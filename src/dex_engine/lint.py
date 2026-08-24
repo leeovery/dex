@@ -70,7 +70,7 @@ from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.enrichment import read_enrichment_fields
-from .pipeline.ownership import corpus_owners
+from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
 from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
@@ -597,8 +597,13 @@ def _state_checks(
         # One corpus pass answers ownership for everything built from these
         # entries: the cognitive rows here — manual-work pointers, owed to
         # the live item like every other surface (:func:`_owner`), never to
-        # a renamed-away id — and the integrity scan below.
-        owners = corpus_owners(instance.root, default_drivers())
+        # a renamed-away id — and the integrity scan below. The ONE
+        # resolution the engine's own readers use (`ownership.unit_owners`),
+        # parent chains included: a renamed item's harvested children and
+        # media units are claimed by no frontmatter, and hashing `urls:`
+        # alone read every one of them as unclaimed work with a destroyed
+        # output — advice that pointed at deleting live state.
+        owners = unit_owners(instance.root, entries, default_drivers())
         waiting: dict[str, int] = {}
         cognitive: list[dict[str, str]] = []
         for entry in entries.values():
@@ -648,7 +653,7 @@ def _referential_integrity(
     instance: Instance,
     entries: dict[str, LedgerEntry],
     corpus_ids: set[str],
-    owners: Mapping[str, str],
+    owners: Mapping[str, tuple[str, ...]],
 ) -> _IntegrityScan:
     """The ledger's pointers into the tree: item ids, and output paths.
 
@@ -716,7 +721,7 @@ def _referential_integrity(
     # pass was made at all.
     counts: dict[tuple[str, str], int] = {}
     for entry in dead:
-        owner = owners.get(entry.hash)
+        owner = _live_claimant(entry, owners, corpus_ids)
         if entry.item in excluded:
             # The record answers first, always: an exclusion is a ruling the
             # owner made and wrote down, and the claim says only that
@@ -757,7 +762,7 @@ def _referential_integrity(
     return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
 
 
-def _owner(entry: LedgerEntry, owners: Mapping[str, str], corpus_ids: set[str]) -> str:
+def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids: set[str]) -> str:
     """The live item that owns this unit — the corpus's answer, else the line's.
 
     The same rule the engine's readers and its write path apply
@@ -768,7 +773,20 @@ def _owner(entry: LedgerEntry, owners: Mapping[str, str], corpus_ids: set[str]) 
     """
     if entry.item in corpus_ids:
         return entry.item
-    return owners.get(entry.hash) or entry.item
+    return _live_claimant(entry, owners, corpus_ids) or entry.item
+
+
+def _live_claimant(
+    entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids: set[str]
+) -> str | None:
+    """The first LIVE item the resolution hands this unit to, or None.
+
+    The resolution always answers — its last fallback is the stored string
+    — so a claim reading has to filter to the ids a corpus file actually
+    answers for: a dead fallback id proves no claim, and treating it as one
+    would erase the unclaimed finding entirely.
+    """
+    return next((item for item in owners.get(entry.hash, ()) if item in corpus_ids), None)
 
 
 def _excluded_items(instance: Instance) -> set[str]:

@@ -2983,12 +2983,15 @@ class TestOwnershipIsTheCorpusAnswer:
         assert fresh.exists()
 
     def _drained_then_renamed(
-        self, instance, *, assets=(), media=(), move_enrichment: bool = True
+        self, instance, *, assets=(), media=(), children=(), move_enrichment: bool = True
     ) -> FakeTransport:
         """A real drain under the old id, then the rename that moves it all.
 
         The state a run meets after a rename is whatever the drain left —
         so it is the drain that builds it here, not a hand-written line.
+        ``children`` are promoted with ``enrich fetch`` before the rename,
+        exactly as a session deepens an item — harvested depth-1 units
+        whose hashes no frontmatter ever lists.
         ``move_enrichment=False`` is the interrupted rename: a rename is
         judgment work a session does in steps, and one interrupted between
         the corpus file and the enrichment directory leaves exactly that.
@@ -3004,6 +3007,12 @@ class TestOwnershipIsTheCorpusAnswer:
             )
 
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport))
+        if children:
+            run_mod.fetch_urls(
+                make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=transport),
+                OLD_ITEM,
+                list(children),
+            )
         old = instance.corpus_dir / "2026" / f"{OLD_ITEM}.md"
         item = corpus.read_item(old)
         corpus.write_item(
@@ -3060,6 +3069,77 @@ class TestOwnershipIsTheCorpusAnswer:
         return run_lint(
             instance, is_cognitive=lambda _need, _fmt=None: False, today=lambda: TODAY, write=False
         ).report
+
+    CHILD = "https://example.test/harvested-doc"
+    HERO = "https://example.test/hero.png"
+
+    def test_a_completed_rename_resolves_the_whole_family_to_the_live_id(self, instance):
+        # The driven scenario, whole: an item with a harvested child
+        # (enrich fetch, depth 1) and a media unit, renamed per the skills
+        # — corpus file moved with its id field updated, enrichment
+        # directory moved, ledger untouched. The children's hashes appear
+        # in no frontmatter, so their only corpus answer travels through
+        # the parent chain; read off `urls:` hashing alone they were
+        # "unclaimed work" whose outputs were "gone from disk" — advice
+        # that pointed at deleting live state, standing forever.
+        self._drained_then_renamed(instance, media=[self.HERO], children=[self.CHILD])
+        report = self._lint(instance)
+        assert "ledger items with no corpus file — **1**" in report
+        assert f"**{OLD_ITEM}** — 3 entries (renamed — {NEW_ITEM} lists this work)" in report
+        assert "no exclusions.tsv record" not in report
+        assert "done entries whose output file is gone from disk — none" in report
+        assert "done entries whose output sits under another item's directory — none" in report
+
+    def test_a_completed_renames_status_view_carries_the_whole_family(self, instance):
+        self._drained_then_renamed(instance, media=[self.HERO], children=[self.CHILD])
+        status = run_mod.status_report(make_ctx(instance, FakeDriver()), item_id=NEW_ITEM)
+        for url in (URL, self.CHILD, self.HERO):
+            assert url in status
+
+    def test_the_digest_backstop_attributes_the_renamed_family_once(self, instance):
+        self._drained_then_renamed(instance, media=[self.HERO], children=[self.CHILD])
+        assert run_mod.digest_orphans(instance) == [NEW_ITEM]  # once, under the live id
+
+    def test_a_pre_rename_digest_still_covers_the_live_item(self, instance):
+        # The skills' rename moves the corpus file and the enrichment
+        # directory; state/digests/<old-id>.md stays where it was written.
+        # Resolved by shortid it still covers the item — asking for the
+        # live id's filename re-listed the item as owing a digest already
+        # recorded, and the re-digest that answered it left a ninth digest
+        # beside eight items, named on no surface, forever.
+        self._drained_then_renamed(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{OLD_ITEM}.md").write_text("digested\n", encoding="utf-8")
+        run_mod.record_pass(make_ctx(instance, FakeDriver()), OLD_ITEM, "digest")
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_pre_rename_digest_gone_stale_is_still_stale(self, instance):
+        # The other direction: enrichment lands AFTER the rename, so the
+        # old digest is genuinely stale. The pass record names the old id,
+        # and unresolved it dated nothing — the staleness reading went
+        # silent exactly when it had something to say.
+        self._drained_then_renamed(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{OLD_ITEM}.md").write_text("digested\n", encoding="utf-8")
+        run_mod.record_pass(make_ctx(instance, FakeDriver()), OLD_ITEM, "digest")
+        later = datetime.date(2026, 8, 22)
+        run_mod.fetch_urls(make_ctx(instance, FakeDriver(), today=lambda: later), NEW_ITEM, [URL])
+        assert run_mod.digest_orphans(instance) == [NEW_ITEM]
+
+    def test_write_time_marks_land_under_the_live_owner(self, instance):
+        # `mark` is a write like any other: healed on the stored string it
+        # re-records a renamed item's unit under the dead id, and the
+        # superseded-output drop searches a directory the rename moved.
+        self._drained_then_renamed(instance, children=[self.CHILD])
+        run_mod.mark(
+            make_ctx(instance, FakeDriver()),
+            self.CHILD,
+            Status.MANUAL,
+            reason="superseded by the live copy",
+        )
+        entry = ledger.load(instance.ledger_path)[work_hash(self.CHILD)]
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.MANUAL
 
     def test_an_extraction_asset_that_moved_with_the_item_is_never_re_fetched(self, instance):
         # A `job: asset` unit's work key is a repo path, not a URL,
