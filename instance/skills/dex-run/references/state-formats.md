@@ -259,7 +259,10 @@ a malformed record impossible:
 - `state/issue-reports.jsonl` — what this instance observed and reported
   `{fingerprint, action, filed, engine, date, issue?, note?}`.
   Written by the issue filer (crash reports) and by `bin/dex issue`
-  (session-observed reports, above); the owner's visible record. The
+  (session-observed reports, above); the owner's visible record.
+  `action` is what the filing pass did: `filed` (a new upstream issue),
+  `commented` (seen again on an open issue), or `recorded` (local
+  record only, the gate off). The
   record is written whether or not `report_issues` let the report file
   upstream — `filed: true|false` says which — and dedupe treats any
   record as seen, so turning the gate on later never auto-refiles what

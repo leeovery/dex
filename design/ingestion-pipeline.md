@@ -1975,8 +1975,8 @@ and the note-never-crash edge.
 - **The local note split**: the payload may carry `note` — free text,
   ≤ 2000 chars, exempt from the detectors BECAUSE it is never filed. It
   lands only in this instance's `issue-reports.jsonl` record
-  (`{fingerprint, action, engine, date, issue?, note?}`), where the
-  owner reads it and forwards what matters by hand.
+  (`{fingerprint, action, filed, engine, date, issue?, note?}`), where
+  the owner reads it and forwards what matters by hand.
 - **Skills**: the rubric lives where a session is when it would notice
   a defect — a guardrail in dex-run's SKILL.md, the full rubric in its
   processing reference (file for engine misbehaviour only, never for

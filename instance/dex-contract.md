@@ -42,7 +42,8 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
   →  state/taxonomy.json (topics/entities)  →  wiki/ (pages, index, log, pins)
 
 state/ also holds: passes.jsonl (stage records) · migrations.jsonl (applied
-migrations) · issue-reports.jsonl (bugs filed upstream) · config.json
+migrations) · issue-reports.jsonl (engine-defect reports, filed upstream or
+recorded locally with the gate off) · config.json
 (owner-editable) · entity-members.json (entity → items) · exclusions.tsv
 cache/ is ephemeral and gitignored (render payloads, in-flight audio) —
 never state, never synced.
