@@ -27,6 +27,7 @@ from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, classify_connection
+from dex_engine.pipeline.digest import item_digest
 from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
@@ -3293,6 +3294,62 @@ class TestOwnershipIsTheCorpusAnswer:
 
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         assert corpus.read_item(bravo_path).status == "raw"
+
+
+class TestRenameAwareDigestBackstop:
+    """An orphaned enrichment directory resolves to the live item by shortid."""
+
+    def _mid_rename(self, instance) -> None:
+        """File + id renamed; the enrichment directory left under the old name."""
+        write_item(instance, NEW_ITEM)
+        out = instance.enrichment_dir / OLD_ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(f"---\nurl: {URL}\nfetched: '2026-08-01'\n---\n\nthe body\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                path=f"enrichment/{OLD_ITEM}/web-{work_hash(URL)[:6]}.md",
+            ),
+        )
+
+    def test_only_the_live_id_is_listed(self, instance):
+        # Not the dead directory name the digest verb would refuse, and
+        # not both — once, under the live id.
+        self._mid_rename(instance)
+        assert run_mod.digest_orphans(instance) == [NEW_ITEM]
+
+    def test_digesting_the_listed_id_succeeds_and_clears_the_listing(self, instance):
+        self._mid_rename(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        payload = instance.cache_dir / "digest.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "id": NEW_ITEM,
+                    "signal": "medium",
+                    "topics": ["uncategorized-shares"],
+                    "facts": ["one fact"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        confirmation = item_digest(payload, ctx=ctx)
+        assert "digest pass recorded" in confirmation
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_directory_matching_no_live_shortid_keeps_its_name(self, instance):
+        # Nothing to attribute to — the name stands, as it always did.
+        stray = instance.enrichment_dir / "2026-01-01-gone-abcdef"
+        stray.mkdir(parents=True)
+        (stray / "web-abc123.md").write_text("enriched", encoding="utf-8")
+        assert run_mod.digest_orphans(instance) == ["2026-01-01-gone-abcdef"]
 
 
 class TestRerunPacing:

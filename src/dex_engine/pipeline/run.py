@@ -2423,8 +2423,15 @@ def digest_orphans(instance: Instance) -> list[str]:
     owing = _items_owing_work(entries, owners)
     enriched_on = _last_enriched(entries, owners)
     digested_on = _last_digested(instance)
+    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    # A directory's name is the attribution as of the day it was written,
+    # like a ledger line's item: a rename interrupted between the corpus
+    # file and the enrichment directory leaves the directory under the
+    # dead old id, which the digest verb will refuse. So the candidate a
+    # directory names is ownership-resolved (:func:`_dir_owner`), and the
+    # mid-rename item is listed once, under the live id.
     candidates = {
-        item_dir.name
+        _dir_owner(item_dir.name, live)
         for item_dir in instance.enrichment_dir.iterdir()
         if item_dir.is_dir() and any(item_dir.glob("*.md"))
     }
@@ -2432,7 +2439,6 @@ def digest_orphans(instance: Instance) -> list[str]:
     # that item has a directory — but only while the item is LIVE: a done
     # line naming an id no corpus file answers to is lint's ghost-item
     # finding, never work this backstop can ask anyone to do.
-    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     candidates |= enriched_on.keys() & live
     # The third answer: an item whose every unit landed dead. It has no
     # enrichment directory and no done line, so neither route above finds
@@ -2455,6 +2461,25 @@ def digest_orphans(instance: Instance) -> list[str]:
         if landed is not None and digested is not None and digested < landed:
             orphans.append(item_id)
     return orphans
+
+
+def _dir_owner(name: str, live: set[str]) -> str:
+    """The live item an enrichment directory belongs to, else its own name.
+
+    A directory named for a live item answers for itself. One named for
+    no live item is resolved by its trailing shortid — a rename keeps the
+    shortid and rewrites the slug, the same trailing-id match the
+    exclusions and the harvest-pass reader use across renames — and
+    attributes to the one live item carrying it. No live match, or two
+    (six hex digits can collide), resolves nothing: the name stands, as
+    it always did, and what it means is a finding, not an attribution to
+    guess at.
+    """
+    if name in live:
+        return name
+    shortid = name.rsplit("-", 1)[-1]
+    matches = [item_id for item_id in live if item_id.rsplit("-", 1)[-1] == shortid]
+    return matches[0] if len(matches) == 1 else name
 
 
 def _items_owing_work(
