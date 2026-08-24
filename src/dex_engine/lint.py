@@ -310,6 +310,12 @@ def _entity_members(instance: Instance) -> tuple[dict[str, list[str]], str | Non
     ``state/entity-members.json`` becomes a loud failure row naming the
     file and its repair — never the bare ``Expecting value…`` exit that
     named nothing. The wiki checks still run, with no entity members.
+
+    The WHOLE documented shape is validated — an object of string ->
+    list-of-strings. Tolerating a wrong-typed value read
+    ``{"name": "string"}`` as an entity someone emptied: the member-count
+    checks ran against a list that was never there, silently, while the
+    file the wiki layer depends on stood broken.
     """
     path = instance.state_dir / "entity-members.json"
     if not path.exists():
@@ -322,7 +328,19 @@ def _entity_members(instance: Instance) -> tuple[dict[str, list[str]], str | Non
         return {}, (
             f"{path.name}: expected an object of entity -> item list, got {type(raw).__name__}"
         )
-    return {name: members for name, members in raw.items() if isinstance(members, list)}, None
+    for name, members in raw.items():
+        if not isinstance(members, list):
+            return {}, (
+                f"{path.name}: entity {name!r} must map to a list of item ids, "
+                f"got {type(members).__name__}"
+            )
+        bad = [m for m in members if not isinstance(m, str)]
+        if bad:
+            return {}, (
+                f"{path.name}: entity {name!r} holds a non-string member "
+                f"({type(bad[0]).__name__}: {bad[0]!r}) — members are item-id strings"
+            )
+    return raw, None
 
 
 def _frontmatter(text: str) -> str | None:

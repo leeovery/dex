@@ -145,6 +145,41 @@ class TestMalformedEntityMembers:
         assert "ENTITY MEMBERS FAILURE" in outcome.report
         assert "expected an object of entity -> item list, got list" in outcome.report
 
+    def test_a_string_value_is_a_loud_finding_not_an_emptied_entity(self, instance):
+        # {"name": "string"} passed silently as an entity with no members:
+        # the member-count checks ran against a list that was never there
+        # while the file the wiki layer depends on stood broken.
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": "not-a-list"}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "entity 'anthropic' must map to a list of item ids, got str" in outcome.report
+
+    def test_a_number_value_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": 3}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "entity 'anthropic' must map to a list of item ids, got int" in outcome.report
+
+    def test_a_list_of_nonstrings_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": ["ok", 42]}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "entity 'anthropic' holds a non-string member (int: 42)" in outcome.report
+
+    def test_the_correct_shape_passes_silently(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text(
+            f'{{"anthropic": ["{ITEM}"], "empty-entity": []}}'
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "ENTITY MEMBERS FAILURE" not in outcome.report
+
 
 class TestTornPassRecord:
     """A torn trailing line in state/passes.jsonl is a lint FINDING, never a bare exit."""
