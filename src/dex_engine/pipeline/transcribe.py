@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dex_engine import atomic
+from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import HttpResponse, Transport
 from dex_engine.drivers.ytdlp import (
     DownloadAudio,
@@ -26,7 +27,7 @@ from dex_engine.drivers.ytdlp import (
     classify_probe_failure,
 )
 
-from .classify import Classification, classify_connection, classify_http
+from .classify import Classification
 from .detect import looks_like_html
 from .enrichment import DESCRIPTION_HEADING, pre_transcript, read_enrichment
 from .types import LedgerEntry, Status
@@ -178,12 +179,10 @@ def acquire_podcast_audio(
 def _download_enclosure(
     url: str, cache_dir: Path, stem: str, transport: Transport
 ) -> Path | Classification:
-    try:
-        response = transport(url)
-    except OSError as e:
-        return classify_connection(e)
-    if not response.ok:
-        return classify_http(response.status)
+    outcome = fetch_classified(transport, url)
+    if isinstance(outcome, FetchFailure):
+        return outcome.classification
+    response = outcome
     unusable = _not_audio(response)
     if unusable is not None:
         # Never cached under <hash>.<ext>: a stored error page is

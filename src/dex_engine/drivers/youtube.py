@@ -41,11 +41,11 @@ import re
 from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
-from dex_engine.pipeline.classify import classify_connection
 from dex_engine.pipeline.enrichment import description_section, youtube_body
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 from .ytdlp import ProbeError, classify_probe_failure, yt_dlp_probe
 
@@ -210,21 +210,16 @@ class YouTubeDriver:
     ) -> Result:
         # A failing caption track says nothing about the VIDEO: yt-dlp track
         # URLs are signed and short-lived, so even a 404 here is transient —
-        # blocked (a re-probe next run mints fresh URLs), never dead.
-        try:
-            response = self._transport(track_url)
-        except OSError as e:
-            detail = classify_connection(e).reason
-            return Result(
-                status=Status.BLOCKED, meta={}, reason=f"caption track fetch failed: {detail}"
-            )
-        if not response.ok:
+        # blocked (a re-probe next run mints fresh URLs), never dead. The
+        # wire fact rides the reason; the classified status never does.
+        outcome = fetch_classified(self._transport, track_url)
+        if isinstance(outcome, FetchFailure):
             return Result(
                 status=Status.BLOCKED,
                 meta={},
-                reason=f"caption track fetch failed: HTTP {response.status}",
+                reason=f"caption track fetch failed: {outcome.detail}",
             )
-        transcript = clean_vtt(response.text())
+        transcript = clean_vtt(outcome.text())
         if len(transcript) < _MIN_TRANSCRIPT_CHARS:
             return Result(
                 status=Status.WAITING,

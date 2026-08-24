@@ -573,6 +573,18 @@ class TestCaptionTrackFailures:
         assert result.status is Status.BLOCKED
         assert "caption track fetch failed" in reason_of(result)
 
+    def test_track_failure_keeps_the_wire_fact_never_classifier_framing(self):
+        # A 402 on the VIDEO would classify manual/paywalled; on a signed
+        # track URL it is CDN weather like any other code. The reason keeps
+        # the plain wire fact — "payment/login required" here would send a
+        # session rescuing a paywall that does not exist.
+        walled = HttpResponse(status=402, content_type="text/plain", body=b"")
+        driver = driver_for(INFO_WITH, {TRACK_URL: walled})
+        result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.BLOCKED
+        assert "caption track fetch failed: HTTP 402" in reason_of(result)
+        assert PAYWALL_REASON not in reason_of(result)
+
 
 class TestCleanVtt:
     def test_headers_cues_numbers_and_align_lines_drop(self):

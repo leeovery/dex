@@ -35,8 +35,6 @@ from dex_engine.pipeline.classify import (
     Classification,
     ProviderUnavailableError,
     ScannedDocumentError,
-    classify_connection,
-    classify_http,
 )
 from dex_engine.pipeline.detect import looks_like_html, sniff_format
 from dex_engine.pipeline.types import (
@@ -50,6 +48,7 @@ from dex_engine.pipeline.types import (
 )
 from dex_engine.pipeline.urls import base_canonical, resolve_repo_path
 
+from .fetch import FetchFailure, fetch_classified
 from .gh import BlobRef, Gh, blob_ref, fetch_blob, run_gh
 from .transport import Transport, urllib_transport
 
@@ -176,16 +175,12 @@ class FileDriver:
         return path.read_bytes(), path.name
 
     def _download(self, url: str) -> tuple[bytes, str | None] | Result:
-        try:
-            response = self._transport(url)
-        except OSError as e:
-            failure = classify_connection(e)
-            return Result(status=failure.status, meta={}, reason=failure.reason)
-        if not response.ok:
-            failure = classify_http(response.status)
+        outcome = fetch_classified(self._transport, url)
+        if isinstance(outcome, FetchFailure):
+            failure = outcome.classification
             return Result(status=failure.status, meta={}, reason=failure.reason)
         tail = unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or None
-        return response.body, tail
+        return outcome.body, tail
 
     def _extract(self, data: bytes, fmt: Format, name: str | None) -> Result:
         extractor = self._capabilities.extractor(fmt)

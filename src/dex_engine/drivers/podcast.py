@@ -27,11 +27,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
-from dex_engine.pipeline.classify import Classification, classify_connection, classify_http
+from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .audio import audio_enclosure
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 
 __all__ = ["PodcastDriver"]
@@ -262,13 +263,10 @@ class PodcastDriver:
     # -- transport plumbing ------------------------------------------------
 
     def _transport_result(self, url: str) -> "str | Result":
-        try:
-            response = self._transport(url)
-        except OSError as e:
-            return _classified(classify_connection(e))
-        if not response.ok:
-            return _classified(classify_http(response.status))
-        return response.text()
+        outcome = fetch_classified(self._transport, url)
+        if isinstance(outcome, FetchFailure):
+            return _classified(outcome.classification)
+        return outcome.text()
 
     def _json(self, url: str) -> "dict | Result":
         body = self._transport_result(url)

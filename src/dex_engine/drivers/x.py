@@ -36,14 +36,11 @@ import time
 import urllib.parse
 from collections.abc import Callable
 
-from dex_engine.pipeline.classify import (
-    Classification,
-    classify_connection,
-    classify_http,
-)
+from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 
 __all__ = ["XDriver"]
@@ -140,14 +137,11 @@ class XDriver:
 
     def _fetch_post(self, api_path: str) -> dict | Classification:
         """One fxtwitter post payload, or the classified failure."""
+        outcome = fetch_classified(self._transport, _API + api_path)
+        if isinstance(outcome, FetchFailure):
+            return outcome.classification
         try:
-            response = self._transport(_API + api_path)
-        except OSError as e:
-            return classify_connection(e)
-        if not response.ok:
-            return classify_http(response.status)
-        try:
-            payload = json.loads(response.text())
+            payload = json.loads(outcome.text())
         except json.JSONDecodeError:
             return Classification(
                 status=Status.BLOCKED, reason="fxtwitter returned unparseable JSON"

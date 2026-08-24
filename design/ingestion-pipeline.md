@@ -1849,11 +1849,12 @@ src/dex_engine/
                  needs healing (§4)
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
                transport.py  the HTTP seam (§5's OSError normalization)
-               gh.py  audio.py  ytdlp.py — the shared lib layer beside the
-                 drivers (§2): the authenticated GitHub route, the
-                 audio-on-a-page signal, and the yt-dlp seam (probe, audio
-                 download, failure vocabulary, audio-cache scan) the
-                 youtube driver and the transcribe drain both consume
+               fetch.py  gh.py  audio.py  ytdlp.py — the shared lib layer
+                 beside the drivers (§2): the fetch-and-classify pairing,
+                 the authenticated GitHub route, the audio-on-a-page
+                 signal, and the yt-dlp seam (probe, audio download,
+                 failure vocabulary, audio-cache scan) the youtube driver
+                 and the transcribe drain both consume
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
@@ -2214,7 +2215,14 @@ after the driver-outcome change (§2) — the cleanup touches the same seams,
 and the outcome union settles several of these on its way past.
 
 - **One shared fetch-and-classify helper.** Eight hand-rolled copies across
-  the drivers, `transcribe` and `run`.
+  the drivers, `transcribe` and `run`. **Done**: `drivers/fetch.py` —
+  `fetch_classified` returns the response or a `FetchFailure` carrying
+  the classification together with the wire status, so the callers that
+  route the classification onward and the two that must not inherit its
+  framing (a signed caption track, the wayback-rescue note) share one
+  pairing; only `paper`'s full-text fallback still calls the transport
+  bare, because it classifies nothing by design (a miss degrades to
+  abstract-only).
 - **Duplicated body / slug / extension helpers.** youtube `_body` vs
   `transcribe.youtube_body`; `capture` vs `normalize` for `URL_RE` and
   slugify; `run._ext_of` vs `transcribe._audio_ext`. **Done**: the

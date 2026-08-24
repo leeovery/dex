@@ -29,6 +29,7 @@ from typing import assert_never
 
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import Transport, urllib_transport
 from dex_engine.drivers.ytdlp import DownloadAudio, yt_dlp_audio
 from dex_engine.render import surfaces
@@ -39,7 +40,6 @@ from .classify import (
     ProviderInputError,
     ProviderUnavailableError,
     classify_connection,
-    classify_http,
     scrub,
 )
 from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
@@ -1300,16 +1300,12 @@ class _Drain:
                 reason="media exceeds 10MB ceiling (declared Content-Length)",
             )
             return
-        try:
-            response = self.ctx.transport(entry.url)
-        except OSError as e:
-            failure = classify_connection(e)
+        outcome = fetch_classified(self.ctx.transport, entry.url)
+        if isinstance(outcome, FetchFailure):
+            failure = outcome.classification
             self._media_failure(entry, failure.status, failure.reason)
             return
-        if not response.ok:
-            failure = classify_http(response.status)
-            self._media_failure(entry, failure.status, failure.reason)
-            return
+        response = outcome
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
