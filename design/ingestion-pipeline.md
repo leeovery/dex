@@ -1164,6 +1164,14 @@ description of a media capture, counted by neither the cap nor
 the "this slot already holds my own file" check — reading it as either put
 a download beyond the cap and beside a description of something else.
 
+The synced `.gitattributes` tracks enrichment binaries by name shape,
+not by an extension list: `media-<n>.*` downloads and `*-asset-<n>.*`
+extraction assets are LFS-tracked whatever their extension, the
+markdown descriptions excepted. An extension list covered neither an
+extraction asset nor a media download in an off-list format, and both
+were entering git history as raw blobs; the name shape is the engine's
+own naming grammar, so whatever it writes stays out.
+
 ## 8. X driver (renamed from tweet)
 
 - **A post's identity is its status id.** Every share shape — the username
