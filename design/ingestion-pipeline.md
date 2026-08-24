@@ -704,7 +704,10 @@ the parent's owners (a harvest-promoted child, a media download and an
 extracted asset are in no frontmatter), failing that the stored string as
 written. Every reader routes through it — the item's derived
 `status`/`enrichment:` refresh, `enrich status`, the run report's parked
-and incompleteness rows, the digest-staleness backstop's landing dates,
+and incompleteness rows, the digest-staleness backstop (its landing
+dates, and the candidates it derives from enrichment directory names: a
+directory an interrupted rename left under the old id resolves to the
+live item, so the backstop asks the right item for the digest),
 `mark`'s post-heal refresh, `exclude`'s claim veto, and lint's ghost and
 output rows.
 
