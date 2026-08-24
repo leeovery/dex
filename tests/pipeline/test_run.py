@@ -2217,6 +2217,30 @@ class TestVerbs:
         with pytest.raises(ValueError, match="reason"):
             run_mod.mark(ctx, URL, Status.MANUAL)
 
+    def _torn_ledger(self, instance) -> RunContext:
+        """A run's clean ledger with an interrupted append's tail behind it."""
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        with instance.ledger_path.open("a", encoding="utf-8") as f:
+            f.write('{"hash": "73bd78')
+        return ctx
+
+    def test_mark_on_a_torn_ledger_names_the_line_and_the_repair(self, instance):
+        # mark bricks on the tear — it must, the ledger is unreadable —
+        # but "unparseable ledger line" alone left the owner with no line
+        # to delete and no sanction to delete it under.
+        ctx = self._torn_ledger(instance)
+        with pytest.raises(ValueError, match="delete this torn line") as err:
+            run_mod.mark(ctx, URL, Status.SKIPPED, reason="ruled out")
+        assert "enrichment-ledger.jsonl:3" in str(err.value)
+
+    def test_compact_on_a_torn_ledger_names_the_line_and_the_repair(self, instance):
+        ctx = self._torn_ledger(instance)
+        with pytest.raises(ValueError, match="delete this torn line") as err:
+            run_mod.compact(ctx)
+        assert "enrichment-ledger.jsonl:3" in str(err.value)
+
     def test_mark_normalizes_a_multiline_reason_so_the_item_view_still_renders(self, instance):
         write_item(instance)
         ctx = make_ctx(instance, FakeDriver())

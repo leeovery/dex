@@ -56,8 +56,12 @@ __all__ = [
 class LedgerSchemaError(ValueError):
     """A ledger line does not conform to the current schema.
 
-    Raised at the serialization boundary — with the likely missing migration
-    named — instead of surfacing as a ``KeyError`` three stages later.
+    Raised at the serialization boundary instead of surfacing as a
+    ``KeyError`` three stages later, and the message carries the repair
+    that fits the fault: a line that is not JSON at all is a TORN line —
+    an interrupted append, which no migration mends — and names the
+    sanctioned deletion; a valid-JSON line breaking the schema names the
+    likely missing migration.
     """
 
 
@@ -106,13 +110,24 @@ def from_line(line: str) -> LedgerEntry:
         The parsed entry.
 
     Raises:
-        LedgerSchemaError: The line is not JSON, not an object, carries
-            unknown or pre-migration vocabulary, or violates a schema invariant.
+        LedgerSchemaError: The line is not JSON (a torn line — the message
+            names the sanctioned single-line deletion), not an object,
+            carries unknown or pre-migration vocabulary (the message names
+            the likely missing migration), or violates a schema invariant.
     """
     try:
         raw = json.loads(line)
     except json.JSONDecodeError as e:
-        raise LedgerSchemaError(f"unparseable ledger line ({e}): {line!r}") from e
+        # A tear, not a schema fault: an interrupted append leaves a
+        # half-written trailing line (relocatable mid-file by later
+        # appends or a union merge), and no migration mends one — the
+        # migration hint would send the owner to a repair that cannot
+        # work. The advice is the passes row's, applied to this file.
+        raise LedgerSchemaError(
+            f"unparseable ledger line ({e}) — delete this torn line, and only this "
+            f"line (a half-written line is not a record; every intact line is, and "
+            f"no migration repairs a tear): {line!r}"
+        ) from e
     if not isinstance(raw, dict):
         raise LedgerSchemaError(f"ledger line is not a JSON object: {line!r}")
 
@@ -306,7 +321,10 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
 
     Raises:
         LedgerSchemaError: A line does not conform — the message names the
-            file, line number, and likely missing migration.
+            file, the line number, and the repair that fits the fault
+            (the sanctioned torn-line deletion, or the likely missing
+            migration), so every verb that dies on this load dies naming
+            them.
     """
     entries: dict[str, LedgerEntry] = {}
     if not path.exists():

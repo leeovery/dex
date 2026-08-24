@@ -512,6 +512,21 @@ class TestStateChecks:
         assert "LEDGER SCHEMA FAILURE" in outcome.report
         assert "migration 1" in outcome.report
 
+    def test_a_torn_line_gets_the_deletion_advice_not_the_migration_hint(self, instance):
+        # An interrupted append's tear is not a schema fault: pointing the
+        # owner at `bin/dex sync` sends him to a repair that cannot work,
+        # while the sanctioned repair — delete the named line, and only
+        # that line — went unstated for the one file it matters most on.
+        self._bare_wiki(instance)
+        instance.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        instance.ledger_path.write_text('{"hash": "73bd78\n')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "LEDGER SCHEMA FAILURE" in outcome.report
+        assert "enrichment-ledger.jsonl:1" in outcome.report
+        assert "delete this torn line, and only this line" in outcome.report
+        assert "bin/dex sync" not in outcome.report
+
     def test_cognitive_jobs_listed_via_the_seam(self, instance):
         self._bare_wiki(instance)
         ledger.append(instance.ledger_path, stamped(waiting_entry(Need.OCR)))
