@@ -9,16 +9,20 @@ the engine stays unaware of which ones exist.
 
 - `src/dex_engine/` — the mechanical commands, exposed as entry points in
   `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-exclude`,
-  `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`) and run in instances
-  through the `bin/dex` shim (`uvx --from` this repo at the pinned tag):
+  `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`, `dex-issue`) and run in
+  instances through the `bin/dex` shim (`uvx --from` this repo at the pinned
+  tag):
   - `pipeline/` — the ledger-driven core: `types.py` (enums, dataclasses,
     Instance/Config), `ledger.py` (the one serialization boundary),
     `detect.py`, `registry.py` (explicit ordered driver list), `run.py`
     (the orchestrator; the pipeline's single broad except), `classify.py`
     (central failure classification + the scrubber), `transcribe.py`,
-    `urls.py`, `capture.py` (`enrich item new`), `digest.py` (`enrich item
-    digest` — the ONE digest write point), `issues.py` (the
-    issue filer).
+    `enrichment.py` (the one enrichment-file format point), `urls.py`,
+    `ownership.py` (which live item claims a work unit), `capture.py`
+    (`enrich item new`), `digest.py` (`enrich item digest` — the ONE
+    digest write point), `issues.py` (the issue filer), `observed.py`
+    (`dex issue` — the observation-shaped producer and its leak
+    rejectors).
   - `drivers/` — one per source shape: youtube, x, github, paper, podcast,
     web (catch-all, always last), file; `transport.py` is the HTTP seam.
   - `capabilities/` — transcribe (whisper-local floor, whisper-api),
@@ -31,7 +35,7 @@ the engine stays unaware of which ones exist.
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·
-    `exclude.py` · `new.py` — thin argparse CLIs over injected
+    `exclude.py` · `new.py` · `issue.py` — thin argparse CLIs over injected
     Instance/Config; zero import-time state anywhere.
 - `instance/` — the template for a new instance, bundled into the wheel:
   the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
