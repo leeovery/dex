@@ -8,9 +8,12 @@ other repairs need):
   (usually: run `bin/dex sync`).
 - **Ledger items with no corpus file** — one row per item and cause;
   the row's parenthesis says which of three, and they want different
-  things. **Excluded on record** — ruled out on purpose: re-run
-  `bin/dex exclude` with that id to purge the leftover entries (the
-  recorded exclusion makes a re-run idempotent); where the row also
+  things. **Excluded on record** — ruled out on purpose: write the id as
+  an exclusions batch (`[{"id": "<item-id>", "reason": "<why>"}]` in
+  `cache/exclusions.json` — full shape in dex-run's
+  `references/state-formats.md`) and run `bin/dex exclude
+  cache/exclusions.json` to purge the leftover entries (the recorded
+  exclusion makes a re-run idempotent); where the row also
   names a sharer, the lines survived because a live item still claims
   the work — leave those. Instances purged before exclude swept the
   ledger carry this as historical residue: clearing it is a one-off,

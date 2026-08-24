@@ -102,6 +102,24 @@ filer: the same defect files once and then comments or stays silent;
 `gh` trouble is a stated line in the verb's output and never stops the
 run.
 
+## `bin/dex exclude` — purging out-of-scope items
+
+Exclusion goes through the verb, never by deleting files. The batch is a
+JSON list of records:
+
+```json
+[{"id": "<corpus item id>", "reason": "why it is out of scope"}]
+```
+
+then `bin/dex exclude cache/exclusions.json`. `reason` is optional and
+defaults to "out of scope". The batch is validated whole and refused
+whole — an id must be a corpus item id, never a path — and one id twice
+collapses to one entry with the count stated. The verb records each
+exclusion in `state/exclusions.tsv` (below), removes the corpus file,
+`enrichment/<id>/` and `state/digests/<id>.md`, and purges the item's
+ledger entries except the work another live item still claims; the
+summary line states every count.
+
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a
@@ -245,8 +263,9 @@ a malformed record impossible:
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what
   matters by hand.
-- `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
-  stay excluded across re-normalization. The verb purges the item
+- `state/exclusions.tsv` — one tab-separated `id<TAB>reason` line per
+  excluded item, written by `bin/dex exclude` (payload above); excluded
+  items stay excluded across re-normalization. The verb purges the item
   completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
   and the item's ledger entries — and states both the entry count it
   dropped and the count it kept because another live item still claims
