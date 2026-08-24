@@ -30,6 +30,7 @@ import json
 from collections.abc import Callable, Collection
 from dataclasses import replace
 from pathlib import Path
+from typing import TextIO
 
 from dex_engine import atomic
 
@@ -321,16 +322,60 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
     return entries
 
 
-def append(path: Path, entry: LedgerEntry) -> None:
-    """Append one entry as a full-record line, creating the file if needed.
+class Appender:
+    """One open append handle over the ledger, for a run's many writes.
 
-    ``entry`` arrives already stamped: :func:`stamp` is the only place a
-    written line's ``at`` is set, so the timestamp that orders a line is
-    always the writing machine's own clock and never a value a caller chose.
+    ``append`` reopens the file per line — a cost the drain paid per unit.
+    Holding the handle makes a line one write, and each line is flushed as
+    it is written, which keeps open-per-line's durability contract exactly:
+    after :meth:`append` returns the line is with the OS, visible to every
+    reader (a fresh ``load`` in this process, or another process's) and
+    safe against this process crashing. Neither shape fsyncs, so an OS
+    crash or power loss can cost the tail either way — the read-back
+    guards (mark's, the run report's) rely on the flush, never on close.
+
+    The file opens lazily on the first append, in append mode, so every
+    line lands at the file's current end even where another writer's line
+    arrived in between — exactly as the per-line reopen behaved.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(to_line(entry) + "\n")
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._handle: TextIO | None = None
+
+    def append(self, entry: LedgerEntry) -> None:
+        """Append one entry as a full-record line, creating the file if needed.
+
+        ``entry`` arrives already stamped: :func:`stamp` is the only place a
+        written line's ``at`` is set, so the timestamp that orders a line is
+        always the writing machine's own clock and never a value a caller
+        chose.
+        """
+        if self._handle is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = self._path.open("a", encoding="utf-8")
+        self._handle.write(to_line(entry) + "\n")
+        self._handle.flush()
+
+    def close(self) -> None:
+        """Release the handle; a later append reopens."""
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+def append(path: Path, entry: LedgerEntry) -> None:
+    """Append one entry and release the handle — :class:`Appender`, one-shot.
+
+    For the callers that write a line and are done (a purge's landing
+    correction, a test's fixture line); a drain holds an :class:`Appender`
+    instead of paying this reopen per unit.
+    """
+    appender = Appender(path)
+    try:
+        appender.append(entry)
+    finally:
+        appender.close()
 
 
 def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:

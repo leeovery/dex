@@ -415,10 +415,21 @@ class _Drain:
     # the one door entries change through — and dropped whenever ownership
     # re-resolves, because the counts attribute exactly as `owner_of` does.
     _fetched_counts: dict[str, int] | None = None
+    # One append handle for the run's many ledger writes (open-per-line
+    # cost the drain per unit). Every line is flushed as written, so the
+    # read-backs (mark's, the report's) and any concurrent reader see it
+    # exactly as they did under open-per-line; the verbs close it when
+    # they finish.
+    _appender: ledger.Appender = field(init=False)
 
     def __post_init__(self) -> None:
         self.entries = ledger.load(self.ctx.instance.ledger_path)
         self.sniff = head_sniffer(self.ctx.transport)
+        self._appender = ledger.Appender(self.ctx.instance.ledger_path)
+
+    def close_ledger(self) -> None:
+        """Release the run's append handle (every line is already flushed)."""
+        self._appender.close()
 
     # -- seeding ---------------------------------------------------------
 
@@ -1455,7 +1466,7 @@ class _Drain:
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
         )
-        ledger.append(self.ctx.instance.ledger_path, stamped)
+        self._appender.append(stamped)
         self._count_write(stamped)
         self.entries[stamped.hash] = stamped
         self.written[stamped.hash] = stamped
@@ -1980,6 +1991,7 @@ def _finish(drain: _Drain) -> str:
     payload = drain.report_payload()
     if outcome.filed:
         payload["issues_filed"] = outcome.filed
+    drain.close_ledger()
     return surfaces.render("enrich-report", payload)
 
 
@@ -2646,6 +2658,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     drain.resolve_owners()
     for item_id in drain.owners.get(prior.hash, (prior.item,)):
         _refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
+    drain.close_ledger()
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 
 

@@ -188,6 +188,27 @@ class TestSeedAndDone:
         statuses = {e.status for e in ledger.load(instance.ledger_path).values()}
         assert statuses == {Status.DONE}
 
+    def test_a_runs_ledger_writes_share_one_append_handle(self, instance, monkeypatch):
+        # Six lines (three births, three outcomes), one open for append:
+        # the per-line reopen is the regression this pins against. Every
+        # line is flushed as written, so the single open changes no
+        # reader's view — the report's read-back below still sees all six.
+        urls = [f"https://example.test/p{n}" for n in range(3)]
+        write_item(instance, urls=urls)
+        opens: list[str] = []
+        real_open = Path.open
+
+        def counting_open(self, mode="r", *args, **kwargs):
+            if self == instance.ledger_path and "a" in mode:
+                opens.append(mode)
+            return real_open(self, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", counting_open)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
+        assert len(lines) == 6
+        assert len(opens) == 1
+
     def test_two_items_sharing_a_url_dedupe_by_hash(self, instance):
         write_item(instance, "2026-08-19-first-aaaaaa")
         write_item(instance, "2026-08-19-second-bbbbbb")

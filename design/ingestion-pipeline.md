@@ -2294,7 +2294,16 @@ and the outcome union settles several of these on its way past.
   admissions, cap fires, `--force`, budget-returning skips, media lines,
   and a rename's re-attribution); the cap check is O(1) per admission
   after one build.
-- **One long-lived append handle for the ledger.**
+- **One long-lived append handle for the ledger.** **Done**:
+  `ledger.Appender` holds one append-mode handle for a drain's many
+  writes (the verbs close it as they finish; `ledger.append` remains as
+  its one-shot form for the single-line callers). Every line is flushed
+  as written, so the durability contract of open-per-line is kept
+  exactly — after each append the line is with the OS, visible to every
+  reader and safe against a process crash; neither shape fsyncs, so an OS
+  crash can cost the tail either way, as before. The file format is
+  byte-identical and append mode keeps an interleaved writer's line
+  intact.
 
 Two seams of this round already landed as part of fixes and are **done**:
 `drivers/gh.py`, the authenticated GitHub route the github and file drivers
