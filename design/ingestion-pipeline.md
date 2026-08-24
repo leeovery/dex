@@ -1981,6 +1981,19 @@ Skill changes shipping with this:
   and `dex-run` (plus `dex-query`, `dex-lint`). Bare `/dex-capture` asks
   "capture what?"; with content in hand it just captures; `dex-run` takes
   nothing.
+- **Progressive disclosure governs the two operating skills whole.**
+  `dex-run`'s SKILL.md is the always-in-context skeleton — mission,
+  numbered steps with their load-bearing invariants inline, a "read
+  `references/<file>.md` now" pointer per phase — over
+  `references/preparation.md` (anchor → sync → guard → pull → inbox),
+  `processing.md` (items → enrich → backstop, dispatching to
+  `ingest-item.md`) and `backfills.md`, alongside the schema/state-format
+  references. `dex-lint`'s skeleton loads `references/repairs.md` and
+  `standing-signals.md`. The preparation steps live once, in dex-run's
+  `references/preparation.md`: run standalone, dex-lint reads that file,
+  makes the instance current, and stops short of processing — no items
+  created, no enrich run — never a second copy of the steps; dex-run
+  remains canonical.
 - **Skill authoring style**: deterministic behavior lives in code, never
   prose; order-critical sequences stay prescribed *with their reasons
   attached* (the "commit immediately — the repo copy is now the only copy"
@@ -1988,7 +2001,15 @@ Skill changes shipping with this:
   work is described as goal + quality bar + boundaries (anti-improvisation
   rules stay), not scripted with gates. Written for whatever model an
   owner's scheduled task runs — the safety comes from the layers below
-  (code constrains, lint verifies), not from prose density.
+  (code constrains, lint verifies), not from prose density. And skills are
+  written for progressive disclosure: a lean orchestrating SKILL.md — the
+  step sequence with one-line summaries, invariants that prevent
+  catastrophe stated inline — with each phase's detail in a reference file
+  read at the step that names it. Instructions loaded before they apply
+  must be ignored-for-now, and that is an ambiguity surface; reveal
+  instructions when they become actionable. Split at phase boundaries
+  (where the session's work changes mode), one reference per phase, never
+  one per step — each read is a context load.
 - **Ingest becomes report-driven, not inbox-driven** — the structural change
   the rest depends on. Procedure: pull → `bin/dex inbox` → **`enrich run`,
   read its report** → per-item cognitive work for *everything the report
