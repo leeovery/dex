@@ -68,7 +68,9 @@ class TestMain:
         assert "observed" in str(err.value.code)
         assert not (instance.state_dir / "issue-reports.jsonl").exists()
 
-    def test_report_issues_false_gates_the_verb_off(self, instance, monkeypatch, capsys):
+    def test_report_issues_false_records_locally_and_files_nothing(
+        self, instance, monkeypatch, capsys
+    ):
         def never(_args):
             raise AssertionError("gh must not be called when reporting is off")
 
@@ -78,8 +80,11 @@ class TestMain:
         _payload(instance)
         main(["--file", "cache/issue.json"])
         out = capsys.readouterr().out
+        assert "recorded locally" in out
         assert "report_issues" in out
-        assert not (instance.state_dir / "issue-reports.jsonl").exists()
+        record = json.loads((instance.state_dir / "issue-reports.jsonl").read_text().split("\n")[0])
+        assert record["action"] == "recorded"
+        assert record["filed"] is False
 
     def test_a_missing_payload_file_exits_stated_not_raised(self, instance, monkeypatch):
         monkeypatch.chdir(instance.root)

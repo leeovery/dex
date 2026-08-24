@@ -2476,7 +2476,7 @@ class TestIssueFiling:
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
         assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs
 
-    def test_report_issues_false_files_nothing(self, instance):
+    def test_report_issues_false_files_nothing_but_records_locally(self, instance):
         gh = FakeGh()
         ctx = dataclasses.replace(
             self._crashing_ctx(instance, gh), config=Config(report_issues=False)
@@ -2484,6 +2484,11 @@ class TestIssueFiling:
         report = run_mod.run(ctx)
         assert gh.calls == []
         assert "reported upstream" not in report
+        # The gate stops upstream filing only — the observation still lands
+        # in the local memory, filed: false, and the report says so.
+        assert "recorded locally" in report
+        record = json.loads((instance.state_dir / "issue-reports.jsonl").read_text().split("\n")[0])
+        assert record["filed"] is False
 
     def test_filer_failure_is_a_note_and_the_run_completes(self, instance):
         report = run_mod.run(self._crashing_ctx(instance, refuse_gh))
