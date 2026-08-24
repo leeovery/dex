@@ -7,12 +7,13 @@ other repairs need):
   state; the message names the file, line, and likely missing migration
   (usually: run `bin/dex sync`).
 - **Torn state file** — the failure row (or sync's error) names the
-  offending file. A torn trailing line in `state/passes.jsonl` or
-  `state/migrations.jsonl` is an interrupted write, and the sanctioned
-  repair is deleting that trailing line: a half-written line is not a
-  record, so removing it is healing, not hand-writing state. The
-  sanction is that narrow — the torn TRAILING line only, never an
-  intact record and never a rewrite. A malformed
+  offending file AND line. A torn line in `state/passes.jsonl` or
+  `state/migrations.jsonl` is an interrupted write (it starts trailing,
+  but later appends or a union merge can leave it mid-file), and the
+  sanctioned repair is deleting exactly the line the row names: a
+  half-written line is not a record, so removing it is healing, not
+  hand-writing state. The sanction is that narrow — the named TORN line
+  only, never an intact record and never a rewrite. A malformed
   `state/entity-members.json` is different: that file is one of the two
   you write directly, so repair it by rewriting it to the shape in
   dex-run's `references/state-formats.md`.
