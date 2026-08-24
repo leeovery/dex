@@ -1281,9 +1281,11 @@ underneath; the audio lives in the feed's `<enclosure>`:
 - **Direct RSS / indie episode page** → the feed the page's `<link rel>`
   names (its notes are richer than the page's markup), falling back to the
   enclosure the page carries itself when that feed is unreachable or does
-  not hold the episode. Either way the unit resolves — it must, because the
-  route it arrives by is a re-detection and bouncing back would park as a
-  loop.
+  not hold the episode. On the fallback road the park body is the episode
+  page's own notes — the page was already fetched, and a park never
+  discards content it already fetched (§6). Either way the unit resolves —
+  it must, because the route it arrives by is a re-detection and bouncing
+  back would park as a loop.
 
   **The route is content-driven, never URL-guessing.** `matches()` stays
   narrow (Apple, Spotify, explicit `.rss`) because bare `/feed` and `/rss`
