@@ -93,7 +93,7 @@ class Classification:
 
         Where the classification layer meets the driver-result layer:
         exactly the classified status and its stated reason, nothing
-        invented, nothing dropped. Six call sites used to spell this out
+        invented, nothing dropped. Seven call sites used to spell this out
         by hand, which is six places a future change to what a
         classification means as a result would have to land.
         """

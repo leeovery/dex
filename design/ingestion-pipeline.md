@@ -2214,7 +2214,7 @@ release work and puts them here rather than on the roadmap. Sequence them
 after the driver-outcome change (§2) — the cleanup touches the same seams,
 and the outcome union settles several of these on its way past.
 
-- **One shared fetch-and-classify helper.** Eight hand-rolled copies across
+- **One shared fetch-and-classify helper.** Nine hand-rolled copies across
   the drivers, `transcribe` and `run`. **Done**: `drivers/fetch.py` —
   `fetch_classified` returns the response or a `FetchFailure` carrying
   the classification together with the wire status, so the callers that
