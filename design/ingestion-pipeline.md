@@ -2258,12 +2258,15 @@ Skill changes shipping with this:
   the video awaiting its transcript) and nothing about it advances to
   digest or wiki until every part has landed, so one pending transcript
   holds the whole item at `raw`; a `dead` or `skipped` unit owes nothing and
-  holds nothing hostage. What the item OWES is the whole question and the
-  ledger answers it, never the item's own directory listing — which asks a
-  different question, where the item's own files are. The one exception is
-  the capture that seeded nothing at all: no units AND no files is a
-  text-or-image-only share, which owes its description and its digest, and
-  an `any()` over no units would call that finished. So an `enriched` item
+  holds nothing hostage. What the item owes in units is the whole question
+  and the ledger answers it, never the item's own directory listing —
+  which asks a different question, where the item's own files are. The one
+  exception is the item with no units at all: an `any()` over no units
+  would call a fresh text-or-image-only share finished, so a no-unit item
+  derives from its directory instead — `raw` while it is empty, `enriched`
+  once anything lands there — and the description and digest such an item
+  owes are the run report's and the digest backstop's to carry, never the
+  status's. So an `enriched` item
   may legitimately carry `enrichment: []` — seeding dedupes by work hash,
   so a URL shared into two captures is ledgered once and its output lands
   under the first item only, while the second derives `enriched` on the

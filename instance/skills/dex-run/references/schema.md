@@ -49,6 +49,10 @@ media:                                      # media captures: repo-relative path
   listing from the files under `enrichment/<id>/`, the status from the
   ledger — `enriched` only once every unit the item owns has landed (or is
   confirmed gone or deliberately skipped), `raw` while any is still owed.
+  An item with no units derives its status from the enrichment directory
+  instead (`raw` while it is empty, `enriched` once anything is there);
+  owed description and digest are the run report's and the digest
+  backstop's to carry, never the status's.
   After creation these are the ONLY two frontmatter fields that ever change.
 - `urls` is immutable capture provenance. Harvest-promoted URLs are ledger
   entries (`via: harvest`), never frontmatter edits.

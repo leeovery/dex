@@ -45,10 +45,12 @@ frontmatter fields ever change (`status`, `enrichment:`), both derived by
 the engine: the listing from the enrichment directory, the status from the
 ledger — `enriched` only once every unit the ownership map gives the item
 has landed (or is confirmed gone or deliberately skipped), `raw` while any
-is still owed. The status is what the item owes, never what its own
-directory holds; the one exception is a capture that seeded nothing at all,
-which stays `raw` on no units and no files because it still owes its
-description and its digest. So `enrichment: []` on an `enriched` item is
+is still owed. An item with no units at all derives its status from the
+enrichment directory instead: `raw` while nothing is there, `enriched` once
+something is. So a text-only share stays `raw` even after its digest lands,
+and a media capture flips `enriched` when its description file lands, digest
+or not; owed description and digest are what the run report and the digest
+backstop carry, never `status`. And `enrichment: []` on an `enriched` item is
 not a fault: a URL two captures share is fetched once and its output lands
 under whichever item hit first, and the listing names only that item's own
 directory. `bin/dex enrich status --item <id>` is where the shared unit
