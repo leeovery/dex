@@ -47,6 +47,19 @@ class TestScaffold:
         assert lines[0] == f"created {root}"
         assert any("bin/dex inbox ensure" in line for line in lines)
 
+    def test_next_steps_respect_the_github_choice(self, tmp_path):
+        # GitHub is a setup-time choice the owner may decline; the printed
+        # next steps offer the gh command conditionally, never as an
+        # unconditional instruction.
+        root = tmp_path / "dex-cooking"
+        lines = scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        assert lines == [
+            f"created {root}",
+            "next: personalize CLAUDE.md and README.md, commit, then:",
+            "  if using GitHub: gh repo create dex-cooking --private --source . --push",
+            "  bin/dex inbox ensure",
+        ]
+
     def test_seeds_config_json_not_the_pre_rename_file(self, tmp_path):
         root = tmp_path / "dex-cooking"
         scaffold(root, run=RecordingRun(), template=TEMPLATE)

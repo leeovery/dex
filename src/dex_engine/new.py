@@ -99,10 +99,13 @@ def scaffold(
     sync(root, template=template)
     run(["git", "init", "-q"], root)
     run(["git", "lfs", "install", "--local"], root)
+    # The next steps stay neutral on hosting: the GitHub question is the
+    # owner's, answered during setup, and an unconditional `gh repo create`
+    # here read as an instruction to an owner who declined GitHub.
     return [
         f"created {root}",
         "next: personalize CLAUDE.md and README.md, commit, then:",
-        f"  gh repo create {root.name} --private --source . --push",
+        f"  if using GitHub: gh repo create {root.name} --private --source . --push",
         "  bin/dex inbox ensure",
     ]
 
