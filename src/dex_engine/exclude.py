@@ -28,6 +28,16 @@ signal. A corpus file that cannot be read claims nothing, which would make
 that veto fail open toward deletion, so a batch that meets one purges no
 ledger entries at all and the summary says why.
 
+The purge judges every line against the whole exclusions record, never
+this batch's ids alone. A kept line still names the item it was seeded
+under — lines are never rewritten in place; reads resolve ownership live —
+so when the survivor is excluded in a later batch, the stored string
+matches no id in that batch: judged against the batch alone the hash was
+never vetoed and never purged, unpurgeable by any batch forever, and the
+next run refetched it under the excluded id. Judged against the record,
+whichever batch removes the last claimant sweeps the line, and any later
+batch sweeps residue an interrupted purge left.
+
 A kept entry whose output was filed under the purged item goes back to
 ``queued`` in the same breath: the line survives on the survivor's claim,
 but the enrichment left with the item that produced it, and seeding's
@@ -132,7 +142,14 @@ def run_exclude(
     # (which the TSV makes idempotent) purges them.
     # Scanned after the deletions above, so a purged item cannot claim its
     # own work — what remains is what the surviving corpus still lists.
-    purged = {exclusion.item_id for exclusion in validated}
+    # The purge judges lines against the WHOLE record, not this batch's ids
+    # alone: a shared unit's line kept on a survivor's claim still names the
+    # item it was seeded under, so the batch that later excludes the
+    # survivor holds no id matching the stored string — the batch's ids
+    # alone left that hash unjudged forever, and the next run refetched it.
+    on_record = {exclusion.item_id for exclusion in validated} | _on_record(
+        instance.state_dir / "exclusions.tsv"
+    )
     collapsed = len(entries) - len(validated)
     counted = f"{len(validated)}"
     if collapsed:
@@ -156,7 +173,7 @@ def run_exclude(
             "were purged — repair them (dex-lint names them) and re-run"
         )
     claimed = _surviving_claims(instance, now=now)
-    dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed, now=now)
+    dropped, kept = ledger.drop_items(instance.ledger_path, on_record, claimed=claimed, now=now)
     summary += _purge_counts(dropped, kept)
 
     def stamp(entry: LedgerEntry) -> LedgerEntry:
@@ -164,7 +181,7 @@ def run_exclude(
         # strands a survivor's landing writes a ledger line at all.
         return ledger.stamp(entry, today=today, now=now, engine_version=version())
 
-    requeued = _requeue_stranded_landings(instance, purged, claimed, now=now, stamp=stamp)
+    requeued = _requeue_stranded_landings(instance, on_record, claimed, now=now, stamp=stamp)
     if requeued:
         summary += f"; {requeued} re-queued (enrichment went with the item that produced it)"
     return summary
@@ -178,13 +195,7 @@ def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple
     deletions the re-run finishes.
     """
     exclusions = instance.state_dir / "exclusions.tsv"
-    existing: set[str] = set()
-    if exclusions.exists():
-        existing = {
-            line.split("\t")[0]
-            for line in exclusions.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+    existing = _on_record(exclusions)
     removed = missing = digests = 0
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
@@ -201,6 +212,23 @@ def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple
                 exclusion.digest_path.unlink()
                 digests += 1
     return removed, missing, digests
+
+
+def _on_record(exclusions: Path) -> set[str]:
+    """Every item id in ``state/exclusions.tsv`` — the full record, all batches.
+
+    Read after :func:`_record_and_remove` appends, this is the batch's ids
+    united with every prior ruling's: the set the ledger purge judges
+    stored ``item`` strings against, because a kept line goes on naming an
+    id excluded batches ago.
+    """
+    if not exclusions.exists():
+        return set()
+    return {
+        line.split("\t")[0]
+        for line in exclusions.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
 
 
 def _surviving_claims(
@@ -255,7 +283,7 @@ def _surviving_claims(
 
 def _requeue_stranded_landings(
     instance: Instance,
-    purged: set[str],
+    on_record: set[str],
     claimed: Mapping[str, tuple[str, ...]],
     *,
     now: Callable[[], datetime.datetime],
@@ -284,7 +312,11 @@ def _requeue_stranded_landings(
 
     Args:
         instance: The instance.
-        purged: The excluded item ids, whose directories are already gone.
+        on_record: Every item id excluded on the record — this batch and
+            prior ones, whose directories are already gone. The whole
+            record, so a landing a prior interrupted purge stranded is
+            healed by whichever batch runs next, the same way the ledger
+            purge sweeps against the record.
         claimed: Work hash -> the live items that still claim it
             (:func:`_surviving_claims`).
         now: Injected instant clock, UTC-aware — the ledger resolves each
@@ -303,7 +335,7 @@ def _requeue_stranded_landings(
         # the health check as a done output gone from disk, and the next
         # verb names the unreadable line loudly.
         return 0
-    deleted = {Path("enrichment") / item_id for item_id in purged}
+    deleted = {Path("enrichment") / item_id for item_id in on_record}
     stranded = [
         entry
         for entry in kept.values()

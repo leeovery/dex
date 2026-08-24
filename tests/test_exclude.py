@@ -3,6 +3,7 @@
 import datetime
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,12 @@ import pytest
 from dex_engine.exclude import main, run_exclude
 from dex_engine.normalize import load_exclusions
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.registry import default_drivers
-from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Status
+from dex_engine.pipeline.types import Config, Instance, Kind, LedgerEntry, Status
+from tests.conftest import FakeDriver
+from tests.drivers.conftest import FakeTransport
 
 DRIVERS = default_drivers()
 
@@ -289,6 +293,94 @@ class TestLedgerPurge:
             f.write("{torn\n")
         run_exclude(instance, [{"id": ITEM}])
         assert instance.ledger_path.read_text() == "{torn\n"
+
+
+class TestSequentialExclusions:
+    """The purge judges the whole exclusions record, never the batch alone.
+
+    A shared unit's line kept on a survivor's claim goes on naming the item
+    it was seeded under — lines are never rewritten in place. The batch
+    that later excludes the survivor holds no id matching that stored
+    string, so judged against the batch alone the hash was never vetoed
+    (nothing live claims it) and never purged (the batch does not name it):
+    unpurgeable by any batch forever, refetched by the next run, and the
+    report resurrected the excluded item under "Needs writing up".
+    """
+
+    def _seed_shared(self, instance) -> str:
+        """Two items on one URL; the queued line names the first of them."""
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        return shared
+
+    def _ctx(self, instance, driver) -> run_mod.RunContext:
+        def refuse_gh(args: Sequence[str]) -> str:
+            raise OSError(f"no gh in tests (called with {args[:2]})")
+
+        return run_mod.RunContext(
+            instance=instance,
+            config=Config(),
+            drivers=[driver],
+            today=lambda: datetime.date(2026, 8, 22),
+            now=lambda: datetime.datetime(2026, 8, 22, 12, 0, tzinfo=datetime.UTC),
+            engine_version="0.4.0",
+            transport=FakeTransport({}),
+            sleep=lambda _seconds: None,
+            gh=refuse_gh,
+        )
+
+    def test_excluding_the_survivor_sweeps_the_line_naming_the_first(self, instance):
+        self._seed_shared(instance)
+        first = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert "0 ledger entries dropped, 1 kept" in first
+        second = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "1 ledger entries dropped, 0 kept" in second
+        assert instance.ledger_path.read_text() == ""
+
+    def test_the_next_run_refetches_nothing_and_resurrects_neither(self, instance):
+        # Under the batch-only judgement the queued line survived both
+        # exclusions, so the next run fetched it, recreated
+        # enrichment/<first>/ and reported the excluded item as new
+        # material.
+        self._seed_shared(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        driver = FakeDriver()
+        report = run_mod.run(self._ctx(instance, driver))
+        assert driver.fetched == []
+        assert ITEM not in report
+        assert OTHER not in report
+        assert not (instance.enrichment_dir / ITEM).exists()
+
+    def test_re_excluding_an_already_gone_id_sweeps_residue_idempotently(self, instance):
+        # An instance that lived through the batch-only judgement holds the
+        # orphan already: both ids on record, no corpus file left, the line
+        # still naming the first. Re-running the last batch (its item long
+        # gone) must sweep the residue, and a further re-run drop nothing.
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{ITEM}\tmeme\n{OTHER}\tmeme\n", encoding="utf-8"
+        )
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        summary = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "removed 0 items (1 already gone)" in summary
+        assert "1 ledger entries dropped, 0 kept" in summary
+        assert instance.ledger_path.read_text() == ""
+        again = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "0 ledger entries dropped, 0 kept" in again
+
+    def test_a_hash_a_live_item_claims_survives_the_record(self, instance):
+        # No over-purging: the stored string is on the record, but OTHER
+        # still lists the URL — an unrelated later batch keeps the line on
+        # the live claim, and counts it kept.
+        shared = self._seed_shared(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        third = "2026-08-19-third-33dd44"
+        write_item_stub(instance, third)
+        summary = run_exclude(instance, [{"id": third, "reason": "ads"}])
+        assert "0 ledger entries dropped, 1 kept" in summary
+        assert set(ledger.load(instance.ledger_path)) == {shared}
 
 
 class TestStrandedLandings:

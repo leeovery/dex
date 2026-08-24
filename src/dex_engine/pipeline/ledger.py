@@ -495,7 +495,12 @@ def drop_items(
     hash is judged on the line ``load`` resolves to, and ``claimed`` — the
     work every surviving corpus item still lists — vetoes the removal. What
     goes is a hash whose live line names a purged item and which no live
-    item claims; its superseded lines, the audit trail, go with it.
+    item claims; its superseded lines, the audit trail, go with it. And a
+    kept line goes on naming the item it was written under — lines are
+    never rewritten in place — so ``items`` must be the whole exclusions
+    record, not one batch's ids: judged against the batch alone, the line
+    a survivor's claim kept becomes unpurgeable the day the survivor is
+    excluded, because no later batch names the id the line stores.
 
     Unparseable lines are kept, not purged: a line this layer cannot read
     is not provably one of these items', and a purge must never become
@@ -505,7 +510,8 @@ def drop_items(
 
     Args:
         path: The ledger file; a missing file is a no-op.
-        items: The purged corpus item ids.
+        items: The purged corpus item ids — every id excluded on the
+            record, prior batches included, never the current batch alone.
         claimed: The work hashes live corpus items still list — computed
             after the purge deletes their files, so a purged item cannot
             claim its own work.
