@@ -363,10 +363,16 @@ class Refused:
     ``permanent`` is the driver-known fact that retrying can never change
     the answer (payment/login walls, geo-blocks); a transient refusal is
     the world misbehaving, and the run layer owns the retry lifecycle.
+
+    ``tls`` is the classifier-known fact that the refusal happened at the
+    TLS layer, before any HTTP conversation — typed because the run layer
+    dispatches on it (the http-only fallback for sources actually shared
+    as http), and a routing signal never lives in the evidence prose.
     """
 
     evidence: str
     permanent: bool = False
+    tls: bool = False
 
     def __post_init__(self) -> None:
         _validate_evidence(self.evidence)

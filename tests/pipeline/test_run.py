@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import ssl
 import zipfile
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from dex_engine.exclude import run_exclude
 from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.classify import ProviderInputError, classify_connection
 from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
@@ -58,6 +59,7 @@ from dex_engine.pipeline.types import (
     Refused,
     Status,
     Unusable,
+    WorkUnit,
 )
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
@@ -974,6 +976,82 @@ class TestOutcomeMapping:
         assert entry.status is Status.DONE
         assert entry.via == "sniff"
         assert len(web.fetched) == 1  # the correction re-routed, never re-fetched as web
+
+
+class TestHttpOnlySources:
+    """The TLS-failure http fallback: only for sources actually shared as http."""
+
+    HTTP_URL = "http://legacy.example.test/post"
+    CANONICAL = "https://legacy.example.test/post"
+
+    @staticmethod
+    def tls_refusal() -> Outcome:
+        # Through the real classifier, so the typed tls marker is the one
+        # the production path carries — never a hand-built lookalike.
+        return classify_connection(ssl.SSLError(1, "TLSV1_ALERT_PROTOCOL_VERSION")).to_outcome()
+
+    def scheme_split_driver(self) -> FakeDriver:
+        """TLS-refuses every https fetch; serves content over http."""
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url.startswith("https://"):
+                return self.tls_refusal()
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        return FakeDriver(fetch_fn=fetch)
+
+    def test_http_shared_source_refetches_over_http_and_lands(self, instance):
+        write_item(instance, urls=[self.HTTP_URL])
+        driver = self.scheme_split_driver()
+        ctx = make_ctx(instance, driver)
+        report = run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL, self.HTTP_URL]
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DONE
+        # Identity and ledger semantics unchanged: the line still carries
+        # the canonical https URL; only the wire request downgraded.
+        assert entry.url == self.CANONICAL
+        assert entry.path is not None
+        assert (instance.root / entry.path).exists()
+        # The retry is visible on the report — it otherwise shows an https
+        # URL the owner never shared.
+        assert "refetched over http" in report
+
+    def test_https_shared_source_never_downgrades_on_tls_failure(self, instance):
+        write_item(instance, urls=[self.CANONICAL])
+        driver = self.scheme_split_driver()
+        ctx = make_ctx(instance, driver)
+        report = run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL]  # no http attempt
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.BLOCKED
+        assert entry.reason is not None
+        assert entry.reason.startswith("TLS failure")
+        assert "refetched over http" not in report
+
+    def test_a_non_tls_refusal_never_downgrades_even_when_http_shared(self, instance):
+        write_item(instance, urls=[self.HTTP_URL])
+        driver = FakeDriver(fetch_fn=lambda _u: Refused(evidence="HTTP 403"))
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL]
+        assert entry_for(ctx, self.CANONICAL).status is Status.BLOCKED
+
+    def test_the_fallback_fetch_takes_the_normal_outcome_road(self, instance):
+        # An http retry that ALSO fails classifies exactly as a normal
+        # fetch would — same outcomes, same statuses.
+        write_item(instance, urls=[self.HTTP_URL])
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url.startswith("https://"):
+                return self.tls_refusal()
+            return Missing(evidence="HTTP 404")
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DEAD
+        assert entry.reason == "HTTP 404"
 
 
 class TestRerun:

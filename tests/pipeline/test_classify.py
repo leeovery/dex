@@ -14,7 +14,7 @@ from dex_engine.pipeline.classify import (
     classify_http,
     scrub,
 )
-from dex_engine.pipeline.types import Status
+from dex_engine.pipeline.types import Refused, Status
 
 RAW = "/Users/owner/dex-notes/raw"  # the instance's raw/ tree, under a home dir
 
@@ -101,6 +101,35 @@ class TestClassifyConnection:
         classification = classify_connection(exc)
         assert classification.status is Status.BLOCKED
         assert classification.reason
+
+    def test_tls_failure_carries_the_typed_marker(self):
+        # The marker is typed, never read out of the reason prose, and it
+        # survives the one conversion to a driver outcome — the run layer's
+        # http-only fallback dispatches on it.
+        classification = classify_connection(ssl.SSLError("tls handshake"))
+        assert classification.tls
+        wrapped = urllib.error.URLError(ssl.SSLError("tls handshake"))
+        assert classify_connection(wrapped).tls
+        outcome = classification.to_outcome()
+        assert isinstance(outcome, Refused)
+        assert outcome.tls
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ConnectionRefusedError("refused"),
+            ConnectionResetError("reset"),
+            TimeoutError("timed out"),
+            OSError("network unreachable"),
+            socket.gaierror(socket.EAI_AGAIN, "temporary failure"),
+        ],
+    )
+    def test_non_tls_trouble_never_carries_the_marker(self, exc):
+        classification = classify_connection(exc)
+        assert not classification.tls
+        outcome = classification.to_outcome()
+        assert isinstance(outcome, Refused)
+        assert not outcome.tls
 
     def test_reasons_are_scrubbed(self):
         exc = OSError("cannot reach https://example.test/x from /Users/owner/repo")

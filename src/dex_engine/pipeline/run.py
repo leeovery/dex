@@ -376,6 +376,11 @@ class _Drain:
     written: dict[str, LedgerEntry] = field(default_factory=dict)
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
+    # Unit hashes whose URL some live item's frontmatter shares as http.
+    # Canonicalization forces https (identity and hashing are unchanged),
+    # so this is the one record that the owner actually shared the source
+    # over http — what licenses the TLS-failure fallback to refetch it so.
+    http_shared: set[str] = field(default_factory=set)
     # Which live corpus items own each unit — the corpus's answer, never the
     # ledger line's stored string. Rebuilt after the drain, when this run's
     # children exist to be attributed.
@@ -460,12 +465,18 @@ class _Drain:
             self.item_status[item.id] = item.status
             for url in item.urls:
                 try:
-                    self.admit(item.id, url)
+                    admission = self.admit(item.id, url)
                 except ValueError as e:
                     # One malformed capture URL parks THAT URL; it never
                     # aborts the run (frontmatter is immutable provenance —
                     # garbage in it is judgment work, hence manual).
                     self.park_bad_seed(item.id, url, e)
+                    continue
+                if url.startswith("http://"):
+                    # The owner shared this source as http; canonicalization
+                    # forces https anyway, so remember the fact here — it is
+                    # what licenses the TLS-failure http fallback.
+                    self.http_shared.add(admission.hash)
             for repo_path in item.media:
                 self._seed_media_file(item.id, repo_path)
         self.resolve_owners()
@@ -857,10 +868,39 @@ class _Drain:
             parent=entry.parent,
         )
         try:
-            self._apply(entry, driver.fetch(unit))
+            fetched = driver.fetch(unit)
+            retry = self._http_retry_unit(unit, fetched)
+            if retry is not None:
+                self.notes.append(
+                    f"{unit.url}: https refused at the TLS layer — refetched over "
+                    "http, which is how the owner shared this source"
+                )
+                self.ctx.sleep(driver.sleep)  # two requests, politeness between them
+                fetched = driver.fetch(retry)
+            self._apply(entry, fetched)
         finally:
             # Politeness holds even when the fetch failed.
             self.ctx.sleep(driver.sleep)
+
+    def _http_retry_unit(self, unit: WorkUnit, fetched: Outcome) -> WorkUnit | None:
+        """The http-variant retry for a TLS-refused fetch, or None.
+
+        Canonicalization forces https, so an http-only source is asked for
+        over a TLS it does not speak and parks blocked forever. When the
+        https fetch failed at the TLS layer (the typed ``Refused.tls``
+        marker, never the evidence prose) AND the owner actually shared
+        the source as http (:attr:`http_shared`, read off live corpus
+        frontmatter at seeding), the same unit is refetched over http —
+        identity, hashing and the ledger URL all unchanged; only the wire
+        request downgrades. A TLS failure on a genuinely https-shared URL
+        never downgrades: it stays blocked, exactly as before. The check
+        lives here, at the run/fetch seam, so drivers stay ignorant of it.
+        """
+        if not (isinstance(fetched, Refused) and fetched.tls):
+            return None
+        if unit.hash not in self.http_shared or not unit.url.startswith("https://"):
+            return None
+        return dataclasses.replace(unit, url="http://" + unit.url.removeprefix("https://"))
 
     # -- the transcribe drain ----------------------------------------
 
