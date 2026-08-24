@@ -386,6 +386,10 @@ class _Drain:
     # children exist to be attributed.
     owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
+    # Live items whose every ledger unit landed dead and whose digest is
+    # not yet recorded — like the no-source items, owed description +
+    # digest from the owner's note, and derived on demand for the report.
+    all_dead_items: list[str] = field(default_factory=list)
     # Items this run wrote an outcome for — the report's incompleteness
     # section covers exactly these (an item nothing happened to this run has
     # nothing new to say; `enrich status` holds the standing view).
@@ -1625,7 +1629,13 @@ class _Drain:
     # -- report ----------------------------------------------------------
 
     def derive_no_source_items(self) -> None:
-        """List fresh text/image-only items the unit-driven report cannot see.
+        """List the items the unit-driven report cannot see, or misstates.
+
+        Two families, one owed job. A no-source capture seeded nothing, so
+        it never appears among the drained units; an all-dead item's units
+        all appear, but only as a count that says nothing about what the
+        item still owes. Both owe description + digest from the owner's
+        note, and both are named on the report until the digest lands.
 
         A capture with no URLs and no document media seeds nothing, so it
         never appears among the drained units — yet its description and
@@ -1646,6 +1656,16 @@ class _Drain:
             and item_id not in sourced
             and not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
         ]
+        # The all-dead sibling: every unit landed `dead`, so the engine owes
+        # nothing further and no enrichment exists — the owed work is the
+        # same description + digest, from the owner's note. Same shared
+        # reading as the digest backstop (:func:`_all_dead_items`), and it
+        # drops off the moment the item's digest is recorded.
+        self.all_dead_items = [
+            item_id
+            for item_id in _all_dead_items(self.entries, self.owners, set(self.item_status))
+            if not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+        ]
 
     def report_payload(self) -> dict[str, object]:
         items = [
@@ -1656,6 +1676,13 @@ class _Drain:
         items += [
             {"id": item_id, "reason": "no-source item — awaiting description + digest"}
             for item_id in self.no_source_items
+        ]
+        items += [
+            {
+                "id": item_id,
+                "reason": "every source dead — awaiting description + digest from the note",
+            }
+            for item_id in self.all_dead_items
         ]
         payload: dict[str, object] = {
             "counts": {status.value: n for status, n in self.counts.items()},
@@ -2370,11 +2397,15 @@ def digest_orphans(instance: Instance) -> list[str]:
     Who is a candidate is asked of the ledger as well as the disk. An
     enrichment directory holding markdown is one answer — it covers files
     no ledger line wrote, like a session's media description. A live item
-    the ledger records a landing for is the other, and it is the only
+    the ledger records a landing for is another, and it is the only
     answer a co-claimant has: seeding dedupes by work hash, so a URL
     shared into two captures enriches under the first item, and the
     second — which derives ``enriched`` on the same landing, and is
-    therefore digestible — has no directory to be found by.
+    therefore digestible — has no directory to be found by. A live item
+    whose every unit landed ``dead`` is the third (:func:`_all_dead_items`):
+    nothing landed and nothing owes, so neither of the first two answers
+    finds it, yet its description and digest — from the owner's note —
+    are exactly the work still owed.
 
     Args:
         instance: The instance.
@@ -2403,6 +2434,13 @@ def digest_orphans(instance: Instance) -> list[str]:
     # finding, never work this backstop can ask anyone to do.
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     candidates |= enriched_on.keys() & live
+    # The third answer: an item whose every unit landed dead. It has no
+    # enrichment directory and no done line, so neither route above finds
+    # it — yet it owes exactly what a no-source capture owes, description
+    # and digest from the owner's note, and the no-digest branch below is
+    # what lists it. Once its digest pass is recorded it drops off like
+    # any other item (nothing ever landed, so nothing is ever stale).
+    candidates.update(_all_dead_items(entries, owners, live))
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
@@ -2440,6 +2478,39 @@ def _items_owing_work(
         if entry.status in _OUTSTANDING
         for item_id in owners.get(entry.hash, (entry.item,))
     }
+
+
+def _all_dead_items(
+    entries: Mapping[str, LedgerEntry] | None,
+    owners: Mapping[str, tuple[str, ...]],
+    live: set[str],
+) -> list[str]:
+    """The live items whose every ledger unit landed ``dead``, sorted.
+
+    One shared reading for the surfaces that owe such an item a listing —
+    the run report and the digest backstop: every source confirmed gone
+    means the engine owes nothing further and no enrichment exists, so
+    the item derives ``enriched`` with nothing to digest FROM but the
+    owner's note — which is exactly its owed work, description + digest,
+    and neither surface could see it as more than a count.
+
+    Ownership is the corpus's answer, like every other reading off these
+    maps. Cap-fire markers are not units — they record refused work — so
+    they neither make an item all-dead nor break the reading. An item
+    with no units at all is the no-source capture, a different listing.
+    An unreadable ledger claims nothing.
+    """
+    if not entries:
+        return []
+    statuses: dict[str, set[Status]] = {}
+    for entry in entries.values():
+        if _is_cap_refusal(entry):
+            continue
+        for item_id in owners.get(entry.hash, (entry.item,)):
+            statuses.setdefault(item_id, set()).add(entry.status)
+    return sorted(
+        item_id for item_id, seen in statuses.items() if item_id in live and seen == {Status.DEAD}
+    )
 
 
 def _last_enriched(

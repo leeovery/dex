@@ -2552,6 +2552,56 @@ class TestNoSourceItems:
         assert "no-source item" not in report
 
 
+class TestAllDeadItems:
+    """Every unit dead — the item owes description + digest from the note."""
+
+    ALL_DEAD_REASON = "every source dead — awaiting description + digest from the note"
+
+    def _dead_ctx(self, instance):
+        write_item(instance)
+        return make_ctx(instance, FakeDriver(fetch_fn=lambda _u: Missing(evidence="HTTP 404")))
+
+    def test_named_on_the_landing_run_report(self, instance):
+        report = run_mod.run(self._dead_ctx(instance))
+        assert ITEM in report
+        assert self.ALL_DEAD_REASON in report
+
+    def test_listed_by_the_digest_backstop_on_both_surfaces(self, instance):
+        run_mod.run(self._dead_ctx(instance))
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        report = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "Digest these" in report
+        assert ITEM in report
+
+    def test_drops_off_both_surfaces_once_digested(self, instance):
+        ctx = self._dead_ctx(instance)
+        run_mod.run(ctx)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").write_text("digested\n", encoding="utf-8")
+        run_mod.record_pass(ctx, ITEM, "digest")
+        assert run_mod.digest_orphans(instance) == []
+        report = run_mod.run(self._dead_ctx(instance))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_an_item_with_one_landed_unit_is_not_all_dead(self, instance):
+        write_item(instance, urls=[URL, "https://example.test/alive"])
+
+        def fetch(unit):
+            if unit.url == URL:
+                return Missing(evidence="HTTP 404")
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_a_dead_ghost_item_is_never_listed(self, instance):
+        # A dead unit whose item has no corpus file is lint's ghost-item
+        # finding — never work the backstop can ask anyone to digest.
+        run_mod.run(self._dead_ctx(instance))
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        assert run_mod.digest_orphans(instance) == []
+
+
 ALPHA = "2026-08-19-alpha-111111"
 BRAVO = "2026-08-19-bravo-222222"
 OLD_ITEM = "2026-08-19-old-slug-55ad7b"
