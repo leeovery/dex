@@ -16,7 +16,7 @@ No provider for the format → ``NeedsCapability(extract)`` with the
 registry's stated reason — and so does a provider that reported available
 and then failed at call time. A scanned/image-only document →
 ``NeedsCapability(ocr)``. Embedded assets ride the Content outcome for the
-run layer to write under the media caps, ledgered ``via: extract-asset`` —
+run layer to write under the media caps, ledgered ``job: asset`` —
 this driver, like every driver, never touches the ledger or the disk
 outputs.
 

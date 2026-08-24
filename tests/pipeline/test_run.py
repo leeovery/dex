@@ -2928,7 +2928,7 @@ class TestOwnershipIsTheCorpusAnswer:
         ).report
 
     def test_an_extraction_asset_that_moved_with_the_item_is_never_re_fetched(self, instance):
-        # A `via: extract-asset` unit's work key is a repo path, not a URL,
+        # A `job: asset` unit's work key is a repo path, not a URL,
         # so anything that queues one for a fetch can only ever raise: the
         # unit sat in `error`, holding the item `raw` out of digest and wiki
         # forever, with the asset on disk under the new name the whole time.
