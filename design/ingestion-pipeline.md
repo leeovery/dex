@@ -1825,7 +1825,9 @@ src/dex_engine/
                              prompt budgeting, chunking (§6, §9)
                enrichment.py the ONE enrichment-file format point: the
                              renderer and its two readers, inverses over
-                             frontmatter.py's scalar unquoting rule
+                             frontmatter.py's scalar unquoting rule, plus
+                             the transcript-body section contract the
+                             youtube driver and the drain share
                urls.py       canonicalization and the work-key hash — the
                              one place a ledger identity is computed
                capture.py    `enrich item new`: capture file → corpus item
@@ -2215,7 +2217,13 @@ and the outcome union settles several of these on its way past.
   the drivers, `transcribe` and `run`.
 - **Duplicated body / slug / extension helpers.** youtube `_body` vs
   `transcribe.youtube_body`; `capture` vs `normalize` for `URL_RE` and
-  slugify; `run._ext_of` vs `transcribe._audio_ext`.
+  slugify; `run._ext_of` vs `transcribe._audio_ext`. **Done**: the
+  transcript-body composition lives in `pipeline/enrichment.py` (the
+  youtube driver and the drain both consume it — the section headings and
+  the `via` field are one contract); `URL_RE` and `slugify` live in
+  `pipeline/capture.py` and `normalize` imports them; the extension guess
+  is `urls.ext_of`, its per-family default (`jpg` media, `mp3` audio)
+  stated by the caller.
 - **Six spellings of Classification→Result.** One conversion, once.
 - **One enrichment-frontmatter module owning render and parse.** The writer
   lives in `run.py`, the reader in `transcribe.py`; the §1 format is one

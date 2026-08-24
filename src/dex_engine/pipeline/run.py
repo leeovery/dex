@@ -43,7 +43,13 @@ from .classify import (
     scrub,
 )
 from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
-from .enrichment import mask_fetched, read_enrichment, render_enrichment
+from .enrichment import (
+    mask_fetched,
+    podcast_body,
+    read_enrichment,
+    render_enrichment,
+    youtube_body,
+)
 from .ownership import corpus_claims
 from .registry import DRIVERS, driver_for
 from .transcribe import (
@@ -51,8 +57,6 @@ from .transcribe import (
     Acquired,
     acquire_podcast_audio,
     acquire_youtube_audio,
-    podcast_body,
-    youtube_body,
 )
 from .types import (
     Availability,
@@ -72,7 +76,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import resolve_repo_path, work_hash
+from .urls import ext_of, resolve_repo_path, work_hash
 
 __all__ = [
     "CAP_BOUNDS",
@@ -1311,7 +1315,11 @@ class _Drain:
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
         owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{_ext_of(entry.url)}"
+        out = (
+            self.ctx.instance.enrichment_dir
+            / owner
+            / f"media-{slot}.{ext_of(entry.url, default='jpg')}"
+        )
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_bytes(out, response.body)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
@@ -2636,11 +2644,3 @@ def compact(ctx: RunContext) -> str:
     removed = ledger.compact(ctx.instance.ledger_path)
     noun = "line" if removed == 1 else "lines"
     return f"compacted: {removed} superseded {noun} removed"
-
-
-def _ext_of(url: str) -> str:
-    tail = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
-    ext = tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
-    if not ext or len(ext) > 4 or not ext.isalnum():  # noqa: PLR2004 — 4-char extension heuristic
-        return "jpg"
-    return ext

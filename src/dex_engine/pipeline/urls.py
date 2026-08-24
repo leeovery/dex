@@ -17,6 +17,7 @@ from pathlib import Path
 __all__ = [
     "STRIP_PARAMS",
     "base_canonical",
+    "ext_of",
     "host_of",
     "resolve_repo_path",
     "work_hash",
@@ -89,6 +90,21 @@ def base_canonical(url: str, *, keep_params: frozenset[str] | None = None) -> st
     return urllib.parse.urlunsplit(
         ("https", host, parts.path.rstrip("/"), urllib.parse.urlencode(query), "")
     )
+
+
+def ext_of(url: str, *, default: str) -> str:
+    """The file extension the URL's path tail names, or ``default``.
+
+    Names a downloaded body's file on disk (a media image, a cached audio
+    enclosure) — the caller states the default its media family warrants.
+    An "extension" longer than 4 characters or carrying non-alphanumerics
+    is a slug's tail, not a format, and takes the default too.
+    """
+    tail = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
+    ext = tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
+    if not ext or len(ext) > 4 or not ext.isalnum():  # noqa: PLR2004 — 4-char extension heuristic
+        return default
+    return ext
 
 
 def resolve_repo_path(root: Path, repo_path: str) -> Path | None:

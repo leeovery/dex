@@ -1,4 +1,4 @@
-"""Transcribe-drain mechanics: audio acquisition, priming, bodies.
+"""Transcribe-drain mechanics: audio acquisition and prompt priming.
 
 **Audio acquisition belongs to the drain, not the drivers**: drivers only
 ever emit ``needs: transcribe`` with the pointer — a YouTube URL, or an
@@ -16,7 +16,6 @@ recorded enclosure URL is the re-fetch pointer.
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from dex_engine import atomic
 from dex_engine.drivers.transport import HttpResponse, Transport
@@ -29,8 +28,9 @@ from dex_engine.drivers.ytdlp import (
 
 from .classify import Classification, classify_connection, classify_http
 from .detect import looks_like_html
-from .enrichment import read_enrichment
+from .enrichment import DESCRIPTION_HEADING, pre_transcript, read_enrichment
 from .types import LedgerEntry, Status
+from .urls import ext_of
 
 __all__ = [
     "HEAD_MAX_TOKENS",
@@ -42,8 +42,6 @@ __all__ = [
     "estimated_tokens",
     "keep_first_tokens",
     "keep_last_tokens",
-    "podcast_body",
-    "youtube_body",
 ]
 
 # Per-run transcription cap: a first sync's resurrected backlog must
@@ -65,17 +63,6 @@ PROMPT_MAX_TOKENS = 200
 HEAD_MAX_TOKENS = 60
 
 _SEPARATOR = " — "
-_AUDIO_EXT_DEFAULT = "mp3"
-# The body sections both transcribable kinds compose around. The youtube
-# driver writes the same two headings on its parks (drivers/youtube.py);
-# the pairing is pinned by test.
-_TRANSCRIPT_HEADING = "## Transcript"
-_DESCRIPTION_HEADING = "## Description"
-
-# The frontmatter key the transcriber stamps (run.py writes via/model onto
-# every transcript it composes). Neither park writes it, so it is the one
-# fact on disk that says whether a body already holds a transcript.
-_TRANSCRIBED_FIELD = "via"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -130,9 +117,9 @@ def _stored_description(path: Path) -> str:
     if not path.exists():
         return ""
     fields, body = read_enrichment(path)
-    head = _pre_transcript(fields, body)
-    if head.startswith(_DESCRIPTION_HEADING):
-        return head[len(_DESCRIPTION_HEADING) :].strip()
+    head = pre_transcript(fields, body)
+    if head.startswith(DESCRIPTION_HEADING):
+        return head[len(DESCRIPTION_HEADING) :].strip()
     return head
 
 
@@ -174,7 +161,7 @@ def acquire_podcast_audio(
                 "podcast driver re-resolves it"
             ),
         )
-    notes = _pre_transcript(fields, body)
+    notes = pre_transcript(fields, body)
     meta: dict[str, str | int | None] = {
         key: value for key, value in fields.items() if key not in ("url", "fetched")
     }
@@ -186,29 +173,6 @@ def acquire_podcast_audio(
             return outcome
         audio = outcome
     return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=notes)
-
-
-def _pre_transcript(fields: dict[str, str], body: str) -> str:
-    """The show-notes half of a park/output body — everything before the transcript.
-
-    A body only holds a transcript section if this drain composed it, and
-    the frontmatter is what says so. A park's body is notes end to end,
-    however many "## Transcript" lines a description or a publisher's show
-    notes happen to contain: reading it by the heading alone truncated the
-    notes at the author's own line, and the drain then wrote that
-    truncation back to disk, losing the tail for good.
-
-    A drained no-notes episode's body STARTS with the transcript heading;
-    the newline-anchored split below would miss it and hand the previous
-    transcript back as "notes", duplicating it on a re-drain. That split
-    takes the LAST section, because the transcript is what the drain
-    appended last.
-    """
-    if _TRANSCRIBED_FIELD not in fields:
-        return body
-    if body == _TRANSCRIPT_HEADING or body.startswith(f"{_TRANSCRIPT_HEADING}\n"):
-        return ""
-    return body.rsplit(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
 
 
 def _download_enclosure(
@@ -227,7 +191,7 @@ def _download_enclosure(
         # would park the episode manual forever over the CDN's mistake.
         return Classification(status=Status.BLOCKED, reason=unusable)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{stem}.{_audio_ext(url)}"
+    path = cache_dir / f"{stem}.{ext_of(url, default='mp3')}"
     # Atomic: a crash mid-write must never leave a truncated file under the
     # final cache name — cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
@@ -254,14 +218,6 @@ def _not_audio(response: HttpResponse) -> str | None:
     if looks_like_html(response.body):
         return f"enclosure served an HTML page ({response.content_type or 'no content type'})"
     return None
-
-
-def _audio_ext(url: str) -> str:
-    tail = urlsplit(url).path.rsplit("/", 1)[-1]
-    ext = tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
-    if not ext or len(ext) > 4 or not ext.isalnum():  # noqa: PLR2004 — 4-char extension heuristic
-        return _AUDIO_EXT_DEFAULT
-    return ext
 
 
 def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
@@ -380,28 +336,3 @@ def keep_last_tokens(text: str, budget: float) -> str:
         if spent > budget:
             return text[len(text) - index :]
     return text
-
-
-# ---------------------------------------------------------------------------
-# Transcript bodies. Raw transcripts, stamped via/model by the caller;
-# corrections live downstream in digest/wiki where judgment operates.
-# ---------------------------------------------------------------------------
-
-
-def youtube_body(description: str, transcript: str) -> str:
-    """Description + transcript sections — the youtube driver's own pattern.
-
-    The transcript is always its own labelled section: a re-drain splits
-    the stored body on that heading, and a bare transcript would come back
-    as "description" and be duplicated under itself.
-    """
-    if description:
-        return f"{_DESCRIPTION_HEADING}\n\n{description}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
-
-
-def podcast_body(show_notes: str, transcript: str) -> str:
-    """Show notes (from the feed) followed by the transcript section."""
-    if show_notes:
-        return f"{show_notes}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"

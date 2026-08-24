@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import corpus
+from .pipeline.capture import URL_RE, slugify
 from .pipeline.detect import detect_kind
 from .pipeline.registry import DRIVERS
 from .pipeline.types import Config, Instance
@@ -39,10 +40,7 @@ __all__ = [
     "main",
     "normalize_discord",
     "run_normalize",
-    "slugify",
 ]
-
-URL_RE = re.compile(r"https?://[^\s>\)\]]+")
 
 # Same-author messages this close together are one post split across messages.
 DISCORD_GAP_MIN = 15
@@ -77,12 +75,6 @@ def kind_of(url: str) -> str:
     is deleted. Pattern-only here; the ledger is authoritative.
     """
     return str(detect_kind(url, DRIVERS))
-
-
-def slugify(text: str, max_len: int = 40) -> str:
-    """A filename slug: lowercase, hyphenated, bounded, never empty."""
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:max_len].rstrip("-") or "untitled"
 
 
 def _is_internal(url: str, internal_domains: list[str]) -> bool:

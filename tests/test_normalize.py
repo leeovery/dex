@@ -13,8 +13,8 @@ from dex_engine.normalize import (
     load_exclusions,
     main,
     run_normalize,
-    slugify,
 )
+from dex_engine.pipeline.capture import slugify
 from dex_engine.pipeline.types import Config, Instance
 
 CHANNEL = "general"

@@ -12,11 +12,8 @@ from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.youtube import YouTubeDriver, clean_vtt
 from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.transcribe import (
-    Acquired,
-    acquire_youtube_audio,
-    youtube_body,
-)
+from dex_engine.pipeline.enrichment import youtube_body
+from dex_engine.pipeline.transcribe import Acquired, acquire_youtube_audio
 from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import base_canonical, work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of

@@ -42,6 +42,7 @@ from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
 from dex_engine.pipeline.classify import classify_connection
+from dex_engine.pipeline.enrichment import description_section, youtube_body
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
@@ -123,12 +124,6 @@ _MAX_CHANNEL_SEGMENTS = 2
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
 
-# The youtube body's two sections. The transcribe drain splits a stored
-# body on these same headings to append a transcript to a park's
-# description (pipeline/transcribe.py); the pairing is pinned by test.
-_DESCRIPTION_HEADING = "## Description"
-_TRANSCRIPT_HEADING = "## Transcript"
-
 # The transcript-provenance stamp the CAPTIONS route writes into meta, and
 # thereby into the enrichment frontmatter. **The frontmatter, not the
 # heading, says whether a body holds a transcript** (design §6): the drain
@@ -204,7 +199,7 @@ class YouTubeDriver:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
-                body=_description_section(info) or None,
+                body=description_section(_description(info)) or None,
                 needs=Need.TRANSCRIBE,
                 reason="no captions available",
             )
@@ -234,7 +229,7 @@ class YouTubeDriver:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
-                body=_description_section(info) or None,
+                body=description_section(_description(info)) or None,
                 needs=Need.TRANSCRIBE,
                 reason="captions track too thin to be a transcript",
             )
@@ -243,7 +238,7 @@ class YouTubeDriver:
         return Result(
             status=Status.DONE,
             meta={**meta, "via": _CAPTIONS_VIA},
-            body=_body(info, transcript),
+            body=youtube_body(_description(info), transcript),
         )
 
 
@@ -341,29 +336,8 @@ def _caption_track_url(info: dict) -> str | None:
     return None
 
 
-def _description_section(info: dict) -> str:
-    """The description as its own body section, or "" when there is none.
-
-    A park writes this on its own: the description is content already
-    fetched, and a video that goes private during a transcription backlog
-    would otherwise take it with it. The transcript is appended to this
-    same section later, never written over it.
-    """
-    description = (info.get("description") or "").strip()
-    return f"{_DESCRIPTION_HEADING}\n\n{description}" if description else ""
-
-
-def _body(info: dict, transcript: str) -> str:
-    """Description section + transcript section — one body shape per kind.
-
-    The transcript is always its own labelled section, description or not:
-    the drain splits a stored body on that heading to append a transcript
-    to what the park already wrote (``pipeline/transcribe.py``).
-    """
-    section = _description_section(info)
-    if section:
-        return f"{section}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
+def _description(info: dict) -> str:
+    return (info.get("description") or "").strip()
 
 
 def clean_vtt(vtt: str) -> str:

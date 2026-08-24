@@ -7,7 +7,11 @@ retype or restructure, and every reader takes those quotes off through the
 one shared unquoting rule (:mod:`dex_engine.frontmatter`, which the
 digest-side readers use too). The writer grew up in ``run.py`` and the
 readers in ``transcribe.py``; the format is one contract, so both halves
-live here.
+live here. The transcript-bearing kinds' body sections belong to the same
+contract — whether a body holds a transcript is said by the ``via`` field,
+so the section headings and the frontmatter cannot be read apart — and
+their composition and split live here too, shared by the youtube driver
+and the transcribe drain.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
@@ -30,10 +34,16 @@ from pathlib import Path
 from dex_engine import frontmatter
 
 __all__ = [
+    "DESCRIPTION_HEADING",
+    "TRANSCRIPT_HEADING",
+    "description_section",
     "mask_fetched",
+    "podcast_body",
+    "pre_transcript",
     "read_enrichment",
     "read_enrichment_fields",
     "render_enrichment",
+    "youtube_body",
 ]
 
 _YAML_UNSAFE = ":#[]{}&*!|>%@`\"'"
@@ -181,3 +191,76 @@ def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
         key, _, raw = line.partition(":")
         fields[key.strip()] = frontmatter.unquote(raw.strip())
     return fields
+
+
+# ---------------------------------------------------------------------------
+# The body sections of transcript-bearing files. The youtube driver writes
+# the description section on its parks and its captions route; the
+# transcribe drain appends what it transcribed to what the park already
+# wrote, splitting the stored body on the transcript heading. Writer and
+# re-reader share one composition here so they can never disagree on where
+# the notes end.
+# ---------------------------------------------------------------------------
+
+DESCRIPTION_HEADING = "## Description"
+TRANSCRIPT_HEADING = "## Transcript"
+
+# The frontmatter key the transcriber stamps (the run layer writes
+# via/model onto every transcript it composes). Neither park writes it, so
+# it is the one fact on disk that says whether a body already holds a
+# transcript.
+_TRANSCRIBED_FIELD = "via"
+
+
+def description_section(description: str) -> str:
+    """The description as its own labelled section, or "" when there is none.
+
+    A park writes this on its own: the description is content already
+    fetched, and a video that goes private during a transcription backlog
+    would otherwise take it with it. The transcript is appended to this
+    same section later, never written over it.
+    """
+    return f"{DESCRIPTION_HEADING}\n\n{description}" if description else ""
+
+
+def youtube_body(description: str, transcript: str) -> str:
+    """Description + transcript sections — one youtube body shape, either route.
+
+    The transcript is always its own labelled section, description or not:
+    a re-drain splits the stored body on that heading, and a bare
+    transcript would come back as "description" and be duplicated under
+    itself.
+    """
+    if description:
+        return f"{DESCRIPTION_HEADING}\n\n{description}\n\n{TRANSCRIPT_HEADING}\n\n{transcript}"
+    return f"{TRANSCRIPT_HEADING}\n\n{transcript}"
+
+
+def podcast_body(show_notes: str, transcript: str) -> str:
+    """Show notes (from the feed) followed by the transcript section."""
+    if show_notes:
+        return f"{show_notes}\n\n{TRANSCRIPT_HEADING}\n\n{transcript}"
+    return f"{TRANSCRIPT_HEADING}\n\n{transcript}"
+
+
+def pre_transcript(fields: dict[str, str], body: str) -> str:
+    """The show-notes half of a park/output body — everything before the transcript.
+
+    A body only holds a transcript section if the drain composed it, and
+    the frontmatter is what says so. A park's body is notes end to end,
+    however many "## Transcript" lines a description or a publisher's show
+    notes happen to contain: reading it by the heading alone truncated the
+    notes at the author's own line, and the drain then wrote that
+    truncation back to disk, losing the tail for good.
+
+    A drained no-notes episode's body STARTS with the transcript heading;
+    the newline-anchored split below would miss it and hand the previous
+    transcript back as "notes", duplicating it on a re-drain. That split
+    takes the LAST section, because the transcript is what the drain
+    appended last.
+    """
+    if _TRANSCRIBED_FIELD not in fields:
+        return body
+    if body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n"):
+        return ""
+    return body.rsplit(f"\n{TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
