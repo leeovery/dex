@@ -14,7 +14,17 @@ import pytest
 
 from dex_engine.drivers.gh import GhResult
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.pipeline.types import Format, Kind, Result, WorkUnit
+from dex_engine.pipeline.types import (
+    Content,
+    Format,
+    Kind,
+    Missing,
+    NeedsCapability,
+    Refused,
+    Result,
+    Unusable,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import work_hash
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -43,9 +53,32 @@ def reason_of(result: Result) -> str:
     return result.reason
 
 
-def body_of(result: Result) -> str:
-    assert result.body is not None
-    return result.body
+def content_of(outcome: object) -> Content:
+    """The outcome as ``Content`` — the fetch found something, or the test fails."""
+    assert isinstance(outcome, Content), f"expected Content, got {outcome!r}"
+    return outcome
+
+
+def needs_of(outcome: object) -> NeedsCapability:
+    """The outcome as ``NeedsCapability`` — a capability park, or the test fails."""
+    assert isinstance(outcome, NeedsCapability), f"expected NeedsCapability, got {outcome!r}"
+    return outcome
+
+
+def evidence_of(outcome: object) -> str:
+    """The stated evidence of a failure outcome, or the test fails."""
+    assert isinstance(outcome, Missing | Refused | Unusable), (
+        f"expected a failure outcome, got {outcome!r}"
+    )
+    return outcome.evidence
+
+
+def body_of(outcome: object) -> str:
+    assert isinstance(outcome, Result | Content | NeedsCapability), (
+        f"expected an outcome carrying a body, got {outcome!r}"
+    )
+    assert outcome.body is not None
+    return outcome.body
 
 
 def html_response(html: str, *, status: int = 200) -> HttpResponse:

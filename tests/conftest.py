@@ -29,6 +29,7 @@ from dex_engine.pipeline.types import (
     Instance,
     Kind,
     Need,
+    Outcome,
     Result,
     Status,
     WorkUnit,
@@ -52,15 +53,15 @@ def _default_fetch(_unit: WorkUnit) -> Result:
 class FakeDriver:
     """A scriptable driver: the fetch behavior is injected per test.
 
-    ``fetch_fn`` may return a Result or raise; every handed unit is recorded
-    on ``fetched`` so tests can assert what the run dispatched.
+    ``fetch_fn`` may return an outcome or raise; every handed unit is
+    recorded on ``fetched`` so tests can assert what the run dispatched.
     """
 
     def __init__(
         self,
         kind: Kind = Kind.WEB,
         *,
-        fetch_fn: Callable[[WorkUnit], Result] | None = None,
+        fetch_fn: Callable[[WorkUnit], Result | Outcome] | None = None,
         sleep: float = 0.0,
     ) -> None:
         self.kind = kind
@@ -74,7 +75,7 @@ class FakeDriver:
     def canonical(self, url: str) -> str:
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Result | Outcome:
         self.fetched.append(unit)
         return self._fetch_fn(unit)
 

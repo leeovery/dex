@@ -18,6 +18,7 @@ __all__ = [
     "Availability",
     "Cap",
     "Config",
+    "Content",
     "Extraction",
     "Extractor",
     "Format",
@@ -26,13 +27,19 @@ __all__ = [
     "LedgerEntry",
     "MediaFetch",
     "MigrationReport",
+    "Missing",
     "Need",
+    "NeedsCapability",
+    "Outcome",
+    "Redetected",
     "Redetection",
+    "Refused",
     "Result",
     "Skipped",
     "SourceDriver",
     "Status",
     "Transcriber",
+    "Unusable",
     "WorkUnit",
     "parse_version",
     "version_newer",
@@ -355,6 +362,135 @@ class Extraction:
 
 
 # ---------------------------------------------------------------------------
+# Driver outcomes: what a fetch FOUND, stated by the driver as a typed
+# union. Lifecycle status is the run layer's decision, made in one total
+# match — no outcome carries a Status, so a driver cannot condemn or bless
+# a unit by accident. The per-source knowledge only the driver has (that a
+# yt-dlp message means confirmed gone, that a 402 means paywalled, that a
+# thin extraction is not content) rides as evidence on the outcome.
+# Outputs exist only on Content: a result that produced nothing has no
+# field to carry outputs on.
+# ---------------------------------------------------------------------------
+
+
+def _validate_evidence(evidence: str) -> None:
+    # An outcome whose whole content is evidence must state it: these
+    # variants park or close a unit, and an unexplained park is exactly
+    # the stated-reason contract's forbidden state.
+    if not evidence:
+        raise ValueError("a failure outcome must state its evidence")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Content:
+    """Fetched something: the unit's outputs, complete.
+
+    ``body`` and ``meta`` become the enrichment file, ``media`` feeds the
+    media stage, and ``assets`` are the embedded bytes the run layer writes
+    under the media caps — drivers never touch the disk, so this outcome is
+    the one channel through which any of it reaches the run layer.
+    """
+
+    meta: dict[str, str | int | None]
+    body: str | None = None
+    media: list[str] = field(default_factory=list)
+    assets: list[Asset] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Missing:
+    """Confirmed gone: a 404/410, NXDOMAIN, or the source's own tombstone.
+
+    The only outcome that can reach ``dead`` — condemning content is a
+    claim about the world, and this is the one shape a driver may make it
+    in, evidence attached.
+    """
+
+    evidence: str
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Refused:
+    """The source turned us away: blocked, rate limited, paywalled.
+
+    ``permanent`` is the driver-known fact that retrying can never change
+    the answer (payment/login walls, geo-blocks); a transient refusal is
+    the world misbehaving, and the run layer owns the retry lifecycle.
+    """
+
+    evidence: str
+    permanent: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Unusable:
+    """Fetched, but not content this pipeline can use: wrong shape, nothing to extract.
+
+    ``rescuable`` says whether anything is there for judgment to act on: a
+    JS shell our tooling cannot read or a collection page whose members
+    want picking is rescuable and parks for a decision; a URL that
+    addresses no content unit at all (a site root, an index of indexes)
+    carries nothing to rescue and is closed out.
+    """
+
+    evidence: str
+    rescuable: bool = True
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NeedsCapability:
+    """Resolved, and the rest of the work belongs to a capability drain.
+
+    ``meta``/``body`` are the partial content already in hand — a video's
+    description, an episode's show notes and enclosure pointer — which the
+    run layer writes now rather than holding hostage to a capability
+    backlog; the drain completes the same file. ``reason`` states the park
+    for the report.
+    """
+
+    need: Need
+    meta: dict[str, str | int | None] = field(default_factory=dict)
+    body: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Redetected:
+    """This is not what we thought it was: a mid-fetch kind correction.
+
+    The canonical case: detection said web (a HEAD lied or was
+    inconclusive), the GET returned a PDF. The unit re-enters the queue
+    under the corrected identity — same URL, same hash — and the corrected
+    kind's driver owns the outputs, so this outcome carries the identity
+    and nothing else; the run layer enforces once-only per run.
+    """
+
+    kind: Kind
+    format: Format | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind in _NON_WORK_KINDS:
+            raise ValueError(
+                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
+                "never becomes a work unit"
+            )
+        if self.format is not None and self.kind is not Kind.FILE:
+            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
+
+
+Outcome = Content | Missing | Refused | Unusable | NeedsCapability | Redetected
+
+
+# ---------------------------------------------------------------------------
 # Capability providers: structural, resolved per capability by the
 # registries in dex_engine.capabilities. Conformance is verified at the typed
 # provider lists there, exactly like the driver registry literal.
@@ -436,8 +572,13 @@ class SourceDriver(Protocol):
         """The canonical form of ``url`` — it keys the ledger hash."""
         ...
 
-    def fetch(self, unit: WorkUnit) -> Result:
-        """Fetch one unit of work; never touches the ledger or the disk."""
+    def fetch(self, unit: WorkUnit) -> Result | Outcome:
+        """Fetch one unit of work; never touches the ledger or the disk.
+
+        Returns what the fetch FOUND (:data:`Outcome`); the run layer
+        decides what that means for the unit's lifecycle. ``Result`` is
+        accepted while the drivers convert and dies with the transition.
+        """
         ...
 
 

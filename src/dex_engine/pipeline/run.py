@@ -62,17 +62,24 @@ from .types import (
     Availability,
     Cap,
     Config,
+    Content,
     Format,
     Instance,
     Kind,
     LedgerEntry,
     MediaFetch,
+    Missing,
     Need,
+    NeedsCapability,
+    Outcome,
+    Redetected,
     Redetection,
+    Refused,
     Result,
     SourceDriver,
     Status,
     Transcriber,
+    Unusable,
     WorkUnit,
     version_newer,
 )
@@ -930,8 +937,7 @@ class _Drain:
                     f"no transcript body for kind '{entry.kind}' — _acquire_audio "
                     "and the body dispatch must cover the same kinds"
                 )
-        result = Result(status=Status.DONE, meta=meta, body=body)
-        path = self._write_output(entry, result)
+        path = self._write_output(entry, meta, body)
         # A unit corrected to a transcribable kind (web → podcast) lands its
         # own output HERE, never through _apply_done — the pre-correction
         # kind's file leaves on the same rule, or the item carries two views
@@ -1004,7 +1010,46 @@ class _Drain:
             case _:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
-    def _apply(self, entry: LedgerEntry, result: Result) -> None:
+    def _apply(self, entry: LedgerEntry, fetched: Result | Outcome) -> None:
+        """Map what the driver FOUND onto the unit's lifecycle — the one total match.
+
+        The driver states its finding as a typed outcome; what that means
+        for the unit's status is decided here and nowhere else. ``Missing``
+        is the only road to ``dead``. The match is total over the union —
+        a new outcome variant is a type error at this site until an arm
+        says what it means.
+        """
+        if isinstance(fetched, Result):
+            self._apply_result(entry, fetched)
+            return
+        match fetched:
+            case Content():
+                self._apply_content(entry, fetched)
+            case Missing(evidence=evidence):
+                self.record_outcome(entry, status=Status.DEAD, reason=evidence)
+            case Refused(evidence=evidence, permanent=True):
+                # Retrying can never change the answer, so the blocked
+                # lifecycle's attempts would teach nothing: the engine
+                # gives the unit up for judgment now.
+                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+            case Refused(evidence=evidence):
+                self._apply_blocked(entry, evidence)
+            case Unusable(evidence=evidence, rescuable=True):
+                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+            case Unusable(evidence=evidence):
+                # Nothing there for judgment either: closed out, owing
+                # nothing, holding nothing hostage.
+                self.record_outcome(entry, status=Status.SKIPPED, reason=evidence)
+            case NeedsCapability():
+                self._apply_needs(entry, fetched)
+            case Redetected():
+                self._apply_redetection(entry, fetched)
+            case _:
+                assert_never(fetched)
+
+    def _apply_result(self, entry: LedgerEntry, result: Result) -> None:
+        # Transitional: the pre-union Result path, deleted with the last
+        # Result-returning driver.
         if result.redetect is not None:
             self._apply_redetection(entry, result.redetect)
             return
@@ -1013,15 +1058,7 @@ class _Drain:
                 self._apply_done(entry, result)
             case Status.WAITING:
                 if result.body is not None or result.meta.get("enclosure") is not None:
-                    # A parking driver may still have real content (a
-                    # podcast's show notes, the enclosure pointer in meta) —
-                    # written now, completed by the drain; the item is not
-                    # yet cognitive work, so the write is not an outcome.
-                    # A waiting-transcribe park carrying an enclosure ALWAYS
-                    # writes its park file: the drain re-fetches the
-                    # audio from that frontmatter pointer, show notes or
-                    # not — a no-notes episode without it would loop manual.
-                    self._write_output(entry, result, count=False)
+                    self._write_output(entry, result.meta, result.body, count=False)
                 self.record_outcome(
                     entry, status=Status.WAITING, needs=result.needs, reason=result.reason
                 )
@@ -1042,7 +1079,7 @@ class _Drain:
     def _apply_done(self, entry: LedgerEntry, result: Result) -> None:
         path = None
         if result.body is not None:
-            path = self._write_output(entry, result)
+            path = self._write_output(entry, result.meta, result.body)
             _drop_superseded_outputs(self.ctx.instance, entry, path)
         title = result.meta.get("title")
         self.record_outcome(
@@ -1056,7 +1093,37 @@ class _Drain:
         if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
             self._media_stage(self.entries[entry.hash], result.media)
 
-    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
+    def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
+        path = None
+        if content.body is not None:
+            path = self._write_output(entry, content.meta, content.body)
+            _drop_superseded_outputs(self.ctx.instance, entry, path)
+        title = content.meta.get("title")
+        self.record_outcome(
+            entry,
+            status=Status.DONE,
+            path=path,
+            title=title if isinstance(title, str) and path is not None else None,
+        )
+        if content.assets:
+            self._write_assets(self.entries[entry.hash], content.assets)
+        if content.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
+            self._media_stage(self.entries[entry.hash], content.media)
+
+    def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
+        if needs.body is not None or needs.meta.get("enclosure") is not None:
+            # A parking driver may still have real content (a podcast's
+            # show notes, the enclosure pointer in meta) — written now,
+            # completed by the drain; the item is not yet cognitive work,
+            # so the write is not an outcome. A waiting-transcribe park
+            # carrying an enclosure ALWAYS writes its park file: the drain
+            # re-fetches the audio from that frontmatter pointer, show
+            # notes or not — a no-notes episode without it would loop
+            # manual.
+            self._write_output(entry, needs.meta, needs.body, count=False)
+        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+
+    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection | Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
 
         The corrected unit has the SAME URL and therefore the same hash — a
@@ -1127,7 +1194,14 @@ class _Drain:
 
     # -- outputs ---------------------------------------------------------
 
-    def _write_output(self, entry: LedgerEntry, result: Result, *, count: bool = True) -> str:
+    def _write_output(
+        self,
+        entry: LedgerEntry,
+        meta: dict[str, str | int | None],
+        body: str | None,
+        *,
+        count: bool = True,
+    ) -> str:
         """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns.
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
@@ -1151,8 +1225,7 @@ class _Drain:
         owner = self.owner_of(entry)
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / owner / name
-        body = result.body or ""
-        content = render_enrichment(entry.url, self.ctx.today(), result.meta, body)
+        content = render_enrichment(entry.url, self.ctx.today(), meta, body or "")
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))

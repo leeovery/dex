@@ -43,15 +43,22 @@ from dex_engine.pipeline.types import (
     Asset,
     Cap,
     Config,
+    Content,
     Format,
     Instance,
     Kind,
     LedgerEntry,
     MediaFetch,
+    Missing,
     Need,
+    NeedsCapability,
+    Outcome,
+    Redetected,
     Redetection,
+    Refused,
     Result,
     Status,
+    Unusable,
 )
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
@@ -888,6 +895,108 @@ class TestParking:
         assert str(entry.format) == "pdf"
         assert entry.status is Status.MANUAL  # this registry has no file driver
         assert driver.fetched == []  # never handed to the web driver
+
+
+class TestOutcomeMapping:
+    """The one total match: what a driver FOUND maps onto status here only.
+
+    One test per arm, each pinning the status, the carried reason, and the
+    side effect that makes the arm's meaning distinct — so re-routing any
+    arm onto any other arm's action kills at least one of these.
+    """
+
+    def apply(self, instance: Instance, outcome: Outcome, **ctx_kwargs) -> RunContext:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: outcome), **ctx_kwargs)
+        run_mod.run(ctx)
+        return ctx
+
+    def test_content_lands_done_with_output_and_title(self, instance):
+        ctx = self.apply(instance, Content(meta={"title": "T"}, body="b" * 400))
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/web-{entry.hash[:6]}.md"
+        assert entry.title == "T"
+        assert (instance.root / str(entry.path)).is_file()
+        assert entry.reason is None
+
+    def test_missing_is_the_only_road_to_dead(self, instance):
+        ctx = self.apply(instance, Missing(evidence="HTTP 404"))
+        entry = entry_for(ctx)
+        assert entry.status is Status.DEAD
+        assert entry.reason == "HTTP 404"
+
+    def test_a_transient_refusal_takes_the_blocked_lifecycle(self, instance):
+        ctx = self.apply(instance, Refused(evidence="HTTP 429"))
+        entry = entry_for(ctx)
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert entry.reason == "HTTP 429"
+
+    def test_a_permanent_refusal_parks_manual_with_no_attempts(self, instance):
+        evidence = "payment/login required (HTTP 402)"
+        ctx = self.apply(instance, Refused(evidence=evidence, permanent=True))
+        entry = entry_for(ctx)
+        assert entry.status is Status.MANUAL
+        assert entry.attempts is None  # retrying can never change the answer
+        assert entry.reason == evidence
+
+    def test_rescuable_unusable_parks_manual(self, instance):
+        ctx = self.apply(instance, Unusable(evidence="thin-extraction"))
+        entry = entry_for(ctx)
+        assert entry.status is Status.MANUAL
+        assert entry.reason == "thin-extraction"
+
+    def test_unrescuable_unusable_closes_skipped(self, instance):
+        evidence = "github root url — nothing to fetch"
+        ctx = self.apply(instance, Unusable(evidence=evidence, rescuable=False))
+        entry = entry_for(ctx)
+        assert entry.status is Status.SKIPPED
+        assert entry.reason == evidence
+        # A skip owes nothing: the item completes instead of parking raw,
+        # which is the whole distance between skipped and manual here.
+        item = corpus.read_item(ctx.instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert item.status == "enriched"
+
+    def test_needs_capability_parks_waiting_and_writes_the_partial_content(self, instance):
+        outcome = NeedsCapability(
+            need=Need.TRANSCRIBE,
+            meta={"title": "ep"},
+            body="## Notes\n\nresolved show notes",
+            reason="episode resolved — audio awaits transcription",
+        )
+        ctx = self.apply(instance, outcome)
+        entry = entry_for(ctx)
+        assert entry.status is Status.WAITING
+        assert entry.needs is Need.TRANSCRIBE
+        assert entry.reason == "episode resolved — audio awaits transcription"
+        park = instance.enrichment_dir / ITEM / f"web-{entry.hash[:6]}.md"
+        assert park.is_file()  # written now, completed by the drain
+        assert entry.path is None  # not an output — the unit still owes its work
+
+    def test_a_bodyless_needs_capability_writes_no_park_file(self, instance):
+        ctx = self.apply(instance, NeedsCapability(need=Need.EXTRACT, reason="no extractor"))
+        entry = entry_for(ctx)
+        assert entry.status is Status.WAITING
+        assert entry.needs is Need.EXTRACT
+        assert not (instance.enrichment_dir / ITEM).exists()
+
+    def test_redetected_relabels_the_unit_and_drains_the_corrected_kind(self, instance):
+        write_item(instance)
+        web = FakeDriver(
+            kind=Kind.WEB, fetch_fn=lambda _u: Redetected(kind=Kind.FILE, format=Format.PDF)
+        )
+        file_driver = FakeDriver(
+            kind=Kind.FILE, fetch_fn=lambda _u: Content(meta={}, body="b" * 400)
+        )
+        ctx = make_ctx(instance, web, drivers=[web, file_driver])
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.kind is Kind.FILE
+        assert entry.format is Format.PDF
+        assert entry.status is Status.DONE
+        assert entry.via == "sniff"
+        assert len(web.fetched) == 1  # the correction re-routed, never re-fetched as web
 
 
 class TestRerun:

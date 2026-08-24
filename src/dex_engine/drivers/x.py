@@ -37,7 +37,7 @@ import urllib.parse
 from collections.abc import Callable
 
 from dex_engine.pipeline.classify import Classification
-from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
+from dex_engine.pipeline.types import Content, Kind, Outcome, Status, Unusable, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .fetch import FetchFailure, fetch_classified
@@ -117,21 +117,17 @@ class XDriver:
             return f"https://x.com/i/status/{status_id}"
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Fetch the captured post, walk its parent chain, render reading order."""
         status_id = _status_id(unit.url)
         if status_id is None:
-            return Result(
-                status=Status.MANUAL,
-                meta={},
-                reason="not a status URL — fxtwitter serves posts only",
-            )
+            return Unusable(evidence="not a status URL — fxtwitter serves posts only")
         # Bare status/<id> is the one fxtwitter path that serves every share
         # shape: the API ignores a username segment but 404s on /i/web/…,
         # and that 404 would misread as a dead post.
         captured = self._fetch_post(f"status/{status_id}")
         if isinstance(captured, Classification):
-            return captured.to_result()
+            return captured.to_outcome()
         posts, walk_meta = self._walk_up(captured)
         return _render(captured, posts, walk_meta)
 
@@ -202,11 +198,15 @@ def _status_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]) -> Result:
-    """Assemble the Result: reading-order body, pooled media, attribution meta."""
+def _render(
+    captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]
+) -> Content | Unusable:
+    """Assemble the outcome: reading-order body, pooled media, attribution meta."""
     has_content = any(
         _text_of(post) or isinstance(post.get("quote"), dict) or _media_urls(post) for post in posts
     )
+    if not has_content:
+        return Unusable(evidence="fxtwitter returned no text or media")
     body = "\n\n".join(_render_post(post) for post in reversed(posts))  # root -> captured
     author = captured.get("author") or {}
     meta: dict[str, str | int | None] = {
@@ -217,15 +217,13 @@ def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | 
     if len(posts) > 1:
         meta["thread_length"] = len(posts)
     meta.update(walk_meta)
-    if not has_content:
-        return Result(status=Status.MANUAL, meta=meta, reason="fxtwitter returned no text or media")
-    # Media-only posts are DONE, not manual: the body stays a minimal
+    # Media-only posts are content, not unusable: the body stays a minimal
     # attributed record and the media stage fetches the files themselves —
     # under its 4-file cap and 10MB ceiling, which a big video meets as
     # `skipped — media exceeds 10MB ceiling`, charged to the media unit
-    # with the size stated, rather than as a manual park on the post.
+    # with the size stated, rather than as a park on the post.
     media = [url for post in posts for url in _media_urls(post)]  # captured post's first
-    return Result(status=Status.DONE, meta=meta, body=body, media=media)
+    return Content(meta=meta, body=body, media=media)
 
 
 def _render_post(post: dict) -> str:

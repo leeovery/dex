@@ -12,17 +12,23 @@ from dex_engine.pipeline.types import (
     Availability,
     Cap,
     Config,
+    Content,
     Format,
     Instance,
     Kind,
     LedgerEntry,
     MediaFetch,
     MigrationReport,
+    Missing,
     Need,
+    NeedsCapability,
+    Redetected,
     Redetection,
+    Refused,
     Result,
     Skipped,
     Status,
+    Unusable,
     WorkUnit,
     parse_version,
     version_newer,
@@ -226,6 +232,73 @@ class TestResultReason:
         # so a returned 'error' could only fabricate its message.
         with pytest.raises(ValueError, match="raised, never returned"):
             Result(status=Status.ERROR, meta={})
+
+
+class TestOutcomeUnion:
+    """What a driver may state, with the wrong states unrepresentable.
+
+    No outcome carries a Status at all; outputs exist only on Content; a
+    failure variant must state its evidence; a redetection carries the
+    corrected identity and nothing else.
+    """
+
+    def test_no_outcome_carries_a_status(self):
+        for outcome in (
+            Content(meta={}),
+            Missing(evidence="HTTP 404"),
+            Refused(evidence="HTTP 429"),
+            Unusable(evidence="thin-extraction"),
+            NeedsCapability(need=Need.TRANSCRIBE),
+            Redetected(kind=Kind.FILE, format=Format.PDF),
+        ):
+            assert not hasattr(outcome, "status")
+
+    def test_a_simple_content_return_uses_defaults(self):
+        content = Content(meta={"title": "t"}, body="text")
+        assert content.media == []
+        assert content.assets == []
+
+    def test_outputs_ride_content_only(self):
+        # The flat Result admitted media on any status and validated assets
+        # done-only by hand; on the union, no other variant has the fields.
+        for variant in (Missing, Refused, Unusable):
+            assert not hasattr(variant(evidence="e"), "media")
+            assert not hasattr(variant(evidence="e"), "assets")
+        assert not hasattr(NeedsCapability(need=Need.OCR), "media")
+        assert not hasattr(Redetected(kind=Kind.WEB), "body")
+
+    @pytest.mark.parametrize("variant", [Missing, Refused, Unusable])
+    def test_a_failure_outcome_must_state_its_evidence(self, variant):
+        with pytest.raises(ValueError, match="evidence"):
+            variant(evidence="")
+
+    def test_refused_is_transient_unless_the_driver_knows_better(self):
+        assert Refused(evidence="HTTP 429").permanent is False
+        assert Refused(evidence="payment/login required", permanent=True).permanent is True
+
+    def test_unusable_is_rescuable_unless_nothing_is_there(self):
+        assert Unusable(evidence="thin-extraction").rescuable is True
+        assert Unusable(evidence="root url", rescuable=False).rescuable is False
+
+    def test_needs_capability_carries_the_partial_content(self):
+        park = NeedsCapability(
+            need=Need.TRANSCRIBE, meta={"enclosure": "https://cdn.test/a.mp3"}, reason="resolved"
+        )
+        assert park.body is None
+        assert park.meta["enclosure"] == "https://cdn.test/a.mp3"
+
+    def test_redetected_non_work_kinds_are_rejected(self):
+        with pytest.raises(ValueError, match="never becomes a work unit"):
+            Redetected(kind=Kind.IMAGE)
+
+    def test_redetected_format_is_file_work_only(self):
+        with pytest.raises(ValueError, match="file-work only"):
+            Redetected(kind=Kind.WEB, format=Format.PDF)
+
+    def test_outcomes_are_frozen(self):
+        outcome = Missing(evidence="HTTP 404")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            outcome.evidence = "rewritten"  # ty: ignore[invalid-assignment]
 
 
 class TestLedgerEntryInvariants:
