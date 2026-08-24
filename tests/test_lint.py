@@ -1097,7 +1097,14 @@ def write_enrichment(
     path.write_text(f"---\nurl: https://x.com/i/status/1\n{frontmatter}---\n\n{body}\n")
 
 
-SKILL = Path(__file__).resolve().parents[1] / "instance" / "skills" / "dex-lint" / "SKILL.md"
+STANDING_SIGNALS = (
+    Path(__file__).resolve().parents[1]
+    / "instance"
+    / "skills"
+    / "dex-lint"
+    / "references"
+    / "standing-signals.md"
+)
 
 
 class TestThreadCapText:
@@ -1109,7 +1116,7 @@ class TestThreadCapText:
     """
 
     def test_the_skill_names_the_drivers_walk_up_bound(self):
-        text = SKILL.read_text(encoding="utf-8")
+        text = STANDING_SIGNALS.read_text(encoding="utf-8")
         assert f"{MAX_HOPS}-hop" in text
         assert "20-hop" not in text
 
