@@ -302,10 +302,9 @@ won't find it by searching the actions panel.
    **Share Sheet**. If there's no input: **Continue**". Tap the highlighted
    **Apps and 18 more** chip.
 5. Everything is toggled on by default. Turn OFF the following and leave
-   everything else on:
-   - **Media**
+   everything else on — **Media** and **PDFs** stay ON, since the shortcut
+   captures them through the binary path:
    - **Folders**
-   - **PDFs**
    - **Map links**
    - **Locations**
    - **Contacts**
