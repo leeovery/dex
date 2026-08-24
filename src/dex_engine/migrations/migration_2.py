@@ -417,13 +417,19 @@ def _rekey_outputs(
                 continue  # a hash6 neighbour's output, not this unit's
             target = stale.with_name(f"{kind.value}-{key[0][:6]}.md")
             if target.exists():
+                # The note states what is actually true. "No longer named
+                # by the ledger" was not: the refused file's line keeps its
+                # stored path through the rewrite, and where that line is
+                # the hash's last, the LIVE line points at exactly this
+                # file until a rerun supersedes it.
                 skipped.append(
                     Skipped(
                         what=f"enrichment/{entry.item}/{stale.name}",
                         why=f"{target.name} already exists beside it — refusing to "
-                        f"overwrite; {stale.name} is an older identity's view of the same "
-                        "unit and is left in place, no longer named by the ledger — merge "
-                        "the two by hand",
+                        f"overwrite. Both files are old spellings' views of one unit; "
+                        f"{target.name} is the name the unit's current identity computes, "
+                        f"and the ledger's live line may still point at {stale.name}. "
+                        f"Merge what it adds into {target.name} by hand, then delete it",
                     )
                 )
                 continue
