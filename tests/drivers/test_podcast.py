@@ -304,6 +304,28 @@ class TestRssIshResolution:
         result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
         assert result.meta["enclosure"] == "https://cdn.pods.test/solo.mp3"
 
+    def test_the_no_feed_fallback_keeps_the_pages_notes(self):
+        # The fallback built its park with notes="" while the fetched page
+        # was in hand: the park file had an empty body, and if the source
+        # died the notes were gone. The page's body goes through the same
+        # extraction the feed route's notes do.
+        page = (
+            '<html><head><meta property="og:title" content="Solo Episode"/>'
+            '<meta property="og:audio" content="https://cdn.pods.test/solo.mp3"/>'
+            "<script>tracker();</script></head>"
+            "<body><h1>Solo Episode</h1><p>We discuss ledgers as work queues, with "
+            '<a href="https://example.test/deck">the deck</a>.</p>'
+            "<script>player.init();</script></body></html>"
+        )
+        d = driver({PAGE_URL: html_response(page)})
+        result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
+        assert result.meta["enclosure"] == "https://cdn.pods.test/solo.mp3"
+        body = result.body or ""
+        assert "We discuss ledgers as work queues" in body
+        assert "[the deck](https://example.test/deck)" in body  # links kept, like feed notes
+        assert "player.init" not in body  # scripts are code, not notes
+        assert "tracker()" not in body
+
     def test_a_page_with_neither_feed_nor_audio_is_manual(self):
         d = driver({PAGE_URL: html_response("<html><body>just a post</body></html>")})
         result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
