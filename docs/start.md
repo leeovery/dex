@@ -49,14 +49,19 @@ choosing somewhere else silently.
 
 #### If `{mode}` is `existing`
 
-From `{home}`: `gh repo clone {repo}`, then `git lfs install --local`
-inside the clone. If the clone is denied, the owner's GitHub account lacks
-access to `{repo}` — resolve that with them before anything else.
+From `{home}`: `gh repo clone {repo}`, then inside the clone
+`git lfs install --local` and `git lfs pull` — on a machine that never ran
+`git lfs install` globally, the clone checks LFS media out as pointer
+files, and the pull materializes them. If the clone is denied, the owner's
+GitHub account lacks access to `{repo}` — resolve that with them before
+anything else.
 
-Set `{instance}` = the clone's absolute path. Bring its machinery current:
-`bin/dex sync` (commit and push if it changed anything), then `bin/dex
-inbox` (reconciles waiting captures and verifies the capture staging
-release).
+Set `{instance}` = the clone's absolute path and `{name}` = its directory
+name. Bring its machinery current — from `{instance}`: `bin/dex sync`
+(commit and push if it changed anything), then `bin/dex inbox`
+(materializes any staged binary captures and checks the standing inbox
+release). Follow the inbox output: anything it materialized is committed
+and pushed immediately, for the reason it states.
 
 → Proceed to **Step 5**.
 
@@ -92,11 +97,11 @@ seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
   `<owner>/<repo>` placeholder in its "Run it on another machine" prompt —
   that prompt is what a second machine or a second person pastes, so it has
   to name the real repo. If GitHub was declined, delete the section.
-- Commit. If GitHub was wanted: `gh repo create {name} --private --source .
-  --push`, then `bin/dex inbox ensure` — creates the standing "inbox"
-  release that binary captures stage into.
-- Sanity check: `bin/dex lint` from `{instance}` (prints a fresh-instance
-  notice).
+- Commit — from `{instance}`, like every command from here on. If GitHub
+  was wanted: `gh repo create {name} --private --source . --push`, then
+  `bin/dex inbox ensure` — creates the standing "inbox" release that
+  binary captures stage into.
+- Sanity check: `bin/dex lint` (prints a fresh-instance notice).
 
 → Proceed to **Step 5**.
 
