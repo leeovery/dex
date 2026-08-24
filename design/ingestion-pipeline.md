@@ -1379,7 +1379,7 @@ render/surfaces.py   named surfaces, loud payload validation:
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
 in-process — includes a "reported upstream: N issues" line when the filer
 acted) and cognitive (Claude writes a JSON payload — including free-prose
-fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
+fields like `notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
 Standing skill rule: **never hand-draw a report; there is a surface for it
 — call it.** A cap refusal is answered on the report of the run that asked
