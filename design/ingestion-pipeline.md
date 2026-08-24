@@ -2066,7 +2066,13 @@ src/dex_engine/
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,
-                 and for anything hand-edited since
+                 and for anything hand-edited since. Exit 1 is the
+                 hard-failure set: broken wikilinks, bad citations, a
+                 ledger schema error, a malformed taxonomy, a malformed
+                 digest, and the pre-taxonomy broken-mid-ingest state
+                 (corpus items on disk with no `state/taxonomy.json`,
+                 placement never having run); everything else is a
+                 finding for the report
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 
