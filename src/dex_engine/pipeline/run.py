@@ -829,13 +829,14 @@ class _Drain:
         # the typed job field is what routes them back to the redrain.
         media_job = entry.job is Job.MEDIA
         if media_job and self.ctx.config.media_fetch is MediaFetch.NONE:
-            # `none` means none on every path, the redrain included. The
-            # unit rests exactly where it parked — same status, no attempts
-            # burned — like a waiting unit under an absent provider, and
-            # drains again when the owner turns media back on.
+            # `none` gates the download, and THIS is the one gate: every
+            # media unit is ledgered at emit, so a freshly emitted child
+            # and a redrained one rest identically — same status, no
+            # attempts burned, like a waiting unit under an absent
+            # provider — and drain again when the owner turns media on.
             if not self.deferred_media:
                 self.notes.append(
-                    "media_fetch is `none` — parked media downloads stay parked "
+                    "media_fetch is `none` — media downloads rest where they are "
                     "until it is turned back on"
                 )
             self.deferred_media += 1
@@ -1115,7 +1116,13 @@ class _Drain:
         )
         if content.assets:
             self._write_assets(self.entries[entry.hash], content.assets)
-        if content.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
+        if content.media:
+            # ALWAYS ledgered at emit, whatever `media_fetch` says: the
+            # config gates the download alone (`_process`), so under
+            # `none` the child rests queued — the one mechanism the
+            # redrain's resting path already is — and drains the moment
+            # the owner turns media back on. Gating the emit dropped the
+            # URLs outright: no line, no note, no recovery.
             self._media_stage(self.entries[entry.hash], content.media)
 
     def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:

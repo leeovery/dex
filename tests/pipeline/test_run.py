@@ -1269,17 +1269,47 @@ class TestMediaStage:
         # No half-written temp left beside it.
         assert sorted(p.name for p in standing.parent.iterdir()) == before
 
-    def test_media_config_none_gates_the_stage_off(self, instance):
+    def test_media_config_none_ledgers_the_emit_and_rests_the_unit(self, instance):
+        # `none` gates the FETCH, never the emit. Dropping a driver's
+        # media URLs at the emit site left no ledger line, no note, and no
+        # recovery when the config flipped back — the media was simply
+        # gone. The emitted unit now rests exactly like the redrain's:
+        # ledgered, unfetched, no attempts burned, the withheld-cohort
+        # note fired once.
         write_item(instance)
         driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
-        ctx = make_ctx(
-            instance,
-            driver,
-            config=Config(media_fetch=MediaFetch.NONE),
-            transport=FakeTransport({}),
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
         )
-        run_mod.run(ctx)
-        assert work_hash(self.IMG1) not in ledger.load(instance.ledger_path)
+        report = run_mod.run(
+            make_ctx(
+                instance, driver, config=Config(media_fetch=MediaFetch.NONE), transport=transport
+            )
+        )
+        resting = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert resting.job is Job.MEDIA
+        assert resting.status is Status.QUEUED
+        assert resting.attempts is None
+        assert resting.parent == work_hash(URL)
+        assert ("GET", self.IMG1) not in transport.calls
+        assert not (instance.root / f"enrichment/{ITEM}/media-0.png").exists()
+        assert "media_fetch is `none`" in report  # the withheld cohort, noted once
+
+    def test_a_rested_media_emit_drains_when_the_config_flips_back(self, instance):
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        run_mod.run(
+            make_ctx(
+                instance, driver, config=Config(media_fetch=MediaFetch.NONE), transport=transport
+            )
+        )
+        run_mod.run(make_ctx(instance, driver, transport=transport))  # `lead` again
+        drained = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert drained.status is Status.DONE
+        assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
 
     def test_media_config_none_gates_the_redrain_too(self, instance):
         # Run 1 under `lead`: the download 503s and the media unit parks
