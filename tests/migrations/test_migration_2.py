@@ -319,6 +319,24 @@ class TestPurgedItemsAreNeverReseeded:
         assert transport.calls == []
         assert '"queued"' not in instance.ledger_path.read_text()
 
+    def test_a_union_merged_record_still_names_the_exclusion(self, tmp_path, migration):
+        # Two machines excluded between syncs: the union driver leaves the
+        # rulings out of order and a doubly-excluded id twice. Membership
+        # is what decides — the skip still fires, whichever reason wins.
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(
+            tmp_path,
+            [
+                ("2026-05-01-item-a1b2c3", "out of scope — machine A"),
+                ("2026-06-06-unrelated-b2c3d4", "ads"),
+                ("2026-05-01-item-a1b2c3", "duplicate ruling — machine B"),
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "excluded, never reseeded" in skip.why
+
     def test_item_gone_without_an_exclusions_record_is_still_skipped(self, tmp_path, migration):
         path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
         report = migration.apply(tmp_path)

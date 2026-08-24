@@ -755,6 +755,23 @@ class TestReferentialIntegrity:
             in outcome.report
         )
 
+    def test_a_union_merged_exclusions_record_still_answers(self, instance):
+        # Two machines excluded between syncs: the union driver leaves the
+        # sides' rulings out of order and a doubly-excluded id twice. The
+        # record is read as a set, so the ghost row still says excluded —
+        # once.
+        self._bare_wiki(instance)
+        excluded = "2024-04-11-document-library-0a7569"
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{excluded}\tpensions reference docs\n"
+            "2026-08-19-unrelated-11ff22\tads\n"
+            f"{excluded}\tout of scope\n",
+            encoding="utf-8",
+        )
+        ledger.append(instance.ledger_path, done_entry("73bd784849", item=excluded))
+        outcome = lint(instance)
+        assert f"**{excluded}** — 1 entry (excluded on record)" in outcome.report
+
     def test_entry_naming_an_unclaimed_item_is_told_apart(self, instance):
         self._bare_wiki(instance)
         ledger.append(instance.ledger_path, done_entry("73bd784849"))

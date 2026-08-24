@@ -442,6 +442,37 @@ class TestStrandedLandings:
         assert "re-queued" not in summary
 
 
+class TestUnionMergedRecord:
+    """Two machines' appends union-merge; the readers tolerate the shape.
+
+    git's union driver concatenates ours-then-theirs, so a merged
+    ``state/exclusions.tsv`` holds the sides' rulings out of chronological
+    order and an item both sides excluded twice, each with the reason its
+    machine wrote. Every reader collapses the file to a set, which is what
+    licenses the template's ``merge=union``.
+    """
+
+    MERGED = (
+        f"{ITEM}\tout of scope\n"
+        f"{OTHER}\tads\n"
+        f"{ITEM}\tmeme thread\n"  # the other machine's copy of the ruling
+        "2026-08-19-third-33dd44\tspam\n"
+    )
+
+    def test_re_excluding_a_twice_recorded_id_appends_no_third_copy(self, instance):
+        (instance.state_dir / "exclusions.tsv").write_text(self.MERGED, encoding="utf-8")
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert (instance.state_dir / "exclusions.tsv").read_text() == self.MERGED
+
+    def test_normalize_reads_every_ruling_once(self, instance):
+        (instance.state_dir / "exclusions.tsv").write_text(self.MERGED, encoding="utf-8")
+        assert load_exclusions(instance.state_dir / "exclusions.tsv") == {
+            "55ad7b",
+            "11ff22",
+            "33dd44",
+        }
+
+
 class TestBadIdsAreRefused:
     """An id is a corpus item id, never a path — `exclude` deletes recursively."""
 

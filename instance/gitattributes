@@ -1,5 +1,8 @@
 # state is append-only JSONL; racing machines merge as a union
 state/*.jsonl merge=union
+# exclusions are append-only id<TAB>reason lines; every reader collapses
+# them to a set, so two machines' rulings union-merge like the JSONL
+state/exclusions.tsv merge=union
 # media is LFS-tracked; capture notes, transcripts, and knowledge stay plain git
 media/** filter=lfs diff=lfs merge=lfs -text
 # Enrichment binaries are LFS-tracked by NAME SHAPE, never by extension
