@@ -343,9 +343,11 @@ Typing discipline (binding for the implementation):
   — `queued` is a birth state and `error` is raised, never returned
   (`Result` has no error channel by design; the pipeline's single broad
   except is the only route to `error` status). `Result` validates this.
-- The typed registry literal (`DRIVERS: list[SourceDriver] = […]`) is the
-  Protocol-conformance point — the type checker verifies every driver
-  against the interface at that one assignment. Same for provider lists.
+- The typed registry literal (`build_drivers`'s `list[SourceDriver]`
+  return) is the Protocol-conformance point — the type checker verifies
+  every driver against the interface at that one return. Same for
+  provider lists. The registry is built by that function on demand
+  (§16), never at import.
 - Every **total** dispatch over `Status`/`Kind`/`Need` uses `match` +
   `assert_never` (exhaustiveness: adding an enum member becomes a type
   error at every unhandled site). The drain predicate is one total
