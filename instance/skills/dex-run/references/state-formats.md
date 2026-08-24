@@ -267,9 +267,11 @@ a malformed record impossible:
   `commented` (seen again on an open issue), or `recorded` (local
   record only, the gate off). The
   record is written whether or not `report_issues` let the report file
-  upstream — `filed: true|false` says which — and dedupe treats any
-  record as seen, so turning the gate on later never auto-refiles what
-  was observed while it was off.
+  upstream — `filed: true|false` says which — and a gate-off record is
+  seen for good: turning the gate on later never auto-refiles what was
+  observed while it was off. The per-run filing cap is different: a
+  rate-limited report still writes its record and stays eligible to
+  file on a later run — deferred, not gated.
   `note` exists only on records the issue verb wrote and is the local
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what

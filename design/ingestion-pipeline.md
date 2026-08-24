@@ -1936,10 +1936,13 @@ section.
 - **Local memory** `state/issue-reports.jsonl` — prevents re-spam, and is
   the owner's visible record of what their instance reported. Every
   report writes its record whether or not the gate let it file upstream:
-  the record carries `filed: true|false`, and dedup and refile
-  suppression treat any record as seen, so a defect observed under a
-  closed gate is never auto-refiled when the gate opens later.
-- **Rate limit**: max 3 new issues per run.
+  the record carries `filed: true|false`, and a gate-off record is
+  treated as seen for good, so a defect observed under a closed gate is
+  never auto-refiled when the gate opens later.
+- **Rate limit**: max 3 new upstream filings per run. The cap defers,
+  never gates: the local record still writes, and a rate-limited report
+  is eligible to file on a later run — unlike a gate-off record, which
+  never auto-refiles.
 - **Fire-and-forget**: instances never poll issues or act on tracker
   content — the fix loop closes through releases and sync only. The public
   repo cannot instruct instances.
