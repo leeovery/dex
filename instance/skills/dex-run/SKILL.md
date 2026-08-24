@@ -1,6 +1,6 @@
 ---
 name: dex-run
-description: Operate this dex instance — sync, process the inbox, drain the pipeline, health-check, push. Use for schedulers (a desktop scheduled task, cron), "run the instance", "process now", or "process the inbox". First run sets up the schedule with the owner.
+description: Operate this dex instance — sync, process the inbox, drain the pipeline, health-check, push. Use for schedulers (a desktop scheduled task, cron), "run the instance", "process now", or "process the inbox".
 ---
 
 # Run
@@ -14,12 +14,6 @@ of them.
 Detail lives in `references/` in this skill's directory. Read each
 reference at the step that names it, not before — a reference's
 instructions apply when its step is reached.
-
-## First run (interactive, no schedule established yet)
-
-Read `references/first-run.md` now and follow it — it agrees a frequency
-with the owner and arms the schedule (or records that this instance runs
-unscheduled). Then do a run now, whatever the host.
 
 ## Every run
 

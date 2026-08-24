@@ -2094,11 +2094,21 @@ Skill changes shipping with this:
   is the subject rule's job when the substance is wanted, and a skip when
   it isn't. Don't enrich navigation into empty items. (Judgment, not a
   blanket rule — a small site's root can be the content itself.)
+- **Scheduling setup lives in the install guide, not the run skill.**
+  dex-run is schedule-blind — purely the Every-run procedure. A session
+  running it cannot see whether a desktop task exists; it may be driven by
+  a terminal, a scheduler, or a non-Claude agent, none of which can arm a
+  desktop task; and a run that opens on a setup question cannot also work
+  fully unattended. `docs/start.md` Step 5 carries the task mechanics —
+  name, exact prompt (the load-bearing folder line included), model
+  recommendation, Folder-field fix, the one attended Run now, local-task
+  semantics, and the no-desktop-app path.
 - **Model recommendation**: skills can't pin a model — scheduled tasks can.
-  dex-run's first-run setup recommends the owner set the task's model to
-  **Opus-class or above**. The system isn't Claude-exclusive (any agent
-  runtime that reads skills could drive it) but is untested elsewhere; the
-  skill says so rather than pretending portability is verified.
+  The install guide's scheduling step recommends the owner set the task's
+  model to **Opus-class or above**. The system isn't Claude-exclusive (any
+  agent runtime that reads skills could drive it) but is untested
+  elsewhere; the guide says so rather than pretending portability is
+  verified.
 
 ## 15. Testing
 
