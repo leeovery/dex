@@ -64,6 +64,7 @@ from pathlib import Path
 from . import frontmatter
 from .capabilities import Capabilities
 from .pipeline import ledger
+from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.enrichment import read_enrichment_fields
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import default_drivers
@@ -73,7 +74,10 @@ from .render import surfaces
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
 
-ID_RE = re.compile(r"`(\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6})`")
+# The strict id grammar is classify's ITEM_ID_PATTERN — one spelling,
+# shared with the scrubber and the observed-report rejectors; this regex
+# adds only the backticks a citation wears.
+ID_RE = re.compile(rf"`({ITEM_ID_PATTERN})`")
 LINK_RE = re.compile(r"\[\[([a-z0-9-]+)\]\]")
 # A backticked bare 6-hex token: shortid-shaped, a probable malformed
 # citation anywhere it appears — full ids never match this.
