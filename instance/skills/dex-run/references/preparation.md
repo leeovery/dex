@@ -30,7 +30,10 @@ in order:
    report; do not build on its state.
 
 4. **Pull.** `git pull` — captures arrive as commits, and other
-   machines' commits arrive with them.
+   machines' commits arrive with them. A local-only instance (no origin
+   remote) has nothing to pull: skip the step — skipped, not passed, the
+   same reading `bin/dex inbox` gives its release checks — and skip the
+   run's later push steps the same way.
 
 5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports

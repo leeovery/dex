@@ -75,7 +75,10 @@ at a time (use your ask-user tool where available):
 2. **What it covers** — 2-4 bullets. Anything not covered is out of scope
    by default; at processing time the agent asks the owner about borderline
    items rather than guessing.
-3. **GitHub** — private repo (default), or local-only for now.
+3. **GitHub** — private repo (default), or local-only for now. Local-only
+   is a supported state, not a half-setup: runs skip pulls, pushes and the
+   inbox release checks (skipped, not passed) until a repo exists, and the
+   phone shortcut and second machines need the repo.
 4. **Capture** — do they want the one-tap phone shortcut? (Needs a GitHub
    repo and a token they create — exact steps come in Step 6.)
 5. **Backfill** — any existing exports (chat exports, bookmarks dump) to

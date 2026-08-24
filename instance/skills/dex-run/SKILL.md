@@ -35,7 +35,9 @@ instructions apply when its step is reached.
    line dated within the past 7 days, run the dex-lint skill
    (`.claude/skills/dex-lint`) — including when the inbox was empty.
 
-4. **Verify.** Working tree clean, everything committed and pushed.
+4. **Verify.** Working tree clean, everything committed and pushed (a
+   local-only instance, with no origin remote, commits without pushing:
+   the push is skipped, not passed).
 
 5. **Report.** One short summary: what was ingested, what was parked and
    why, what the health check found, or "nothing to do". Report any
