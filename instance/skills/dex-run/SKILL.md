@@ -55,6 +55,13 @@ instructions apply when its step is reached.
   ledger for the health check. An `enrich fetch` refusal is already
   answered on the engine's own report; the summaries and receipts you
   write never restate cap fires.
+- An ENGINE defect you observe — output contradicting state on disk, a
+  documented behaviour that did not happen, a verb writing the wrong
+  thing — is filed with `bin/dex issue` per the rubric in
+  `references/processing.md`, and then the run continues: filing is a
+  side errand, never a stop. World and content failures (dead links,
+  paywalls, blocked fetches, poor transcripts) never file — the
+  classifier owns the world.
 
 ## State writes
 

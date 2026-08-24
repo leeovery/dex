@@ -36,3 +36,31 @@ directory).
    session's: judge the **Needs you** entries per the reference's heal
    procedure exactly as on the run report, and act on nothing under
    **Waiting on the engine**.
+
+## Engine defects, whenever you notice one
+
+This applies at every step above, and to dex-lint's repairs: the engine
+can misbehave without raising, and on a scheduled run nobody reads your
+session — an unfiled observation reaches no one.
+
+- **File when the ENGINE misbehaved**: a report or status output
+  contradicts state on disk; a documented behaviour did not happen; a
+  report states something false; a verb wrote the wrong thing. The test
+  is always "the engine broke its own contract".
+- **Never for content or world failures**: a dead link, a paywall, a
+  site blocking the fetch, a transcript the owner finds poor, a
+  judgment outcome you disagree with. The classifier and the parking
+  lanes already handle the world; none of it is an engine bug.
+- **Mechanics, never content**: describe items abstractly ("an item
+  with two URLs", "a unit parked waiting") — never by slug, id, URL or
+  path. The verb runs the scrubber's own detectors over every public
+  field and REFUSES the whole payload on any hit, naming each field:
+  abstract the clause and run it again. The refusal is the design
+  working, not an obstacle.
+
+Write the payload to `cache/issue.json` — the field shapes, bounds and
+the local-only `note` split are in `state-formats.md` (this directory)
+— and run `bin/dex issue --file cache/issue.json`. Whatever it answers
+(filed, seen-again comment, "nothing filed", refused), **continue the
+run**: filing is a side errand, never a stop, and its outcome is one
+line in your report.
