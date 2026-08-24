@@ -30,9 +30,14 @@ bin/dex enrich item new inbox/<capture>.md --shared-by <owner> [--slug <slug>]
 
 Corpus items are created by `item new`, never freehand — code computes the
 id (both id paths: URL hash, or the `media/<id>/` directory `dex inbox`
-fixed) and writes the frontmatter, so a malformed item cannot exist. Pass
-`--slug` when you have a better name than the mechanical derivation (the
-page or video title, once known). The body is the owner's note **verbatim
+fixed) and writes the frontmatter, so a malformed item cannot exist. The
+slug derives from the capture at creation time (note text first, then the
+URL's path tail); pass `--slug` only when the capture itself already gives
+a better name than that derivation — a note that buries the subject, a URL
+tail that is an opaque id. Item creation precedes enrichment, so a page or
+video title is never in hand here, and a title learned later does not
+become a rename: the id is fixed at creation, and the better name belongs
+in the digest and on the pages that cite the item. The body is the owner's note **verbatim
 and stays that way** — your interpretive context (what a linked video is,
 how a thread relates) belongs in the digest, never the item body; thread
 context lives in the enrichment via walk-up. After creation, exactly two
