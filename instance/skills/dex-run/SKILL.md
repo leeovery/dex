@@ -22,7 +22,8 @@ instructions apply when its step is reached.
    inside this instance's root for the whole run and never enter another
    dex instance; `bin/dex sync` runs before anything else touches state;
    after sync's commit, a still-dirty tree means a previous run died
-   mid-work — stop and report.
+   mid-work — never build on it silently; the reference says how to
+   recover.
 
 2. **Process.** Read `references/processing.md` now and perform its three
    steps: items created from every in-scope capture, then `bin/dex enrich

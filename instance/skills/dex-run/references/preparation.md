@@ -26,8 +26,24 @@ in order:
    deliberately: sync legitimately edits state (pin bump, migration
    rewrites and seeds) before any guard could pass, so a guard placed
    earlier would trip on its own machinery. After the sync commit, a
-   still-dirty tree means a previous session died mid-work — stop and
-   report; do not build on its state.
+   still-dirty tree means a previous session died mid-work. Never build
+   on it silently; clear it deliberately, now, or every later run trips
+   here on the same residue:
+
+   - **Inspect the residue** (`git status`, `git diff`) and attribute
+     it. Engine-written residue is coherent work a dead session never
+     committed: corpus items, enrichment files, state appends, deleted
+     capture files. Commit it with a marked message (e.g. `recovered:
+     previous run died mid-work`) and proceed — the run's redrain
+     re-seeds and retries whatever was half-done, so nothing recovered
+     this way is trusted as finished.
+   - **A tree left mid-merge** (conflict markers, an unfinished merge in
+     git's own state) is the pull procedure's case arriving early:
+     resolve it per step 4's file classes, commit, and continue.
+   - **Residue you cannot attribute stays put**, uncommitted and
+     untouched, and IS the loud report: stop and describe exactly what
+     is sitting in the tree. Recovery is a deliberate act with a commit
+     that says so, never silent building-on-top.
 
 4. **Pull.** `git pull` — captures arrive as commits, and other
    machines' commits arrive with them. A local-only instance (no origin
