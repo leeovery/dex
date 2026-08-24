@@ -23,7 +23,7 @@ from dex_engine.drivers.transport import urllib_transport
 from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
 from dex_engine.pipeline.types import Format, Kind, Missing, Need, Redetected, Status
-from tests.drivers.conftest import body_of, content_of, make_unit
+from tests.drivers.conftest import body_of, content_of, make_unit, needs_of
 
 pytestmark = pytest.mark.live
 
@@ -56,9 +56,10 @@ class TestItunesLookupShape:
         url = (
             "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/id1434243584?i=1000716969529"
         )
-        result = PodcastDriver(transport=urllib_transport).fetch(make_unit(url, Kind.PODCAST))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(
+            PodcastDriver(transport=urllib_transport).fetch(make_unit(url, Kind.PODCAST))
+        )
+        assert result.need is Need.TRANSCRIBE
         assert str(result.meta["enclosure"]).startswith("http")
 
 

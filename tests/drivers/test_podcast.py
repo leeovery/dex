@@ -4,8 +4,15 @@ import xml.etree.ElementTree as ET
 
 from dex_engine.drivers.podcast import PodcastDriver, _itunes_episode, _match_by_title
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.pipeline.types import Kind, Need, Status
-from tests.drivers.conftest import FakeTransport, fixture_text, html_response, make_unit, reason_of
+from dex_engine.pipeline.types import Kind, Need, NeedsCapability, Refused, Unusable
+from tests.drivers.conftest import (
+    FakeTransport,
+    evidence_of,
+    fixture_text,
+    html_response,
+    make_unit,
+    needs_of,
+)
 
 APPLE_URL = "https://podcasts.apple.com/us/podcast/engineering-distilled/id9990001?i=8880042"
 SPOTIFY_URL = "https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk"
@@ -75,9 +82,8 @@ class TestAppleResolution:
                 FEED_URL: feed(),
             }
         )
-        result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(d.fetch(make_unit(APPLE_URL, Kind.PODCAST)))
+        assert result.need is Need.TRANSCRIBE
         assert result.meta["enclosure"] == ENCLOSURE
         assert result.meta["title"] == "Ledgers as Work Queues"
         assert result.meta["show"] == "Engineering Distilled"
@@ -89,7 +95,7 @@ class TestAppleResolution:
                 FEED_URL: feed(),
             }
         )
-        result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
+        result = needs_of(d.fetch(make_unit(APPLE_URL, Kind.PODCAST)))
         assert result.body is not None
         assert "[Ada Guest](https://example.test/guest)" in result.body  # harvestable
         assert "- Why JSONL merges" in result.body
@@ -99,8 +105,8 @@ class TestAppleResolution:
         show_url = "https://podcasts.apple.com/us/podcast/engineering/id9990001"
         unit = make_unit(show_url, Kind.PODCAST)
         result = d.fetch(unit)
-        assert result.status is Status.MANUAL
-        assert "show, not an episode" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "show, not an episode" in evidence_of(result)
 
     def test_the_lookup_is_keyed_by_the_show_id_not_the_episode_id(self):
         # The pin: the episode-id lookup the driver used to send resolves
@@ -113,42 +119,42 @@ class TestAppleResolution:
             }
         )
         result = PodcastDriver(transport=transport).fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
+        assert isinstance(result, NeedsCapability)
         assert transport.calls[0] == ("GET", LOOKUP_URL)
         assert all("id=8880042" not in url for _method, url in transport.calls)
 
     def test_episode_outside_the_lookup_window_is_manual(self):
         d = driver({LOOKUP_URL: html_response('{"resultCount": 0, "results": []}')})
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "not among the 200 episodes iTunes lists for this show" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "not among the 200 episodes iTunes lists for this show" in evidence_of(result)
 
     def test_apple_link_without_a_show_id_segment_is_manual(self):
         d = driver({})
         url = "https://podcasts.apple.com/us/podcast/engineering-distilled?i=8880042"
         result = d.fetch(make_unit(url, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "no show id" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "no show id" in evidence_of(result)
 
     def test_episode_pulled_from_feed_is_manual(self):
         pulled = fixture_text("podcast", "itunes-lookup.json").replace("ep-42-guid", "gone-guid")
         pulled = pulled.replace("Ledgers as Work Queues", "An Episode The Feed Lost")
         d = driver({LOOKUP_URL: html_response(pulled), FEED_URL: feed()})
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "not in the show's feed" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "not in the show's feed" in evidence_of(result)
 
     def test_lookup_http_failure_classifies_never_dies(self):
         d = driver({LOOKUP_URL: HttpResponse(status=503, content_type="text/html", body=b"")})
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.BLOCKED
-        assert reason_of(result) == "HTTP 503"
+        assert isinstance(result, Refused)
+        assert evidence_of(result) == "HTTP 503"
 
     def test_unparseable_itunes_json_is_blocked(self):
         d = driver({LOOKUP_URL: html_response("<html>maintenance</html>")})
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
-        assert result.status is Status.BLOCKED
-        assert "unparseable JSON" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "unparseable JSON" in evidence_of(result)
 
 
 class TestSpotifyResolution:
@@ -166,9 +172,8 @@ class TestSpotifyResolution:
                 FEED_URL: feed(),
             }
         )
-        result = d.fetch(make_unit(SPOTIFY_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(d.fetch(make_unit(SPOTIFY_URL, Kind.PODCAST)))
+        assert result.need is Need.TRANSCRIBE
         assert result.meta["enclosure"] == ENCLOSURE
 
     def test_exclusive_fails_honestly_manual(self):
@@ -181,15 +186,15 @@ class TestSpotifyResolution:
             }
         )
         result = d.fetch(make_unit(SPOTIFY_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "Spotify" in reason_of(result)
-        assert "show's own site" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "Spotify" in evidence_of(result)
+        assert "show's own site" in evidence_of(result)
 
     def test_titleless_page_is_manual(self):
         d = driver({SPOTIFY_URL: html_response("<html><body>consent wall</body></html>")})
         result = d.fetch(make_unit(SPOTIFY_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "no episode title" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "no episode title" in evidence_of(result)
 
 
 def feed_item(title: str) -> ET.Element:
@@ -235,15 +240,14 @@ class TestRssIshResolution:
         single = fixture_text("podcast", "feed.xml")
         single = single[: single.index("<item>", single.index("</item>"))] + "</channel></rss>"
         d = driver({"https://feeds.pods.test/one-shot.rss": xml_response(single)})
-        result = d.fetch(make_unit("https://feeds.pods.test/one-shot.rss", Kind.PODCAST))
-        assert result.status is Status.WAITING
+        result = needs_of(d.fetch(make_unit("https://feeds.pods.test/one-shot.rss", Kind.PODCAST)))
         assert result.meta["enclosure"] == ENCLOSURE
 
     def test_multi_item_feed_is_a_show_not_an_episode(self):
         d = driver({FEED_URL: feed()})
         result = d.fetch(make_unit(FEED_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "capture an episode link" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "capture an episode link" in evidence_of(result)
 
     def test_indie_episode_page_resolves_via_its_feed_link(self):
         # An explicit .rss URL that actually serves the episode PAGE —
@@ -255,17 +259,15 @@ class TestRssIshResolution:
                 FEED_URL: feed(),
             }
         )
-        result = d.fetch(make_unit(page_url, Kind.PODCAST))
-        assert result.status is Status.WAITING
+        result = needs_of(d.fetch(make_unit(page_url, Kind.PODCAST)))
         assert result.meta["enclosure"] == ENCLOSURE
 
     def test_a_redetected_indie_page_prefers_the_feeds_episode(self):
         # The page carries its own audio, but the FEED's notes are richer —
         # so a resolvable feed link wins, and the enclosure is the feed's.
         d = driver({PAGE_URL: indie_page(), FEED_URL: feed()})
-        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
+        assert result.need is Need.TRANSCRIBE
         assert result.meta["enclosure"] == ENCLOSURE
         assert "Ada Guest" in (result.body or "")  # the feed's show notes
 
@@ -274,8 +276,7 @@ class TestRssIshResolution:
         # driver must resolve from that same signal rather than bounce it
         # back, which the run layer would park as a re-detection loop.
         d = driver({PAGE_URL: indie_page(), FEED_URL: OSError("connection reset")})
-        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
+        result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
         assert result.meta["enclosure"] == "https://engineering-distilled.test/audio/ep42.mp3"
         assert result.meta["title"] == "Ledgers as Work Queues"
 
@@ -290,8 +291,7 @@ class TestRssIshResolution:
             )
         )
         d = driver({PAGE_URL: html_response(page)})
-        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
+        result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
         assert result.meta["enclosure"] == "https://engineering-distilled.test/audio/ep42.mp3"
 
     def test_an_og_audio_pointer_counts_as_an_enclosure(self):
@@ -301,15 +301,14 @@ class TestRssIshResolution:
             "</head><body>notes</body></html>"
         )
         d = driver({PAGE_URL: html_response(page)})
-        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
-        assert result.status is Status.WAITING
+        result = needs_of(d.fetch(make_unit(PAGE_URL, Kind.PODCAST)))
         assert result.meta["enclosure"] == "https://cdn.pods.test/solo.mp3"
 
     def test_a_page_with_neither_feed_nor_audio_is_manual(self):
         d = driver({PAGE_URL: html_response("<html><body>just a post</body></html>")})
         result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "no RSS feed link" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "no RSS feed link" in evidence_of(result)
 
     def test_enclosureless_episode_is_manual(self):
         page_url = "https://engineering-distilled.test/episodes/no-audio.rss"
@@ -324,10 +323,10 @@ class TestRssIshResolution:
             }
         )
         result = d.fetch(make_unit(page_url, Kind.PODCAST))
-        assert result.status is Status.MANUAL
-        assert "no audio enclosure" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "no audio enclosure" in evidence_of(result)
 
     def test_feed_fetch_failure_classifies(self):
         d = driver({FEED_URL: OSError("connection reset")})
         result = d.fetch(make_unit(FEED_URL, Kind.PODCAST))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
