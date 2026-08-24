@@ -1746,6 +1746,11 @@ Shipping migrations for this rewrite:
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
+   only page work: a `job` unit (a media download, an asset write) is a
+   byproduct of its parent's fetch with no links to keep and no thread to
+   walk — seeding one would strip its routing and lineage and send a
+   signed media URL or an asset repo path to the web driver, and the
+   parent page's own rerun regenerates its media children anyway. And
    only entries whose work a **live corpus item still claims**:
    `dex exclude` deletes the item, its enrichment, its digest **and the
    ledger entries

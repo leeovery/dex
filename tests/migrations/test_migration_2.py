@@ -1,5 +1,6 @@
 """Migration 2: the identity re-key + rerun seed for pre-rewrite state."""
 
+import dataclasses
 import datetime
 import json
 
@@ -165,6 +166,36 @@ class TestSeeding:
         assert entries[work_hash(url_of("walled"))].status is Status.MANUAL
         assert entries[work_hash(url_of("broken"))].status is Status.ERROR
         assert report.actions == []
+
+    def test_media_and_asset_units_are_never_swept_into_the_rerun(self, tmp_path, migration):
+        # Both fixes are about page content; a job unit is a byproduct of
+        # its parent's fetch. The sweep used to requeue these as plain page
+        # reruns — job and lineage stripped — sending the signed media URL
+        # and the asset repo path to the web driver on the next run, the
+        # exact state exclude.py's requeue exists to avoid creating.
+        page = stored("https://blog.example.test/post", kind=Kind.WEB)
+        media = child(
+            "https://cdn.example.test/img.png?sig=abc",
+            parent=page.hash,
+            job=Job.MEDIA,
+            kind=Kind.WEB,
+        )
+        media = dataclasses.replace(media, engine="0.0.1")
+        asset = child(ASSET_PATH, parent=page.hash, job=Job.ASSET, kind=Kind.WEB)
+        asset = dataclasses.replace(asset, engine="0.0.1")
+        path = write_entries(tmp_path, [page, media, asset])
+        report = migration.apply(tmp_path)
+        entries = ledger.load(path)
+        seed = entries[page.hash]
+        assert seed.status is Status.QUEUED  # page work still reruns
+        assert seed.rerun is True
+        for unit in (media, asset):
+            kept = entries[unit.hash]
+            assert kept.status is Status.DONE  # byproducts stay landed
+            assert kept.rerun is False
+            assert kept.job is unit.job
+            assert kept.parent == page.hash
+        assert any("1 web (link keeping)" in action for action in report.actions)
 
     def test_post_rewrite_done_entries_are_not_seeded(self, tmp_path, migration):
         # Entries written by the rewritten engine already have both fixes.
