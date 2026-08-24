@@ -14,9 +14,26 @@ from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.enrichment import youtube_body
 from dex_engine.pipeline.transcribe import Acquired, acquire_youtube_audio
-from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import (
+    Content,
+    Kind,
+    LedgerEntry,
+    Missing,
+    Need,
+    NeedsCapability,
+    Refused,
+    Status,
+    Unusable,
+)
 from dex_engine.pipeline.urls import base_canonical, work_hash
-from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
+from tests.drivers.conftest import (
+    FakeTransport,
+    body_of,
+    content_of,
+    fixture_text,
+    make_unit,
+    needs_of,
+)
 
 URL = "https://youtube.com/watch?v=dQw4w9WgXcA"
 INFO_WITH = json.loads(fixture_text("youtube", "info-with-captions.json"))
@@ -143,8 +160,9 @@ class TestPlaylists:
     def test_playlist_parks_manual_with_reason_and_never_probes(self):
         driver = driver_for(AssertionError("the probe must not run for a playlist"))
         result = driver.fetch(make_unit("https://youtube.com/playlist?list=PLabc", Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert "playlist" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert result.rescuable  # the members are there for judgment to pick
+        assert "playlist" in result.evidence
 
     def test_playlist_embed_identity_is_the_list_id(self):
         driver = driver_for({})
@@ -164,8 +182,8 @@ class TestPlaylists:
         }
         for canonical in canonicals:
             result = driver.fetch(make_unit(canonical, Kind.YOUTUBE))
-            assert result.status is Status.MANUAL
-            assert "playlist" in reason_of(result)
+            assert isinstance(result, Unusable)
+            assert "playlist" in result.evidence
 
     def test_an_embedded_single_video_is_still_its_video(self):
         driver = driver_for({})
@@ -233,20 +251,20 @@ class TestChannelsAndSearch:
         # all 63 audio files over one filename.
         driver = driver_for(AssertionError("the probe must not run for a channel"))
         result = driver.fetch(make_unit(url, Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert "a channel is a collection" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "a channel is a collection" in result.evidence
 
     def test_search_results_park_manual_and_never_probe(self):
         driver = driver_for(AssertionError("the probe must not run for a search page"))
         result = driver.fetch(make_unit(SEARCH_URL, Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert "a result page is a collection" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "a result page is a collection" in result.evidence
 
     def test_a_hashtag_feed_parks_manual_and_never_probes(self):
         driver = driver_for(AssertionError("the probe must not run for a hashtag feed"))
         result = driver.fetch(make_unit(HASHTAG_URL, Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert "a hashtag feed is a collection" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "a hashtag feed is a collection" in result.evidence
 
     @pytest.mark.parametrize("url", [*CHANNEL_SHAPES, SEARCH_URL, HASHTAG_URL])
     def test_collection_urls_keep_the_generic_canonical(self, url):
@@ -263,7 +281,7 @@ class TestChannelsAndSearch:
     )
     def test_a_channels_live_path_is_one_video_and_still_probes(self, url):
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
-        assert driver.fetch(make_unit(url, Kind.YOUTUBE)).status is Status.DONE
+        assert isinstance(driver.fetch(make_unit(url, Kind.YOUTUBE)), Content)
 
     @pytest.mark.parametrize("url", FUNCTIONAL_URLS)
     def test_a_functional_path_is_never_read_as_a_collection(self, url):
@@ -271,7 +289,8 @@ class TestChannelsAndSearch:
         # paths are one segment too, and parking /watch or /feed as a
         # channel would be the same bug pointed the other way.
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
-        assert "collection" not in (driver.fetch(make_unit(url, Kind.YOUTUBE)).reason or "")
+        outcome = driver.fetch(make_unit(url, Kind.YOUTUBE))
+        assert not (isinstance(outcome, Unusable) and "collection" in outcome.evidence)
 
     @pytest.mark.parametrize(
         "url",
@@ -298,21 +317,21 @@ class TestChannelsAndSearch:
     )
     def test_single_video_shapes_still_fetch(self, url):
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
-        assert driver.fetch(make_unit(url, Kind.YOUTUBE)).status is Status.DONE
+        assert isinstance(driver.fetch(make_unit(url, Kind.YOUTUBE)), Content)
 
     def test_a_video_whose_id_looks_like_a_channel_prefix_still_probes(self):
         # /c/<name> is a channel but /v/<id> is a video: the pair shapes
         # must not bleed into each other.
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
         url = "https://youtube.com/v/dQw4w9WgXcA"
-        assert driver.fetch(make_unit(url, Kind.YOUTUBE)).status is Status.DONE
+        assert isinstance(driver.fetch(make_unit(url, Kind.YOUTUBE)), Content)
 
 
 class TestCaptions:
     def test_captions_become_description_and_transcript_sections(self):
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         body = body_of(result)
         assert body.startswith("## Description")
         assert "## Transcript" in body
@@ -345,7 +364,7 @@ class TestCaptions:
 
     def test_meta_carries_title_channel_duration_upload_date(self):
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
-        meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
+        meta = content_of(driver.fetch(make_unit(URL, Kind.YOUTUBE))).meta
         assert meta["title"] == "Ledgers as Work Queues: a Field Report"
         assert meta["channel"] == "Systems Field Notes"
         assert meta["duration_min"] == 13
@@ -356,28 +375,28 @@ class TestCaptions:
         # None (omitted from frontmatter), not a fabricated 0.
         info = {k: v for k, v in INFO_WITH.items() if k != "duration"}
         driver = driver_for(info, {TRACK_URL: vtt_response(VTT)})
-        meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
+        meta = content_of(driver.fetch(make_unit(URL, Kind.YOUTUBE))).meta
         assert meta["duration_min"] is None
 
     def test_a_captions_transcript_stamps_its_provenance(self):
         # Frontmatter, not the heading, says a body holds a transcript.
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(VTT)})
-        meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
+        meta = content_of(driver.fetch(make_unit(URL, Kind.YOUTUBE))).meta
         assert meta["via"] == "captions"
 
 
-def _park_file(path, result, url: str = URL) -> None:
-    """Write the enrichment file the run layer writes for ``result``.
+def _park_file(path, outcome: Content | NeedsCapability, url: str = URL) -> None:
+    """Write the enrichment file the run layer writes for ``outcome``.
 
     The frontmatter is the driver's OWN meta — the point of the round trip
     below is that whatever the driver did or did not stamp is what the
     drain reads back.
     """
     fields = "".join(
-        f"{key}: {value}\n" for key, value in result.meta.items() if value not in (None, "")
+        f"{key}: {value}\n" for key, value in outcome.meta.items() if value not in (None, "")
     )
     path.write_text(
-        f"---\nurl: {url}\nfetched: '2026-08-10'\n{fields}---\n\n{result.body}\n",
+        f"---\nurl: {url}\nfetched: '2026-08-10'\n{fields}---\n\n{outcome.body}\n",
         encoding="utf-8",
     )
 
@@ -402,9 +421,10 @@ class FakeDownload:
 class TestCaptionsRoundTripThroughTheDrain:
     """A captioned body re-entering the transcribe path (`enrich mark … waiting`)."""
 
-    def _drain_over(self, tmp_path, result) -> str:
+    def _drain_over(self, tmp_path, outcome: object) -> str:
+        assert isinstance(outcome, Content | NeedsCapability)
         park = tmp_path / "youtube-abc123.md"
-        _park_file(park, result)
+        _park_file(park, outcome)
         entry = LedgerEntry(
             hash=work_hash(URL),
             url=URL,
@@ -468,10 +488,9 @@ class TestWaitingParks:
         # The empty FakeTransport is the pin: ANY download attempt raises —
         # audio acquisition belongs to the drain, not the driver.
         driver = driver_for(INFO_WITHOUT)
-        result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
-        assert reason_of(result) == "no captions available"
+        result = needs_of(driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert result.need is Need.TRANSCRIBE
+        assert result.reason == "no captions available"
         assert result.meta["title"] == "Unindexed Conference Talk"
 
     def test_the_park_carries_the_description_it_already_fetched(self):
@@ -485,17 +504,15 @@ class TestWaitingParks:
 
     def test_a_description_less_video_still_parks_cleanly(self):
         info = {k: v for k, v in INFO_WITHOUT.items() if k != "description"}
-        result = driver_for(info).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(driver_for(info).fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert result.need is Need.TRANSCRIBE
         assert result.body is None  # nothing to write, nothing invented
 
     def test_thin_captions_track_parks_waiting_transcribe(self):
         thin = "WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.000\nhi\n"
         driver = driver_for(INFO_WITH, {TRACK_URL: vtt_response(thin)})
-        result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.WAITING
-        assert result.needs is Need.TRANSCRIBE
+        result = needs_of(driver.fetch(make_unit(URL, Kind.YOUTUBE)))
+        assert result.need is Need.TRANSCRIBE
         assert "## Description" in body_of(result)  # the description still lands
 
 
@@ -503,18 +520,20 @@ class TestProbeClassification:
     def test_http_code_in_the_message_routes_through_the_classifier(self):
         failure = ProbeError("ERROR: unable to download: HTTP Error 429: Too Many Requests")
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
+        assert not result.permanent
 
     def test_private_video_is_manual_login_walled(self):
         failure = ProbeError("ERROR: Private video. Sign in if you've been granted access")
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert PAYWALL_REASON in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent  # a sign-in wall never heals on retry
+        assert PAYWALL_REASON in result.evidence
 
     def test_confirmed_unavailable_is_dead(self):
         failure = ProbeError("ERROR: Video unavailable. This video has been removed")
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.DEAD
+        assert isinstance(result, Missing)
 
     def test_closed_account_is_dead(self):
         failure = ProbeError(
@@ -522,7 +541,7 @@ class TestProbeClassification:
             "account associated with this video has been closed"
         )
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.DEAD
+        assert isinstance(result, Missing)
 
     def test_transient_network_failure_is_blocked_never_dead(self):
         # THE regression pin for the probe path: the motivating-incident
@@ -533,8 +552,8 @@ class TestProbeClassification:
             "'Operation timed out')))"
         )
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
-        assert result.status is not Status.DEAD
+        assert isinstance(result, Refused)
+        assert not isinstance(result, Missing)
 
     def test_extractor_breakage_is_blocked_never_dead(self):
         # yt-dlp breaking against a YouTube change heals via a yt-dlp
@@ -544,8 +563,8 @@ class TestProbeClassification:
             "please report this issue on https://github.com/yt-dlp/yt-dlp/issues"
         )
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
-        assert "github.com" not in reason_of(result)  # the message URL was scrubbed
+        assert isinstance(result, Refused)
+        assert "github.com" not in result.evidence  # the message URL was scrubbed
 
     def test_geo_block_is_manual_with_reason(self):
         failure = ProbeError(
@@ -553,8 +572,9 @@ class TestProbeClassification:
             "available in your country"
         )
         result = driver_for(failure).fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.MANUAL
-        assert "geo-blocked" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent
+        assert "geo-blocked" in result.evidence
 
 
 class TestCaptionTrackFailures:
@@ -564,14 +584,15 @@ class TestCaptionTrackFailures:
         gone = HttpResponse(status=404, content_type="text/plain", body=b"")
         driver = driver_for(INFO_WITH, {TRACK_URL: gone})
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
-        assert "caption track fetch failed: HTTP 404" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert "caption track fetch failed: HTTP 404" in result.evidence
 
     def test_track_connection_failure_is_blocked(self):
         driver = driver_for(INFO_WITH, {TRACK_URL: TimeoutError("timed out")})
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
-        assert "caption track fetch failed" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "caption track fetch failed" in result.evidence
 
     def test_track_failure_keeps_the_wire_fact_never_classifier_framing(self):
         # A 402 on the VIDEO would classify manual/paywalled; on a signed
@@ -581,9 +602,10 @@ class TestCaptionTrackFailures:
         walled = HttpResponse(status=402, content_type="text/plain", body=b"")
         driver = driver_for(INFO_WITH, {TRACK_URL: walled})
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
-        assert result.status is Status.BLOCKED
-        assert "caption track fetch failed: HTTP 402" in reason_of(result)
-        assert PAYWALL_REASON not in reason_of(result)
+        assert isinstance(result, Refused)
+        assert not result.permanent  # a 402 on a signed track URL is CDN weather
+        assert "caption track fetch failed: HTTP 402" in result.evidence
+        assert PAYWALL_REASON not in result.evidence
 
 
 class TestCleanVtt:

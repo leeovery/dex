@@ -26,15 +26,15 @@ whisper drain stacked a second ``## Transcript`` under the first.
 
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
-``Result(waiting, needs=transcribe)``: the work is parked for the
+``NeedsCapability(need=transcribe)``: the work is parked for the
 capability, not given up on — and the park carries the description it
 already fetched, so the run layer writes that content now rather than
 holding it hostage to a transcription backlog the video may not survive.
 The drain appends the transcript to that same file.
 
 Probe failures are mapped honestly: an HTTP code buried in yt-dlp's message
-routes through the central classifier; private/sign-in walls are ``manual``;
-only a confirmed-unavailable video is ``dead``.
+routes through the central classifier; private/sign-in walls are permanent
+refusals; only a confirmed-unavailable video is ``Missing``.
 """
 
 import re
@@ -42,7 +42,16 @@ from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
 from dex_engine.pipeline.enrichment import description_section, youtube_body
-from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
+from dex_engine.pipeline.types import (
+    Content,
+    Kind,
+    Need,
+    NeedsCapability,
+    Outcome,
+    Refused,
+    Unusable,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .fetch import FetchFailure, fetch_classified
@@ -173,13 +182,13 @@ class YouTubeDriver:
             return "https://youtube.com/playlist?" + urlencode({"list": playlist_id})
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
+    def fetch(self, unit: WorkUnit) -> Outcome:
         """Probe the video; captions become the transcript, or the unit parks."""
         if _playlist_id(unit.url) is not None:
-            return Result(
-                status=Status.MANUAL,
-                meta={},
-                reason="playlist link — capture the videos worth keeping individually",
+            # A collection, not a unit — but its members are there for
+            # judgment to pick, so it parks rather than closing.
+            return Unusable(
+                evidence="playlist link — capture the videos worth keeping individually"
             )
         collection = _collection_reason(unit.url)
         if collection is not None:
@@ -187,50 +196,43 @@ class YouTubeDriver:
             # from these URLs (minutes of work, every video's metadata),
             # and the transcribe drain would then pull every one of those
             # audio files over a single filename.
-            return Result(status=Status.MANUAL, meta={}, reason=collection)
+            return Unusable(evidence=collection)
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
-            return classify_probe_failure(str(e)).to_result()
+            return classify_probe_failure(str(e)).to_outcome()
         meta = _video_meta(info)
         track_url = _caption_track_url(info)
         if track_url is None:
-            return Result(
-                status=Status.WAITING,
+            return NeedsCapability(
+                need=Need.TRANSCRIBE,
                 meta=meta,
                 body=description_section(_description(info)) or None,
-                needs=Need.TRANSCRIBE,
                 reason="no captions available",
             )
         return self._fetch_transcript(track_url, info, meta)
 
     def _fetch_transcript(
         self, track_url: str, info: dict, meta: dict[str, str | int | None]
-    ) -> Result:
+    ) -> Outcome:
         # A failing caption track says nothing about the VIDEO: yt-dlp track
-        # URLs are signed and short-lived, so even a 404 here is transient —
-        # blocked (a re-probe next run mints fresh URLs), never dead. The
-        # wire fact rides the reason; the classified status never does.
+        # URLs are signed and short-lived, so even a 404 here is a transient
+        # refusal (a re-probe next run mints fresh URLs), never Missing. The
+        # wire fact rides the evidence; the classified framing never does.
         outcome = fetch_classified(self._transport, track_url)
         if isinstance(outcome, FetchFailure):
-            return Result(
-                status=Status.BLOCKED,
-                meta={},
-                reason=f"caption track fetch failed: {outcome.detail}",
-            )
+            return Refused(evidence=f"caption track fetch failed: {outcome.detail}")
         transcript = clean_vtt(outcome.text())
         if len(transcript) < _MIN_TRANSCRIPT_CHARS:
-            return Result(
-                status=Status.WAITING,
+            return NeedsCapability(
+                need=Need.TRANSCRIBE,
                 meta=meta,
                 body=description_section(_description(info)) or None,
-                needs=Need.TRANSCRIBE,
                 reason="captions track too thin to be a transcript",
             )
         # Stamped only on the route that actually produces a transcript —
         # the two parks above share this meta and must stay unstamped.
-        return Result(
-            status=Status.DONE,
+        return Content(
             meta={**meta, "via": _CAPTIONS_VIA},
             body=youtube_body(_description(info), transcript),
         )
