@@ -9,7 +9,9 @@ every blocker loudly and never work around a failure silently.
 ## Step 1: New or Existing?
 
 Ask the owner: "Are we creating a new dex, or setting up an existing one on
-this machine?"
+this machine?" — unless the request that brought you here already says. An
+instance README's join prompt names an existing dex and its repo; never
+re-ask what the owner already stated.
 
 Set `{mode}` = `new` or `existing`.
 
