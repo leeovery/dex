@@ -66,8 +66,8 @@ provenance.
        │ kind (+ format) assigned → driver resolved from ordered registry
        ▼
   ┌─────────┐  driver.canonical(url), driver.sleep,
-  │ FETCH   │  driver.fetch(unit) → Result
-  └────┬────┘
+  │ FETCH   │  driver.fetch(unit) → Outcome (§2) — what the fetch FOUND;
+  └────┬────┘  the run layer's one total match decides the status
        │
        ├─▶ body + meta ──▶ WRITE   enrichment/<id>/<kind>-<hash6>.md
        │                           (deterministic name → reruns overwrite,
@@ -163,8 +163,8 @@ and NOT as a child (early drafts said "child-re-entry"; a child is a
 different URL — this is the same URL, same hash, changing its mind): the
 driver sniffs the fetched body (magic bytes first, via the central
 detection module — bytes decide, never content-type alone) and returns
-`Result(status: queued, redetect: Redetection(kind, format))`, identity
-only, the one sanctioned queued-from-a-driver shape. The run layer appends
+`Redetected(kind, format)`, identity only — the one outcome that
+re-enters the queue. The run layer appends
 a **superseding line for the same hash** — corrected kind, `via: "sniff"`
 — last-per-hash relabels the unit in place and requeues it in-run. Any
 prior kind's output file is unlinked **when the corrected unit lands one of
@@ -262,27 +262,60 @@ class SourceDriver(Protocol):          # one per source shape
     sleep: float                       # per-driver politeness delay
     def matches(self, url: str) -> bool: ...
     def canonical(self, url: str) -> str: ...
-    def fetch(self, unit: WorkUnit) -> Result: ...
+    def fetch(self, unit: WorkUnit) -> Outcome: ...
+
+# What a fetch FOUND, as a closed union — no variant carries a Status
+# (lifecycle is the run layer's decision, below), and outputs exist only
+# on Content, so the wrong states are unrepresentable rather than
+# validated:
+Outcome = Content | Missing | Refused | Unusable | NeedsCapability | Redetected
 
 @dataclass
-class Result:
-    status: Status
+class Content:                         # fetched something — the outputs
     meta: dict                         # passthrough → enrichment frontmatter
     body: str | None
     media: list[str]                   # URLs for the media stage
-    needs: Need | None                 # capability job
-    reason: str | None                 # mirrors the ledger reason contract:
-                                       # required when a driver returns
-                                       # manual/skipped (the driver knows
-                                       # why), optional waiting/blocked/dead,
-                                       # forbidden otherwise. The run layer
-                                       # may append classifier context but
-                                       # never invents what the driver knew.
     assets: list[Asset]                # extraction assets (bytes) — drivers
                                        # never touch disk; the run layer
                                        # writes them under the §7 caps,
-                                       # ledgered job: asset.
-                                       # Success-only, validated.
+                                       # ledgered job: asset
+
+@dataclass
+class Missing:                         # confirmed gone
+    evidence: str                      # the driver-stated reason rides the
+                                       # union as required `evidence` on the
+                                       # three failure variants; the run
+                                       # layer may append context but never
+                                       # invents what the driver knew
+
+@dataclass
+class Refused:                         # blocked, paywalled, rate limited
+    evidence: str
+    permanent: bool = False            # the driver-known fact that a retry
+                                       # can never change the answer
+                                       # (payment/login walls, geo-blocks)
+
+@dataclass
+class Unusable:                        # wrong shape, nothing to extract
+    evidence: str
+    rescuable: bool = True             # False when the URL addresses no
+                                       # content unit at all (a site root,
+                                       # an index) — nothing for judgment
+
+@dataclass
+class NeedsCapability:                 # needs transcription, extraction, OCR
+    need: Need
+    meta: dict                         # partial content already in hand —
+    body: str | None                   # a description, show notes, the
+                                       # enclosure pointer — written now,
+                                       # completed by the capability drain
+    reason: str | None                 # the stated park, for the report
+
+@dataclass
+class Redetected:                      # this is not what we thought it was
+    kind: Kind                         # (§1 mid-fetch kind discovery);
+    format: Format | None              # identity only — the corrected
+                                       # kind's driver owns the outputs
 
 @dataclass
 class WorkUnit:                        # what the pipeline hands a driver
@@ -332,18 +365,20 @@ its m.youtube.com divergence).
 
 Typing discipline (binding for the implementation):
 - All §2 types are `@dataclass(frozen=True, slots=True, kw_only=True)`.
-  `Result` gets defaults (`media`/`assets` via `field(default_factory=
-  list)`, `needs`/`body` None) so a simple driver returns
-  `Result(status=Status.DONE, meta=…, body=…)`. `meta` is
-  `dict[str, str | int | None]` (it becomes YAML frontmatter), never bare
-  `dict`.
+  `Content` gets defaults (`media`/`assets` via `field(default_factory=
+  list)`, `body` None) so a simple driver returns
+  `Content(meta=…, body=…)`. `meta` is `dict[str, str | int | None]` (it
+  becomes YAML frontmatter), never bare `dict`. A failure variant's
+  `evidence` is required and non-empty — an unexplained park is the
+  stated-reason contract's forbidden state, unconstructable.
 - **WorkUnit is not LedgerEntry.** Drivers see url/kind/format/item/depth —
   never `attempts`, `engine`, `rerun` bookkeeping (no internal types across
   layers).
-- Drivers may return only `{done, dead, skipped, manual, blocked, waiting}`
-  — `queued` is a birth state and `error` is raised, never returned
-  (`Result` has no error channel by design; the pipeline's single broad
-  except is the only route to `error` status). `Result` validates this.
+- No outcome carries a `Status`, and `error` is raised, never returned (no
+  variant has an error channel; the pipeline's single broad except is the
+  only route to `error` status). `queued` is a birth state: `Redetected`
+  is the one outcome that re-enters the queue, and it carries identity
+  only.
 - The typed registry literal (`build_drivers`'s `list[SourceDriver]`
   return) is the Protocol-conformance point — the type checker verifies
   every driver against the interface at that one return. Same for
@@ -358,14 +393,17 @@ Typing discipline (binding for the implementation):
   not applicable at that site (transcript bodies and audio acquisition
   cover youtube and podcast only; the acquisition-failure and classifier
   arms take the three statuses their classifier can return) — states the
-  mismatch at runtime instead of defaulting quietly. Three do it by
-  raising: the transcript-body dispatch, the acquisition-failure arm and
-  the classifier arm, each a loud engine bug when it fires. The
-  audio-acquisition arm is the one that does not — it returns
+  mismatch at runtime instead of defaulting quietly. Four do it by
+  raising: the transcript-body dispatch, the acquisition-failure arm, the
+  classifier arm, and `Classification.to_outcome` — the one conversion at
+  the classifier seam, total over the three statuses the classifiers
+  produce (dead/blocked/manual) and loud beyond them — each a loud engine
+  bug when it fires. The audio-acquisition arm is the one that does not — it returns
   `Classification(status: manual, …)` naming the same mismatch, so the unit
-  parks with the reason stated and the rest of the drain runs. The fourth
-  `case _: raise` in the tree belongs to none of this: it is `enrich.py`'s
-  argparse guard, unreachable while argparse enforces the command set.
+  parks with the reason stated and the rest of the drain runs. The
+  remaining `case _: raise` in the tree belongs to none of this: it is
+  `enrich.py`'s argparse guard, unreachable while argparse enforces the
+  command set.
 
 Capability resolution: **per format / per need, first available *mechanical*
 provider wins**, order set by instance config. The **cognitive provider** is
@@ -379,14 +417,14 @@ on a missing key or an unsupported format.
 
 ### Driver outcomes: drivers report, the orchestrator decides
 
-**Agreed, not yet implemented.** Everything above this heading describes the
-engine as built; this describes the contract that replaces the driver's
-half of it. Drivers stop deciding lifecycle status: they report what they
+**Implemented** — the contract in force, and the shapes the §2 sketch
+above shows. Drivers do not decide lifecycle status: they report what they
 found, and the orchestrator decides what that means.
 
-Every driver currently returns a `Result` carrying a `Status`, so each one
-decides the unit's lifecycle for itself. That is the root of the largest
-family of defects the review rounds found, and it recurred in six of them:
+Before this, every driver returned a flat `Result` carrying a `Status`, so
+each one decided the unit's lifecycle for itself. That was the root of the
+largest family of defects the review rounds found, and it recurred in six
+of them:
 
 - private GitHub blobs classified `dead` because an unauthenticated fetch
   404s, condemning live content
@@ -397,31 +435,47 @@ family of defects the review rounds found, and it recurred in six of them:
 - a "listen to this article" widget rerouting an article to the podcast
   driver, discarding the article
 
-Each was fixed where it was found (§3, §5, §9). The class survives because
-there is no single place that decides what a fetch outcome means, and no way
-to audit which statuses a driver may produce.
+Each was fixed where it was found (§3, §5, §9). The class survived because
+there was no single place that decided what a fetch outcome means, and no
+way to audit which statuses a driver may produce.
 
 A driver is a black box over one source shape. It is passed a work unit,
 does its job, and returns an outcome describing what it found:
 
-    Content(body, meta, media)          fetched something
+    Content(meta, body, media, assets)  fetched something
     Missing(evidence)                   confirmed gone
-    Refused(evidence)                   blocked, paywalled, rate limited
-    Unusable(evidence)                  wrong shape, nothing to extract
-    NeedsCapability(need)               needs transcription, extraction, OCR
+    Refused(evidence, permanent)        blocked, paywalled, rate limited
+    Unusable(evidence, rescuable)       wrong shape, nothing to extract
+    NeedsCapability(need, meta, body,   needs transcription, extraction, OCR
+                    reason)
     Redetected(kind, format)            this is not what we thought it was
 
 The driver keeps the knowledge only it has. That a particular yt-dlp
 message means confirmed gone, that a 402 means paywalled, that a thin
 extraction is not content: those are per-source judgements and they stay in
-the driver, carried as evidence on the outcome. `Redetected` is the mid-fetch
-kind discovery of §1, which today is the one sanctioned shape in which a
-driver may return `queued`; as an outcome it stops being a special case.
+the driver, carried as evidence on the outcome — plus the two typed facts
+only the driver can state: `permanent` (a refusal a retry can never
+change) and `rescuable` (whether an unusable fetch left anything for
+judgment to act on). `Redetected` is the mid-fetch kind discovery of §1,
+which was the one sanctioned shape in which a driver could return
+`queued`; as an outcome it stops being a special case.
 
-The run layer maps outcome to `Status` in one total match, in one place.
-`Missing` is the only road to `dead`. That mapping becomes auditable and
-testable on its own, and the question "can this driver produce a terminal
-status by accident" stops being answerable only by reading the driver.
+The run layer maps outcome to `Status` in one total match, in one place
+(`_Drain._apply`, closed by `assert_never`):
+
+    Content                       → done   (outputs written, media staged)
+    Missing                       → dead
+    Refused(permanent)            → manual (attempts would teach nothing)
+    Refused                       → blocked (the attempts lifecycle, §5)
+    Unusable(rescuable)           → manual
+    Unusable                      → skipped (owes nothing, holds nothing)
+    NeedsCapability               → waiting + needs (park file written now)
+    Redetected                    → queued, superseding line, re-drained
+
+`Missing` is the only road to `dead`. The mapping is auditable and tested
+on its own (a run-layer pin per arm, mutation-checked), and the question
+"can this driver produce a terminal status by accident" is answered by
+this table instead of by reading seven drivers.
 
 **Drivers never raise.** Every escape becomes an outcome at the seam. A
 driver that raises is an engine bug, not a content problem, and the run
@@ -440,27 +494,35 @@ route, hoisted into `drivers/article.py` beside the other libs; web and
 paper both consume it, and the isolation rule holds with zero exceptions —
 the isolation test names none.
 
-**What this replaces.** `Result` becomes the union above rather than a flat
-dataclass whose fields are only meaningful for some statuses. Today a
-`Result` may carry `media` on a non-done result: `assets` is validated
-done-only while `media` is not, so the type admits outputs on a result that
-produced none, and nothing but convention keeps them off. Making the wrong
-states unrepresentable is the point, not a side effect. (The sketch above
-does not say where `assets` and the driver-stated `reason` ride on the
-union; settle that when it is built.)
+**What this replaced.** The flat `Result` — a dataclass whose fields were
+only meaningful for some statuses — is gone without a compatibility path.
+It could carry `media` on a non-done result: `assets` was validated
+done-only while `media` was not, so the type admitted outputs on a result
+that produced none, and nothing but convention kept them off. Making the
+wrong states unrepresentable was the point, not a side effect — which is
+also what settled the two sub-questions the sketch once left open: the
+outputs (`body`, `media`, `assets`) ride `Content` and only `Content` (no
+other variant has the fields), and the driver-stated reason rides the
+union as the required `evidence` of the three failure variants and the
+optional `reason` of a `NeedsCapability` park — `Content` and `Redetected`
+carry none, because a success and an identity correction have nothing to
+explain.
 
 **Settled — `links` vs `children` on the outcome union.** Neither: the
 outcome union carries no link-promotion field, because the deletion of the
 never-emitted `children` path settled it — promotion is judgment (§10) and
 enters through `enrich fetch`.
 
-Two related shapes stand on their own:
+Two related shapes shipped with it:
 
-- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so a
-  whole class of legal ledger states cannot convert: an entry pairs
-  `parent` with *having* a depth, a unit pairs it with a **non-zero**
-  depth, so `LedgerEntry(parent set, depth 0)` is legal and the same
-  `WorkUnit` is refused. One rule, stated once.
+- `LedgerEntry` and `WorkUnit` disagreed on what `depth = 0` means, so a
+  whole class of legal ledger states could not convert: an entry paired
+  `parent` with *having* a depth, a unit paired it with a **non-zero**
+  depth, so `LedgerEntry(parent set, depth 0)` was legal and the same
+  `WorkUnit` refused. One rule now, stated once (a shared lineage check):
+  a spawned unit carries parent and depth ≥ 1 together, an original
+  carries neither, each type keeping its own spelling of "original" — the
+  unit's depth 0, the entry's absent depth.
 - `via` carried provenance, routing (`via == "media"` dispatched) and a
   migration marker — three jobs, one field. Split: routing is the typed
   `job` field (§3, §5) and `via` keeps provenance and the migration
@@ -1039,7 +1101,7 @@ key would buy.
 A shared pipeline stage, **not** a capability (no plausible second
 implementation of an HTTP GET). **URL downloads only** — extraction's
 embedded assets never pass through here (§6). Drivers return media URLs in
-`Result.media`;
+`Content.media`;
 the stage downloads to `enrichment/<id>/media-N.ext`, honoring instance
 config (`media_fetch: none | lead`), **cap 4 files, ~10MB per-file ceiling**;
 every download ledgered (`job: media`, parent = owning work unit, kind =
@@ -2167,8 +2229,11 @@ The Protocol/pipeline split exists partly to make the system testable; the
 old monolith had no seams.
 
 - **Hermetic driver tests** against `tests/fixtures/` (fxtwitter JSON, GitHub
-  payloads, VTT, tiny real docx/pdf/csv). Regression pin on the motivating
-  incident: a 403 fixture must produce `blocked`, never `dead`.
+  payloads, VTT, tiny real docx/pdf/csv), asserting what the fetch FOUND —
+  the §2 outcomes — while the run-layer tests assert the outcome→status
+  mapping, one pin per match arm. Regression pin on the motivating
+  incident: a 403 fixture must come back a transient `Refused`, never
+  `Missing`.
 - **Pipeline tests with fake drivers**: seeds/children/reruns born `queued`
   and drained, promotion + provenance through `enrich fetch`, both caps
   fire and record over a real chain, waiting ignores runs
@@ -2229,9 +2294,10 @@ literal (§2) — no separate conformance tests needed.
 
 Debts the build left in the engine, batched so they aren't lost. Owner
 ruling: these ship **before the first release**, which is what makes them
-release work and puts them here rather than on the roadmap. Sequence them
-after the driver-outcome change (§2) — the cleanup touches the same seams,
-and the outcome union settles several of these on its way past.
+release work and puts them here rather than on the roadmap. They were
+sequenced around the driver-outcome change (§2) — the cleanup touches the
+same seams, and the outcome union settled several of them on its way
+past.
 
 - **One shared fetch-and-classify helper.** Nine hand-rolled copies across
   the drivers, `transcribe` and `run`. **Done**: `drivers/fetch.py` —
@@ -2252,11 +2318,11 @@ and the outcome union settles several of these on its way past.
   is `urls.ext_of`, its per-family default (`jpg` media, `mp3` audio)
   stated by the caller.
 - **Six spellings of Classification→Result.** One conversion, once.
-  **Done**: `Classification.to_result()` in `classify.py`, where the
-  classification layer meets the driver-result layer; every former
-  spelling calls it, and the wayback fallback appends its rescue note
-  onto the classification's reason before converting through the same
-  method.
+  **Done**, and carried through the outcome union as
+  `Classification.to_outcome()` in `classify.py`, where the
+  classification layer meets the driver seam; every former spelling calls
+  it, and the wayback fallback appends its rescue note onto the
+  classification's reason before converting through the same method.
 - **One enrichment-frontmatter module owning render and parse.** The writer
   lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
   contract and belongs to one module. **Done**: `pipeline/enrichment.py`
