@@ -1,17 +1,25 @@
 """The issue filer: decentralized self-healing, sanitized by construction.
 
 Instances auto-file engine bugs at the public engine repo; the owner's
-session fixes; Mint releases; every instance heals at next sync. The filer
-fires only on ``status: error`` outcomes — the world misbehaving
-(blocked/dead/manual/waiting) is never an engine bug.
+session fixes; Mint releases; every instance heals at next sync. One
+mechanism, two producers: the exception path here fires only on
+``status: error`` outcomes — the world misbehaving
+(blocked/dead/manual/waiting) is never an engine bug — and the observed
+path (:mod:`.observed`, the ``dex issue`` verb) files what a session SAW
+misbehave without anything raising. Both reduce to a :class:`Filable` and
+go through :func:`file_reports`: the same repo, dedup arithmetic, local
+memory, rate limit and soft edge.
 
-Everything that leaves the instance is allowlisted: engine version, command,
-kind/format enums, error class, errno where present, engine-frames-only
-traceback, the URL *hash* — and NO free text at all. The exception message
-is deliberately absent from issue bodies (the trade, ruled: zero residual
-leak risk beats remote diagnostics; the scrubbed message stays in the local
-ledger's ``error`` field, so diagnosis happens where the data lives). The
-sanitizer is code, so it cannot leak by judgment lapse.
+Everything the exception path sends is allowlisted: engine version,
+command, kind/format enums, error class, errno where present,
+engine-frames-only traceback, the URL *hash* — and NO free text at all.
+The exception message is deliberately absent from issue bodies (the trade,
+ruled: zero residual leak risk beats remote diagnostics; the scrubbed
+message stays in the local ledger's ``error`` field, so diagnosis happens
+where the data lives). The sanitizer is code, so it cannot leak by
+judgment lapse. The observed path holds the same line by rejection
+instead: its module refuses any payload the scrubber's detectors would
+touch, so nothing needing scrubbing ever reaches the mechanism.
 
 Fire-and-forget: the filer never polls issues or acts on tracker content —
 search results feed dedup arithmetic only, and the fix loop closes through
@@ -36,9 +44,11 @@ __all__ = [
     "ENGINE_REPO",
     "MAX_NEW_ISSUES_PER_RUN",
     "ErrorEvent",
+    "Filable",
     "FilerOutcome",
     "GhRunner",
     "error_event",
+    "file_reports",
     "fingerprint",
     "gh_runner",
     "report_errors",
@@ -106,10 +116,30 @@ class ErrorEvent:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Filable:
+    """One producer-shaped report, ready for the shared filing mechanism.
+
+    Both producers (§13) reduce to this: :func:`report_errors` wraps each
+    :class:`ErrorEvent`, and the observed verb wraps its validated
+    payload. ``body`` takes the regression reference as its argument
+    because only the mechanism knows, at file time, whether the filing is
+    a recurrence. ``note`` is the local-only free text: it lands in the
+    memory record for the owner and NEVER in any ``gh`` argument.
+    """
+
+    fingerprint: str
+    title: str
+    summary: str  # the run-report note's label: what misbehaved, where
+    body: Callable[[int | None], str]  # regression_of -> the issue body
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FilerOutcome:
     """What the filer did this run — feeds the run report."""
 
     filed: int = 0
+    commented: int = 0
     notes: list[str] = field(default_factory=list)
 
 
@@ -179,6 +209,11 @@ class _MemoryRecord:
     engine: str
     date: str
     issue: int | None = None
+    # The observed verb's local-only free text. THE SPLIT: the note is for
+    # the owner to read here and forward by hand — it is never part of any
+    # filed title or body, which is why it may name items, paths and URLs
+    # the public fields must not.
+    note: str | None = None
 
 
 def _memory_path(state_dir: Path) -> Path:
@@ -206,6 +241,7 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
                 f"{path.name}:{lineno}: issue-reports record missing field(s) {missing}"
             )
         issue = raw.get("issue")
+        note = raw.get("note")
         records.append(
             _MemoryRecord(
                 fingerprint=str(raw["fingerprint"]),
@@ -213,6 +249,7 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
                 engine=str(raw["engine"]),
                 date=str(raw["date"]),
                 issue=issue if isinstance(issue, int) else None,
+                note=note if isinstance(note, str) else None,
             )
         )
     return records
@@ -227,6 +264,8 @@ def _append_memory(path: Path, record: _MemoryRecord) -> None:
     }
     if record.issue is not None:
         raw["issue"] = record.issue
+    if record.note is not None:
+        raw["note"] = record.note
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(raw, ensure_ascii=False) + "\n")
@@ -321,19 +360,19 @@ def _issue_number(create_output: str) -> int | None:
 
 @dataclass(slots=True, kw_only=True)
 class _Filer:
-    """One run's filing pass — internal to :func:`report_errors`."""
+    """One filing pass over producer-shaped reports — internal to :func:`file_reports`."""
 
     gh: GhRunner
     memory_path: Path
     engine_version: str
-    command: str
     today: Callable[[], datetime.date]
     memory: list[_MemoryRecord] = field(default_factory=list)
     filed: int = 0
+    commented: int = 0
     notes: list[str] = field(default_factory=list)
 
-    def handle(self, event: ErrorEvent) -> None:
-        fp = fingerprint(event)
+    def handle(self, filable: Filable) -> None:
+        fp = filable.fingerprint
         if any(
             record.fingerprint == fp and record.engine == self.engine_version
             for record in self.memory
@@ -343,14 +382,14 @@ class _Filer:
         open_issues = [e for e in found if str(e.get("state", "")).upper() == "OPEN"]
         closed_issues = [e for e in found if str(e.get("state", "")).upper() == "CLOSED"]
         if open_issues:
-            self._comment(fp, open_issues[0])
+            self._comment(filable, open_issues[0])
             return
         if closed_issues:
-            self._handle_closed(event, fp, closed_issues[0])
+            self._handle_closed(filable, closed_issues[0])
             return
-        self._file(event, fp, regression_of=None)
+        self._file(filable, regression_of=None)
 
-    def _comment(self, fp: str, issue: dict[str, object]) -> None:
+    def _comment(self, filable: Filable, issue: dict[str, object]) -> None:
         number = issue.get("number")
         if not isinstance(number, int):
             raise ValueError(f"gh issue list entry has no integer number: {issue!r}")
@@ -365,10 +404,11 @@ class _Filer:
                 f"seen again (engine {self.engine_version}, {self.today().isoformat()})",
             ]
         )
-        self._remember(fp, action="commented", issue=number)
+        self.commented += 1
+        self._remember(filable, action="commented", issue=number)
         self.notes.append(f"engine issue #{number}: seen-again comment added")
 
-    def _handle_closed(self, event: ErrorEvent, fp: str, issue: dict[str, object]) -> None:
+    def _handle_closed(self, filable: Filable, issue: dict[str, object]) -> None:
         """Closed-issue dedup: silent unless this is a newer-engine recurrence.
 
         The instance never reads tracker content, so "predates the fix" is
@@ -378,16 +418,16 @@ class _Filer:
         No local baseline (another instance filed it) stays silent — sync
         cures the ordinary case, and guessing files noise.
         """
-        prior = [record for record in self.memory if record.fingerprint == fp]
+        prior = [record for record in self.memory if record.fingerprint == filable.fingerprint]
         recurred_newer = any(
             _safe_version_newer(self.engine_version, record.engine) for record in prior
         )
         if not recurred_newer:
             return
         number = issue.get("number")
-        self._file(event, fp, regression_of=number if isinstance(number, int) else None)
+        self._file(filable, regression_of=number if isinstance(number, int) else None)
 
-    def _file(self, event: ErrorEvent, fp: str, *, regression_of: int | None) -> None:
+    def _file(self, filable: Filable, *, regression_of: int | None) -> None:
         if self.filed >= MAX_NEW_ISSUES_PER_RUN:
             return  # the rate limit; the fingerprint retries next run
         out = self.gh(
@@ -397,31 +437,25 @@ class _Filer:
                 "--repo",
                 ENGINE_REPO,
                 "--title",
-                _title(event, fp),
+                filable.title,
                 "--body",
-                _body(
-                    event,
-                    fp,
-                    engine_version=self.engine_version,
-                    command=self.command,
-                    date=self.today(),
-                    regression_of=regression_of,
-                ),
+                filable.body(regression_of),
             ]
         )
         self.filed += 1
         number = _issue_number(out)
-        self._remember(fp, action="filed", issue=number)
-        label = f"#{number}" if number is not None else f"fp-{fp}"
-        self.notes.append(f"filed engine issue {label}: {event.error_class} in {event.function}")
+        self._remember(filable, action="filed", issue=number)
+        label = f"#{number}" if number is not None else f"fp-{filable.fingerprint}"
+        self.notes.append(f"filed engine issue {label}: {filable.summary}")
 
-    def _remember(self, fp: str, *, action: str, issue: int | None) -> None:
+    def _remember(self, filable: Filable, *, action: str, issue: int | None) -> None:
         record = _MemoryRecord(
-            fingerprint=fp,
+            fingerprint=filable.fingerprint,
             action=action,
             engine=self.engine_version,
             date=self.today().isoformat(),
             issue=issue,
+            note=filable.note,
         )
         _append_memory(self.memory_path, record)
         self.memory.append(record)
@@ -432,6 +466,83 @@ def _safe_version_newer(candidate: str, baseline: str) -> bool:
         return version_newer(candidate, baseline)
     except ValueError:
         return False  # an unparseable stored engine can't prove a regression
+
+
+def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
+    filables: Sequence[Filable],
+    *,
+    enabled: bool,
+    state_dir: Path,
+    engine_version: str,
+    today: Callable[[], datetime.date],
+    gh: GhRunner,
+) -> FilerOutcome:
+    """The one filing mechanism, shared by both producers.
+
+    Dedup'd (local memory first, then a title search; open issues take a
+    seen-again comment, closed ones stay silent unless the recurrence is
+    on a newer engine), rate-limited, remembered in
+    ``state/issue-reports.jsonl``, and never fatal.
+
+    Args:
+        filables: The producer-shaped reports to file.
+        enabled: The ``report_issues`` config gate (default true).
+        state_dir: The instance's ``state/`` — holds the local memory.
+        engine_version: The running engine's version (injected).
+        today: Injected clock.
+        gh: The ``gh`` seam.
+
+    Returns:
+        What was filed and commented, plus report notes. Filer failures
+        are wrapped non-fatal: the outcome notes "issue filing failed"
+        and the caller continues — the local state already holds the
+        truth.
+    """
+    if not enabled or not filables:
+        return FilerOutcome()
+    filer = _Filer(
+        gh=gh,
+        memory_path=_memory_path(state_dir),
+        engine_version=engine_version,
+        today=today,
+    )
+    try:
+        filer.memory = _read_memory(filer.memory_path)
+        for filable in filables:
+            filer.handle(filable)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
+        # The filer's one soft edge: gh missing/failing, unparseable output, a torn
+        # memory line. Never fatal — noted, and the run continues.
+        filer.notes.append(f"issue filing failed ({scrub(str(e))}) — run continues")
+    return FilerOutcome(filed=filer.filed, commented=filer.commented, notes=filer.notes)
+
+
+def _error_filable(
+    event: ErrorEvent,
+    *,
+    engine_version: str,
+    command: str,
+    today: Callable[[], datetime.date],
+) -> Filable:
+    """The exception producer: one error event as the mechanism's input."""
+    fp = fingerprint(event)
+
+    def body(regression_of: int | None) -> str:
+        return _body(
+            event,
+            fp,
+            engine_version=engine_version,
+            command=command,
+            date=today(),
+            regression_of=regression_of,
+        )
+
+    return Filable(
+        fingerprint=fp,
+        title=_title(event, fp),
+        summary=f"{event.error_class} in {event.function}",
+        body=body,
+    )
 
 
 def report_errors(  # noqa: PLR0913 — every input is injected, none ambient
@@ -460,8 +571,6 @@ def report_errors(  # noqa: PLR0913 — every input is injected, none ambient
         non-fatal: the outcome notes "issue filing failed" and the run
         continues — the ledger already holds the truth.
     """
-    if not enabled or not events:
-        return FilerOutcome()
     seen: set[str] = set()
     unique: list[ErrorEvent] = []
     for event in events:
@@ -469,19 +578,15 @@ def report_errors(  # noqa: PLR0913 — every input is injected, none ambient
         if fp not in seen:
             seen.add(fp)
             unique.append(event)
-    filer = _Filer(
-        gh=gh,
-        memory_path=_memory_path(state_dir),
+    filables = [
+        _error_filable(event, engine_version=engine_version, command=command, today=today)
+        for event in unique
+    ]
+    return file_reports(
+        filables,
+        enabled=enabled,
+        state_dir=state_dir,
         engine_version=engine_version,
-        command=command,
         today=today,
+        gh=gh,
     )
-    try:
-        filer.memory = _read_memory(filer.memory_path)
-        for event in unique:
-            filer.handle(event)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
-        # The filer's one soft edge: gh missing/failing, unparseable output, a torn
-        # memory line. Never fatal — noted, and the run continues.
-        filer.notes.append(f"issue filing failed ({scrub(str(e))}) — run continues")
-    return FilerOutcome(filed=filer.filed, notes=filer.notes)
