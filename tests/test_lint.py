@@ -566,6 +566,64 @@ def waiting_entry(needs: Need, unit_hash: str = "73bd784849") -> LedgerEntry:
     )
 
 
+class TestParkedOrphanExemption:
+    """The coverage row never fires on a correctly parked item.
+
+    An item still owing a unit derives raw, and the ingest procedure
+    forbids digesting or placing a raw item — firing steered sessions to
+    ledger a still-parked item into uncategorized-shares mid-park.
+    """
+
+    ORPHAN_ROW = "items no page cites and the taxonomy does not record"
+
+    def _uncited(self, instance, status: Status, **fields) -> None:
+        write_corpus_stub(instance)
+        write_taxonomy(instance)
+        write_index(instance, "")
+        ledger.append(
+            instance.ledger_path,
+            stamped(
+                LedgerEntry(
+                    hash="73bd784849",
+                    url="https://example.test/a",
+                    item=ITEM,
+                    kind=Kind.WEB,
+                    status=status,
+                    engine="0.1.0",
+                    date=TODAY,
+                    **fields,
+                )
+            ),
+        )
+
+    def test_a_blocked_item_is_exempt(self, instance):
+        self._uncited(instance, Status.BLOCKED, attempts=2, reason="HTTP 503")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — none" in outcome.report
+
+    def test_a_waiting_item_is_exempt(self, instance):
+        self._uncited(instance, Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — none" in outcome.report
+
+    def test_a_digested_but_uncited_item_still_fires(self, instance):
+        # Digested means it went through placement: its absence from the
+        # taxonomy is real drift, whatever its later units are doing.
+        self._uncited(instance, Status.BLOCKED, attempts=2, reason="HTTP 503")
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").write_text("digested\n", encoding="utf-8")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+
+    def test_a_settled_uncited_item_still_fires(self, instance):
+        # Nothing outstanding: the exemption is for parked work, never a
+        # blanket pass on uncited items.
+        self._uncited(instance, Status.DONE)
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — **1**" in outcome.report
+
+
 class TestStateChecks:
     def _bare_wiki(self, instance):
         write_taxonomy(instance)

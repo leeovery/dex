@@ -74,7 +74,14 @@ from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.enrichment import read_enrichment_fields
 from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
-from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
+from .pipeline.run import (
+    CAP_BOUNDS,
+    HARVEST_RULES_VERSION,
+    digest_orphans,
+    digested_items,
+    items_owing_work,
+    never_harvested,
+)
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
@@ -684,6 +691,7 @@ def _state_checks(
                 )
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
+        _exempt_parked_orphans(instance, payload, entries, corpus_ids, owners)
         integrity = _referential_integrity(instance, entries, corpus_ids, owners)
         payload["ghost_items"] = integrity.ghost
         payload["missing_outputs"] = integrity.missing
@@ -698,6 +706,34 @@ def _state_checks(
     notes += threads.notes
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
+
+
+def _exempt_parked_orphans(
+    instance: Instance,
+    payload: dict[str, object],
+    entries: dict[str, LedgerEntry],
+    corpus_ids: set[str],
+    owners: Mapping[str, tuple[str, ...]],
+) -> None:
+    """Drop the correctly parked items from the coverage-orphan row.
+
+    The row asks which items no page cites and the taxonomy does not
+    record — but an item still owing a unit (blocked, waiting, manual,
+    queued, error) derives ``raw``, and the ingest procedure forbids
+    digesting or placing a raw item: firing on it steered sessions to
+    ledger a still-parked item into uncategorized-shares. The exemption
+    mirrors the run report's parked handling (:func:`items_owing_work`,
+    the same reading the digest backstop applies), and it reaches only
+    items whose digest is not recorded: a digested item has been through
+    placement, so its absence from the taxonomy is real drift however its
+    later units sit.
+    """
+    orphans = payload.get("orphans")
+    if not isinstance(orphans, list):
+        return
+    digested = digested_items(instance, corpus_ids)
+    parked = {item_id for item_id in items_owing_work(entries, owners) if item_id not in digested}
+    payload["orphans"] = [item_id for item_id in orphans if item_id not in parked]
 
 
 EXCLUDED_ON_RECORD = "excluded on record"

@@ -99,6 +99,7 @@ __all__ = [
     "fetch_urls",
     "head_sniffer",
     "is_drainable",
+    "items_owing_work",
     "mark",
     "never_harvested",
     "no_providers",
@@ -2443,7 +2444,7 @@ def digest_orphans(instance: Instance) -> list[str]:
         return orphans
     entries = _ledger_or_none(instance)
     owners = _unit_owners(instance, entries) if entries is not None else {}
-    owing = _items_owing_work(entries, owners)
+    owing = items_owing_work(entries, owners)
     enriched_on = _last_enriched(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     recorded = digested_items(instance, live)
@@ -2543,7 +2544,7 @@ def digested_items(instance: Instance, live: set[str]) -> set[str]:
     return {_dir_owner(path.stem, live) for path in instance.digests_dir.glob("*.md")}
 
 
-def _items_owing_work(
+def items_owing_work(
     entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
 ) -> set[str]:
     """The items a unit is still outstanding on — the ones deriving ``raw``.
@@ -2552,6 +2553,8 @@ def _items_owing_work(
     from (:func:`_unit_owners`): an item held out of digest by an
     outstanding unit and an item listed as owing one have to be the same
     item, or the backstop names work the ingest procedure forbids doing.
+    Public because lint's coverage row applies the same exemption: a
+    correctly parked item is not drift to place, it is work still owed.
 
     An unreadable ledger claims nothing: no item is held back, exactly as
     no item is called stale.
@@ -2698,7 +2701,7 @@ def never_harvested(instance: Instance) -> list[str]:
     if not entries:
         return []
     owners = _unit_owners(instance, entries)
-    owing = _items_owing_work(entries, owners)
+    owing = items_owing_work(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     fetched = {
         item_id
