@@ -1,11 +1,10 @@
-"""Tests for drivers/paper.py: arxiv API + full text, web delegation."""
+"""Tests for drivers/paper.py: arxiv API + full text, the article route."""
 
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline.types import Kind, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
@@ -36,16 +35,6 @@ def thin_extract(_html: str) -> str:
 
 def driver_for(responses: dict, extract=long_extract) -> PaperDriver:
     return PaperDriver(transport=FakeTransport(responses), extract=extract)
-
-
-class _RefusingWeb(WebDriver):
-    """A delegate that must never be reached — an arxiv paper is not an article."""
-
-    def __init__(self) -> None:
-        super().__init__(transport=FakeTransport({}), extract=long_extract)
-
-    def fetch(self, unit):
-        raise AssertionError(f"the web delegate must not see the arxiv URL {unit.url!r}")
 
 
 class TestIdentity:
@@ -220,20 +209,21 @@ class TestIdentityProperties:
 class TestArxiv:
     def test_the_canonical_key_is_what_fetch_reads(self):
         # Identity and content must not diverge: the form canonical emits
-        # has to route through the arxiv API, never the web delegate.
+        # has to route through the arxiv API, never the article route — an
+        # article-route GET of the abs URL would hit FakeTransport's loud
+        # unknown-URL failure.
         driver = PaperDriver(
             transport=FakeTransport(
                 {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
             ),
             extract=long_extract,
-            web=_RefusingWeb(),
         )
         canonical = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
         result = driver.fetch(make_unit(canonical, Kind.PAPER))
         assert result.status is Status.DONE
         assert result.meta["arxiv_id"] == "2408.12345"
 
-    def test_an_old_style_id_fetches_through_the_api_not_the_web_delegate(self):
+    def test_an_old_style_id_fetches_through_the_api_not_the_article_route(self):
         # An old-style abs page read as an article was the bug: the id has
         # to reach the export API, in the bare form the API resolves.
         api_url = "https://export.arxiv.org/api/query?id_list=math/0309285"
@@ -243,7 +233,6 @@ class TestArxiv:
                 {api_url: xml_response(FEED), html_url: html_page("<html>paper</html>")}
             ),
             extract=long_extract,
-            web=_RefusingWeb(),
         )
         canonical = driver.canonical("https://arxiv.org/abs/math.NA/0309285v2")
         result = driver.fetch(make_unit(canonical, Kind.PAPER))
@@ -308,20 +297,13 @@ class TestArxiv:
         assert "unparseable XML" in reason_of(result)
 
 
-class TestDelegation:
-    def test_non_arxiv_papers_read_as_articles_via_the_web_driver(self):
-        calls: list[str] = []
-
-        class RecordingWeb(WebDriver):
-            def fetch(self, unit):
-                calls.append(unit.url)
-                return super().fetch(unit)
-
+class TestArticleRoute:
+    def test_non_arxiv_papers_read_as_articles(self):
+        # The shared article seam does the fetching: the page URL itself is
+        # GET, extracted, and lands done — the ledger kind stays paper.
         url = "https://openreview.net/forum?id=abc"
-        web = RecordingWeb(
-            transport=FakeTransport({url: html_page("<html>rev</html>")}), extract=long_extract
-        )
-        driver = PaperDriver(transport=FakeTransport({}), extract=long_extract, web=web)
+        transport = FakeTransport({url: html_page("<html>rev</html>")})
+        driver = PaperDriver(transport=transport, extract=long_extract)
         result = driver.fetch(make_unit(url, Kind.PAPER))
-        assert calls == [url]
+        assert ("GET", url) in transport.calls
         assert result.status is Status.DONE

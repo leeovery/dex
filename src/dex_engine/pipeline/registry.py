@@ -44,15 +44,14 @@ def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> li
     Returns:
         The drivers, specialized first, ``web`` last as the catch-all.
     """
-    web = WebDriver()
     return [
         YouTubeDriver(),
         XDriver(),
         GitHubDriver(),
-        PaperDriver(web=web),
+        PaperDriver(),
         PodcastDriver(),
         FileDriver(capabilities=capabilities, root=root),
-        web,  # the catch-all — ALWAYS last
+        WebDriver(),  # the catch-all — ALWAYS last
     ]
 
 

@@ -432,11 +432,12 @@ audio stream, and `csv.Error`.
 
 **Drivers are isolated.** A driver never imports another driver. Behaviour
 two drivers share becomes a lib beside `drivers/transport.py`,
-`drivers/gh.py` and `drivers/audio.py`. **Open question — `paper.py`**,
-which delegates to `WebDriver` wholesale as a fetch strategy rather than
-borrowing a helper, is the one standing exception and needs its own
-decision: either the delegation is legitimate and named, or fetch, wayback
-and extraction hoist into a lib and the exception goes.
+`drivers/gh.py` and `drivers/audio.py`. **Settled — `paper.py`** (owner
+ruling, 2026-08-24): the wholesale delegation to `WebDriver` ends. Article
+extraction, the wayback rescue and thin-extraction handling are one shared
+route, hoisted into `drivers/article.py` beside the other libs; web and
+paper both consume it, and the isolation rule holds with zero exceptions —
+the isolation test names none.
 
 **What this replaces.** `Result` becomes the union above rather than a flat
 dataclass whose fields are only meaningful for some statuses. Today a
@@ -1851,12 +1852,15 @@ src/dex_engine/
                  needs healing (§4)
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
                transport.py  the HTTP seam (§5's OSError normalization)
-               fetch.py  gh.py  audio.py  ytdlp.py — the shared lib layer
-                 beside the drivers (§2): the fetch-and-classify pairing,
-                 the authenticated GitHub route, the audio-on-a-page
-                 signal, and the yt-dlp seam (probe, audio download,
-                 failure vocabulary, audio-cache scan) the youtube driver
-                 and the transcribe drain both consume
+               fetch.py  gh.py  audio.py  ytdlp.py  article.py — the
+                 shared lib layer beside the drivers (§2): the
+                 fetch-and-classify pairing, the authenticated GitHub
+                 route, the audio-on-a-page signal, the yt-dlp seam
+                 (probe, audio download, failure vocabulary, audio-cache
+                 scan) the youtube driver and the transcribe drain both
+                 consume, and the article-fetch route (extraction,
+                 thin-extraction parking, wayback rescue, mid-fetch
+                 re-detection) the web and paper drivers both consume
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py

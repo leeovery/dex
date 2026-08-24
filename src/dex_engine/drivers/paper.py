@@ -23,9 +23,9 @@ back to ar5iv. A missing full text degrades to abstract-only with a note —
 the abstract in hand is not thrown away over a rendering gap.
 
 openreview and huggingface.co/papers pages read fine as articles, so they
-delegate to the web driver's fetch (classified statuses, wayback fallback
-and all); the ledger kind stays ``paper`` — detection, not the delegate,
-owns kind.
+fetch through the shared article seam (classified statuses, wayback
+fallback and all); the ledger kind stays ``paper`` — detection, not the
+fetch route, owns kind.
 """
 
 import re
@@ -37,9 +37,9 @@ from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .article import HtmlExtract, fetch_article, trafilatura_extract
 from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
-from .web import HtmlExtract, WebDriver, trafilatura_extract
 
 __all__ = ["PaperDriver"]
 
@@ -67,7 +67,7 @@ _MIN_FULLTEXT_CHARS = 2000
 
 
 class PaperDriver:
-    """Fetch papers: arxiv natively, openreview/hf-papers via the web driver."""
+    """Fetch papers: arxiv natively, openreview/hf-papers as articles."""
 
     kind: Kind = Kind.PAPER
     sleep: float = 3.0
@@ -77,19 +77,16 @@ class PaperDriver:
         *,
         transport: Transport = urllib_transport,
         extract: HtmlExtract = trafilatura_extract,
-        web: WebDriver | None = None,
     ) -> None:
-        """Wire the HTTP/extraction seams and the web-driver delegate.
+        """Wire the HTTP/extraction seams.
 
         Args:
             transport: The HTTP seam.
-            extract: html -> markdown for the arxiv full-text pages.
-            web: The delegate for non-arxiv paper pages; built from the same
-                seams when not given.
+            extract: html -> markdown for the arxiv full-text pages and the
+                non-arxiv article route.
         """
         self._transport = transport
         self._extract = extract
-        self._web = web or WebDriver(transport=transport, extract=extract)
 
     def matches(self, url: str) -> bool:
         """True for arxiv.org, openreview.net, and huggingface.co/papers."""
@@ -115,7 +112,7 @@ class PaperDriver:
         """Arxiv ids go through the API; everything else reads as an article."""
         arxiv_id = _arxiv_id(unit.url)
         if arxiv_id is None:
-            return self._web.fetch(unit)
+            return fetch_article(self._transport, self._extract, unit.url)
         return self._fetch_arxiv(arxiv_id)
 
     def _fetch_arxiv(self, arxiv_id: str) -> Result:

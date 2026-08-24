@@ -1,100 +1,20 @@
-"""The web driver: registry catch-all, urllib fetch + trafilatura extraction.
+"""The web driver: registry catch-all over the shared article-fetch seam.
 
-Fetching and extraction are split on purpose: ``trafilatura.fetch_url``'s
-failure mode — ``None`` for everything — is what caused the motivating
-incident. The transport fetches with visible status codes; trafilatura is
-demoted to extraction only, with ``include_links=True`` because the old
-``include_links=False`` stripped the very URLs harvest reasons over.
-
-Wayback fallback stays for failed fetches, and its failures are classified
-like any fetch, never swallowed. A 200 whose extraction comes back thin is
-``manual`` (reason ``thin-extraction``), never ``dead`` — our tooling can't
-read it; that doesn't mean it's gone.
-
-A 200 whose BODY is a document (magic bytes say PDF/OOXML/…, or the
-content type maps to an extractable format) is neither thin nor web work at
-all: detection's HEAD lied or was inconclusive. The driver signals a
-redetection to ``file`` work and the run layer re-routes the unit — never
-``manual`` for content the file driver can read.
-
-The same mid-fetch discovery carries indie podcast episode pages to the
-``podcast`` driver, and being the catch-all is what lets that be decided on
-content rather than on URL patterns that cannot tell ``/feed`` the blog
-from ``/feed`` the show. What counts as evidence is narrow, because the two
-mistakes cost differently: handing an article to the podcast driver parks
-it ``waiting: transcribe`` with an EMPTY body — the article is never
-extracted and its links are never harvested — while handing an episode
-page to ``web`` merely stores its show notes. So an episode is a page whose
-``og:audio`` names the audio as the page's own object, or one carrying a
-player and no body worth extracting. An ``<audio>`` element beside a real
-article is a read-aloud widget or a media sample, and the article wins.
+The whole fetch route — classified fetch, mid-fetch re-detection, links-kept
+extraction, thin-extraction parking, wayback rescue — is
+:func:`dex_engine.drivers.article.fetch_article`, shared with the paper
+driver's non-arxiv hosts. This driver owns what being the catch-all means:
+it matches everything, canonicalizes by the generic rules, and reads every
+page it is handed as an article.
 """
 
-import html as html_lib
-import json
-import re
-import urllib.parse
-from collections.abc import Callable
-from dataclasses import dataclass, replace
-
-from dex_engine.pipeline.classify import (
-    MIN_SUBSTANTIAL_CHARS,
-    THIN_EXTRACTION_REASON,
-    Classification,
-)
-from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
-from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
+from dex_engine.pipeline.types import Kind, Result, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
-from .audio import audio_enclosure
-from .fetch import FetchFailure, fetch_classified
+from .article import HtmlExtract, fetch_article, trafilatura_extract
 from .transport import Transport, urllib_transport
 
-__all__ = ["HtmlExtract", "WebDriver", "trafilatura_extract"]
-
-# html -> markdown, or None when nothing extractable was found.
-HtmlExtract = Callable[[str], str | None]
-
-_WAYBACK_AVAILABLE = "https://archive.org/wayback/available?url="
-
-# The captured value runs from the opening quote to the closing one and may
-# not cross a line break: a wrapped content attribute has no og:image this
-# driver will vouch for. Capturing up to the break instead yielded the
-# truncated head of the URL ("https://cdn.example.test/"), which is a
-# perfectly well-formed request for a resource that does not exist — a
-# guaranteed junk fetch ledgered as a real media unit.
-_OG_IMAGE_RES = (
-    re.compile(
-        r"<meta[^>]+(?:property|name)=[\"']og:image[\"'][^>]+content=[\"']([^\"'\r\n]+)[\"']"
-    ),
-    re.compile(
-        r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:image[\"']"
-    ),
-)
-_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
-_MAX_TITLE_CHARS = 200
-
-
-def trafilatura_extract(html: str) -> str | None:
-    """Extract markdown from HTML via trafilatura — extraction ONLY.
-
-    ``include_links=True`` is load-bearing: harvest reads the preserved
-    hyperlinks.
-    """
-    import trafilatura  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting
-
-    return trafilatura.extract(
-        html, output_format="markdown", include_links=True, include_comments=False
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _Page:
-    """A successfully fetched page: decoded text plus what the wire said."""
-
-    html: str
-    body: bytes = b""
-    content_type: str = ""
+__all__ = ["WebDriver"]
 
 
 class WebDriver:
@@ -128,133 +48,4 @@ class WebDriver:
 
     def fetch(self, unit: WorkUnit) -> Result:
         """Fetch and extract one page, wayback fallback on fetch failure."""
-        page = self._fetch_page(unit.url)
-        if isinstance(page, _Page):
-            fmt = _document_format(page)
-            if fmt is not None:
-                # Detection said web but the body is a document — a HEAD
-                # lied or was inconclusive. Re-route, never thin-manual.
-                return Result(
-                    status=Status.QUEUED,
-                    meta={},
-                    redetect=Redetection(kind=Kind.FILE, format=fmt),
-                )
-            enclosure = audio_enclosure(page.html, unit.url)
-            if enclosure is not None and enclosure.declared:
-                return _podcast_redetection()
-            extracted = self._extracted(page.html, base_url=unit.url, allow_media=True)
-            if extracted is not None:
-                return extracted
-            if enclosure is not None:
-                # A player and nothing worth extracting: the audio is what
-                # the page is. Ordering is the whole rule — an article's
-                # read-aloud widget was reached above, by its own body.
-                return _podcast_redetection()
-            return Result(
-                status=Status.MANUAL,
-                meta=_title_meta(page.html),
-                reason=THIN_EXTRACTION_REASON,
-            )
-        return self._wayback_fallback(unit.url, page)
-
-    def _fetch_page(self, url: str) -> _Page | Classification:
-        outcome = fetch_classified(self._transport, url)
-        if isinstance(outcome, FetchFailure):
-            return outcome.classification
-        return _Page(html=outcome.text(), body=outcome.body, content_type=outcome.content_type)
-
-    def _extracted(self, html: str, *, base_url: str, allow_media: bool) -> Result | None:
-        """A done Result when extraction is substantial, else None."""
-        body = self._extract(html)
-        if body is None or len(body) < MIN_SUBSTANTIAL_CHARS:
-            return None
-        media = [image] if allow_media and (image := _og_image(html, base_url)) else []
-        return Result(status=Status.DONE, meta=_title_meta(html), body=body, media=media)
-
-    def _wayback_fallback(self, url: str, failure: Classification) -> Result:
-        """Try the wayback machine; on any rescue failure, the direct truth stands."""
-        snapshot_url, note = self._wayback_snapshot(url)
-        if snapshot_url is not None:
-            page = self._fetch_page(snapshot_url)
-            if isinstance(page, _Page):
-                # Snapshot og:images point at web.archive.org — skip media.
-                rescued = self._extracted(page.html, base_url=snapshot_url, allow_media=False)
-                if rescued is not None:
-                    meta = dict(rescued.meta)
-                    meta["via"] = "wayback"
-                    meta["snapshot"] = snapshot_url
-                    return Result(status=Status.DONE, meta=meta, body=rescued.body)
-                note = "wayback snapshot extraction was thin"
-            else:
-                note = f"wayback fetch failed: {page.reason}"
-        if note is not None:
-            # The rescue's fate is appended context on the direct truth —
-            # the classification's own status and reason still decide.
-            failure = replace(failure, reason=f"{failure.reason}; {note}")
-        return failure.to_result()
-
-    def _wayback_snapshot(self, url: str) -> tuple[str | None, str | None]:
-        """The closest snapshot URL, or (None, why the lookup yielded nothing)."""
-        lookup = _WAYBACK_AVAILABLE + urllib.parse.quote(url, safe="")
-        outcome = fetch_classified(self._transport, lookup)
-        if isinstance(outcome, FetchFailure):
-            # A failed rescue is only a note on the direct failure — the
-            # wire fact, never the classifier's status framing.
-            return None, f"wayback lookup failed: {outcome.detail}"
-        try:
-            snapshots = json.loads(outcome.text())
-        except json.JSONDecodeError:
-            return None, "wayback lookup returned unparseable JSON"
-        if not isinstance(snapshots, dict):
-            return None, "wayback lookup returned an unexpected shape"
-        archived = snapshots.get("archived_snapshots")
-        closest = archived.get("closest") if isinstance(archived, dict) else None
-        if not isinstance(closest, dict) or not closest.get("available") or not closest.get("url"):
-            return None, "no wayback snapshot"
-        return closest["url"], None
-
-
-def _podcast_redetection() -> Result:
-    """Hand the unit to the podcast driver — identity only, no outputs."""
-    return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST))
-
-
-def _document_format(page: _Page) -> Format | None:
-    """The extractable Format of a fetched body, or None for real web content.
-
-    Magic bytes decide first (authoritative — servers lie in both
-    directions); the declared content type is the fallback that catches
-    signature-less formats (CSV). No filename-extension guessing here: a
-    web URL's path tail is routing, not identity.
-    """
-    magic = sniff_format(page.body)
-    if magic is not None:
-        return magic
-    return CONTENT_TYPE_FORMATS.get(page.content_type)
-
-
-def _og_image(html: str, base_url: str) -> str | None:
-    """The page's og:image as an absolute http(s) URL, or None.
-
-    The media stage fetches what it is handed verbatim, so a media URL must
-    be fetchable by construction: relative and protocol-relative values
-    resolve against the page they were found on, entities unescape, and
-    anything that is not http(s) afterwards (``data:``, ``javascript:``, a
-    template placeholder) is not a media URL at all.
-    """
-    for pattern in _OG_IMAGE_RES:
-        match = pattern.search(html)
-        if match is None:
-            continue
-        candidate = urllib.parse.urljoin(base_url, html_lib.unescape(match.group(1)).strip())
-        if candidate.startswith(("http://", "https://")):
-            return candidate
-    return None
-
-
-def _title_meta(html: str) -> dict[str, str | int | None]:
-    match = _TITLE_RE.search(html)
-    if not match:
-        return {}
-    title = " ".join(html_lib.unescape(match.group(1)).split())[:_MAX_TITLE_CHARS]
-    return {"title": title} if title else {}
+        return fetch_article(self._transport, self._extract, unit.url)

@@ -1,10 +1,16 @@
-"""Tests for drivers/web.py: classified fetches, links kept, wayback fallback."""
+"""Tests for the web driver over the shared article seam (drivers/article.py).
+
+The catch-all's whole fetch behaviour — classified fetches, links kept,
+thin parking, re-detection, wayback fallback — lives in the article lib,
+and this file pins it through the driver that reads every page that way.
+"""
 
 import socket
 import urllib.parse
 
+from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.web import WebDriver, trafilatura_extract
+from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Format, Kind, Status
 from tests.capabilities.conftest import fixture_bytes
