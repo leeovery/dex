@@ -778,6 +778,9 @@ files is judgment work, not the drain's.
   "parent": "a1b2c3d4e5",
   "depth": 2,
   "rerun": true,               // requeued over existing output — overwrite
+  "http_shared": true,         // the admitting URL was spelled http;
+                               // licenses the TLS-failure fallback to
+                               // plain http (below)
   // outputs — success only
   "path": "enrichment/<id>/web-73bd78.md",
   "title": "…",
@@ -870,9 +873,14 @@ independently is seven chances to reintroduce it):
 - **An http-shared source may fall back to http at fetch time.**
   Canonicalization still forces https: identity is the ledger's key, and a
   scheme split would give one resource two entries. But a server that was
-  shared as plain http may never speak TLS at all, so when the https
-  attempt fails at the TLS layer and the item's own `urls:` show the
-  source was shared as http, the fetch retries over http. A TLS failure on
+  shared as plain http may never speak TLS at all, so the admission door
+  records the spelling it saw: a unit admitted from an http-spelled URL —
+  a capture's `urls:` line, an `enrich fetch` argument — carries
+  `http_shared` on its ledger line. When the https attempt fails at the
+  TLS layer and either the item's own `urls:` show the source was shared
+  as http or the unit's line carries `http_shared`, the fetch retries
+  over http — so a promoted URL and a redrain travel the same road as a
+  fresh capture. A TLS failure on
   an https-shared source still classifies `blocked` like any other
   connection failure: the capture is the evidence of what the server was
   ever claimed to speak, and the fallback never downgrades a source the
@@ -1325,7 +1333,9 @@ Engine primitive: `dex enrich fetch <item-id> <url>…` — fetch specific extra
 URLs into an existing item, ledgered as child entries. It is the ONE road
 into the queue besides a capture. Semantics: `parent`
 defaults to the item's primary work unit (override with `--parent <hash>`),
-`depth` = parent's depth + 1, and both caps bind the admission — fetches
+`depth` = parent's depth + 1, an http-spelled URL is admitted with
+`http_shared` on its line — the same TLS-failure fallback a capture's
+http URL licenses (§5) — and both caps bind the admission — fetches
 count against the item's 12-URL cap, and a fetch past depth 4 is refused
 too. `--force` may exceed the URL cap for an owner-requested deepen (the
 cap fire is still recorded); it does **not** reach past depth, which is a

@@ -225,7 +225,7 @@ a malformed record impossible:
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
   attempts?, cap?, forced?, engine, date, at?, job?, via?, parent?, depth?,
-  rerun?, path?, title?, error?, reason?}`. The latest line per hash wins, and
+  rerun?, http_shared?, path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
   concatenates their lines in git's order, not in write order. Lines
@@ -239,7 +239,10 @@ a malformed record impossible:
   it (`depth`, or `url-requested` — the per-item URL budget an `enrich
   fetch` may exceed with `--force`); `forced` marks the fire `--force`
   waived — the unit still entered, and the health check's drift reading
-  skips it; `job` marks the units that are not fetched pages — `media`
+  skips it; `http_shared` marks a unit admitted from an http-spelled URL
+  (a capture's `urls:` line, an `enrich fetch` argument) and licenses
+  the fetch's TLS-failure fallback to plain http; `job` marks the units
+  that are not fetched pages — `media`
   downloads (routed through the media stage's redrain) and
   extraction-`asset` byte-writes — while `via` is provenance only
   (`harvest`, `sniff`, `migration-<n>`) and never routes. Heals and
