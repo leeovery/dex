@@ -1363,10 +1363,11 @@ Without that reader, a session that skipped harvest left an item digested
 and cited on the strength of the shared link alone, on no surface. The
 predicate follows the ingest procedure's own bounds: an item still owing a
 unit derives `raw` and has not reached the harvest step, so it is never
-listed; a no-source capture, and an item whose every unit died unfetched,
-has no page to read the subject rule over and owes no pass — its owed work
-is description and digest, written from the owner's note. The run report
-names such an item, the `enrich status`/lint digest backstop lists it
+listed; a no-source capture, and an item whose every unit ended dead or
+skipped with nothing fetched, has no page to read the subject rule over
+and owes no pass — its owed work is description and digest, written from
+the owner's note. The run report names such an item ("dead or ruled out"
+covers the mixed case), the `enrich status`/lint digest backstop lists it
 until its digest pass is recorded, and recording that pass is what clears
 it. A recorded
 pass covers its item by trailing shortid, the same match exclusions use
