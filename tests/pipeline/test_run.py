@@ -1438,6 +1438,83 @@ class TestMediaStage:
         assert drain.fetched_count(ITEM) == 2  # seed + child; media excluded
 
 
+class TestFetchedCountStaysARecount:
+    """The maintained count answers exactly what a full recount would.
+
+    The cap check reads a per-item table kept beside the entries instead of
+    recounting the ledger per admission; this pins the table to the recount
+    it replaced, across every way the drain's state moves — admissions,
+    cap fires, --force past the bound, outcomes that give budget back,
+    media lines that never spend it, and ownership re-resolving under a
+    rename.
+    """
+
+    def _recount(self, drain, item_id):
+        # Today's rule, spelled independently of the maintained table.
+        return sum(
+            1
+            for entry in drain.entries.values()
+            if drain.owner_of(entry) == item_id
+            and entry.via not in ("media", "extract-asset")
+            and entry.status is not Status.SKIPPED
+        )
+
+    def _agrees(self, drain, *item_ids):
+        for item_id in item_ids:
+            assert drain.fetched_count(item_id) == self._recount(drain, item_id)
+
+    def test_agreement_across_admissions_force_outcomes_and_renames(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        drain = run_mod._Drain(ctx=make_ctx(instance, FakeDriver()))  # noqa: SLF001 — the table under test is drain state
+        drain.seed_from_corpus()
+        self._agrees(drain, ITEM)
+
+        # A promotion refused at the cap writes only a skipped marker.
+        parent = drain.entries[work_hash(urls[0])]
+        extra = "https://example.test/extra"
+        refused = drain.admit(ITEM, extra, via="harvest", parent=parent)
+        assert refused.cap is Cap.URL_REQUESTED
+        self._agrees(drain, ITEM)
+
+        # --force admits past the bound: the waived fire plus a queued line.
+        forced = drain.admit(ITEM, extra, via="harvest", parent=parent, force=True)
+        assert forced.entry is not None
+        self._agrees(drain, ITEM)
+
+        # A skip landing on an admitted unit gives its budget back...
+        drain.record_outcome(
+            drain.entries[work_hash(urls[1])], status=Status.SKIPPED, reason="thin-extraction"
+        )
+        self._agrees(drain, ITEM)
+
+        # ...and a media line never spent any.
+        drain.record(
+            LedgerEntry(
+                hash=work_hash("https://cdn.example.test/m.png"),
+                url="https://cdn.example.test/m.png",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="seed",
+                date=datetime.date.min,
+                via="media",
+                parent=parent.hash,
+                depth=1,
+            )
+        )
+        self._agrees(drain, ITEM)
+
+        # A rename re-attributes every unit: the counts must follow the
+        # corpus's new answer, not the stored strings.
+        renamed = "2026-08-19-renamed-55ad7b"
+        write_item(instance, renamed, urls=[*urls, extra])
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        drain.resolve_owners()
+        self._agrees(drain, ITEM, renamed)
+        assert drain.fetched_count(renamed) == self._recount(drain, renamed) > 0
+
+
 class TestExtractAssets:
     def asset_fetch(self, assets):
         def fetch(_unit):

@@ -185,6 +185,16 @@ def _is_transcribe_job(entry: LedgerEntry) -> bool:
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
 
 
+def _spends_url_budget(entry: LedgerEntry) -> bool:
+    """Whether this line spends its item's 12-URL budget.
+
+    Fetched pages only: media downloads and extraction-asset byte-writes
+    are not pages, and a skipped line — the cap's own markers included —
+    holds no unit.
+    """
+    return entry.via not in ("media", "extract-asset") and entry.status is not Status.SKIPPED
+
+
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
     """The null provider seam: nothing mechanical is wired (tests, bare contexts).
 
@@ -399,6 +409,12 @@ class _Drain:
     # Ledgered media units left resting because `media_fetch` is `none` —
     # noted once, like the transcription deferral.
     deferred_media: int = 0
+    # Per-item fetched-page counts, maintained beside the entries so the
+    # URL-cap check is not a full recount per admission (quadratic in the
+    # item's ledger). Built lazily from the entries, updated in `record` —
+    # the one door entries change through — and dropped whenever ownership
+    # re-resolves, because the counts attribute exactly as `owner_of` does.
+    _fetched_counts: dict[str, int] | None = None
 
     def __post_init__(self) -> None:
         self.entries = ledger.load(self.ctx.instance.ledger_path)
@@ -440,6 +456,10 @@ class _Drain:
     def resolve_owners(self) -> None:
         """Re-read which live corpus item owns each unit (one corpus pass)."""
         self.owners = _unit_owners(self.ctx.instance, self.entries, self.ctx.drivers)
+        # The counts attribute by owner, so a new answer to "whose unit is
+        # this" (a rename mid-run) invalidates them wholesale — they
+        # rebuild from the entries on the next cap check.
+        self._fetched_counts = None
 
     def owner_of(self, entry: LedgerEntry) -> str:
         """Which live item owns this unit's work — the corpus's answer.
@@ -1409,14 +1429,22 @@ class _Drain:
         live id, ever, so its budget restarted from zero at every rename
         and the cap never fired, which also silences the drift reading a
         cap fire feeds the health check.
+
+        The answer is a maintained count, not a recount: one pass over the
+        entries builds the per-item table, `record` — the one door entries
+        change through — keeps it current per write, and re-resolving
+        ownership drops it (the attribution the counts key on has a new
+        answer). At every read it equals the full recount by the rule
+        above.
         """
-        return sum(
-            1
-            for entry in self.entries.values()
-            if self.owner_of(entry) == item_id
-            and entry.via not in ("media", "extract-asset")
-            and entry.status is not Status.SKIPPED
-        )
+        if self._fetched_counts is None:
+            counts: dict[str, int] = {}
+            for entry in self.entries.values():
+                if _spends_url_budget(entry):
+                    owner = self.owner_of(entry)
+                    counts[owner] = counts.get(owner, 0) + 1
+            self._fetched_counts = counts
+        return self._fetched_counts.get(item_id, 0)
 
     # -- recording -------------------------------------------------------
 
@@ -1428,6 +1456,7 @@ class _Drain:
             engine_version=self.ctx.engine_version,
         )
         ledger.append(self.ctx.instance.ledger_path, stamped)
+        self._count_write(stamped)
         self.entries[stamped.hash] = stamped
         self.written[stamped.hash] = stamped
         if count:
@@ -1438,6 +1467,24 @@ class _Drain:
                 _parked_row(stamped, stamped.item, media_fetch=self.ctx.config.media_fetch)
             )
         return stamped
+
+    def _count_write(self, stamped: LedgerEntry) -> None:
+        """Keep the fetched counts equal to a recount across one write.
+
+        Called before ``self.entries`` takes the new line, while the line it
+        supersedes is still readable: the superseded line leaves the count
+        it was in, the new one enters the count its owner and status say —
+        which is how a skip landing on a queued unit gives the budget back,
+        exactly as a recount would.
+        """
+        if self._fetched_counts is None:
+            return
+        previous = self.entries.get(stamped.hash)
+        if previous is not None and _spends_url_budget(previous):
+            self._fetched_counts[self.owner_of(previous)] -= 1
+        if _spends_url_budget(stamped):
+            owner = self.owner_of(stamped)
+            self._fetched_counts[owner] = self._fetched_counts.get(owner, 0) + 1
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
         self,

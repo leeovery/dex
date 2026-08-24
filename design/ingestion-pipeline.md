@@ -2286,7 +2286,14 @@ and the outcome union settles several of these on its way past.
   capture must materialize whole) and the JSON API reads — none of these
   has a ceiling to enforce.
 - **A per-item fetched-count cache.** The cap check recounts the item's
-  entries per admission, which is quadratic in the item's ledger.
+  entries per admission, which is quadratic in the item's ledger. **Done**:
+  the drain keeps a per-item table built lazily from the entries, updated
+  in `record` — the one door entries change through — and dropped whenever
+  ownership re-resolves, since the counts attribute exactly as `owner_of`
+  does. At every read it equals the full recount (pinned across
+  admissions, cap fires, `--force`, budget-returning skips, media lines,
+  and a rename's re-attribution); the cap check is O(1) per admission
+  after one build.
 - **One long-lived append handle for the ledger.**
 
 Two seams of this round already landed as part of fixes and are **done**:
