@@ -283,7 +283,9 @@ a malformed record impossible:
   matters by hand.
 - `state/exclusions.tsv` — one tab-separated `id<TAB>reason` line per
   excluded item, written by `bin/dex exclude` (payload above); excluded
-  items stay excluded across re-normalization. The verb purges the item
+  items stay excluded across re-normalization. Like the `state/*.jsonl`
+  files it merges as a union across machines, and every reader answers
+  by id, so a doubled ruling is harmless. The verb purges the item
   completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
   and the item's ledger entries — and states both the entry count it
   dropped and the count it kept because another live item still claims

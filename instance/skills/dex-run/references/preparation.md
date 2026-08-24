@@ -58,10 +58,11 @@ in order:
    judgment, which is exactly what a session is for: an unattended run
    performs it the same way, and never stops to ask. Per file class:
 
-   - `state/*.jsonl` merge as a union automatically. Verify no conflict
-     markers remain in them; if any do, the union driver did not run,
-     and the resolution is still the union: keep both sides' lines,
-     markers removed.
+   - `state/*.jsonl` and `state/exclusions.tsv` merge as a union
+     automatically — an exclusion is never lost in a merge. Verify no
+     conflict markers remain in them; if any do, the union driver did
+     not run, and the resolution is still the union: keep both sides'
+     lines, markers removed.
    - `state/taxonomy.json` and `state/entity-members.json` are the two
      files sessions write directly, so merge them by judgment: the
      union of both sides' topics, entities and member lists,
@@ -73,9 +74,6 @@ in order:
    - `wiki/*` is a build artifact: rewrite each conflicted page whole
      from the merged state (digests and taxonomy), rather than splicing
      around markers.
-   - A conflicted `state/exclusions.tsv` means both machines excluded
-     since the last sync: keep both sides' rows, one line per id,
-     markers removed. An exclusion is never lost in a merge.
    - A conflicted corpus file is two machines' engine refreshes
      deriving different `status`/`enrichment:` fields. The body is
      verbatim forever and identical on both sides; keep either side's
