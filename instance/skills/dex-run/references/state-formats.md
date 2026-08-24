@@ -119,7 +119,10 @@ collapses to one entry with the count stated. The verb records each
 exclusion in `state/exclusions.tsv` (below), removes the corpus file,
 `enrichment/<id>/` and `state/digests/<id>.md`, and purges the item's
 ledger entries except the work another live item still claims; the
-summary line states every count.
+summary line states every count. The one thing the purge leaves is the
+item's entry in `state/taxonomy.json` — that file is yours to write, so
+lint's ghost-member row names the leftover id and the removal is the
+session's.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 

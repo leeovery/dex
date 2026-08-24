@@ -2118,7 +2118,10 @@ src/dex_engine/
                  with its entry count; done outputs missing on disk, and
                  done outputs filed under another item's directory — both
                  asked of the owning item, §4),
-                 waiting cohorts, pass records, the judgment-drift signals
+                 waiting cohorts, pass records, ghost taxonomy members
+                 (a topic's `items` id naming no live corpus item — the
+                 one leftover an exclusion's purge leaves, a finding
+                 with the removal repair), the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,
