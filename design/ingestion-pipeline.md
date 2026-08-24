@@ -857,6 +857,16 @@ independently is seven chances to reintroduce it):
   untouched — it keys the ledger, and re-encoding it would orphan every
   existing entry. Only a host DNS genuinely cannot carry fails, as a stated
   `ValueError` the bad-seed containment parks on with a readable reason.
+- **An http-shared source may fall back to http at fetch time.**
+  Canonicalization still forces https: identity is the ledger's key, and a
+  scheme split would give one resource two entries. But a server that was
+  shared as plain http may never speak TLS at all, so when the https
+  attempt fails at the TLS layer and the item's own `urls:` show the
+  source was shared as http, the fetch retries over http. A TLS failure on
+  an https-shared source still classifies `blocked` like any other
+  connection failure: the capture is the evidence of what the server was
+  ever claimed to speak, and the fallback never downgrades a source the
+  owner shared secure.
 - **A truncated ERROR body never costs the status code.** The body of a
   4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
   transport, whisper-api's multipart POST) drop a failed error-body read and
