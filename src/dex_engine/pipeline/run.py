@@ -30,6 +30,7 @@ from typing import assert_never
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.transport import Transport, urllib_transport
+from dex_engine.drivers.ytdlp import DownloadAudio, yt_dlp_audio
 from dex_engine.render import surfaces
 
 from . import issues, ledger
@@ -47,13 +48,11 @@ from .registry import DRIVERS, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
-    DownloadAudio,
     acquire_podcast_audio,
     acquire_youtube_audio,
     podcast_body,
     read_enrichment,
     youtube_body,
-    yt_dlp_audio,
 )
 from .types import (
     Availability,

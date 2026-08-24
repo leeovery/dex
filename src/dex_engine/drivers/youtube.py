@@ -41,19 +41,14 @@ import re
 from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
-from dex_engine.pipeline.classify import (
-    PAYWALL_REASON,
-    Classification,
-    classify_connection,
-    classify_http,
-    scrub,
-)
+from dex_engine.pipeline.classify import classify_connection
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .transport import Transport, urllib_transport
+from .ytdlp import ProbeError, classify_probe_failure, yt_dlp_probe
 
-__all__ = ["ProbeError", "YouTubeDriver", "classify_probe_failure", "clean_vtt", "yt_dlp_probe"]
+__all__ = ["YouTubeDriver", "clean_vtt"]
 
 _HOSTS = frozenset({"youtube.com", "youtu.be"})
 # Path prefixes that address a single video, on youtube.com and youtu.be
@@ -128,18 +123,9 @@ _MAX_CHANNEL_SEGMENTS = 2
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
 
-_HTTP_CODE_RE = re.compile(r"HTTP Error (\d{3})")
-_LOGIN_MARKERS = ("private", "sign in", "members-only", "members only", "log in")
-_GEO_MARKERS = ("in your country", "in your region", "geo restricted", "geo-restricted")
-# `dead` needs an explicit confirmed-gone marker — anything else (transient
-# network trouble, yt-dlp extractor breakage) is the world misbehaving and
-# defaults to `blocked`: the motivating-incident class, again.
-_GONE_MARKERS = ("video unavailable", "removed", "terminated")
-
 # The youtube body's two sections. The transcribe drain splits a stored
 # body on these same headings to append a transcript to a park's
-# description (pipeline/transcribe.py); drivers cannot import that module
-# (it imports this one), so the pairing is pinned by test instead.
+# description (pipeline/transcribe.py); the pairing is pinned by test.
 _DESCRIPTION_HEADING = "## Description"
 _TRANSCRIPT_HEADING = "## Transcript"
 
@@ -155,34 +141,6 @@ _CAPTIONS_VIA = "captions"
 
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
-
-
-class ProbeError(Exception):
-    """yt-dlp could not extract video info; the message says why."""
-
-
-def yt_dlp_probe(url: str) -> dict:
-    """Extract video info via yt-dlp, no download.
-
-    Args:
-        url: The canonical video URL.
-
-    Returns:
-        The yt-dlp info dict.
-
-    Raises:
-        ProbeError: yt-dlp reported a download error; the driver maps the
-            message through the central classifier.
-    """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when probing
-
-    options = {"quiet": True, "no_warnings": True, "skip_download": True}
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        raise ProbeError(str(e)) from e
-    return dict(info or {})
 
 
 class YouTubeDriver:
@@ -354,34 +312,6 @@ def _playlist_id(url: str) -> str | None:
     if not is_playlist_page:
         return None
     return dict(parse_qsl(parts.query)).get("list")
-
-
-def classify_probe_failure(message: str) -> Classification:
-    """Map a yt-dlp failure message: code > login > geo > confirmed gone > blocked.
-
-    Public because the transcribe drain's audio acquisition fails in
-    exactly the same vocabulary — one classifier, not two.
-
-    ``dead`` requires an explicit confirmed-gone marker. The default is
-    ``blocked`` — a transient network error or an extractor-breakage message
-    mislabeled ``dead`` would be terminal and never retried, which is
-    exactly the incident class this design exists to kill.
-    """
-    code_match = _HTTP_CODE_RE.search(message)
-    if code_match:
-        return classify_http(int(code_match.group(1)))
-    lowered = message.lower()
-    if any(marker in lowered for marker in _LOGIN_MARKERS):
-        return Classification(status=Status.MANUAL, reason=f"{PAYWALL_REASON} ({scrub(message)})")
-    if any(marker in lowered for marker in _GEO_MARKERS):
-        # Checked before the gone markers: geo messages often open with
-        # "Video unavailable." and the specific diagnosis must win.
-        return Classification(status=Status.MANUAL, reason=f"geo-blocked ({scrub(message)})")
-    if any(marker in lowered for marker in _GONE_MARKERS) or (
-        "account" in lowered and "closed" in lowered
-    ):
-        return Classification(status=Status.DEAD, reason=scrub(message))
-    return Classification(status=Status.BLOCKED, reason=scrub(message))
 
 
 def _video_meta(info: dict) -> dict[str, str | int | None]:

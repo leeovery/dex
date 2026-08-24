@@ -14,14 +14,18 @@ recorded enclosure URL is the re-fetch pointer.
 """
 
 import unicodedata
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from dex_engine import atomic, frontmatter
 from dex_engine.drivers.transport import HttpResponse, Transport
-from dex_engine.drivers.youtube import ProbeError, classify_probe_failure
+from dex_engine.drivers.ytdlp import (
+    DownloadAudio,
+    ProbeError,
+    cached_audio,
+    classify_probe_failure,
+)
 
 from .classify import Classification, classify_connection, classify_http
 from .detect import looks_like_html
@@ -32,8 +36,6 @@ __all__ = [
     "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
-    "DownloadAudio",
-    "YoutubeAudio",
     "acquire_podcast_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
@@ -43,7 +45,6 @@ __all__ = [
     "read_enrichment",
     "read_enrichment_fields",
     "youtube_body",
-    "yt_dlp_audio",
 ]
 
 # Per-run transcription cap: a first sync's resurrected backlog must
@@ -68,8 +69,7 @@ _SEPARATOR = " — "
 _AUDIO_EXT_DEFAULT = "mp3"
 # The body sections both transcribable kinds compose around. The youtube
 # driver writes the same two headings on its parks (drivers/youtube.py);
-# it cannot import them from here (this module imports that one), so the
-# pairing is pinned by test.
+# the pairing is pinned by test.
 _TRANSCRIPT_HEADING = "## Transcript"
 _DESCRIPTION_HEADING = "## Description"
 
@@ -77,73 +77,6 @@ _DESCRIPTION_HEADING = "## Description"
 # every transcript it composes). Neither park writes it, so it is the one
 # fact on disk that says whether a body already holds a transcript.
 _TRANSCRIBED_FIELD = "via"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class YoutubeAudio:
-    """What the yt-dlp seam returns: the audio file plus priming vocabulary."""
-
-    path: Path
-    title: str | None
-    channel: str | None
-    description: str
-    duration_min: int | None = None
-    upload_date: str | None = None
-
-
-# url, cache_dir, stem -> downloaded audio; raises ProbeError on yt-dlp
-# failure (classified by classify_probe_failure — one classifier).
-DownloadAudio = Callable[[str, Path, str], YoutubeAudio]
-
-
-def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
-    """The one real :data:`DownloadAudio`: bestaudio into the cache, no ffmpeg.
-
-    An audio file already cached under ``stem`` is reused (retries don't
-    re-download); the probe still runs for the priming vocabulary.
-
-    Args:
-        url: The canonical video URL.
-        cache_dir: ``cache/audio/``.
-        stem: The work-unit hash — the cache filename stem.
-
-    Returns:
-        The audio and its vocabulary.
-
-    Raises:
-        ProbeError: yt-dlp failed; the caller classifies the message.
-    """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when acquiring
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    existing = _cached_audio(cache_dir, stem)
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bestaudio/best",
-        "outtmpl": str(cache_dir / f"{stem}.%(ext)s"),
-        "noplaylist": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = dict(ydl.extract_info(url, download=existing is None) or {})
-            path = existing or Path(ydl.prepare_filename(info))
-    except yt_dlp.utils.DownloadError as e:
-        raise ProbeError(str(e)) from e
-    if not path.exists():
-        fallback = _cached_audio(cache_dir, stem)
-        if fallback is None:
-            raise ProbeError("yt-dlp reported success but produced no audio file")
-        path = fallback
-    duration = info.get("duration") or 0
-    return YoutubeAudio(
-        path=path,
-        title=info.get("title") or None,
-        channel=info.get("channel") or info.get("uploader"),
-        description=(info.get("description") or "").strip(),
-        duration_min=round(duration / 60) if duration else None,
-        upload_date=info.get("upload_date") or None,
-    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -247,7 +180,7 @@ def acquire_podcast_audio(
         key: value for key, value in fields.items() if key not in ("url", "fetched")
     }
     prompt = _prompt(fields.get("title"), fields.get("show"), notes)
-    audio = _cached_audio(cache_dir, entry.hash)
+    audio = cached_audio(cache_dir, entry.hash)
     if audio is None:
         outcome = _download_enclosure(enclosure, cache_dir, entry.hash, transport)
         if isinstance(outcome, Classification):
@@ -279,34 +212,6 @@ def _pre_transcript(fields: dict[str, str], body: str) -> str:
     return body.rsplit(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
 
 
-# In-flight artifacts: yt-dlp's `.part` bodies (also `.part-Frag…`) and
-# `.ytdl` state files, the enclosure download's atomic-write `.tmp` temps,
-# and the odd `.download`/`.temp` from other tooling.
-_PARTIAL_MARKERS = (".part", ".ytdl", ".download", ".temp", ".tmp")
-
-
-def _is_partial(name: str) -> bool:
-    lowered = name.lower()
-    return lowered.endswith(_PARTIAL_MARKERS) or ".part-" in lowered
-
-
-def _cached_audio(cache_dir: Path, stem: str) -> Path | None:
-    """The completed cached download for ``stem`` — partials never count.
-
-    A crash mid-download leaves ``.part``/``.ytdl`` files behind; reusing
-    one would transcribe truncated audio and ledger it ``done``. Partials
-    are deleted here so the retry re-downloads from scratch (the
-    don't-re-download rule covers completed audio only).
-    """
-    complete: Path | None = None
-    for path in sorted(cache_dir.glob(f"{stem}.*")):
-        if _is_partial(path.name):
-            path.unlink(missing_ok=True)
-        elif complete is None:
-            complete = path
-    return complete
-
-
 def _download_enclosure(
     url: str, cache_dir: Path, stem: str, transport: Transport
 ) -> Path | Classification:
@@ -325,7 +230,7 @@ def _download_enclosure(
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{stem}.{_audio_ext(url)}"
     # Atomic: a crash mid-write must never leave a truncated file under the
-    # final cache name — _cached_audio would reuse it as completed audio.
+    # final cache name — cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
     return path
 

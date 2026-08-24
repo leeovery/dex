@@ -1844,6 +1844,11 @@ src/dex_engine/
                  needs healing (§4)
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
                transport.py  the HTTP seam (§5's OSError normalization)
+               gh.py  audio.py  ytdlp.py — the shared lib layer beside the
+                 drivers (§2): the authenticated GitHub route, the
+                 audio-on-a-page signal, and the yt-dlp seam (probe, audio
+                 download, failure vocabulary, audio-cache scan) the
+                 youtube driver and the transcribe drain both consume
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
@@ -2214,7 +2219,11 @@ and the outcome union settles several of these on its way past.
   contract and belongs to one module.
 - **Hoist the yt-dlp seam out of `drivers/youtube.py`** so
   `pipeline/transcribe.py` stops importing a driver — the standing
-  violation of the driver-isolation rule (§2) inside the engine's own code.
+  violation of the driver-isolation rule (§2) inside the engine's own
+  code. **Done**: `drivers/ytdlp.py` (probe, audio download, the probe
+  failure vocabulary, the audio-cache scan) serves the youtube driver and
+  the transcribe drain from the lib layer; outside `registry.py` — the
+  conformance point (§14) — no pipeline module imports a driver.
 - **`ledger.py`'s per-word legacy-vocabulary hint tables.**
 - **The import-time `DRIVERS` registry.** A module-level list against the
   no-import-time-state rule (§14); the typed registry literal is still the

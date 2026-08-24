@@ -13,7 +13,8 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.web import WebDriver
-from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, _video_meta
+from dex_engine.drivers.youtube import YouTubeDriver, _video_meta
+from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio, cached_audio
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import (
@@ -27,8 +28,6 @@ from dex_engine.pipeline.transcribe import (
     HEAD_MAX_TOKENS,
     TRANSCRIBE_RUN_CAP,
     Acquired,
-    YoutubeAudio,
-    _cached_audio,
     _download_enclosure,
     _prompt,
     acquire_youtube_audio,
@@ -1081,7 +1080,7 @@ class TestEnclosureDownloadAtomicity:
         transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
         with pytest.raises(OSError, match="No space left"):
             _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []
 
     def test_completed_download_lands_under_the_final_name(self, tmp_path):
@@ -1145,29 +1144,29 @@ class TestCachedAudio:
         # A kill mid-atomic-write can orphan the temp file itself; it must
         # be cleared like any partial, never picked up as completed audio.
         (tmp_path / "abc.mp3.k3j2f9.tmp").write_bytes(b"TRUNCATED")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []
 
     def test_partials_are_deleted_and_never_reused(self, tmp_path):
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
         (tmp_path / "abc.ytdl").write_bytes(b"state")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []  # crash leftovers cleared for the re-download
 
     def test_complete_file_wins_and_partial_leftovers_are_cleared(self, tmp_path):
         (tmp_path / "abc.m4a").write_bytes(b"full")
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
-        path = _cached_audio(tmp_path, "abc")
+        path = cached_audio(tmp_path, "abc")
         assert path is not None
         assert path.name == "abc.m4a"
         assert [p.name for p in tmp_path.iterdir()] == ["abc.m4a"]
 
     def test_fragment_partials_count_as_partials(self, tmp_path):
         (tmp_path / "abc.mp4.part-Frag001").write_bytes(b"frag")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
 
     def test_missing_cache_dir_is_simply_empty(self, tmp_path):
-        assert _cached_audio(tmp_path / "audio", "abc") is None
+        assert cached_audio(tmp_path / "audio", "abc") is None
 
 
 # Whisper's real prompt window: `previous_tokens[-(448 // 2 - 1):]` in

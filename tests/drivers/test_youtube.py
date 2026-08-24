@@ -9,11 +9,11 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, clean_vtt
+from dex_engine.drivers.youtube import YouTubeDriver, clean_vtt
+from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.transcribe import (
     Acquired,
-    YoutubeAudio,
     acquire_youtube_audio,
     youtube_body,
 )
