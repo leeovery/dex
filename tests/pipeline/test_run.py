@@ -46,6 +46,7 @@ from dex_engine.pipeline.types import (
     Content,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
@@ -1127,7 +1128,7 @@ class TestMediaStage:
         run_mod.run(ctx)
         entries = ledger.load(instance.ledger_path)
         media = entries[work_hash(self.IMG1)]
-        assert media.via == "media"
+        assert media.job is Job.MEDIA
         assert media.kind is Kind.X  # the parent's kind
         assert media.parent == work_hash(URL)
         assert media.status is Status.DONE
@@ -1262,7 +1263,7 @@ class TestMediaStage:
                 status=Status.MANUAL,
                 engine="0.2.0",
                 date=datetime.date(2026, 8, 19),
-                via="media",
+                job=Job.MEDIA,
                 parent=work_hash(URL),
                 depth=1,
                 reason="download failed 5 times — inspect by hand",
@@ -1418,7 +1419,7 @@ class TestMediaStage:
             if line.strip() and json.loads(line)["hash"] == work_hash(self.IMG1)
         ]
         assert [line["status"] for line in audit] == ["queued", "done"]
-        assert all(line["via"] == "media" for line in audit)
+        assert all(line["job"] == "media" for line in audit)
 
     def test_media_3xx_is_blocked_never_a_run_crash(self, instance):
         # The totality pin at the media stage: a redirect-loop 302 surfaced
@@ -1514,7 +1515,7 @@ class TestMediaStage:
         assert entries[work_hash(URL)].status is Status.DONE  # the parent stands
         media = entries[work_hash(bad)]
         assert media.status is Status.MANUAL
-        assert media.via == "media"
+        assert media.job is Job.MEDIA
         assert media.parent == work_hash(URL)
         assert "unfetchable media URL" in (media.reason or "")
         assert all(call[1] != bad for call in transport.calls)  # never fetched
@@ -1581,7 +1582,7 @@ class TestFetchedCountStaysARecount:
             1
             for entry in drain.entries.values()
             if drain.owner_of(entry) == item_id
-            and entry.via not in ("media", "extract-asset")
+            and entry.job is None
             and entry.status is not Status.SKIPPED
         )
 
@@ -1624,7 +1625,7 @@ class TestFetchedCountStaysARecount:
                 status=Status.QUEUED,
                 engine="seed",
                 date=datetime.date.min,
-                via="media",
+                job=Job.MEDIA,
                 parent=parent.hash,
                 depth=1,
             )
@@ -1659,7 +1660,7 @@ class TestExtractAssets:
         drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
         assert drain.fetched_count(ITEM) == 1  # the page alone; both assets excluded
         ledgered = ledger.load(ctx.instance.ledger_path)
-        assert sum(1 for e in ledgered.values() if e.via == "extract-asset") == 2
+        assert sum(1 for e in ledgered.values() if e.job is Job.ASSET) == 2
 
     def test_assets_write_under_media_caps_ledgered_extract_asset(self, instance):
         write_item(instance)
@@ -1671,9 +1672,7 @@ class TestExtractAssets:
         run_mod.run(ctx)
         entries = ledger.load(instance.ledger_path)
         parent_hash = work_hash(URL)
-        rows = sorted(
-            (e for e in entries.values() if e.via == "extract-asset"), key=lambda e: e.url
-        )
+        rows = sorted((e for e in entries.values() if e.job is Job.ASSET), key=lambda e: e.url)
         assert len(rows) == 2
         first = rows[0]
         assert first.status is Status.DONE
@@ -1688,9 +1687,7 @@ class TestExtractAssets:
         huge = Asset(data=b"x" * (run_mod.MEDIA_MAX_BYTES + 1), suggested_ext="png")
         ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch([huge])))
         run_mod.run(ctx)
-        row = next(
-            e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"
-        )
+        row = next(e for e in ledger.load(instance.ledger_path).values() if e.job is Job.ASSET)
         assert row.status is Status.SKIPPED
         assert "10MB" in (row.reason or "")
         assert not (instance.root / row.url).exists()
@@ -1705,7 +1702,7 @@ class TestExtractAssets:
         ctx = make_ctx(instance, FakeDriver(fetch_fn=self.asset_fetch(assets)))
         run_mod.run(ctx)
         rows = sorted(
-            (e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"),
+            (e for e in ledger.load(instance.ledger_path).values() if e.job is Job.ASSET),
             key=lambda e: e.url,
         )
         assert [row.status for row in rows] == [Status.DONE, Status.SKIPPED]
@@ -1728,7 +1725,7 @@ class TestExtractAssets:
         audit = [
             json.loads(line)
             for line in instance.ledger_path.read_text().split("\n")
-            if line.strip() and json.loads(line).get("via") == "extract-asset"
+            if line.strip() and json.loads(line).get("job") == "asset"
         ]
         assert len(audit) == 1  # the unchanged rerun added no audit line
 
@@ -2054,7 +2051,7 @@ class TestVerbs:
         run_mod.mark(ctx, signed, Status.SKIPPED, reason="the signed link expired")
         healed = ledger.load(instance.ledger_path)[work_hash(signed)]
         assert healed.status is Status.SKIPPED
-        assert healed.via == "media"  # provenance carried forward
+        assert healed.job is Job.MEDIA  # the routing mark carried forward
 
     def test_mark_prefers_the_canonical_match_when_both_keys_exist(self, instance):
         raw = f"{URL}?si=abc123"  # canonicalizes to URL; ledgered verbatim as media
@@ -2746,7 +2743,7 @@ class TestOwnershipIsTheCorpusAnswer:
                 status=Status.QUEUED,
                 engine="0.2.0",
                 date=datetime.date(2026, 8, 1),
-                via="media",
+                job=Job.MEDIA,
                 parent=parent,
                 depth=1,
             ),
@@ -2780,7 +2777,7 @@ class TestOwnershipIsTheCorpusAnswer:
                 status=Status.DONE,
                 engine="0.2.0",
                 date=datetime.date(2026, 8, 1),
-                via="media",
+                job=Job.MEDIA,
                 parent=work_hash(URL),
                 depth=1,
                 path=f"enrichment/{item_id}/media-{slot}.png",
@@ -2939,9 +2936,7 @@ class TestOwnershipIsTheCorpusAnswer:
         self._drained_then_renamed(instance, assets=[Asset(data=b"png-bytes", suggested_ext="png")])
         driver = FakeDriver()
         run_mod.run(make_ctx(instance, driver))
-        asset = next(
-            e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"
-        )
+        asset = next(e for e in ledger.load(instance.ledger_path).values() if e.job is Job.ASSET)
         assert asset.status is Status.DONE
         assert (
             instance.enrichment_dir / NEW_ITEM / f"{work_hash(URL)[:6]}-asset-0.png"

@@ -65,6 +65,7 @@ from .types import (
     Content,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
@@ -194,10 +195,10 @@ def _spends_url_budget(entry: LedgerEntry) -> bool:
     """Whether this line spends its item's 12-URL budget.
 
     Fetched pages only: media downloads and extraction-asset byte-writes
-    are not pages, and a skipped line — the cap's own markers included —
-    holds no unit.
+    (the ``job`` field) are not pages, and a skipped line — the cap's own
+    markers included — holds no unit.
     """
-    return entry.via not in ("media", "extract-asset") and entry.status is not Status.SKIPPED
+    return entry.job is None and entry.status is not Status.SKIPPED
 
 
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
@@ -795,9 +796,9 @@ class _Drain:
 
     def _process(self, entry: LedgerEntry) -> bool:
         """Process one unit; False means a deferred no-op (nothing spent)."""
-        # The ONE via-routed dispatch: the media stage gives blocked downloads
-        # normal retry rules, and via is the only mark they carry.
-        media_job = entry.via == "media"
+        # The media stage gives blocked downloads normal retry rules, and
+        # the typed job field is what routes them back to the redrain.
+        media_job = entry.job is Job.MEDIA
         if media_job and self.ctx.config.media_fetch is MediaFetch.NONE:
             # `none` means none on every path, the redrain included. The
             # unit rests exactly where it parked — same status, no attempts
@@ -1188,7 +1189,7 @@ class _Drain:
     # -- extraction assets ----------------------------------------
 
     def _write_assets(self, entry: LedgerEntry, assets: list) -> None:
-        """Write embedded assets under the media caps, ledgered via: extract-asset.
+        """Write embedded assets under the media caps, ledgered ``job: asset``.
 
         Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
         overwrite, never duplicate; the caps (4 files per item, 10MB per
@@ -1245,7 +1246,7 @@ class _Drain:
                 status=status,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
-                via="extract-asset",
+                job=Job.ASSET,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
                 path=path,
@@ -1282,12 +1283,12 @@ class _Drain:
                 status=Status.QUEUED,
                 engine="seed",
                 date=datetime.date.min,
-                via="media",
+                job=Job.MEDIA,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
             )
             # The birth line lands BEFORE the download (entries exist from
-            # birth) — a crash mid-download leaves a queued via:media entry
+            # birth) — a crash mid-download leaves a queued media entry
             # the next run's redrain path picks up. The download itself goes
             # through _process, so a failure of any class is charged to the
             # media unit rather than to the page that pointed at it.
@@ -1322,7 +1323,7 @@ class _Drain:
                 status=Status.MANUAL,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
-                via="media",
+                job=Job.MEDIA,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
                 reason=f"unfetchable media URL — {why}",
@@ -1442,7 +1443,7 @@ class _Drain:
         for unit_hash, other in self.entries.items():
             if unit_hash == entry.hash:
                 break
-            if self.owner_of(other) == owner and other.via == "media":
+            if self.owner_of(other) == owner and other.job is Job.MEDIA:
                 seen += 1
         return seen
 
@@ -1547,6 +1548,7 @@ class _Drain:
                 attempts=attempts,
                 engine="seed",  # stamped in _record
                 date=datetime.date.min,
+                job=entry.job,
                 via=entry.via,
                 parent=entry.parent,
                 depth=entry.depth,
@@ -1719,7 +1721,7 @@ def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) ->
     back on resumes nothing for them.
     """
     if (
-        entry.via == "media"
+        entry.job is Job.MEDIA
         and media_fetch is MediaFetch.NONE
         and entry.status is not Status.MANUAL
     ):
@@ -2286,6 +2288,8 @@ def _item_status(ctx: RunContext, entries: dict[str, LedgerEntry], item_id: str)
         if item_id not in owners.get(entry.hash, ()):
             continue
         unit: dict[str, object] = {"url": entry.url, "status": entry.status.value}
+        if entry.job is not None:
+            unit["job"] = entry.job.value
         if entry.via is not None:
             unit["via"] = entry.via
         if entry.depth is not None:
@@ -2488,7 +2492,7 @@ def never_harvested(instance: Instance) -> list[str]:
     fetched = {
         item_id
         for entry in entries.values()
-        if entry.status is Status.DONE and entry.via not in ("media", "extract-asset")
+        if entry.status is Status.DONE and entry.job is None
         for item_id in owners.get(entry.hash, (entry.item,))
     }
     recorded = _harvested_shortids(instance)
@@ -2574,7 +2578,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     a hand-written enrichment file is listed the moment its heal lands.
 
     A unit is found by its canonical identity, or — failing that — by the
-    exact key it was stored under: bad seeds and every ``via: media`` line
+    exact key it was stored under: bad seeds and every media line
     are keyed on the URL verbatim (canonicalization failed, or never ran),
     so a canonical-only lookup could never reach them, and the contract
     forbids healing them by hand.
@@ -2635,6 +2639,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
         engine="seed",  # stamped in record
         date=datetime.date.min,
+        job=prior.job,
         via=prior.via,
         parent=prior.parent,
         depth=prior.depth,

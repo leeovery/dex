@@ -13,7 +13,7 @@ from dex_engine.migrations.migration_2 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.enrichment import read_enrichment
-from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeTransport, json_response
@@ -544,7 +544,7 @@ SIGNED_MEDIA_URL = "https://cdn.a.test/clip.mp4?Expires=1&Signature=abc&ref=shar
 ASSET_PATH = "enrichment/2026-05-01-item-a1b2c3/paper-asset-01.png"
 
 
-def child(url, *, parent, via, kind=Kind.X):
+def child(url, *, parent, via=None, job=None, kind=Kind.X):
     return LedgerEntry(
         hash=work_hash(url),
         url=url,
@@ -553,6 +553,7 @@ def child(url, *, parent, via, kind=Kind.X):
         status=Status.DONE,
         engine="0.4.0",
         date=datetime.date(2026, 5, 1),
+        job=job,
         via=via,
         parent=parent,
         depth=1,
@@ -681,7 +682,7 @@ class TestVerbatimKeysAreNotRekeyed:
         # Canonicalizing would strip `ref` from a signed URL and key the
         # entry away from the runtime's raw-hash discipline.
         parent = stored(OLD_X_URL, kind=Kind.X)
-        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, job=Job.MEDIA)
         path = write_entries(tmp_path, [parent, media])
         before = path.read_text().split("\n")[1]
         migration.apply(tmp_path)
@@ -693,7 +694,7 @@ class TestVerbatimKeysAreNotRekeyed:
 
     def test_media_line_under_a_stable_parent_is_untouched(self, tmp_path, migration):
         parent = stored("https://blog.example.test/post", kind=Kind.WEB)
-        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media", kind=Kind.WEB)
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, job=Job.MEDIA, kind=Kind.WEB)
         path = write_entries(tmp_path, [parent, media])
         before = path.read_text()
         migration.apply(tmp_path)
@@ -701,7 +702,7 @@ class TestVerbatimKeysAreNotRekeyed:
 
     def test_extract_asset_repo_path_is_never_mangled_into_a_url(self, tmp_path, migration):
         parent = stored("https://blog.example.test/paper", kind=Kind.WEB)
-        asset = child(ASSET_PATH, parent=parent.hash, via="extract-asset", kind=Kind.WEB)
+        asset = child(ASSET_PATH, parent=parent.hash, job=Job.ASSET, kind=Kind.WEB)
         path = write_entries(tmp_path, [parent, asset])
         migration.apply(tmp_path)
         line = json.loads(path.read_text().split("\n")[1])
@@ -742,13 +743,13 @@ class TestVerbatimKeysAreNotRekeyed:
     def test_a_child_listed_before_its_parent_still_follows(self, tmp_path, migration):
         # File order is birth order in practice, never by contract.
         parent = stored(OLD_X_URL, kind=Kind.X)
-        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, job=Job.MEDIA)
         path = write_entries(tmp_path, [media, parent])
         migration.apply(tmp_path)
         assert json.loads(path.read_text().split("\n")[0])["parent"] == work_hash(NEW_X_URL)
 
     def test_a_parent_pointer_naming_nothing_is_left_alone(self, tmp_path, migration):
-        orphan = child(SIGNED_MEDIA_URL, parent="0123456789", via="media")
+        orphan = child(SIGNED_MEDIA_URL, parent="0123456789", job=Job.MEDIA)
         path = write_entries(tmp_path, [orphan])
         before = path.read_text()
         migration.apply(tmp_path)
@@ -756,7 +757,7 @@ class TestVerbatimKeysAreNotRekeyed:
 
     def test_second_apply_moves_nothing(self, tmp_path, migration):
         parent = stored(OLD_X_URL, kind=Kind.X)
-        media = child(SIGNED_MEDIA_URL, parent=parent.hash, via="media")
+        media = child(SIGNED_MEDIA_URL, parent=parent.hash, job=Job.MEDIA)
         path = write_entries(tmp_path, [parent, media])
         migration.apply(tmp_path)
         first = path.read_text()

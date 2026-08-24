@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ledger import LedgerSchemaError
-from dex_engine.pipeline.types import Cap, Format, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Format, Instance, Job, Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import ITEM, URL, make_ctx, write_item
@@ -684,7 +684,8 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),
-        via=draw(st.sampled_from([None, "harvest", "media", "sniff", "migration-1"])),
+        job=draw(st.none() | st.sampled_from(list(Job))),
+        via=draw(st.sampled_from([None, "harvest", "sniff", "migration-1"])),
         parent=parent,
         depth=depth,
         rerun=draw(st.booleans()),

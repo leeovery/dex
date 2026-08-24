@@ -14,6 +14,7 @@ from dex_engine.pipeline.types import (
     Content,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
@@ -265,20 +266,36 @@ class TestLedgerEntryInvariants:
         with pytest.raises(ValueError, match="engine"):
             entry(engine="")
 
-    @pytest.mark.parametrize(
-        "via", ["harvest", "media", "sniff", "extract-asset", "migration-1", "migration-12"]
-    )
+    @pytest.mark.parametrize("via", ["harvest", "sniff", "migration-1", "migration-12"])
     def test_the_known_provenance_vocabulary_is_accepted(self, via):
         assert entry(via=via, rerun=True).via == via
 
     @pytest.mark.parametrize(
-        "via", ["", "harvested", "migration-", "migration-0", "Harvest", "thread", "freehand"]
+        "via",
+        [
+            "",
+            "harvested",
+            "migration-",
+            "migration-0",
+            "Harvest",
+            "thread",
+            "freehand",
+            "media",
+            "extract-asset",
+        ],
     )
     def test_via_outside_the_vocabulary_is_rejected(self, via):
         # `thread` among them: the walk-up writes its chain into ONE
         # enrichment file (§8), so nothing was ever ledgered under it.
+        # `media` and `extract-asset` too: routing left `via` for the typed
+        # `job` field, and the old spellings must not quietly come back.
         with pytest.raises(ValueError, match="via"):
             entry(via=via)
+
+    def test_job_marks_media_and_asset_work(self):
+        assert entry(job=Job.MEDIA, parent="a1b2c3d4e5", depth=1).job is Job.MEDIA
+        assert entry(job=Job.ASSET, parent="a1b2c3d4e5", depth=1).job is Job.ASSET
+        assert entry().job is None
 
     def test_title_without_path_is_rejected(self):
         with pytest.raises(ValueError, match="travel together"):

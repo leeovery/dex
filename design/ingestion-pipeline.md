@@ -115,10 +115,11 @@ listing, never an alarm: a fire is a reading, not a fault, so it never
 fails the check.
 
 **What the 12 counts is fetched pages, and only those.** The count is over
-the item's ledger entries, excluding `via: media` (downloads, not pages),
-`via: extract-asset` (bytes written out of a container, which never touched
-the network), and every `skipped` entry (cap-fire markers record refused
-work, so counting them would let one refusal ratchet the cap shut). A PDF
+the item's ledger entries, excluding every entry carrying a `job` —
+`media` (downloads, not pages) and `asset` (bytes written out of a
+container, which never touched the network) — and every `skipped` entry
+(cap-fire markers record refused work, so counting them would let one
+refusal ratchet the cap shut). A PDF
 carrying thirty embedded images therefore spends one of the item's twelve,
 not thirty-one — the budget bounds how much of the web an item pulls in,
 and the media caps (§7) bound the rest separately.
@@ -280,7 +281,7 @@ class Result:
     assets: list[Asset]                # extraction assets (bytes) — drivers
                                        # never touch disk; the run layer
                                        # writes them under the §7 caps,
-                                       # ledgered via: extract-asset.
+                                       # ledgered job: asset.
                                        # Success-only, validated.
 
 @dataclass
@@ -460,8 +461,10 @@ Two related shapes stand on their own:
   `parent` with *having* a depth, a unit pairs it with a **non-zero**
   depth, so `LedgerEntry(parent set, depth 0)` is legal and the same
   `WorkUnit` is refused. One rule, stated once.
-- `via` carries provenance, routing (`via == "media"` dispatches, §3) and a
-  migration marker. Three jobs, one field. Provenance and routing separate.
+- `via` carried provenance, routing (`via == "media"` dispatched) and a
+  migration marker — three jobs, one field. Split: routing is the typed
+  `job` field (§3, §5) and `via` keeps provenance and the migration
+  marker, never dispatched on.
 
 **Acceptance bar.** Each change must name the defect class from the review
 record that it makes structurally impossible. Moving code is not enough and
@@ -516,13 +519,15 @@ one session is not stale. The digest file's own `date:` is the item's
 *share* date, so it can never serve here.
 
 **`via`** (provenance) stays a documented string, not an enum —
-`harvest, media, sniff, extract-asset, migration-<n>` — because
-`migration-<n>` is parameterized and provenance is descriptive, never
-dispatched on. **One blessed exception**: the run loop routes
-`via == "media"` entries to the media redrain — §7 mandates media entries
-carry the parent's kind, leaving `via` as their only marker. That single
-commented dispatch site is the sanctioned total of value-routed dispatch,
-forever — and it dispatches on a controlled single-token field, not prose.
+`harvest, sniff, migration-<n>` — because `migration-<n>` is parameterized
+and provenance is descriptive, never dispatched on. Routing is `job`, a
+typed StrEnum field (`media | asset`) marking the units that are not
+driver-fetched pages: the run loop routes `job: media` entries to the
+media redrain (§7 mandates media entries carry the parent's kind, so the
+field is their only marker), and the fetched-page readers — the 12-URL
+budget, the harvest obligation — ask it "is this a page". `via` once
+carried that dispatch as its blessed exception; the split ended it, so no
+dispatch reads prose-space anywhere.
 
 **Lifecycle signals are typed schema fields, never prose.** `reason` is
 display text: reports render it, nothing matches on it, and rewording one
@@ -688,6 +693,11 @@ files is judgment work, not the drain's.
                                // resolves latest-per-hash across a union
                                // merge (§4). Absent on lines written before
                                // the field shipped; absent sorts oldest
+  "job": "media",              // which stage owns the unit's work when it
+                               // is not a fetched page: media downloads
+                               // and extraction-asset writes. Typed and
+                               // dispatched on (§3) — the redrain and the
+                               // fetched-page readers ask this, never via
   // provenance — children and reruns only
   "via": "harvest",
   "parent": "a1b2c3d4e5",
@@ -876,7 +886,7 @@ the raw string. Two consequences, both deliberate:
 
 - `enrich mark` resolves a unit by canonical identity **first** and by the
   exact stored key **second**. A canonical-only lookup could never reach a
-  bad seed — or a `via: media` line, keyed verbatim because signed query
+  bad seed — or a `job: media` line, keyed verbatim because signed query
   params ARE the resource — and the contract forbids healing either by
   hand-appending JSONL, which would leave judgment with no working tool at
   all. So pass the URL as the ledger shows it and the heal lands.
@@ -938,7 +948,7 @@ mechanism, not a hack.
   **bytes** — structurally, not as an anydoc quirk: embedded images live
   inside the container and have no URL, so `Extraction.assets = bytes` is
   part of the contract; the extract step writes them directly to
-  `enrichment/<id>/` under the media caps, ledgered `via: extract-asset`. A
+  `enrichment/<id>/` under the media caps, ledgered `job: asset`. A
   replacement extractor either populates assets (bytes, the only possible
   form) or returns none — graceful text-only degradation. Images merely
   *linked* from a document stay links in the markdown, like web body links —
@@ -1032,7 +1042,7 @@ embedded assets never pass through here (§6). Drivers return media URLs in
 `Result.media`;
 the stage downloads to `enrichment/<id>/media-N.ext`, honoring instance
 config (`media_fetch: none | lead`), **cap 4 files, ~10MB per-file ceiling**;
-every download ledgered (`via: media`, parent = owning work unit, kind =
+every download ledgered (`job: media`, parent = owning work unit, kind =
 parent's kind) — success `done`, transient failure `blocked` (normal retry
 rules), oversize `skipped` with reason. Media downloads do **not** count
 toward the item's 12-URL cap (that cap bounds fetched pages). The old
@@ -1640,8 +1650,8 @@ Shipping migrations for this rewrite:
    (the file is read twice, written once — a parent's line may come after
    its child's). Entries whose key is **verbatim by design** are left
    alone, because re-keying moves them away from the identity the runtime
-   computes: `via: media` (media URLs are fetched verbatim, signed params
-   included), `via: extract-asset` (the key is a repo path, which
+   computes: `job: media` (media URLs are fetched verbatim, signed params
+   included), `job: asset` (the key is a repo path, which
    canonicalization would mangle into `https:enrichment/…`), and any entry
    whose URL is not an absolute http(s) URL. Canonicalization is guarded
    per entry, as in migration 1 — one unreadable URL is skipped-with-why
@@ -1700,7 +1710,7 @@ Shipping migrations for this rewrite:
    inferred by a later run because here the deletion is a fact, and a
    recorded path is missing for innocent reasons too (a rename moves the
    enrichment directory as well, and re-fetching on that would put a
-   `via: extract-asset` unit's repo path into the fetch queue, where no
+   `job: asset` unit's repo path into the fetch queue, where no
    transport can take it). The summary line states the counts — dropped,
    kept, and any re-queued — because `exclude` runs in bulk from the
    scope-filter pass and that line is the owner's only signal. One

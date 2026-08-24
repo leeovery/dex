@@ -12,7 +12,7 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.run import CAP_BOUNDS
-from dex_engine.pipeline.types import Cap, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Instance, Job, Kind, LedgerEntry, Need, Status
 
 DRIVERS = default_drivers()
 
@@ -865,7 +865,7 @@ class TestNeverHarvested:
             status=Status.DONE,
             engine="0.1.0",
             date=TODAY,
-            via="media",
+            job=Job.MEDIA,
             parent="aaaaaaaaaa",
             depth=1,
         )

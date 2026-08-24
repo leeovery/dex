@@ -36,10 +36,10 @@ Not every entry is canonically keyed, and the ones that aren't are left
 exactly as they are — re-keying them would move them AWAY from the
 identity the runtime computes:
 
-- ``via: media`` — media URLs are fetched verbatim, signed query params and
+- ``job: media`` — media URLs are fetched verbatim, signed query params and
   all; canonicalizing one strips the signature and mints a key nothing
   will ever look up again;
-- ``via: extract-asset`` — the work key is a repo path, not a URL;
+- ``job: asset`` — the work key is a repo path, not a URL;
   canonicalization would mangle it into ``https:enrichment/…``;
 - any entry whose URL is not an absolute http(s) URL (a ``file:`` work key,
   a bare repo path) — same reason, generalized.
@@ -135,7 +135,7 @@ _PRE_REWRITE = (0, 0, 1)
 _SEEDED_KINDS = frozenset({Kind.WEB, Kind.X})
 # Provenance whose work key is the fetch string verbatim, never a canonical
 # URL — see the module docstring.
-_VERBATIM_VIA = frozenset({"media", "extract-asset"})
+
 _ABSOLUTE_HTTP = ("http://", "https://")
 
 
@@ -446,7 +446,7 @@ def _current_key(
     refused the URL — and one unreadable URL must never abort a migration
     chain part-way through, leaving state half-moved.
     """
-    if entry.via in _VERBATIM_VIA or not entry.url.startswith(_ABSOLUTE_HTTP):
+    if entry.job is not None or not entry.url.startswith(_ABSOLUTE_HTTP):
         return None
     try:
         canonical = canonical_url(entry.url, drivers)

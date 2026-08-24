@@ -18,7 +18,7 @@ from dex_engine.corpus import read_item
 from dex_engine.migrations import migration_1
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Cap, Config, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Config, Job, Kind, LedgerEntry, Need, Status
 
 ENGINE = "0.5.0"
 
@@ -432,6 +432,48 @@ class TestLedgerTranslation:
         assert entry.status is Status.DONE
         assert entry.via is None
         assert any("via 'fxtwitter' dropped" in action for action in report.actions)
+        assert report.skipped == []
+
+    def test_old_via_media_translates_to_the_job_field(self, tmp_path, migration):
+        # `media` and `extract-asset` left the via vocabulary when routing
+        # split onto the typed job field: an old line spelling either is the
+        # same fact in the old spelling, translated — never dropped, and
+        # never costing the whole line.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "7777777777",
+                    "url": "https://cdn.a.test/img.png?sig=abc",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "via": "media",
+                    "parent": "1111111111",
+                    "depth": 1,
+                    "path": "enrichment/2026-05-01-item-a1b2c3/web-777777.png",
+                },
+                {
+                    "hash": "8888888888",
+                    "url": "enrichment/2026-05-01-item-a1b2c3/777777-asset-0.png",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "via": "extract-asset",
+                    "parent": "1111111111",
+                    "depth": 1,
+                    "path": "enrichment/2026-05-01-item-a1b2c3/777777-asset-0.png",
+                },
+            ],
+        )
+        report = migration.apply(tmp_path)
+        entries = ledger.load(path)
+        assert entries["7777777777"].job is Job.MEDIA
+        assert entries["7777777777"].via is None
+        assert entries["8888888888"].job is Job.ASSET
+        assert entries["8888888888"].via is None
+        assert not any("dropped" in action for action in report.actions)
         assert report.skipped == []
 
     def test_stray_title_on_non_done_dropped_with_note(self, tmp_path, migration):

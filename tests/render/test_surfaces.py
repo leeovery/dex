@@ -634,10 +634,16 @@ class TestItemStatus:
                         "status": "manual",
                         "reason": "thin-extraction",
                     },
+                    {
+                        "url": "https://cdn.example.test/img.png?sig=abc",
+                        "status": "done",
+                        "job": "media",
+                        "depth": 1,
+                    },
                 ],
             },
         )
-        assert out.startswith("## Item 2026-08-19-example-55ad7b — 3 units\n")
+        assert out.startswith("## Item 2026-08-19-example-55ad7b — 4 units\n")
         assert "- **https://example.test/post** · `done`" in out
         assert "  ↳ wrote `enrichment/2026-08-19-example-55ad7b/web-73bd78.md`" in out
         assert (
@@ -645,6 +651,9 @@ class TestItemStatus:
         ) in out
         assert "- **https://paywalled.test/a** · `manual`" in out
         assert "  ↳ thin-extraction" in out
+        assert (
+            "- **https://cdn.example.test/img.png?sig=abc** · `done` · job media, depth 1"
+        ) in out
 
     def test_no_units_reads_honestly(self):
         out = render("item-status", {"item": "2026-08-19-note-aaaaaa", "units": []})

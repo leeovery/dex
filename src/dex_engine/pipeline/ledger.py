@@ -35,7 +35,7 @@ from typing import TextIO
 
 from dex_engine import atomic
 
-from .types import Cap, Format, Kind, LedgerEntry, Need, Status
+from .types import Cap, Format, Job, Kind, LedgerEntry, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
@@ -82,6 +82,7 @@ _ALL_KEYS = frozenset(
         "cap",
         "forced",
         "at",
+        "job",
         "via",
         "parent",
         "depth",
@@ -154,6 +155,7 @@ def from_line(line: str) -> LedgerEntry:
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             at=None if "at" not in raw else _expect_datetime(raw, "at"),
+            job=None if "job" not in raw else Job(_expect_str(raw, "job")),
             via=None if "via" not in raw else _expect_str(raw, "via"),
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
@@ -217,6 +219,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("at", entry.at.isoformat() if entry.at is not None else None),
+        ("job", entry.job.value if entry.job is not None else None),
         ("via", entry.via),
         ("parent", entry.parent),
         ("depth", entry.depth),

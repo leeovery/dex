@@ -22,6 +22,7 @@ __all__ = [
     "Extractor",
     "Format",
     "Instance",
+    "Job",
     "Kind",
     "LedgerEntry",
     "MediaFetch",
@@ -127,13 +128,30 @@ class MediaFetch(StrEnum):
     LEAD = "lead"
 
 
+class Job(StrEnum):
+    """Which engine stage owns a unit's work, when it is not page work.
+
+    The routing field: the run loop routes ``MEDIA`` entries to the media
+    redrain instead of a driver, and the fetched-page readers (the 12-URL
+    budget, the harvest obligation) ask "is this a fetched page" of this
+    field — a media download and an extraction-asset byte-write are not
+    pages. Typed and dispatched on, which is exactly what ``via`` is not:
+    provenance is descriptive prose-space, and rewording it must never be
+    able to change routing.
+    """
+
+    MEDIA = "media"
+    ASSET = "asset"
+
+
 # ---------------------------------------------------------------------------
 # Provenance vocabulary. `via` stays a documented string, not an enum:
 # `migration-<n>` is parameterized and provenance is descriptive, never
-# dispatched on. It is still validated against the known shapes.
+# dispatched on — routing lives on the typed `job` field. It is still
+# validated against the known shapes.
 # ---------------------------------------------------------------------------
 
-_VIA_EXACT = frozenset({"harvest", "media", "sniff", "extract-asset"})
+_VIA_EXACT = frozenset({"harvest", "sniff"})
 _VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
 
 
@@ -514,6 +532,10 @@ class LedgerEntry:
     # git's union merge interleaves two machines' lines. Absent only on
     # lines written before the field shipped.
     at: datetime.datetime | None = None
+    # which stage owns the unit's work — media downloads and asset writes
+    # only; None is driver-fetched page work. The routing field: dispatch
+    # and the fetched-page readers ask this, never `via`
+    job: Job | None = None
     # provenance — children and reruns only
     via: str | None = None
     parent: str | None = None
