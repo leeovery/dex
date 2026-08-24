@@ -27,6 +27,7 @@ every reader resolves and not every reader has a clock to hand.
 
 import datetime
 import json
+import os
 from collections.abc import Callable, Collection
 from dataclasses import replace
 from pathlib import Path
@@ -334,6 +335,21 @@ class Appender:
     crash or power loss can cost the tail either way — the read-back
     guards (mark's, the run report's) rely on the flush, never on close.
 
+    **The per-line reopen was load-bearing, and the stat below replaces
+    it — do not optimise it away.** ``compact``, exclude's purge, and the
+    migrations rewrite the ledger atomically: a temp file, then one
+    ``replace`` — a NEW inode at the same path. Open-per-line re-resolved
+    the path every write, so appends after a rewrite landed in the new
+    file; a held handle keeps the replaced inode, and without
+    revalidation every later write of the run goes to an orphaned file no
+    reader ever sees (discovered when this class first removed the
+    reopen). So each append re-checks that the handle still names the
+    file at the path — one ``fstat``/``stat`` pair, far cheaper than the
+    open/write/close it replaced — and reopens on mismatch, or where the
+    path is briefly gone mid-rewrite. The window that remains (a replace
+    landing between the check and the write) is the same one the per-line
+    reopen always had between its open and its write.
+
     The file opens lazily on the first append, in append mode, so every
     line lands at the file's current end even where another writer's line
     arrived in between — exactly as the per-line reopen behaved.
@@ -351,11 +367,34 @@ class Appender:
         always the writing machine's own clock and never a value a caller
         chose.
         """
-        if self._handle is None:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._handle = self._path.open("a", encoding="utf-8")
-        self._handle.write(to_line(entry) + "\n")
-        self._handle.flush()
+        handle = self._current_handle()
+        handle.write(to_line(entry) + "\n")
+        handle.flush()
+
+    def _current_handle(self) -> TextIO:
+        """The handle for the file the path names NOW, reopened if it moved."""
+        if self._handle is not None:
+            if self._still_current(self._handle):
+                return self._handle
+            self._handle.close()
+            self._handle = None
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._path.open("a", encoding="utf-8")
+        return self._handle
+
+    def _still_current(self, handle: TextIO) -> bool:
+        """Whether the held handle is still the file at the path.
+
+        False when an atomic rewrite replaced the inode, or the file is
+        (however briefly) gone — either way the next line belongs to the
+        file the path names, not to the one the handle kept.
+        """
+        try:
+            current = self._path.stat()
+        except FileNotFoundError:
+            return False
+        held = os.fstat(handle.fileno())
+        return (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino)
 
     def close(self) -> None:
         """Release the handle; a later append reopens."""

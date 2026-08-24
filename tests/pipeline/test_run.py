@@ -209,6 +209,28 @@ class TestSeedAndDone:
         assert len(lines) == 6
         assert len(opens) == 1
 
+    def test_a_mid_run_ledger_rewrite_never_orphans_later_outcomes(self, instance):
+        # compact/exclude/sync in another terminal during a long run: the
+        # rewrite is a temp file plus one replace, a NEW inode at the same
+        # path. The run's held handle must follow the path — a handle that
+        # keeps the replaced inode writes every later outcome into an
+        # orphan, the report claims work the ledger never took, and the
+        # read-back misdiagnoses the loss as a backwards clock.
+        urls = [f"https://example.test/p{n}" for n in range(3)]
+        write_item(instance, urls=urls)
+        fetched: list[str] = []
+
+        def fetch(unit):
+            fetched.append(unit.url)
+            if len(fetched) == 2:
+                ledger.compact(instance.ledger_path)  # another terminal's compact
+            return Result(status=Status.DONE, meta={}, body="b" * 400)
+
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        loaded = ledger.load(instance.ledger_path)
+        assert all(loaded[work_hash(url)].status is Status.DONE for url in urls)
+        assert "did not take effect" not in report
+
     def test_two_items_sharing_a_url_dedupe_by_hash(self, instance):
         write_item(instance, "2026-08-19-first-aaaaaa")
         write_item(instance, "2026-08-19-second-bbbbbb")

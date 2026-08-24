@@ -2305,7 +2305,15 @@ and the outcome union settles several of these on its way past.
   reader and safe against a process crash; neither shape fsyncs, so an OS
   crash can cost the tail either way, as before. The file format is
   byte-identical and append mode keeps an interleaved writer's line
-  intact.
+  intact. The per-line reopen turned out to be load-bearing in a second
+  way: `compact`, exclude's purge, and the migrations rewrite the ledger
+  atomically (temp file + one replace — a new inode at the same path),
+  and open-per-line re-resolved the path every write, so post-rewrite
+  appends followed the file. The held handle keeps that property by
+  revalidating identity per line (`fstat` vs `stat` on dev/ino, reopen
+  on mismatch or a briefly missing path) — one stat pair per line, still
+  far cheaper than the reopen it replaced; the check must never be
+  "optimised" away.
 
 Two seams of this round already landed as part of fixes and are **done**:
 `drivers/gh.py`, the authenticated GitHub route the github and file drivers
