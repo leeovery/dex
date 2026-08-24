@@ -35,12 +35,13 @@ def write_item_stub(instance: Instance, item_id: str = ITEM, *, urls: tuple[str,
     )
 
 
-def ledger_entry(
+def ledger_entry(  # noqa: PLR0913 — one keyword per ledger identity slot
     instance: Instance,
     unit_hash: str,
     item_id: str,
     *,
     url: str | None = None,
+    parent: str | None = None,
     at: datetime.datetime = datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
 ) -> None:
     ledger.append(
@@ -54,6 +55,8 @@ def ledger_entry(
             engine="0.2.1",
             date=datetime.date(2026, 8, 20),
             at=at,
+            parent=parent,
+            depth=None if parent is None else 1,
         ),
     )
 
@@ -246,6 +249,37 @@ class TestLedgerPurge:
         run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
         assert instance.ledger_path.read_text() == before
 
+    def test_a_promoted_child_survives_on_the_co_claimants_chain(self, instance):
+        # Two items list one URL; the unit was seeded under the one about
+        # to be purged, and `enrich fetch` promoted a child under it whose
+        # line carries the shared unit's hash as `parent`. The child is in
+        # no frontmatter — its only corpus answer travels the chain — and a
+        # frontmatter-only veto purged it even though the chain resolves to
+        # the co-claimant, a live item: work another live corpus item still
+        # claims, deleted with its history.
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        ledger_entry(instance, "cccccccccc", ITEM, parent=shared)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert set(ledger.load(instance.ledger_path)) == {shared, "cccccccccc"}
+        assert "0 ledger entries dropped" in summary
+        assert "2 kept" in summary
+
+    def test_a_child_whose_whole_chain_dies_with_the_item_is_purged(self, instance):
+        # Only the excluded item lists the URL: the chain ends at work no
+        # live item claims, so the child goes with its parent — there is
+        # no survivor to keep either line for.
+        url = "https://example.test/only-this-item"
+        unit = work_identity(url, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(url,))
+        ledger_entry(instance, unit, ITEM, url=url)
+        ledger_entry(instance, "cccccccccc", ITEM, parent=unit)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert ledger.load(instance.ledger_path) == {}
+        assert "2 ledger entries dropped, 0 kept" in summary
+
     def test_an_unreadable_line_is_kept_never_purged_by_accident(self, instance):
         # A purge must not become incidental data loss: a line this code
         # cannot parse is not provably the excluded item's.
@@ -320,6 +354,41 @@ class TestStrandedLandings:
         assert entry.engine == "0.4.0"
         assert entry.date == self.TODAY
         assert entry.at == self.NOW
+
+    def test_a_stranded_promoted_child_goes_back_queued_for_the_survivor(self, instance):
+        # The child's line survives on the co-claimant's chain, but its
+        # output lived in enrichment/<purged>/ and went with the item that
+        # produced it: back to queued, named for the survivor, lineage kept
+        # so ownership still resolves through the chain.
+        shared = self._shared_landing(instance)
+        child_output = instance.enrichment_dir / ITEM / "web-cccccc.md"
+        child_output.write_text("the promoted child page\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash="cccccccccc",
+                url="https://example.test/promoted-child",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.1",
+                date=datetime.date(2026, 8, 20),
+                at=datetime.datetime(2026, 8, 20, 9, 30, tzinfo=datetime.UTC),
+                parent=shared,
+                depth=1,
+                path=f"enrichment/{ITEM}/web-cccccc.md",
+                title="a child page",
+            ),
+        )
+        summary = self._exclude(instance)
+        child = ledger.load(instance.ledger_path)["cccccccccc"]
+        assert child.status is Status.QUEUED
+        assert child.item == OTHER
+        assert child.parent == shared
+        assert child.depth == 1
+        assert child.path is None
+        assert child.title is None
+        assert "2 re-queued" in summary
 
     def test_a_landing_filed_elsewhere_is_left_alone(self, instance):
         # Only a product in the directory this purge deleted is stranded.

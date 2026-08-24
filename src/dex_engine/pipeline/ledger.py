@@ -46,6 +46,7 @@ __all__ = [
     "compact",
     "drop_items",
     "from_line",
+    "latest_readable",
     "load",
     "resolution_key",
     "stamp",
@@ -539,6 +540,32 @@ def drop_items(
     # Atomic: a crash mid-write must never lose the ledger.
     atomic.write_text(path, "".join(line + "\n" for line in kept))
     return removed, kept_units
+
+
+def latest_readable(
+    path: Path, *, now: Callable[[], datetime.datetime] = _utc_now
+) -> dict[str, LedgerEntry]:
+    """The latest entry per hash over the lines that parse — purge support only.
+
+    Exactly the view :func:`drop_items` judges hashes on, exposed so the
+    purge's claim veto can resolve ownership over the same entries it
+    judges: one hand-tampered line must neither abort the purge (the next
+    command's ``load`` names it loudly) nor skew which hashes the veto
+    covers. A line this reader skips is not judged and not purged —
+    ``drop_items`` keeps it. Every ordinary reader uses :func:`load`, whose
+    loud refusal is the design.
+
+    Args:
+        path: The ledger file; a missing file reads as empty.
+        now: The reader's clock, passed to the ``at``-timestamp resolution.
+
+    Returns:
+        Work hash -> the latest readable entry, as ``load`` would resolve
+        it over the readable lines.
+    """
+    if not path.exists():
+        return {}
+    return _latest_readable(path.read_text(encoding="utf-8"), now=now())
 
 
 def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEntry]:
