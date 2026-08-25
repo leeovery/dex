@@ -13,3 +13,7 @@ in last month") answer from corpus+digests — make that an explicit mode in
 dex-query. Principle: one store (the corpus); queue, digest, and index
 sections are regenerable views. A TUI/newsletter delivery layer waits
 until the digest proves what the owner actually wants to see.
+
+The delivery layer this defers is `browsable-wiki.md` — "new this week" and
+"waiting for you" are browse views, not query answers, and they need a page
+rather than a chat. `catalogue.md` is what either would read.

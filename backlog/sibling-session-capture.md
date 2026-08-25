@@ -15,3 +15,8 @@ sibling session may see, and how it picks between them), the boundary
 the owner), and how the capture keeps provenance when it arrives from a
 session with no dex context. Whatever the shape, it must not make every
 unrelated session pay a context tax for dex's benefit.
+
+One candidate carrier worth weighing against a CLAUDE.md paragraph or a
+shared skill: a local server of the kind `thin-query-surface.md` describes.
+It costs an unrelated session no standing context — nothing is read until a
+tool is called — which is this entry's own hard constraint.
