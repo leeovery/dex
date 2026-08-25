@@ -558,6 +558,14 @@ class LedgerEntry:
     # nobody overrode, and counting them off the prose that worded the
     # override would put a routing signal in the free-text namespace.
     forced: bool = False
+    # the URL was spelled http when it was admitted — captured OR promoted
+    # via `enrich fetch`. Canonicalization forces https, so this is the
+    # typed record that the source was actually shared over http; with the
+    # live frontmatter's http variant it is one of the two licenses for
+    # the TLS-failure http fallback, and it rides every superseding line
+    # so redrains keep the license. Typed rather than re-derived because
+    # only the admission door ever sees the pre-canonical spelling.
+    http_shared: bool = False
     engine: str
     date: datetime.date
     # the write instant, UTC, sub-second — what resolves last-per-hash when

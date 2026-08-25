@@ -82,3 +82,9 @@ class TestEnrichmentShapes:
     def test_state_jsonl_keeps_the_union_merge(self, check_attr, tmp_path):
         values = check_attr(tmp_path, "merge", ["state/enrichment-ledger.jsonl"])
         assert values == {"state/enrichment-ledger.jsonl": "union"}
+
+    def test_exclusions_tsv_merges_as_a_union(self, check_attr, tmp_path):
+        # Append-only id<TAB>reason lines, read as a set by every consumer:
+        # two machines excluding between syncs must merge, not conflict.
+        values = check_attr(tmp_path, "merge", ["state/exclusions.tsv"])
+        assert values == {"state/exclusions.tsv": "union"}

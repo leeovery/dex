@@ -50,7 +50,7 @@ from .enrichment import (
     render_enrichment,
     youtube_body,
 )
-from .ownership import corpus_claims
+from .ownership import unit_owners
 from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
@@ -95,9 +95,11 @@ __all__ = [
     "RERUN_DRAIN_CAP",
     "RunContext",
     "digest_orphans",
+    "digested_items",
     "fetch_urls",
     "head_sniffer",
     "is_drainable",
+    "items_owing_work",
     "mark",
     "never_harvested",
     "no_providers",
@@ -378,18 +380,23 @@ class _Drain:
     item_status: dict[str, str] = field(default_factory=dict)
     # Unit hashes whose URL some live item's frontmatter shares as http.
     # Canonicalization forces https (identity and hashing are unchanged),
-    # so this is the one record that the owner actually shared the source
-    # over http — what licenses the TLS-failure fallback to refetch it so.
+    # so this records that the owner actually shared the source over http
+    # — one of the TLS-failure fallback's two licenses, covering captured
+    # lines however old. The other is the entry's own typed `http_shared`
+    # flag, stamped at the admission door: the only record a PROMOTED
+    # http URL has (promotions never live in frontmatter), and the one
+    # that keeps a redrain licensed.
     http_shared: set[str] = field(default_factory=set)
     # Which live corpus items own each unit — the corpus's answer, never the
     # ledger line's stored string. Rebuilt after the drain, when this run's
     # children exist to be attributed.
     owners: dict[str, tuple[str, ...]] = field(default_factory=dict)
     no_source_items: list[str] = field(default_factory=list)
-    # Live items whose every ledger unit landed dead and whose digest is
-    # not yet recorded — like the no-source items, owed description +
-    # digest from the owner's note, and derived on demand for the report.
-    all_dead_items: list[str] = field(default_factory=list)
+    # Live items whose every ledger unit closed without content (dead or
+    # skipped) and whose digest is not yet recorded — like the no-source
+    # items, owed description + digest from the owner's note, and derived
+    # on demand for the report.
+    closed_unenriched_items: list[str] = field(default_factory=list)
     # Items this run wrote an outcome for — the report's incompleteness
     # section covers exactly these (an item nothing happened to this run has
     # nothing new to say; `enrich status` holds the standing view).
@@ -515,8 +522,20 @@ class _Drain:
         old line stays what it is, historical attribution, and no persisted
         line is ever rewritten to heal it.
         """
-        owners = self.owners.get(entry.hash, ())
-        return entry.item if not owners or entry.item in owners else owners[0]
+        owners = self.owners_of(entry)
+        return entry.item if entry.item in owners else owners[0]
+
+    def owners_of(self, entry: LedgerEntry) -> tuple[str, ...]:
+        """Every item the corpus resolves this unit to — never empty.
+
+        The multi-claimant face of :meth:`owner_of`, for membership
+        questions: a URL two items list is owed by BOTH, so "is this item
+        among the unit's claimants" must be asked of the whole tuple —
+        compared against the single-name form it always answered for the
+        first claimant alone, and the second claimant of every shared
+        unit read as owning nothing.
+        """
+        return self.owners.get(entry.hash) or (entry.item,)
 
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
@@ -665,6 +684,13 @@ class _Drain:
                 kind=detection.kind,
                 format=detection.format,
                 status=Status.QUEUED,
+                # The admission door is the ONE place the pre-canonical
+                # spelling is in hand, so the http-share fact is recorded
+                # here — captured or promoted alike. It licenses the
+                # TLS-failure http fallback, and riding the line it
+                # survives redrains, which frontmatter cannot cover for a
+                # promotion (promoted URLs live in the ledger only).
+                http_shared=url.startswith("http://"),
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
                 via=via,
@@ -815,13 +841,14 @@ class _Drain:
         # the typed job field is what routes them back to the redrain.
         media_job = entry.job is Job.MEDIA
         if media_job and self.ctx.config.media_fetch is MediaFetch.NONE:
-            # `none` means none on every path, the redrain included. The
-            # unit rests exactly where it parked — same status, no attempts
-            # burned — like a waiting unit under an absent provider, and
-            # drains again when the owner turns media back on.
+            # `none` gates the download, and THIS is the one gate: every
+            # media unit is ledgered at emit, so a freshly emitted child
+            # and a redrained one rest identically — same status, no
+            # attempts burned, like a waiting unit under an absent
+            # provider — and drain again when the owner turns media on.
             if not self.deferred_media:
                 self.notes.append(
-                    "media_fetch is `none` — parked media downloads stay parked "
+                    "media_fetch is `none` — media downloads rest where they are "
                     "until it is turned back on"
                 )
             self.deferred_media += 1
@@ -873,7 +900,7 @@ class _Drain:
         )
         try:
             fetched = driver.fetch(unit)
-            retry = self._http_retry_unit(unit, fetched)
+            retry = self._http_retry_unit(entry, unit, fetched)
             if retry is not None:
                 self.notes.append(
                     f"{unit.url}: https refused at the TLS layer — refetched over "
@@ -886,23 +913,32 @@ class _Drain:
             # Politeness holds even when the fetch failed.
             self.ctx.sleep(driver.sleep)
 
-    def _http_retry_unit(self, unit: WorkUnit, fetched: Outcome) -> WorkUnit | None:
+    def _http_retry_unit(
+        self, entry: LedgerEntry, unit: WorkUnit, fetched: Outcome
+    ) -> WorkUnit | None:
         """The http-variant retry for a TLS-refused fetch, or None.
 
         Canonicalization forces https, so an http-only source is asked for
         over a TLS it does not speak and parks blocked forever. When the
         https fetch failed at the TLS layer (the typed ``Refused.tls``
-        marker, never the evidence prose) AND the owner actually shared
-        the source as http (:attr:`http_shared`, read off live corpus
-        frontmatter at seeding), the same unit is refetched over http —
-        identity, hashing and the ledger URL all unchanged; only the wire
-        request downgrades. A TLS failure on a genuinely https-shared URL
-        never downgrades: it stays blocked, exactly as before. The check
-        lives here, at the run/fetch seam, so drivers stay ignorant of it.
+        marker, never the evidence prose) AND the source was actually
+        shared as http, the same unit is refetched over http — identity,
+        hashing and the ledger URL all unchanged; only the wire request
+        downgrades. A TLS failure on a genuinely https-shared URL never
+        downgrades: it stays blocked, exactly as before. The check lives
+        here, at the run/fetch seam, so drivers stay ignorant of it.
+
+        Two licenses, either one enough: a live frontmatter listing the
+        http variant (:attr:`http_shared`, read at seeding — it covers
+        every captured line, however old), or the entry's own typed
+        ``http_shared`` flag, stamped at the admission door — the only
+        record a PROMOTED http URL has, since promoted URLs never live in
+        frontmatter, and the record that keeps a redrain licensed.
         """
         if not (isinstance(fetched, Refused) and fetched.tls):
             return None
-        if unit.hash not in self.http_shared or not unit.url.startswith("https://"):
+        licensed = unit.hash in self.http_shared or entry.http_shared
+        if not licensed or not unit.url.startswith("https://"):
             return None
         return dataclasses.replace(unit, url="http://" + unit.url.removeprefix("https://"))
 
@@ -1101,7 +1137,13 @@ class _Drain:
         )
         if content.assets:
             self._write_assets(self.entries[entry.hash], content.assets)
-        if content.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
+        if content.media:
+            # ALWAYS ledgered at emit, whatever `media_fetch` says: the
+            # config gates the download alone (`_process`), so under
+            # `none` the child rests queued — the one mechanism the
+            # redrain's resting path already is — and drains the moment
+            # the owner turns media back on. Gating the emit dropped the
+            # URLs outright: no line, no note, no recovery.
             self._media_stage(self.entries[entry.hash], content.media)
 
     def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
@@ -1156,6 +1198,7 @@ class _Drain:
                 kind=redetect.kind,
                 format=redetect.format,
                 status=Status.QUEUED,
+                http_shared=entry.http_shared,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
                 via="sniff",
@@ -1220,14 +1263,19 @@ class _Drain:
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        atomic.write_text(out, content)
+        # Counted AFTER the write lands: the mkdir and the write can both
+        # raise (a file squatting where the directory belongs), the unit
+        # then ledgers `error` — and an outcome registered first had the
+        # report claiming a new enrichment file while listing the same
+        # item under Needs writing up, with nothing on disk to write up.
         if count:
             outcome = self.outcomes.setdefault(owner, _ItemOutcome())
             if existed:
                 outcome.changed += 1
             else:
                 outcome.new += 1
-        out.parent.mkdir(parents=True, exist_ok=True)
-        atomic.write_text(out, content)
         return str(out.relative_to(self.ctx.instance.root))
 
     # -- extraction assets ----------------------------------------
@@ -1590,6 +1638,7 @@ class _Drain:
                 status=status,
                 needs=needs,
                 attempts=attempts,
+                http_shared=entry.http_shared,
                 engine="seed",  # stamped in _record
                 date=datetime.date.min,
                 job=entry.job,
@@ -1632,10 +1681,11 @@ class _Drain:
         """List the items the unit-driven report cannot see, or misstates.
 
         Two families, one owed job. A no-source capture seeded nothing, so
-        it never appears among the drained units; an all-dead item's units
-        all appear, but only as a count that says nothing about what the
-        item still owes. Both owe description + digest from the owner's
-        note, and both are named on the report until the digest lands.
+        it never appears among the drained units; an item whose every unit
+        closed without content has units that all appear, but only as a
+        count that says nothing about what the item still owes. Both owe
+        description + digest from the owner's note, and both are named on
+        the report until the digest lands.
 
         A capture with no URLs and no document media seeds nothing, so it
         never appears among the drained units — yet its description and
@@ -1649,22 +1699,27 @@ class _Drain:
         the opposite of what its frontmatter says.
         """
         sourced = {item_id for items in self.owners.values() for item_id in items}
+        # Digest coverage is filename-resolved (:func:`digested_items`): a
+        # renamed item's digest sits under the old id, and asking for the
+        # live id's file re-listed the item as owing work it recorded.
+        digested = digested_items(self.ctx.instance, set(self.item_status))
         self.no_source_items = [
             item_id
             for item_id, status in sorted(self.item_status.items())
-            if status == "raw"
-            and item_id not in sourced
-            and not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+            if status == "raw" and item_id not in sourced and item_id not in digested
         ]
-        # The all-dead sibling: every unit landed `dead`, so the engine owes
-        # nothing further and no enrichment exists — the owed work is the
-        # same description + digest, from the owner's note. Same shared
-        # reading as the digest backstop (:func:`_all_dead_items`), and it
+        # The closed-without-content sibling: every unit landed `dead` or
+        # was deliberately ruled out, so the engine owes nothing further
+        # and no enrichment exists — the owed work is the same description
+        # + digest, from the owner's note. Same shared reading as the
+        # digest backstop (:func:`_terminal_no_content_items`), and it
         # drops off the moment the item's digest is recorded.
-        self.all_dead_items = [
+        self.closed_unenriched_items = [
             item_id
-            for item_id in _all_dead_items(self.entries, self.owners, set(self.item_status))
-            if not (self.ctx.instance.digests_dir / f"{item_id}.md").exists()
+            for item_id in _terminal_no_content_items(
+                self.entries, self.owners, set(self.item_status)
+            )
+            if item_id not in digested
         ]
 
     def report_payload(self) -> dict[str, object]:
@@ -1680,9 +1735,11 @@ class _Drain:
         items += [
             {
                 "id": item_id,
-                "reason": "every source dead — awaiting description + digest from the note",
+                "reason": (
+                    "every source dead or ruled out — awaiting description + digest from the note"
+                ),
             }
-            for item_id in self.all_dead_items
+            for item_id in self.closed_unenriched_items
         ]
         payload: dict[str, object] = {
             "counts": {status.value: n for status, n in self.counts.items()},
@@ -1908,67 +1965,26 @@ def _unit_owners(
 ) -> dict[str, tuple[str, ...]]:
     """Which live corpus items each work unit belongs to.
 
-    A ledger line's ``item`` is the attribution as of the day it was
-    written, and migration 1 carries a stated item verbatim forever — so a
-    unit of an item RENAMED since then names an id no corpus file answers
-    to, and reading ownership off that string hands the work to a dead id.
-    The corpus is the source of truth, so the corpus is asked first
-    (:func:`corpus_claims`), exactly as ``exclude``, ``lint`` and migration
-    2 already ask it — and exactly as the drain asks it on the way OUT
-    (:meth:`_Drain.owner_of`), which is why no line is ever rewritten to
-    correct a stale one.
-
-    Three answers, in the order migration 2 established:
-
-    1. Every live item that lists the URL — plus the entry's own item where
-       its corpus file exists, which answers first for a unit an owner has
-       since removed from the frontmatter it was seeded from.
-    2. Failing that, the parent's owners: a harvest-promoted child, a media
-       download and an extracted asset are never listed in any frontmatter,
-       so the only corpus answer they have is the one their parent gets.
-    3. Failing that, the stored string as written. A unit no live item
-       claims belongs to whoever the line says — which is lint's ghost-item
-       finding to report, not this map's to silently reassign.
+    The one resolution is :func:`dex_engine.pipeline.ownership.unit_owners`
+    — frontmatter claims first, the ``parent`` chain for the units no
+    frontmatter names, the stored string last — shared with lint so every
+    reader and every write answers ownership identically. This wrapper only
+    supplies the driver registry for the standing-report paths that hold no
+    RunContext.
 
     Args:
         instance: The instance.
         entries: The ledger, hash -> latest entry.
         drivers: The driver registry that owns canonicalization; built
-            fresh when the caller has none in hand (the standing-report
-            paths hold no RunContext).
+            fresh when the caller has none in hand.
 
     Returns:
         Work hash -> the owning item ids, in id order. Every hash in
         ``entries`` has an answer; none is ever empty.
     """
-    claims = corpus_claims(instance.root, drivers if drivers is not None else default_drivers())
-    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
-    owners: dict[str, tuple[str, ...]] = {}
-
-    def resolve(unit_hash: str, seen: frozenset[str]) -> tuple[str, ...]:
-        cached = owners.get(unit_hash)
-        if cached is not None:
-            return cached
-        entry = entries.get(unit_hash)
-        if entry is None:
-            return claims.get(unit_hash, ())
-        claimants = set(claims.get(unit_hash, ()))
-        if entry.item in live:
-            claimants.add(entry.item)
-        if claimants:
-            resolved = tuple(sorted(claimants))
-        elif entry.parent is not None and entry.parent not in seen:
-            # Cycle-guarded: a hand-edited `parent` pointing back into its
-            # own chain must cost a lookup, never the run.
-            resolved = resolve(entry.parent, seen | {unit_hash}) or (entry.item,)
-        else:
-            resolved = (entry.item,)
-        owners[unit_hash] = resolved
-        return resolved
-
-    for unit_hash in entries:
-        resolve(unit_hash, frozenset())
-    return owners
+    return unit_owners(
+        instance.root, entries, drivers if drivers is not None else default_drivers()
+    )
 
 
 def _item_units(
@@ -2182,11 +2198,18 @@ def fetch_urls(
 def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEntry:
     """The stated parent, or the item's primary unit — the corpus's answer.
 
-    Which units are the item's is asked of the corpus (:meth:`_Drain.owner_of`),
-    never of the line's stored string: a renamed item's primary unit sits in
-    the ledger under the dead id, and scanning the string told its owner the
-    item had no primary work unit — both implied causes false — while
-    demanding a ``--parent`` hash for a unit the ledger held all along.
+    Which units are the item's is asked of the corpus
+    (:meth:`_Drain.owners_of`), never of the line's stored string: a
+    renamed item's primary unit sits in the ledger under the dead id, and
+    scanning the string told its owner the item had no primary work unit —
+    both implied causes false — while demanding a ``--parent`` hash for a
+    unit the ledger held all along.
+
+    The question is MEMBERSHIP among the unit's claimants, not equality
+    with one name: seeding hands a shared URL's unit to the first claimant
+    and the line names only that one, but every item listing the URL owns
+    the unit — asked as equality, only the first claimant could ever
+    ``enrich fetch``, and the second was told the same two false causes.
     """
     if parent is not None:
         entry = drain.entries.get(parent)
@@ -2194,7 +2217,7 @@ def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEn
             raise ValueError(f"--parent {parent!r} is not a ledger entry")
         return entry
     for entry in drain.entries.values():
-        if drain.owner_of(entry) == item_id and (entry.depth or 0) == 0:
+        if item_id in drain.owners_of(entry) and (entry.depth or 0) == 0:
             return entry
     raise ValueError(f"item {item_id!r} has no primary work unit — pass --parent <hash> explicitly")
 
@@ -2402,7 +2425,8 @@ def digest_orphans(instance: Instance) -> list[str]:
     shared into two captures enriches under the first item, and the
     second — which derives ``enriched`` on the same landing, and is
     therefore digestible — has no directory to be found by. A live item
-    whose every unit landed ``dead`` is the third (:func:`_all_dead_items`):
+    whose every unit closed without content — ``dead``, or deliberately
+    ruled out ``skipped`` — is the third (:func:`_terminal_no_content_items`):
     nothing landed and nothing owes, so neither of the first two answers
     finds it, yet its description and digest — from the owner's note —
     are exactly the work still owed.
@@ -2420,10 +2444,18 @@ def digest_orphans(instance: Instance) -> list[str]:
         return orphans
     entries = _ledger_or_none(instance)
     owners = _unit_owners(instance, entries) if entries is not None else {}
-    owing = _items_owing_work(entries, owners)
+    owing = items_owing_work(entries, owners)
     enriched_on = _last_enriched(entries, owners)
-    digested_on = _last_digested(instance)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    recorded = digested_items(instance, live)
+    # A digest pass record names the item as of the day it was recorded,
+    # like the file it covers: resolved the same way, so a pre-rename pass
+    # still dates the live item's digest and the staleness comparison
+    # survives the rename.
+    digested_on: dict[str, datetime.date] = {}
+    for recorded_item, date in _last_digested(instance).items():
+        item_id = _dir_owner(recorded_item, live)
+        digested_on[item_id] = max(digested_on.get(item_id, date), date)
     # A directory's name is the attribution as of the day it was written,
     # like a ledger line's item: a rename interrupted between the corpus
     # file and the enrichment directory leaves the directory under the
@@ -2440,17 +2472,18 @@ def digest_orphans(instance: Instance) -> list[str]:
     # line naming an id no corpus file answers to is lint's ghost-item
     # finding, never work this backstop can ask anyone to do.
     candidates |= enriched_on.keys() & live
-    # The third answer: an item whose every unit landed dead. It has no
-    # enrichment directory and no done line, so neither route above finds
-    # it — yet it owes exactly what a no-source capture owes, description
-    # and digest from the owner's note, and the no-digest branch below is
-    # what lists it. Once its digest pass is recorded it drops off like
-    # any other item (nothing ever landed, so nothing is ever stale).
-    candidates.update(_all_dead_items(entries, owners, live))
+    # The third answer: an item whose every unit closed without content
+    # (dead, or ruled out skipped). It has no enrichment directory and no
+    # done line, so neither route above finds it — yet it owes exactly
+    # what a no-source capture owes, description and digest from the
+    # owner's note, and the no-digest branch below is what lists it. Once
+    # its digest pass is recorded it drops off like any other item
+    # (nothing ever landed, so nothing is ever stale).
+    candidates.update(_terminal_no_content_items(entries, owners, live))
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
-        if not (instance.digests_dir / f"{item_id}.md").exists():
+        if item_id not in recorded:
             orphans.append(item_id)
             continue
         landed = enriched_on.get(item_id)
@@ -2464,16 +2497,19 @@ def digest_orphans(instance: Instance) -> list[str]:
 
 
 def _dir_owner(name: str, live: set[str]) -> str:
-    """The live item an enrichment directory belongs to, else its own name.
+    """The live item an id-named artifact belongs to, else the name itself.
 
-    A directory named for a live item answers for itself. One named for
-    no live item is resolved by its trailing shortid — a rename keeps the
-    shortid and rewrites the slug, the same trailing-id match the
-    exclusions and the harvest-pass reader use across renames — and
-    attributes to the one live item carrying it. No live match, or two
-    (six hex digits can collide), resolves nothing: the name stands, as
-    it always did, and what it means is a finding, not an attribution to
-    guess at.
+    A name matching a live item answers for itself. One matching no live
+    item is resolved by its trailing shortid — a rename keeps the shortid
+    and rewrites the slug, the same trailing-id match the exclusions and
+    the harvest-pass reader use across renames — and attributes to the one
+    live item carrying it. No live match, or two (six hex digits can
+    collide), resolves nothing: the name stands, as it always did, and
+    what it means is a finding, not an attribution to guess at.
+
+    The names resolved this way are the id-keyed leftovers a rename can
+    strand: an enrichment directory, a ``state/digests/<id>.md`` file
+    (:func:`digested_items`), and a digest pass record's item.
     """
     if name in live:
         return name
@@ -2482,7 +2518,33 @@ def _dir_owner(name: str, live: set[str]) -> str:
     return matches[0] if len(matches) == 1 else name
 
 
-def _items_owing_work(
+def digested_items(instance: Instance, live: set[str]) -> set[str]:
+    """The item each recorded digest answers for — filenames ownership-resolved.
+
+    A digest file's name is the attribution as of the day it was written,
+    like an enrichment directory's: the rename procedure moves the corpus
+    file and the enrichment directory, and ``state/digests/<old-id>.md``
+    stays behind. Resolved by the same trailing-shortid rule
+    (:func:`_dir_owner`), the renamed item keeps the digest it already
+    recorded — asking for the live id's filename instead re-listed the
+    item as owing a digest, and the re-digest that answered it left a
+    ninth digest beside eight items, named on no surface, forever. A stem
+    that resolves to nothing live stands as itself: the digest covers no
+    live item, and the item missing one is still surfaced.
+
+    Args:
+        instance: The instance.
+        live: The live corpus item ids.
+
+    Returns:
+        The resolved owner of every ``state/digests/*.md`` file.
+    """
+    if not instance.digests_dir.is_dir():
+        return set()
+    return {_dir_owner(path.stem, live) for path in instance.digests_dir.glob("*.md")}
+
+
+def items_owing_work(
     entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
 ) -> set[str]:
     """The items a unit is still outstanding on — the ones deriving ``raw``.
@@ -2491,6 +2553,8 @@ def _items_owing_work(
     from (:func:`_unit_owners`): an item held out of digest by an
     outstanding unit and an item listed as owing one have to be the same
     item, or the backstop names work the ingest procedure forbids doing.
+    Public because lint's coverage row applies the same exemption: a
+    correctly parked item is not drift to place, it is work still owed.
 
     An unreadable ledger claims nothing: no item is held back, exactly as
     no item is called stale.
@@ -2505,25 +2569,36 @@ def _items_owing_work(
     }
 
 
-def _all_dead_items(
+# The statuses that close a unit without producing content: confirmed gone,
+# or deliberately ruled out (a cap-free skip — the skills' own heal marks a
+# dead unit's sibling skipped with the reason stated). `done` landed
+# content; everything else is outstanding.
+_TERMINAL_NO_CONTENT = frozenset({Status.DEAD, Status.SKIPPED})
+
+
+def _terminal_no_content_items(
     entries: Mapping[str, LedgerEntry] | None,
     owners: Mapping[str, tuple[str, ...]],
     live: set[str],
 ) -> list[str]:
-    """The live items whose every ledger unit landed ``dead``, sorted.
+    """The live items whose every ledger unit closed without content, sorted.
 
     One shared reading for the surfaces that owe such an item a listing —
-    the run report and the digest backstop: every source confirmed gone
-    means the engine owes nothing further and no enrichment exists, so
-    the item derives ``enriched`` with nothing to digest FROM but the
-    owner's note — which is exactly its owed work, description + digest,
-    and neither surface could see it as more than a count.
+    the run report and the digest backstop: every source confirmed gone or
+    deliberately ruled out means the engine owes nothing further and no
+    enrichment exists, so the item derives ``enriched`` with nothing to
+    digest FROM but the owner's note — which is exactly its owed work,
+    description + digest, and neither surface could see it as more than a
+    count. Dead-only was the first spelling of this predicate, and it let
+    the mixed item vanish: the skills' own heal marks a dead unit's
+    sibling ``skipped`` with a reason, and that item owes exactly the same
+    note-digest.
 
     Ownership is the corpus's answer, like every other reading off these
     maps. Cap-fire markers are not units — they record refused work — so
-    they neither make an item all-dead nor break the reading. An item
-    with no units at all is the no-source capture, a different listing.
-    An unreadable ledger claims nothing.
+    they neither close an item nor break the reading. An item with no
+    units at all is the no-source capture, a different listing. An
+    unreadable ledger claims nothing.
     """
     if not entries:
         return []
@@ -2534,7 +2609,9 @@ def _all_dead_items(
         for item_id in owners.get(entry.hash, (entry.item,)):
             statuses.setdefault(item_id, set()).add(entry.status)
     return sorted(
-        item_id for item_id, seen in statuses.items() if item_id in live and seen == {Status.DEAD}
+        item_id
+        for item_id, seen in statuses.items()
+        if item_id in live and seen <= _TERMINAL_NO_CONTENT
     )
 
 
@@ -2596,9 +2673,10 @@ def never_harvested(instance: Instance) -> list[str]:
     step. An item still owing a unit derives ``raw`` and has not reached
     harvest, so it is never listed, however long it stays parked — the same
     rule :func:`digest_orphans` applies. An item with no fetched page at
-    all — a no-source capture, or one whose every unit died unfetched — has
-    no pages to read the subject rule over; its work is description and
-    digest, and it owes no pass. A fetched page is a ``done`` unit that is
+    all — a no-source capture, or one whose every unit closed without
+    content (dead, or ruled out skipped) — has no pages to read the
+    subject rule over; its work is description and digest, and it owes no
+    pass. A fetched page is a ``done`` unit that is
     not a media download or an extracted asset, the same reading the URL
     cap counts (:meth:`_Drain.fetched_count`).
 
@@ -2623,7 +2701,7 @@ def never_harvested(instance: Instance) -> list[str]:
     if not entries:
         return []
     owners = _unit_owners(instance, entries)
-    owing = _items_owing_work(entries, owners)
+    owing = items_owing_work(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     fetched = {
         item_id
@@ -2710,8 +2788,11 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
 
     A heal never erases what it does not correct: done heals carry the
     prior entry's path/title forward unless a new ``path`` overrides them.
-    The owning item's derived frontmatter is refreshed in the same call, so
-    a hand-written enrichment file is listed the moment its heal lands.
+    The attribution is the corpus's answer (:meth:`_Drain.owner_of`), like
+    every other write's — a renamed item's heal lands under the live id,
+    never the dead string the prior line spells. The owning item's derived
+    frontmatter is refreshed in the same call, so a hand-written enrichment
+    file is listed the moment its heal lands.
 
     A unit is found by its canonical identity, or — failing that — by the
     exact key it was stored under: bad seeds and every media line
@@ -2760,11 +2841,16 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         prior = drain.entries.get(work_hash(url))
     if prior is None:
         raise ValueError(f"no ledger entry for {canonical!r} — mark heals existing state")
+    # The attribution is asked of the corpus before the write, like every
+    # other write path: a heal carried on the stored string re-records a
+    # renamed item's unit under the dead id, and the superseded-output drop
+    # below then searches a directory the rename moved away.
+    drain.resolve_owners()
     effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
     healed = LedgerEntry(
         hash=prior.hash,
         url=prior.url,
-        item=prior.item,
+        item=drain.owner_of(prior),
         kind=prior.kind,
         format=prior.format,
         status=status,
@@ -2773,6 +2859,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # dropped.
         needs=(needs or prior.needs) if status in (Status.WAITING, Status.BLOCKED) else needs,
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
+        http_shared=prior.http_shared,
         engine="seed",  # stamped in record
         date=datetime.date.min,
         job=prior.job,

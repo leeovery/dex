@@ -16,11 +16,27 @@ permanently excluded item feeding query and wiki forever.
 Except the work another live corpus item still claims. A work unit is
 keyed by URL, not by item, so two items listing one URL share one ledger
 entry that names only one of them; purging on the name alone would delete
-a history the survivor still owns. The summary states both counts — this
+a history the survivor still owns. The claim is asked of the one ownership
+resolution every ledger reader routes through
+(:func:`dex_engine.pipeline.ownership.unit_owners`), not of frontmatter
+alone: a child promoted under the excluded item appears in no ``urls:``/
+``media:``, so its only corpus answer travels its ``parent`` chain — where
+the chain ends at work a survivor lists, the child is the survivor's too.
+The summary states both counts — this
 runs in bulk from the scope-filter pass, so that line is the owner's only
 signal. A corpus file that cannot be read claims nothing, which would make
 that veto fail open toward deletion, so a batch that meets one purges no
 ledger entries at all and the summary says why.
+
+The purge judges every line against the whole exclusions record, never
+this batch's ids alone. A kept line still names the item it was seeded
+under — lines are never rewritten in place; reads resolve ownership live —
+so when the survivor is excluded in a later batch, the stored string
+matches no id in that batch: judged against the batch alone the hash was
+never vetoed and never purged, unpurgeable by any batch forever, and the
+next run refetched it under the excluded id. Judged against the record,
+whichever batch removes the last claimant sweeps the line, and any later
+batch sweeps residue an interrupted purge left.
 
 A kept entry whose output was filed under the purged item goes back to
 ``queued`` in the same breath: the line survives on the survivor's claim,
@@ -54,7 +70,7 @@ from pathlib import Path
 
 from . import corpus
 from .pipeline import ledger
-from .pipeline.ownership import corpus_owners
+from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
 from .pipeline.types import Instance, LedgerEntry, Status
 from .pipeline.urls import resolve_repo_path
@@ -126,7 +142,14 @@ def run_exclude(
     # (which the TSV makes idempotent) purges them.
     # Scanned after the deletions above, so a purged item cannot claim its
     # own work — what remains is what the surviving corpus still lists.
-    purged = {exclusion.item_id for exclusion in validated}
+    # The purge judges lines against the WHOLE record, not this batch's ids
+    # alone: a shared unit's line kept on a survivor's claim still names the
+    # item it was seeded under, so the batch that later excludes the
+    # survivor holds no id matching the stored string — the batch's ids
+    # alone left that hash unjudged forever, and the next run refetched it.
+    on_record = {exclusion.item_id for exclusion in validated} | _on_record(
+        instance.state_dir / "exclusions.tsv"
+    )
     collapsed = len(entries) - len(validated)
     counted = f"{len(validated)}"
     if collapsed:
@@ -149,8 +172,8 @@ def run_exclude(
             + f"; {unreadable} corpus file(s) could not be read, so no ledger entries "
             "were purged — repair them (dex-lint names them) and re-run"
         )
-    claimed = corpus_owners(instance.root, default_drivers())
-    dropped, kept = ledger.drop_items(instance.ledger_path, purged, claimed=claimed)
+    claimed = _surviving_claims(instance, now=now)
+    dropped, kept = ledger.drop_items(instance.ledger_path, on_record, claimed=claimed, now=now)
     summary += _purge_counts(dropped, kept)
 
     def stamp(entry: LedgerEntry) -> LedgerEntry:
@@ -158,7 +181,7 @@ def run_exclude(
         # strands a survivor's landing writes a ledger line at all.
         return ledger.stamp(entry, today=today, now=now, engine_version=version())
 
-    requeued = _requeue_stranded_landings(instance, purged, claimed, now=now, stamp=stamp)
+    requeued = _requeue_stranded_landings(instance, on_record, claimed, now=now, stamp=stamp)
     if requeued:
         summary += f"; {requeued} re-queued (enrichment went with the item that produced it)"
     return summary
@@ -172,13 +195,7 @@ def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple
     deletions the re-run finishes.
     """
     exclusions = instance.state_dir / "exclusions.tsv"
-    existing: set[str] = set()
-    if exclusions.exists():
-        existing = {
-            line.split("\t")[0]
-            for line in exclusions.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+    existing = _on_record(exclusions)
     removed = missing = digests = 0
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
@@ -197,10 +214,77 @@ def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple
     return removed, missing, digests
 
 
+def _on_record(exclusions: Path) -> set[str]:
+    """Every item id in ``state/exclusions.tsv`` — the full record, all batches.
+
+    Read after :func:`_record_and_remove` appends, this is the batch's ids
+    united with every prior ruling's: the set the ledger purge judges
+    stored ``item`` strings against, because a kept line goes on naming an
+    id excluded batches ago.
+    """
+    if not exclusions.exists():
+        return set()
+    return {
+        line.split("\t")[0]
+        for line in exclusions.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+
+
+def _surviving_claims(
+    instance: Instance,
+    *,
+    now: Callable[[], datetime.datetime],
+) -> dict[str, tuple[str, ...]]:
+    """Work hash -> the live items the one ownership resolution hands it to.
+
+    The claim veto's map, asked of :func:`unit_owners` — the resolution
+    every ledger reader routes ownership through — rather than of
+    frontmatter claims alone. A child promoted under the excluded item is
+    listed in no ``urls:``/``media:``, so its only corpus answer travels
+    its ``parent`` chain; reading the veto off frontmatter purged such a
+    child even where the chain resolves to a live co-claimant — work
+    another item still owns, deleted with its history.
+
+    Called after the batch's deletions, so the whole resolution answers
+    against the post-exclusion corpus: a purged item is not live, cannot
+    claim its own work, and cannot keep a child's chain alive.
+    ``unit_owners`` falls back to the stored string where nothing live
+    claims a unit, so the answer is filtered to the items with a corpus
+    file — a fallback id proves no claim, and counting it as one would
+    veto every purge. Each hash's resolution is homogeneous (a chain
+    inherits live claimants whole or dies whole), so the filter keeps
+    either the full answer or none of it.
+
+    The entries are read tolerantly (:func:`ledger.latest_readable`) — the
+    same view ``drop_items`` judges — so one hand-tampered line neither
+    aborts the purge nor skews which hashes the veto covers.
+
+    Args:
+        instance: The instance.
+        now: Injected instant clock, UTC-aware — the resolution reads the
+            ledger against the same present the purge does.
+
+    Returns:
+        Work hash -> the surviving claimant ids, in id order; hashes no
+        live item claims are absent.
+    """
+    entries = ledger.latest_readable(instance.ledger_path, now=now)
+    owners = unit_owners(instance.root, entries, default_drivers())
+    corpus_dir = instance.root / "corpus"
+    live = {path.stem for path in corpus_dir.glob("*/*.md")} if corpus_dir.is_dir() else set()
+    claims: dict[str, tuple[str, ...]] = {}
+    for unit_hash, ids in owners.items():
+        survivors = tuple(item_id for item_id in ids if item_id in live)
+        if survivors:
+            claims[unit_hash] = survivors
+    return claims
+
+
 def _requeue_stranded_landings(
     instance: Instance,
-    purged: set[str],
-    claimed: Mapping[str, str],
+    on_record: set[str],
+    claimed: Mapping[str, tuple[str, ...]],
     *,
     now: Callable[[], datetime.datetime],
     stamp: Callable[[LedgerEntry], LedgerEntry],
@@ -228,8 +312,13 @@ def _requeue_stranded_landings(
 
     Args:
         instance: The instance.
-        purged: The excluded item ids, whose directories are already gone.
-        claimed: Work hash -> the live item that still claims it.
+        on_record: Every item id excluded on the record — this batch and
+            prior ones, whose directories are already gone. The whole
+            record, so a landing a prior interrupted purge stranded is
+            healed by whichever batch runs next, the same way the ledger
+            purge sweeps against the record.
+        claimed: Work hash -> the live items that still claim it
+            (:func:`_surviving_claims`).
         now: Injected instant clock, UTC-aware — the ledger resolves each
             hash against the same present the purge did.
         stamp: The writer seam — :func:`ledger.stamp` with this command's
@@ -246,7 +335,7 @@ def _requeue_stranded_landings(
         # the health check as a done output gone from disk, and the next
         # verb names the unreadable line loudly.
         return 0
-    deleted = {Path("enrichment") / item_id for item_id in purged}
+    deleted = {Path("enrichment") / item_id for item_id in on_record}
     stranded = [
         entry
         for entry in kept.values()
@@ -258,12 +347,17 @@ def _requeue_stranded_landings(
     if not stranded:
         return 0
     for entry in stranded:
+        # The stored string wins wherever it is still one of the claimants
+        # (a unit two live items share must not migrate between them);
+        # otherwise the first survivor by id, as seeding's dedupe orders.
+        survivors = claimed.get(entry.hash, ())
+        item = entry.item if entry.item in survivors or not survivors else survivors[0]
         ledger.append(
             instance.ledger_path,
             stamp(
                 dataclasses.replace(
                     entry,
-                    item=claimed.get(entry.hash, entry.item),
+                    item=item,
                     status=Status.QUEUED,
                     path=None,
                     title=None,
@@ -353,13 +447,13 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
 def _unreadable_corpus_items(root: Path) -> int:
     """How many corpus files cannot be read at all.
 
-    ``corpus_owners`` skips them silently, rightly for its other callers —
-    but here its map is a delete decision, and it fails OPEN: a hash
-    claimed only by an item whose frontmatter will not parse reads as
-    claimed by nobody, and the hash's whole history goes, reported as a
-    clean drop. Counted separately (a second parse, on a command that runs
-    rarely and in bulk) rather than by changing what that map means to
-    every caller.
+    The corpus claims under ``unit_owners`` skip them silently
+    (``corpus_claims``), rightly for its other callers — but here its map
+    is a delete decision, and it fails OPEN: a hash claimed only by an item
+    whose frontmatter will not parse reads as claimed by nobody, and the
+    hash's whole history goes, reported as a clean drop. Counted separately
+    (a second parse, on a command that runs rarely and in bulk) rather than
+    by changing what that map means to every caller.
     """
     corpus_dir = root / "corpus"
     if not corpus_dir.is_dir():

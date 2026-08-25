@@ -46,6 +46,7 @@ __all__ = [
     "compact",
     "drop_items",
     "from_line",
+    "latest_readable",
     "load",
     "resolution_key",
     "stamp",
@@ -56,8 +57,12 @@ __all__ = [
 class LedgerSchemaError(ValueError):
     """A ledger line does not conform to the current schema.
 
-    Raised at the serialization boundary — with the likely missing migration
-    named — instead of surfacing as a ``KeyError`` three stages later.
+    Raised at the serialization boundary instead of surfacing as a
+    ``KeyError`` three stages later, and the message carries the repair
+    that fits the fault: a line that is not JSON at all is a TORN line —
+    an interrupted append, which no migration mends — and names the
+    sanctioned deletion; a valid-JSON line breaking the schema names the
+    likely missing migration.
     """
 
 
@@ -81,6 +86,7 @@ _ALL_KEYS = frozenset(
         "attempts",
         "cap",
         "forced",
+        "http_shared",
         "at",
         "job",
         "via",
@@ -105,13 +111,24 @@ def from_line(line: str) -> LedgerEntry:
         The parsed entry.
 
     Raises:
-        LedgerSchemaError: The line is not JSON, not an object, carries
-            unknown or pre-migration vocabulary, or violates a schema invariant.
+        LedgerSchemaError: The line is not JSON (a torn line — the message
+            names the sanctioned single-line deletion), not an object,
+            carries unknown or pre-migration vocabulary (the message names
+            the likely missing migration), or violates a schema invariant.
     """
     try:
         raw = json.loads(line)
     except json.JSONDecodeError as e:
-        raise LedgerSchemaError(f"unparseable ledger line ({e}): {line!r}") from e
+        # A tear, not a schema fault: an interrupted append leaves a
+        # half-written trailing line (relocatable mid-file by later
+        # appends or a union merge), and no migration mends one — the
+        # migration hint would send the owner to a repair that cannot
+        # work. The advice is the passes row's, applied to this file.
+        raise LedgerSchemaError(
+            f"unparseable ledger line ({e}) — delete this torn line, and only this "
+            f"line (a half-written line is not a record; every intact line is, and "
+            f"no migration repairs a tear): {line!r}"
+        ) from e
     if not isinstance(raw, dict):
         raise LedgerSchemaError(f"ledger line is not a JSON object: {line!r}")
 
@@ -152,6 +169,7 @@ def from_line(line: str) -> LedgerEntry:
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
             cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
             forced=_expect_bool(raw, "forced") if "forced" in raw else False,
+            http_shared=_expect_bool(raw, "http_shared") if "http_shared" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             at=None if "at" not in raw else _expect_datetime(raw, "at"),
@@ -205,9 +223,9 @@ def _expect_bool(raw: dict[str, object], key: str) -> bool:
 def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
-    ``None`` fields are dropped; ``rerun`` and ``forced`` appear only when
-    true — the written line carries exactly the ledger schema, in schema
-    order.
+    ``None`` fields are dropped; ``rerun``, ``forced`` and ``http_shared``
+    appear only when true — the written line carries exactly the ledger
+    schema, in schema order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -220,6 +238,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("attempts", entry.attempts),
         ("cap", entry.cap.value if entry.cap is not None else None),
         ("forced", entry.forced or None),
+        ("http_shared", entry.http_shared or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("at", entry.at.isoformat() if entry.at is not None else None),
@@ -303,7 +322,10 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
 
     Raises:
         LedgerSchemaError: A line does not conform — the message names the
-            file, line number, and likely missing migration.
+            file, the line number, and the repair that fits the fault
+            (the sanctioned torn-line deletion, or the likely missing
+            migration), so every verb that dies on this load dies naming
+            them.
     """
     entries: dict[str, LedgerEntry] = {}
     if not path.exists():
@@ -473,7 +495,12 @@ def drop_items(
     hash is judged on the line ``load`` resolves to, and ``claimed`` — the
     work every surviving corpus item still lists — vetoes the removal. What
     goes is a hash whose live line names a purged item and which no live
-    item claims; its superseded lines, the audit trail, go with it.
+    item claims; its superseded lines, the audit trail, go with it. And a
+    kept line goes on naming the item it was written under — lines are
+    never rewritten in place — so ``items`` must be the whole exclusions
+    record, not one batch's ids: judged against the batch alone, the line
+    a survivor's claim kept becomes unpurgeable the day the survivor is
+    excluded, because no later batch names the id the line stores.
 
     Unparseable lines are kept, not purged: a line this layer cannot read
     is not provably one of these items', and a purge must never become
@@ -483,7 +510,8 @@ def drop_items(
 
     Args:
         path: The ledger file; a missing file is a no-op.
-        items: The purged corpus item ids.
+        items: The purged corpus item ids — every id excluded on the
+            record, prior batches included, never the current batch alone.
         claimed: The work hashes live corpus items still list — computed
             after the purge deletes their files, so a purged item cannot
             claim its own work.
@@ -518,6 +546,32 @@ def drop_items(
     # Atomic: a crash mid-write must never lose the ledger.
     atomic.write_text(path, "".join(line + "\n" for line in kept))
     return removed, kept_units
+
+
+def latest_readable(
+    path: Path, *, now: Callable[[], datetime.datetime] = _utc_now
+) -> dict[str, LedgerEntry]:
+    """The latest entry per hash over the lines that parse — purge support only.
+
+    Exactly the view :func:`drop_items` judges hashes on, exposed so the
+    purge's claim veto can resolve ownership over the same entries it
+    judges: one hand-tampered line must neither abort the purge (the next
+    command's ``load`` names it loudly) nor skew which hashes the veto
+    covers. A line this reader skips is not judged and not purged —
+    ``drop_items`` keeps it. Every ordinary reader uses :func:`load`, whose
+    loud refusal is the design.
+
+    Args:
+        path: The ledger file; a missing file reads as empty.
+        now: The reader's clock, passed to the ``at``-timestamp resolution.
+
+    Returns:
+        Work hash -> the latest readable entry, as ``load`` would resolve
+        it over the readable lines.
+    """
+    if not path.exists():
+        return {}
+    return _latest_readable(path.read_text(encoding="utf-8"), now=now())
 
 
 def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEntry]:

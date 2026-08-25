@@ -3,6 +3,7 @@
 import datetime
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,12 @@ import pytest
 from dex_engine.exclude import main, run_exclude
 from dex_engine.normalize import load_exclusions
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.registry import default_drivers
-from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Status
+from dex_engine.pipeline.types import Config, Instance, Kind, LedgerEntry, Status
+from tests.conftest import FakeDriver
+from tests.drivers.conftest import FakeTransport
 
 DRIVERS = default_drivers()
 
@@ -35,12 +39,13 @@ def write_item_stub(instance: Instance, item_id: str = ITEM, *, urls: tuple[str,
     )
 
 
-def ledger_entry(
+def ledger_entry(  # noqa: PLR0913 — one keyword per ledger identity slot
     instance: Instance,
     unit_hash: str,
     item_id: str,
     *,
     url: str | None = None,
+    parent: str | None = None,
     at: datetime.datetime = datetime.datetime(2026, 8, 20, 9, 0, tzinfo=datetime.UTC),
 ) -> None:
     ledger.append(
@@ -54,6 +59,8 @@ def ledger_entry(
             engine="0.2.1",
             date=datetime.date(2026, 8, 20),
             at=at,
+            parent=parent,
+            depth=None if parent is None else 1,
         ),
     )
 
@@ -246,6 +253,37 @@ class TestLedgerPurge:
         run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
         assert instance.ledger_path.read_text() == before
 
+    def test_a_promoted_child_survives_on_the_co_claimants_chain(self, instance):
+        # Two items list one URL; the unit was seeded under the one about
+        # to be purged, and `enrich fetch` promoted a child under it whose
+        # line carries the shared unit's hash as `parent`. The child is in
+        # no frontmatter — its only corpus answer travels the chain — and a
+        # frontmatter-only veto purged it even though the chain resolves to
+        # the co-claimant, a live item: work another live corpus item still
+        # claims, deleted with its history.
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        ledger_entry(instance, "cccccccccc", ITEM, parent=shared)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
+        assert set(ledger.load(instance.ledger_path)) == {shared, "cccccccccc"}
+        assert "0 ledger entries dropped" in summary
+        assert "2 kept" in summary
+
+    def test_a_child_whose_whole_chain_dies_with_the_item_is_purged(self, instance):
+        # Only the excluded item lists the URL: the chain ends at work no
+        # live item claims, so the child goes with its parent — there is
+        # no survivor to keep either line for.
+        url = "https://example.test/only-this-item"
+        unit = work_identity(url, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(url,))
+        ledger_entry(instance, unit, ITEM, url=url)
+        ledger_entry(instance, "cccccccccc", ITEM, parent=unit)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert ledger.load(instance.ledger_path) == {}
+        assert "2 ledger entries dropped, 0 kept" in summary
+
     def test_an_unreadable_line_is_kept_never_purged_by_accident(self, instance):
         # A purge must not become incidental data loss: a line this code
         # cannot parse is not provably the excluded item's.
@@ -255,6 +293,94 @@ class TestLedgerPurge:
             f.write("{torn\n")
         run_exclude(instance, [{"id": ITEM}])
         assert instance.ledger_path.read_text() == "{torn\n"
+
+
+class TestSequentialExclusions:
+    """The purge judges the whole exclusions record, never the batch alone.
+
+    A shared unit's line kept on a survivor's claim goes on naming the item
+    it was seeded under — lines are never rewritten in place. The batch
+    that later excludes the survivor holds no id matching that stored
+    string, so judged against the batch alone the hash was never vetoed
+    (nothing live claims it) and never purged (the batch does not name it):
+    unpurgeable by any batch forever, refetched by the next run, and the
+    report resurrected the excluded item under "Needs writing up".
+    """
+
+    def _seed_shared(self, instance) -> str:
+        """Two items on one URL; the queued line names the first of them."""
+        shared = work_identity(SHARED_URL, DRIVERS)
+        write_item_stub(instance, ITEM, urls=(SHARED_URL,))
+        write_item_stub(instance, OTHER, urls=(SHARED_URL,))
+        ledger_entry(instance, shared, ITEM, url=SHARED_URL)
+        return shared
+
+    def _ctx(self, instance, driver) -> run_mod.RunContext:
+        def refuse_gh(args: Sequence[str]) -> str:
+            raise OSError(f"no gh in tests (called with {args[:2]})")
+
+        return run_mod.RunContext(
+            instance=instance,
+            config=Config(),
+            drivers=[driver],
+            today=lambda: datetime.date(2026, 8, 22),
+            now=lambda: datetime.datetime(2026, 8, 22, 12, 0, tzinfo=datetime.UTC),
+            engine_version="0.4.0",
+            transport=FakeTransport({}),
+            sleep=lambda _seconds: None,
+            gh=refuse_gh,
+        )
+
+    def test_excluding_the_survivor_sweeps_the_line_naming_the_first(self, instance):
+        self._seed_shared(instance)
+        first = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert "0 ledger entries dropped, 1 kept" in first
+        second = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "1 ledger entries dropped, 0 kept" in second
+        assert instance.ledger_path.read_text() == ""
+
+    def test_the_next_run_refetches_nothing_and_resurrects_neither(self, instance):
+        # Under the batch-only judgement the queued line survived both
+        # exclusions, so the next run fetched it, recreated
+        # enrichment/<first>/ and reported the excluded item as new
+        # material.
+        self._seed_shared(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        driver = FakeDriver()
+        report = run_mod.run(self._ctx(instance, driver))
+        assert driver.fetched == []
+        assert ITEM not in report
+        assert OTHER not in report
+        assert not (instance.enrichment_dir / ITEM).exists()
+
+    def test_re_excluding_an_already_gone_id_sweeps_residue_idempotently(self, instance):
+        # An instance that lived through the batch-only judgement holds the
+        # orphan already: both ids on record, no corpus file left, the line
+        # still naming the first. Re-running the last batch (its item long
+        # gone) must sweep the residue, and a further re-run drop nothing.
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{ITEM}\tmeme\n{OTHER}\tmeme\n", encoding="utf-8"
+        )
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        summary = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "removed 0 items (1 already gone)" in summary
+        assert "1 ledger entries dropped, 0 kept" in summary
+        assert instance.ledger_path.read_text() == ""
+        again = run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert "0 ledger entries dropped, 0 kept" in again
+
+    def test_a_hash_a_live_item_claims_survives_the_record(self, instance):
+        # No over-purging: the stored string is on the record, but OTHER
+        # still lists the URL — an unrelated later batch keeps the line on
+        # the live claim, and counts it kept.
+        shared = self._seed_shared(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        third = "2026-08-19-third-33dd44"
+        write_item_stub(instance, third)
+        summary = run_exclude(instance, [{"id": third, "reason": "ads"}])
+        assert "0 ledger entries dropped, 1 kept" in summary
+        assert set(ledger.load(instance.ledger_path)) == {shared}
 
 
 class TestStrandedLandings:
@@ -321,6 +447,41 @@ class TestStrandedLandings:
         assert entry.date == self.TODAY
         assert entry.at == self.NOW
 
+    def test_a_stranded_promoted_child_goes_back_queued_for_the_survivor(self, instance):
+        # The child's line survives on the co-claimant's chain, but its
+        # output lived in enrichment/<purged>/ and went with the item that
+        # produced it: back to queued, named for the survivor, lineage kept
+        # so ownership still resolves through the chain.
+        shared = self._shared_landing(instance)
+        child_output = instance.enrichment_dir / ITEM / "web-cccccc.md"
+        child_output.write_text("the promoted child page\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash="cccccccccc",
+                url="https://example.test/promoted-child",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.1",
+                date=datetime.date(2026, 8, 20),
+                at=datetime.datetime(2026, 8, 20, 9, 30, tzinfo=datetime.UTC),
+                parent=shared,
+                depth=1,
+                path=f"enrichment/{ITEM}/web-cccccc.md",
+                title="a child page",
+            ),
+        )
+        summary = self._exclude(instance)
+        child = ledger.load(instance.ledger_path)["cccccccccc"]
+        assert child.status is Status.QUEUED
+        assert child.item == OTHER
+        assert child.parent == shared
+        assert child.depth == 1
+        assert child.path is None
+        assert child.title is None
+        assert "2 re-queued" in summary
+
     def test_a_landing_filed_elsewhere_is_left_alone(self, instance):
         # Only a product in the directory this purge deleted is stranded.
         # A landing under the survivor's own id is untouched, and re-queuing
@@ -371,6 +532,37 @@ class TestStrandedLandings:
         summary = self._exclude(instance)
         assert ledger.load(instance.ledger_path) == {}
         assert "re-queued" not in summary
+
+
+class TestUnionMergedRecord:
+    """Two machines' appends union-merge; the readers tolerate the shape.
+
+    git's union driver concatenates ours-then-theirs, so a merged
+    ``state/exclusions.tsv`` holds the sides' rulings out of chronological
+    order and an item both sides excluded twice, each with the reason its
+    machine wrote. Every reader collapses the file to a set, which is what
+    licenses the template's ``merge=union``.
+    """
+
+    MERGED = (
+        f"{ITEM}\tout of scope\n"
+        f"{OTHER}\tads\n"
+        f"{ITEM}\tmeme thread\n"  # the other machine's copy of the ruling
+        "2026-08-19-third-33dd44\tspam\n"
+    )
+
+    def test_re_excluding_a_twice_recorded_id_appends_no_third_copy(self, instance):
+        (instance.state_dir / "exclusions.tsv").write_text(self.MERGED, encoding="utf-8")
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert (instance.state_dir / "exclusions.tsv").read_text() == self.MERGED
+
+    def test_normalize_reads_every_ruling_once(self, instance):
+        (instance.state_dir / "exclusions.tsv").write_text(self.MERGED, encoding="utf-8")
+        assert load_exclusions(instance.state_dir / "exclusions.tsv") == {
+            "55ad7b",
+            "11ff22",
+            "33dd44",
+        }
 
 
 class TestBadIdsAreRefused:

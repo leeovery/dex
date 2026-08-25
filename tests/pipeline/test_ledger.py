@@ -57,6 +57,32 @@ PARKED_ENTRY = entry(
 )
 
 
+class TestTornLineAdvice:
+    """The repair splits by fault: a tear is deleted, a schema fault migrates."""
+
+    TORN = '{"hash": "73bd78'  # what an interrupted append leaves
+
+    def test_a_torn_line_names_the_sanctioned_deletion(self):
+        with pytest.raises(LedgerSchemaError) as err:
+            ledger.from_line(self.TORN)
+        message = str(err.value)
+        assert "delete this torn line, and only this line" in message
+        assert "a half-written line is not a record" in message
+        assert "bin/dex sync" not in message  # no migration mends a tear
+
+    def test_a_schema_invalid_json_line_keeps_the_migration_hint(self):
+        with pytest.raises(LedgerSchemaError) as err:
+            ledger.from_line('{"kind": "tweet", "status": "done"}')
+        assert "bin/dex sync" in str(err.value)
+        assert "delete this torn line" not in str(err.value)
+
+    def test_load_names_the_file_and_line_of_the_tear(self, tmp_path):
+        path = tmp_path / "enrichment-ledger.jsonl"
+        path.write_text(ledger.to_line(BASE_ENTRY) + "\n" + self.TORN)
+        with pytest.raises(LedgerSchemaError, match=r"enrichment-ledger\.jsonl:2"):
+            ledger.load(path)
+
+
 class TestToLine:
     def test_none_fields_are_dropped(self):
         record = json.loads(ledger.to_line(entry()))
@@ -693,6 +719,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
         cap=cap,
         forced=cap is not None and draw(st.booleans()),
+        http_shared=draw(st.booleans()),
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),

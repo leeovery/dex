@@ -319,6 +319,24 @@ class TestPurgedItemsAreNeverReseeded:
         assert transport.calls == []
         assert '"queued"' not in instance.ledger_path.read_text()
 
+    def test_a_union_merged_record_still_names_the_exclusion(self, tmp_path, migration):
+        # Two machines excluded between syncs: the union driver leaves the
+        # rulings out of order and a doubly-excluded id twice. Membership
+        # is what decides — the skip still fires, whichever reason wins.
+        path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
+        write_exclusions(
+            tmp_path,
+            [
+                ("2026-05-01-item-a1b2c3", "out of scope — machine A"),
+                ("2026-06-06-unrelated-b2c3d4", "ads"),
+                ("2026-05-01-item-a1b2c3", "duplicate ruling — machine B"),
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert '"migration-2"' not in path.read_text()
+        (skip,) = report.skipped
+        assert "excluded, never reseeded" in skip.why
+
     def test_item_gone_without_an_exclusions_record_is_still_skipped(self, tmp_path, migration):
         path = write_entries(tmp_path, [entry("post-web", kind=Kind.WEB)], items=False)
         report = migration.apply(tmp_path)
@@ -691,6 +709,37 @@ class TestOutputsFollowTheRekey:
         )
         assert (item_dir / f"x-{second.hash[:6]}.md").read_text().endswith("the twitter.com view\n")
         assert any("refusing to overwrite" in one.why for one in report.skipped)
+
+    def test_the_refused_rename_note_states_the_real_situation(self, tmp_path, migration):
+        # The old note said the stale file was "no longer named by the
+        # ledger" — but the refused file's line keeps its stored path
+        # through the rewrite, and driven end to end the collapsed hash's
+        # last DONE line names exactly that file. The note now says what
+        # is true and what to do about it.
+        first = stored(OLD_X_URL, kind=Kind.X)
+        second = stored("https://twitter.com/carol/status/300", kind=Kind.X)
+        path = write_entries(tmp_path, [first, second])
+        write_output(tmp_path, first, body="the x.com view")
+        write_output(tmp_path, second, body="the twitter.com view")
+        report = migration.apply(tmp_path)
+        target = f"x-{work_hash(NEW_X_URL)[:6]}.md"
+        stale = f"x-{second.hash[:6]}.md"
+        note = next(s for s in report.skipped if s.what == f"enrichment/{second.item}/{stale}")
+        assert note.why == (
+            f"{target} already exists beside it — refusing to overwrite. Both files are "
+            f"old spellings' views of one unit; {target} is the name the unit's current "
+            f"identity computes, and the ledger's live line may still point at {stale}. "
+            f"Merge what it adds into {target} by hand, then delete it"
+        )
+        assert "no longer named by the ledger" not in note.why
+        # The driven fact the old note denied: the last done line of the
+        # collapsed hash still names the refused file.
+        done = [
+            json.loads(line)
+            for line in path.read_text().split("\n")
+            if line.strip() and json.loads(line)["status"] == "done"
+        ]
+        assert done[-1]["path"] == f"enrichment/{second.item}/{stale}"
 
     def test_a_hash6_neighbours_output_is_left_alone(self, tmp_path, migration):
         # Six hex digits collide, so the candidate must prove it belongs to

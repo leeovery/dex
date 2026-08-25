@@ -5,8 +5,10 @@ Checks:
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
   citation everywhere, index included), coverage orphans and their cited
-  complement (items pages cite that no taxonomy topic records), index
-  consistency,
+  complement (items pages cite that no taxonomy topic records), ghost
+  members (a taxonomy topic's or entity's member id with no corpus file —
+  ``exclude`` never edits the session-owned lists, so the id lingers),
+  index consistency,
   stale pages, page item-count drift (frontmatter ``items:`` vs the page's
   MEMBER count — its taxonomy topic's items, or its entity-members list;
   never its citation count), and difflib sentence similarity ("possible restated
@@ -70,9 +72,16 @@ from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.enrichment import read_enrichment_fields
-from .pipeline.ownership import corpus_owners
+from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
-from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
+from .pipeline.run import (
+    CAP_BOUNDS,
+    HARVEST_RULES_VERSION,
+    digest_orphans,
+    digested_items,
+    items_owing_work,
+    never_harvested,
+)
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
@@ -164,6 +173,7 @@ def run_lint(
     scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
 
     ledgered = _uncategorized_items(taxonomy)
+    ghost_members = _ghost_members(taxonomy, entity_members, corpus_ids)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
     # The coverage invariant's other face: a citation is not a placement,
     # so a cited item can still be in no topic's items and off the
@@ -194,6 +204,7 @@ def run_lint(
         "shortid_citations": scan.shortid_citations,
         "orphans": orphans,
         "unplaced": unplaced,
+        "ghost_members": ghost_members,
         "unindexed": unindexed,
         "ghost_index": ghost_index,
         "stale_pages": scan.stale_pages,
@@ -255,6 +266,48 @@ def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     return {item for item in items if isinstance(item, str)}
 
 
+def _ghost_members(
+    taxonomy: dict[str, object],
+    entity_members: dict[str, list[str]],
+    corpus_ids: set[str],
+) -> list[dict[str, str]]:
+    """Member ids in the session-owned lists that no corpus file answers for.
+
+    ``bin/dex exclude`` deletes the item, its enrichment, its digest and
+    its ledger lines — but ``state/taxonomy.json`` and
+    ``state/entity-members.json`` are session-maintained judgment, which
+    no verb edits, so the excluded id sits in a topic's ``items`` (or an
+    entity's member list) forever: counted by every member-count check,
+    read by staleness, resolvable by nothing. One row per (id, list),
+    naming both, so the repair needs no hunt.
+
+    A finding, not a failure: nothing downstream crashes on a ghost
+    member — it is drift. The repair is the session's: remove the id from
+    the named list, and where the item was excluded that is the whole
+    repair. Malformed shapes contribute nothing here — they are their own
+    loud findings.
+    """
+    rows: list[dict[str, str]] = []
+    topics = taxonomy.get("topics", {})
+    if isinstance(topics, dict):
+        for name, topic in sorted(topics.items()):
+            items = topic.get("items", []) if isinstance(topic, dict) else []
+            if not isinstance(items, list):
+                continue
+            rows += [
+                {"item": item, "where": f"topic {name!r}"}
+                for item in items
+                if isinstance(item, str) and item not in corpus_ids
+            ]
+    for name, members in sorted(entity_members.items()):
+        rows += [
+            {"item": member, "where": f"entity {name!r}"}
+            for member in members
+            if member not in corpus_ids
+        ]
+    return rows
+
+
 def _placed_items(taxonomy: dict[str, object]) -> set[str]:
     """Every item id some topic's ``items`` records — uncategorized-shares included.
 
@@ -310,6 +363,12 @@ def _entity_members(instance: Instance) -> tuple[dict[str, list[str]], str | Non
     ``state/entity-members.json`` becomes a loud failure row naming the
     file and its repair — never the bare ``Expecting value…`` exit that
     named nothing. The wiki checks still run, with no entity members.
+
+    The WHOLE documented shape is validated — an object of string ->
+    list-of-strings. Tolerating a wrong-typed value read
+    ``{"name": "string"}`` as an entity someone emptied: the member-count
+    checks ran against a list that was never there, silently, while the
+    file the wiki layer depends on stood broken.
     """
     path = instance.state_dir / "entity-members.json"
     if not path.exists():
@@ -322,7 +381,19 @@ def _entity_members(instance: Instance) -> tuple[dict[str, list[str]], str | Non
         return {}, (
             f"{path.name}: expected an object of entity -> item list, got {type(raw).__name__}"
         )
-    return {name: members for name, members in raw.items() if isinstance(members, list)}, None
+    for name, members in raw.items():
+        if not isinstance(members, list):
+            return {}, (
+                f"{path.name}: entity {name!r} must map to a list of item ids, "
+                f"got {type(members).__name__}"
+            )
+        bad = [m for m in members if not isinstance(m, str)]
+        if bad:
+            return {}, (
+                f"{path.name}: entity {name!r} holds a non-string member "
+                f"({type(bad[0]).__name__}: {bad[0]!r}) — members are item-id strings"
+            )
+    return raw, None
 
 
 def _frontmatter(text: str) -> str | None:
@@ -597,8 +668,13 @@ def _state_checks(
         # One corpus pass answers ownership for everything built from these
         # entries: the cognitive rows here — manual-work pointers, owed to
         # the live item like every other surface (:func:`_owner`), never to
-        # a renamed-away id — and the integrity scan below.
-        owners = corpus_owners(instance.root, default_drivers())
+        # a renamed-away id — and the integrity scan below. The ONE
+        # resolution the engine's own readers use (`ownership.unit_owners`),
+        # parent chains included: a renamed item's harvested children and
+        # media units are claimed by no frontmatter, and hashing `urls:`
+        # alone read every one of them as unclaimed work with a destroyed
+        # output — advice that pointed at deleting live state.
+        owners = unit_owners(instance.root, entries, default_drivers())
         waiting: dict[str, int] = {}
         cognitive: list[dict[str, str]] = []
         for entry in entries.values():
@@ -615,6 +691,7 @@ def _state_checks(
                 )
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
+        _exempt_parked_orphans(instance, payload, entries, corpus_ids, owners)
         integrity = _referential_integrity(instance, entries, corpus_ids, owners)
         payload["ghost_items"] = integrity.ghost
         payload["missing_outputs"] = integrity.missing
@@ -629,6 +706,34 @@ def _state_checks(
     notes += threads.notes
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
+
+
+def _exempt_parked_orphans(
+    instance: Instance,
+    payload: dict[str, object],
+    entries: dict[str, LedgerEntry],
+    corpus_ids: set[str],
+    owners: Mapping[str, tuple[str, ...]],
+) -> None:
+    """Drop the correctly parked items from the coverage-orphan row.
+
+    The row asks which items no page cites and the taxonomy does not
+    record — but an item still owing a unit (blocked, waiting, manual,
+    queued, error) derives ``raw``, and the ingest procedure forbids
+    digesting or placing a raw item: firing on it steered sessions to
+    ledger a still-parked item into uncategorized-shares. The exemption
+    mirrors the run report's parked handling (:func:`items_owing_work`,
+    the same reading the digest backstop applies), and it reaches only
+    items whose digest is not recorded: a digested item has been through
+    placement, so its absence from the taxonomy is real drift however its
+    later units sit.
+    """
+    orphans = payload.get("orphans")
+    if not isinstance(orphans, list):
+        return
+    digested = digested_items(instance, corpus_ids)
+    parked = {item_id for item_id in items_owing_work(entries, owners) if item_id not in digested}
+    payload["orphans"] = [item_id for item_id in orphans if item_id not in parked]
 
 
 EXCLUDED_ON_RECORD = "excluded on record"
@@ -648,7 +753,7 @@ def _referential_integrity(
     instance: Instance,
     entries: dict[str, LedgerEntry],
     corpus_ids: set[str],
-    owners: Mapping[str, str],
+    owners: Mapping[str, tuple[str, ...]],
 ) -> _IntegrityScan:
     """The ledger's pointers into the tree: item ids, and output paths.
 
@@ -716,7 +821,7 @@ def _referential_integrity(
     # pass was made at all.
     counts: dict[tuple[str, str], int] = {}
     for entry in dead:
-        owner = owners.get(entry.hash)
+        owner = _live_claimant(entry, owners, corpus_ids)
         if entry.item in excluded:
             # The record answers first, always: an exclusion is a ruling the
             # owner made and wrote down, and the claim says only that
@@ -757,7 +862,7 @@ def _referential_integrity(
     return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
 
 
-def _owner(entry: LedgerEntry, owners: Mapping[str, str], corpus_ids: set[str]) -> str:
+def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids: set[str]) -> str:
     """The live item that owns this unit — the corpus's answer, else the line's.
 
     The same rule the engine's readers and its write path apply
@@ -768,7 +873,20 @@ def _owner(entry: LedgerEntry, owners: Mapping[str, str], corpus_ids: set[str]) 
     """
     if entry.item in corpus_ids:
         return entry.item
-    return owners.get(entry.hash) or entry.item
+    return _live_claimant(entry, owners, corpus_ids) or entry.item
+
+
+def _live_claimant(
+    entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids: set[str]
+) -> str | None:
+    """The first LIVE item the resolution hands this unit to, or None.
+
+    The resolution always answers — its last fallback is the stored string
+    — so a claim reading has to filter to the ids a corpus file actually
+    answers for: a dead fallback id proves no claim, and treating it as one
+    would erase the unclaimed finding entirely.
+    """
+    return next((item for item in owners.get(entry.hash, ()) if item in corpus_ids), None)
 
 
 def _excluded_items(instance: Instance) -> set[str]:

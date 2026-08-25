@@ -251,7 +251,10 @@ class PodcastDriver:
             show=None,
             enclosure=enclosure.url,
             published=None,
-            notes="",
+            # The page is in hand and it is all this route will ever see:
+            # an empty body here parked a file with no notes to lose the
+            # moment the source died. Same extraction as the feed route's.
+            notes=_page_notes(page),
         )
 
     def _episode_from_page_feed(self, url: str, page: str) -> "_Episode | Outcome":
@@ -470,6 +473,24 @@ def _normalize(title: str) -> str:
 # ---------------------------------------------------------------------------
 # Pages.
 # ---------------------------------------------------------------------------
+
+
+_PAGE_BODY_RE = re.compile(r"<body\b[^>]*>(.*?)</body\s*>", re.IGNORECASE | re.DOTALL)
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _page_notes(page: str) -> str:
+    """What the page itself offers as show notes, as markdown.
+
+    The no-feed fallback's body: the feed route's notes go through
+    :func:`_html_to_markdown`, and this is the same extraction over the
+    page's ``<body>`` (whole page when no body tag parses), with script
+    and style blocks dropped first — their contents are code, and the tag
+    stripper would keep them as text.
+    """
+    match = _PAGE_BODY_RE.search(page)
+    fragment = match.group(1) if match else page
+    return _html_to_markdown(_SCRIPT_STYLE_RE.sub("", fragment))
 
 
 def _og_title(page: str) -> str | None:

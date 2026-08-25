@@ -145,6 +145,82 @@ class TestMalformedEntityMembers:
         assert "ENTITY MEMBERS FAILURE" in outcome.report
         assert "expected an object of entity -> item list, got list" in outcome.report
 
+    def test_a_string_value_is_a_loud_finding_not_an_emptied_entity(self, instance):
+        # {"name": "string"} passed silently as an entity with no members:
+        # the member-count checks ran against a list that was never there
+        # while the file the wiki layer depends on stood broken.
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": "not-a-list"}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "entity 'anthropic' must map to a list of item ids, got str" in outcome.report
+
+    def test_a_number_value_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": 3}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "entity 'anthropic' must map to a list of item ids, got int" in outcome.report
+
+    def test_a_list_of_nonstrings_is_the_same_finding(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text('{"anthropic": ["ok", 42]}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "ENTITY MEMBERS FAILURE" in outcome.report
+        assert "entity 'anthropic' holds a non-string member (int: 42)" in outcome.report
+
+    def test_the_correct_shape_passes_silently(self, instance):
+        write_taxonomy(instance)
+        (instance.state_dir / "entity-members.json").write_text(
+            f'{{"anthropic": ["{ITEM}"], "empty-entity": []}}'
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "ENTITY MEMBERS FAILURE" not in outcome.report
+
+
+class TestGhostMembers:
+    """A member id no corpus file answers for is drift the report names.
+
+    `bin/dex exclude` deletes the item and its state, but the taxonomy
+    and entity-members lists are session-owned judgment no verb edits —
+    the excluded id sat in them forever, unreported.
+    """
+
+    def test_an_excluded_id_in_uncategorized_is_a_row(self, instance):
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": [ITEM]}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0  # drift, not a hard failure
+        assert "ghost members" in outcome.report
+        assert f"**{ITEM}** — in topic 'uncategorized-shares'" in outcome.report
+
+    def test_an_excluded_id_in_a_topic_is_a_row(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"**{ITEM}** — in topic 'brewing'" in outcome.report
+
+    def test_an_entity_member_with_no_corpus_file_is_a_row(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+        (instance.state_dir / "entity-members.json").write_text(f'{{"anthropic": ["{ITEM}"]}}')
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"**{ITEM}** — in entity 'anthropic'" in outcome.report
+
+    def test_live_ids_are_silent(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_index(instance, "")
+        (instance.state_dir / "entity-members.json").write_text(f'{{"anthropic": ["{ITEM}"]}}')
+        outcome = lint(instance)
+        assert "ghost members (id has no corpus file" in outcome.report  # the check ran
+        assert f"**{ITEM}** — in" not in outcome.report
+
 
 class TestTornPassRecord:
     """A torn trailing line in state/passes.jsonl is a lint FINDING, never a bare exit."""
@@ -490,6 +566,64 @@ def waiting_entry(needs: Need, unit_hash: str = "73bd784849") -> LedgerEntry:
     )
 
 
+class TestParkedOrphanExemption:
+    """The coverage row never fires on a correctly parked item.
+
+    An item still owing a unit derives raw, and the ingest procedure
+    forbids digesting or placing a raw item — firing steered sessions to
+    ledger a still-parked item into uncategorized-shares mid-park.
+    """
+
+    ORPHAN_ROW = "items no page cites and the taxonomy does not record"
+
+    def _uncited(self, instance, status: Status, **fields) -> None:
+        write_corpus_stub(instance)
+        write_taxonomy(instance)
+        write_index(instance, "")
+        ledger.append(
+            instance.ledger_path,
+            stamped(
+                LedgerEntry(
+                    hash="73bd784849",
+                    url="https://example.test/a",
+                    item=ITEM,
+                    kind=Kind.WEB,
+                    status=status,
+                    engine="0.1.0",
+                    date=TODAY,
+                    **fields,
+                )
+            ),
+        )
+
+    def test_a_blocked_item_is_exempt(self, instance):
+        self._uncited(instance, Status.BLOCKED, attempts=2, reason="HTTP 503")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — none" in outcome.report
+
+    def test_a_waiting_item_is_exempt(self, instance):
+        self._uncited(instance, Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — none" in outcome.report
+
+    def test_a_digested_but_uncited_item_still_fires(self, instance):
+        # Digested means it went through placement: its absence from the
+        # taxonomy is real drift, whatever its later units are doing.
+        self._uncited(instance, Status.BLOCKED, attempts=2, reason="HTTP 503")
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").write_text("digested\n", encoding="utf-8")
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+
+    def test_a_settled_uncited_item_still_fires(self, instance):
+        # Nothing outstanding: the exemption is for parked work, never a
+        # blanket pass on uncited items.
+        self._uncited(instance, Status.DONE)
+        outcome = lint(instance)
+        assert f"{self.ORPHAN_ROW} — **1**" in outcome.report
+
+
 class TestStateChecks:
     def _bare_wiki(self, instance):
         write_taxonomy(instance)
@@ -511,6 +645,21 @@ class TestStateChecks:
         assert outcome.exit_code == 1
         assert "LEDGER SCHEMA FAILURE" in outcome.report
         assert "migration 1" in outcome.report
+
+    def test_a_torn_line_gets_the_deletion_advice_not_the_migration_hint(self, instance):
+        # An interrupted append's tear is not a schema fault: pointing the
+        # owner at `bin/dex sync` sends him to a repair that cannot work,
+        # while the sanctioned repair — delete the named line, and only
+        # that line — went unstated for the one file it matters most on.
+        self._bare_wiki(instance)
+        instance.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        instance.ledger_path.write_text('{"hash": "73bd78\n')
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "LEDGER SCHEMA FAILURE" in outcome.report
+        assert "enrichment-ledger.jsonl:1" in outcome.report
+        assert "delete this torn line, and only this line" in outcome.report
+        assert "bin/dex sync" not in outcome.report
 
     def test_cognitive_jobs_listed_via_the_seam(self, instance):
         self._bare_wiki(instance)
@@ -605,6 +754,23 @@ class TestReferentialIntegrity:
             "**2024-04-11-document-library-0a7569** — 1 entry (excluded on record)"
             in outcome.report
         )
+
+    def test_a_union_merged_exclusions_record_still_answers(self, instance):
+        # Two machines excluded between syncs: the union driver leaves the
+        # sides' rulings out of order and a doubly-excluded id twice. The
+        # record is read as a set, so the ghost row still says excluded —
+        # once.
+        self._bare_wiki(instance)
+        excluded = "2024-04-11-document-library-0a7569"
+        (instance.state_dir / "exclusions.tsv").write_text(
+            f"{excluded}\tpensions reference docs\n"
+            "2026-08-19-unrelated-11ff22\tads\n"
+            f"{excluded}\tout of scope\n",
+            encoding="utf-8",
+        )
+        ledger.append(instance.ledger_path, done_entry("73bd784849", item=excluded))
+        outcome = lint(instance)
+        assert f"**{excluded}** — 1 entry (excluded on record)" in outcome.report
 
     def test_entry_naming_an_unclaimed_item_is_told_apart(self, instance):
         self._bare_wiki(instance)
