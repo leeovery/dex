@@ -51,10 +51,12 @@ the engine stays unaware of which ones exist.
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
   capture protocol any client implements).
-- `design/ingestion-pipeline.md` — the one design surface for this release:
-  the in-force design for the ingestion machinery and the rendered
-  surfaces, plus the work agreed and not yet built. `design/roadmap.md` —
-  an index over the design files, post-release backlog, operational facts.
+- `design/` — one markdown file per fleshed-out design, kept for reference
+  after it ships. `ingestion-pipeline.md` is this release's: the in-force
+  design for the ingestion machinery and the rendered surfaces.
+- `backlog/` — one file per idea not yet in hand (features and bug fixes
+  alike), indexed in `backlog/index.md`, which also states the convention.
+  An idea graduates by getting its `design/<name>.md`.
 - `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
   `live.yml` (the daily third-party drift watch). See Development below.
 - `example/` — a toy instance showing the shapes.
