@@ -9,7 +9,9 @@ every blocker loudly and never work around a failure silently.
 ## Step 1: New or Existing?
 
 Ask the owner: "Are we creating a new dex, or setting up an existing one on
-this machine?"
+this machine?" — unless the request that brought you here already says. An
+instance README's join prompt names an existing dex and its repo; never
+re-ask what the owner already stated.
 
 Set `{mode}` = `new` or `existing`.
 
@@ -47,14 +49,19 @@ choosing somewhere else silently.
 
 #### If `{mode}` is `existing`
 
-From `{home}`: `gh repo clone {repo}`, then `git lfs install --local`
-inside the clone. If the clone is denied, the owner's GitHub account lacks
-access to `{repo}` — resolve that with them before anything else.
+From `{home}`: `gh repo clone {repo}`, then inside the clone
+`git lfs install --local` and `git lfs pull` — on a machine that never ran
+`git lfs install` globally, the clone checks LFS media out as pointer
+files, and the pull materializes them. If the clone is denied, the owner's
+GitHub account lacks access to `{repo}` — resolve that with them before
+anything else.
 
-Set `{instance}` = the clone's absolute path. Bring its machinery current:
-`bin/dex sync` (commit and push if it changed anything), then `bin/dex
-inbox` (reconciles waiting captures and verifies the capture staging
-release).
+Set `{instance}` = the clone's absolute path and `{name}` = its directory
+name. Bring its machinery current — from `{instance}`: `bin/dex sync`
+(commit and push if it changed anything), then `bin/dex inbox`
+(materializes any staged binary captures and checks the standing inbox
+release). Follow the inbox output: anything it materialized is committed
+and pushed immediately, for the reason it states.
 
 → Proceed to **Step 5**.
 
@@ -90,11 +97,11 @@ seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
   `<owner>/<repo>` placeholder in its "Run it on another machine" prompt —
   that prompt is what a second machine or a second person pastes, so it has
   to name the real repo. If GitHub was declined, delete the section.
-- Commit. If GitHub was wanted: `gh repo create {name} --private --source .
-  --push`, then `bin/dex inbox ensure` — creates the standing "inbox"
-  release that binary captures stage into.
-- Sanity check: `bin/dex lint` from `{instance}` (prints a fresh-instance
-  notice).
+- Commit — from `{instance}`, like every command from here on. If GitHub
+  was wanted: `gh repo create {name} --private --source . --push`, then
+  `bin/dex inbox ensure` — creates the standing "inbox" release that
+  binary captures stage into.
+- Sanity check: `bin/dex lint` (prints a fresh-instance notice).
 
 → Proceed to **Step 5**.
 
@@ -109,10 +116,10 @@ desktop app (Code tab → Routines → New routine → Local), which runs the
 instance's dex-run skill on the owner's machine with their full
 environment. The task:
 
-- Name `<instance>-run`; the chosen frequency; instructions exactly:
-  "Work in the folder <absolute path to {instance}>.
+- Name `{name}-run`; the chosen frequency; instructions exactly:
+  "Work in the folder {instance}.
   This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
-  and perform its Every-run procedure exactly. Never ask the owner
+  and perform its Every run section exactly. Never ask the owner
   questions; report what was done."
   The first line is load-bearing: task creation from a session cannot set
   the task's folder (no folder parameter), so the prompt must carry it.
@@ -137,18 +144,26 @@ environment. The task:
   trigger is theirs then — a cron or launchd entry that starts a session
   in the instance, or nothing at all, since asking for a run does the
   same work. Record what they chose and move on: an unscheduled instance
-  is a supported state, not a failed setup.
+  is a supported state, not a failed setup. Then do the first run
+  yourself, in this session — read
+  `{instance}/.claude/skills/dex-run/SKILL.md` and perform its Every run
+  section — so setup still ends with the instance current.
 
 ---
 
 ## Step 6: Phone Capture
 
+Skip this step if the owner declined the shortcut, or the instance has no
+GitHub repo. Otherwise fetch the shortcut guide — it lives in the engine
+repo, which is never cloned, so fetch it raw:
+https://raw.githubusercontent.com/leeovery/dex/main/docs/shortcut.md
+
 Each person captures with their own token. Walk them through, concretely:
 
-1. GitHub → Settings → Developer settings → Fine-grained tokens → new token
+1. The token, per the guide's **Before you begin** section: fine-grained,
    scoped to ONLY this instance repo, permissions: Contents R/W.
-2. Install the shortcut from the link pinned at the top of
-   `docs/shortcut.md` — on import it asks for their instances and token.
+2. Install the shortcut from the iCloud link at the top of the guide — on
+   import it asks for their instances and token.
 3. Using it: share anything from any app and pick **Send To Dex**. If it
    isn't in the share sheet, scroll to the very bottom, tap **Edit
    Actions**, add Send To Dex, and drag it to the top so it's always in

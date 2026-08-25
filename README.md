@@ -308,11 +308,13 @@ sessions: the PUT is the commit, and the next run moves staged binaries into
 `media/` where LFS applies. Suggestion is untrusted by design, so scope filtering happens at
 processing time, inside the instance. Full protocol: `docs/capture.md`.
 
-Instance layout: `CLAUDE.md` (scope and operations contract) · `inbox/` (pending
-captures) · `raw/` (verbatim exports) · `corpus/` (append-only items) ·
-`enrichment/` · `media/` (captured binaries, LFS) · `wiki/`
-(topics/entities/syntheses plus index, log, pins) · `state/` (digests, taxonomy,
-the ledger and other append-only JSONL, config.json) · `cache/` (gitignored
-ephemera) · `.dex-engine-pin` (the engine release this instance runs).
+Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·
+`.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·
+`inbox/` (pending captures) · `raw/` (verbatim exports) · `corpus/`
+(append-only items) · `enrichment/` · `media/` (captured binaries, LFS) ·
+`wiki/` (topics/entities/syntheses plus index, log, pins) · `state/` (digests,
+taxonomy, the ledger and other append-only JSONL, config.json) · `cache/`
+(gitignored ephemera) · `.dex-engine-pin` (the engine release this instance
+runs).
 
 </details>
