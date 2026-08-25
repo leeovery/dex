@@ -51,9 +51,12 @@ given a link, file, or note.
    the inbox, and an unpushed capture is invisible to all of them. Commit
    message: `capture: <short description>`. If the push fails, say so
    loudly and leave the commit in place — never quietly stop at a local
-   commit.
+   commit. A local-only instance (no origin remote) has nowhere to push:
+   the commit is the finished capture, and the skipped push is skipped,
+   not failed.
 
 4. **Confirm and stop.** One line: what was captured and that it is on the
-   remote, e.g. `captured inbox/20260818-101530.md — processed on the next
-   run`. Do not process, enrich, digest, or touch the wiki. The next
-   dex-run session (scheduled, or asked for) picks it up.
+   remote (or committed, on a local-only instance), e.g. `captured
+   inbox/20260818-101530.md — processed on the next run`. Do not process,
+   enrich, digest, or touch the wiki. The next dex-run session (scheduled,
+   or asked for) picks it up.

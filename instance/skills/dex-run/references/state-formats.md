@@ -99,8 +99,27 @@ forward by hand.
 
 Dedup, the `report_issues` gate and failure behaviour match the crash
 filer: the same defect files once and then comments or stays silent;
-`gh` trouble is a stated line in the verb's output and never stops the
-run.
+the gate stops only the upstream filing, and the local record still
+lands (marked `filed: false`) so nothing observed is lost; `gh` trouble
+is a stated line in the verb's output and never stops the run.
+
+## `bin/dex exclude` — purging out-of-scope items
+
+Exclusion goes through the verb, never by deleting files. The batch is a
+JSON list of records:
+
+```json
+[{"id": "<corpus item id>", "reason": "why it is out of scope"}]
+```
+
+then `bin/dex exclude cache/exclusions.json`. `reason` is optional and
+defaults to "out of scope". The batch is validated whole and refused
+whole — an id must be a corpus item id, never a path — and one id twice
+collapses to one entry with the count stated. The verb records each
+exclusion in `state/exclusions.tsv` (below), removes the corpus file,
+`enrichment/<id>/` and `state/digests/<id>.md`, and purges the item's
+ledger entries except the work another live item still claims; the
+summary line states every count.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 
@@ -182,7 +201,7 @@ this file — they propose changes in the run report.
 | `media_fetch` | `none` \| `lead` — media-stage URL downloads |
 | `transcribe_model` | whisper-local size (default `medium`) |
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
-| `report_issues` | file engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`) |
+| `report_issues` | gate on filing engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`). Gates the filing only: the `state/issue-reports.jsonl` record is written either way, `filed` saying which |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
@@ -237,16 +256,21 @@ a malformed record impossible:
   digest` remains the manual re-record).
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
-- `state/issue-reports.jsonl` — what this instance filed/commented
-  upstream `{fingerprint, action, engine, date, issue?, note?}`.
+- `state/issue-reports.jsonl` — what this instance observed and reported
+  `{fingerprint, action, filed, engine, date, issue?, note?}`.
   Written by the issue filer (crash reports) and by `bin/dex issue`
-  (session-observed reports, above); the owner's visible record.
+  (session-observed reports, above); the owner's visible record. The
+  record is written whether or not `report_issues` let the report file
+  upstream — `filed: true|false` says which — and dedupe treats any
+  record as seen, so turning the gate on later never auto-refiles what
+  was observed while it was off.
   `note` exists only on records the issue verb wrote and is the local
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what
   matters by hand.
-- `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
-  stay excluded across re-normalization. The verb purges the item
+- `state/exclusions.tsv` — one tab-separated `id<TAB>reason` line per
+  excluded item, written by `bin/dex exclude` (payload above); excluded
+  items stay excluded across re-normalization. The verb purges the item
   completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
   and the item's ledger entries — and states both the entry count it
   dropped and the count it kept because another live item still claims

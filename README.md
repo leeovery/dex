@@ -280,6 +280,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
 | `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, pass records (`--write` reconciles derived wiki frontmatter) |
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
+| `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (skills never hand-draw reports) |

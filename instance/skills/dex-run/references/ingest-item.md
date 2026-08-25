@@ -30,9 +30,14 @@ bin/dex enrich item new inbox/<capture>.md --shared-by <owner> [--slug <slug>]
 
 Corpus items are created by `item new`, never freehand — code computes the
 id (both id paths: URL hash, or the `media/<id>/` directory `dex inbox`
-fixed) and writes the frontmatter, so a malformed item cannot exist. Pass
-`--slug` when you have a better name than the mechanical derivation (the
-page or video title, once known). The body is the owner's note **verbatim
+fixed) and writes the frontmatter, so a malformed item cannot exist. The
+slug derives from the capture at creation time (note text first, then the
+URL's path tail); pass `--slug` only when the capture itself already gives
+a better name than that derivation — a note that buries the subject, a URL
+tail that is an opaque id. Item creation precedes enrichment, so a page or
+video title is never in hand here, and a title learned later does not
+become a rename: the id is fixed at creation, and the better name belongs
+in the digest and on the pages that cite the item. The body is the owner's note **verbatim
 and stays that way** — your interpretive context (what a linked video is,
 how a thread relates) belongs in the digest, never the item body; thread
 context lives in the enrichment via walk-up. After creation, exactly two
@@ -153,10 +158,24 @@ names each such item and what it is still owed ("3 of 4 units landed — 1
 waiting on transcription"), and the item stays `status: raw` until the
 last unit lands.
 
+An item whose every unit died is not parked: a dead unit owes nothing,
+so the item owes only its description and digest, and both come from the
+owner's note (plus anything that did land). The run report and the
+digest backstop name it until its digest pass is recorded; recording
+that pass is what clears it.
+
 ## 7. Place (judgment)
 
+Placement always writes `state/taxonomy.json`. On the first placement
+pass of a fresh instance, create the file (shape in `state-formats.md`,
+this directory) and place the item in it: early items may land in
+`uncategorized-shares` until pages are justified. A corpus with no
+taxonomy is the state lint reads as BROKEN MID-INGEST and fails on, so
+the file exists from the first placed item onward.
+
 Taxonomy exists → append the id to each matching topic's `items`. Create a
-new topic only once several items justify a page. When you do create one,
+new topic only once several items justify a page; the several-items rule
+governs page creation, never taxonomy existence. When you do create one,
 sweep the existing digests (`state/digests/`) for items that belong to
 it — including `uncategorized-shares` — and move them in: a new topic
 usually reveals items that were previously overlooked or coarsely filed.

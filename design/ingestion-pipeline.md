@@ -628,7 +628,7 @@ Files:
 | `state/enrichment-ledger.jsonl` | work units (§5) |
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10). The digest pass is recorded by `enrich item digest` itself, in the same call as the file (§10); `enrich pass` records the harvest and wiki stages, and remains the manual re-record for any stage |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
-| `state/issue-reports.jsonl` | filed/commented issue fingerprints; observed-report records also carry the local-only `note` (§13) |
+| `state/issue-reports.jsonl` | one record per issue report, filed upstream or gated (`filed: true\|false` says which — the `report_issues` gate stops only the filing, never the record); observed-report records also carry the local-only `note` (§13) |
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
@@ -636,7 +636,10 @@ Files:
 
 Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
-union merges). Superseded lines until then are the audit trail.
+union merges). Superseded lines until then are the audit trail. Compaction's
+operating home is the health check: the dex-lint skill runs `enrich compact`
+as a step, because no other operating surface ever schedules it and an
+instance would otherwise never compact.
 
 **Latest is by write time, not by file position.** Git's union driver
 concatenates ours-then-theirs, so after two machines merge, the last line of a
@@ -701,7 +704,10 @@ the parent's owners (a harvest-promoted child, a media download and an
 extracted asset are in no frontmatter), failing that the stored string as
 written. Every reader routes through it — the item's derived
 `status`/`enrichment:` refresh, `enrich status`, the run report's parked
-and incompleteness rows, the digest-staleness backstop's landing dates,
+and incompleteness rows, the digest-staleness backstop (its landing
+dates, and the candidates it derives from enrichment directory names: a
+directory an interrupted rename left under the old id resolves to the
+live item, so the backstop asks the right item for the digest),
 `mark`'s post-heal refresh, `exclude`'s claim veto, and lint's ghost and
 output rows.
 
@@ -825,8 +831,10 @@ independently is seven chances to reintroduce it):
   decentralize exactly what this centralizes). Mapping: 403/429/5xx →
   `blocked`, 404/410/NXDOMAIN → `dead`, **401/402 → `manual`**
   (login-walls/paywalls — x.com answers 402; retrying never resolves
-  payment-required), and **any other status the transport surfaces
-  (3xx redirect loops included) → `blocked` with "unexpected HTTP <n>"** —
+  payment-required), and **any other status the transport surfaces →
+  `blocked`**: a surfaced 1xx/3xx (a redirect loop's final 30x, an
+  out-of-place informational response) reads "unexpected HTTP <n>", an
+  unlisted 4xx reads plain "HTTP <n>" —
   the classifier is total; no HTTP outcome is unclassifiable. Routed
   through by every driver's HTTP path. The §15 regression pin tests the
   classifier once and holds for all drivers.
@@ -852,6 +860,16 @@ independently is seven chances to reintroduce it):
   untouched — it keys the ledger, and re-encoding it would orphan every
   existing entry. Only a host DNS genuinely cannot carry fails, as a stated
   `ValueError` the bad-seed containment parks on with a readable reason.
+- **An http-shared source may fall back to http at fetch time.**
+  Canonicalization still forces https: identity is the ledger's key, and a
+  scheme split would give one resource two entries. But a server that was
+  shared as plain http may never speak TLS at all, so when the https
+  attempt fails at the TLS layer and the item's own `urls:` show the
+  source was shared as http, the fetch retries over http. A TLS failure on
+  an https-shared source still classifies `blocked` like any other
+  connection failure: the capture is the evidence of what the server was
+  ever claimed to speak, and the fallback never downgrades a source the
+  owner shared secure.
 - **A truncated ERROR body never costs the status code.** The body of a
   4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
   transport, whisper-api's multipart POST) drop a failed error-body read and
@@ -1146,6 +1164,14 @@ description of a media capture, counted by neither the cap nor
 the "this slot already holds my own file" check — reading it as either put
 a download beyond the cap and beside a description of something else.
 
+The synced `.gitattributes` tracks enrichment binaries by name shape,
+not by an extension list: `media-<n>.*` downloads and `*-asset-<n>.*`
+extraction assets are LFS-tracked whatever their extension, the
+markdown descriptions excepted. An extension list covered neither an
+extraction asset nor a media download in an off-list format, and both
+were entering git history as raw blobs; the name shape is the engine's
+own naming grammar, so whatever it writes stays out.
+
 ## 8. X driver (renamed from tweet)
 
 - **A post's identity is its status id.** Every share shape — the username
@@ -1332,7 +1358,10 @@ predicate follows the ingest procedure's own bounds: an item still owing a
 unit derives `raw` and has not reached the harvest step, so it is never
 listed; a no-source capture, and an item whose every unit died unfetched,
 has no page to read the subject rule over and owes no pass — its owed work
-is description and digest, which the run report already names. A recorded
+is description and digest, written from the owner's note. The run report
+names such an item, the `enrich status`/lint digest backstop lists it
+until its digest pass is recorded, and recording that pass is what clears
+it. A recorded
 pass covers its item by trailing shortid, the same match exclusions use
 across renames, so a renamed item's standing record never reads as a
 skipped judgment; an item re-seeded by migration keeps its original pass
@@ -1379,7 +1408,7 @@ render/surfaces.py   named surfaces, loud payload validation:
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
 in-process — includes a "reported upstream: N issues" line when the filer
 acted) and cognitive (Claude writes a JSON payload — including free-prose
-fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
+fields like `notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
 Standing skill rule: **never hand-draw a report; there is a surface for it
 — call it.** A cap refusal is answered on the report of the run that asked
@@ -1887,7 +1916,11 @@ section.
   a recurrence on a *newer* version files a fresh issue referencing the old
   one (regression).
 - **Local memory** `state/issue-reports.jsonl` — prevents re-spam, and is
-  the owner's visible record of what their instance reported.
+  the owner's visible record of what their instance reported. Every
+  report writes its record whether or not the gate let it file upstream:
+  the record carries `filed: true|false`, and dedup and refile
+  suppression treat any record as seen, so a defect observed under a
+  closed gate is never auto-refiled when the gate opens later.
 - **Rate limit**: max 3 new issues per run.
 - **Fire-and-forget**: instances never poll issues or act on tracker
   content — the fix loop closes through releases and sync only. The public
@@ -1897,8 +1930,9 @@ section.
   exactly this kind of lack). No pending-file/retry machinery. The filer's
   only soft edge: its own failures are wrapped and non-fatal — the report
   notes "issue filing failed" and the run continues.
-- Config: `report_issues: true` (default) in `state/config.json`. Filings
-  appear in the run report, so the human always knows.
+- Config: `report_issues: true` (default) in `state/config.json` — a gate
+  on upstream filing only, never on the local record. Filings appear in
+  the run report, so the human always knows.
 
 ### The second producer: session-observed reports (`bin/dex issue`)
 
@@ -2066,8 +2100,26 @@ src/dex_engine/
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,
-                 and for anything hand-edited since
-  sync.py      grows: pin resolution, re-exec, migration runner, sync report
+                 and for anything hand-edited since. A broken state
+                 file renders as a failure row naming the offending
+                 file (a malformed `entity-members.json`, a torn
+                 `passes.jsonl` line — named by file and line, since
+                 later appends or a union merge can leave the tear
+                 mid-file) rather than dying bare, so the report
+                 survives to name the repair. Exit 1 is the
+                 hard-failure set: broken wikilinks, bad citations, a
+                 ledger schema error, a malformed taxonomy, a malformed
+                 `entity-members.json`, an unparseable pass record, a
+                 malformed digest, and the pre-taxonomy
+                 broken-mid-ingest state (corpus items on disk with no
+                 `state/taxonomy.json`, placement never having run);
+                 everything else is a finding for the report
+  sync.py      grows: pin resolution, re-exec, migration runner, sync
+                 report. A torn `migrations.jsonl` line fails with an
+                 error naming the file, the line, and the sanctioned
+                 repair: delete the named torn line — a half-written
+                 line is not a record, so removing it is healing, not
+                 hand-writing state, and intact records are never edited
 ```
 
 Dependencies: `trafilatura` (extraction only), `yt-dlp`, **`firecrawl-anydoc`**
