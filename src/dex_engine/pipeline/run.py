@@ -114,21 +114,9 @@ HARVEST_RULES_VERSION = 1
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
-# A failed audio download takes the normal blocked lifecycle (acquisition
-# failures are NOT provider failures — never no-clock waiting). The blocked
-# line cannot carry `needs` (waiting-only), so this reason prefix is the
-# marker that routes the retry back to the transcribe path — the one place
-# it is written and matched.
-_ACQUISITION_FAILED_PREFIX = "audio acquisition failed: "
-
-
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
-    if entry.status is Status.WAITING and entry.needs is Need.TRANSCRIBE:
-        return True
-    return entry.status is Status.BLOCKED and (entry.reason or "").startswith(
-        _ACQUISITION_FAILED_PREFIX
-    )
+    return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
 
 
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
@@ -632,9 +620,13 @@ class _Drain:
             case Status.BLOCKED:
                 # Acquisition failures are not provider failures — the
                 # normal blocked lifecycle applies, attempts and all,
-                # escalating manual at 5. The reason prefix routes the
-                # retry back here (see _is_transcribe_job).
-                self._apply_blocked(entry, f"{_ACQUISITION_FAILED_PREFIX}{failure.reason}")
+                # escalating manual at 5. `needs` keeps the retry routed
+                # back through the transcribe drain, never the driver.
+                self._apply_blocked(
+                    entry,
+                    f"audio acquisition failed: {failure.reason}",
+                    needs=Need.TRANSCRIBE,
+                )
             case Status.DEAD if entry.kind is Kind.PODCAST:
                 # A 404ing enclosure is often just an expired signed URL —
                 # the EPISODE is not confirmed gone. Manual, with the
@@ -761,7 +753,9 @@ class _Drain:
         corrected = redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
-    def _apply_blocked(self, entry: LedgerEntry, reason: str | None) -> None:
+    def _apply_blocked(
+        self, entry: LedgerEntry, reason: str | None, *, needs: Need | None = None
+    ) -> None:
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
             # Escalation appends attempt context to what the driver knew —
@@ -773,7 +767,9 @@ class _Drain:
                 reason=f"still blocked after {attempts} attempts — {detail}",
             )
             return
-        self.record_outcome(entry, status=Status.BLOCKED, attempts=attempts, reason=reason)
+        self.record_outcome(
+            entry, status=Status.BLOCKED, needs=needs, attempts=attempts, reason=reason
+        )
 
     # -- outputs ---------------------------------------------------------
 
@@ -1009,6 +1005,7 @@ class _Drain:
                 kind=detection.kind if detection else detect_kind(child.url, self.ctx.drivers),
                 format=detection.format if detection else None,
                 status=Status.SKIPPED if cap_reason else Status.QUEUED,
+                capped=cap_reason is not None,
                 engine="seed",
                 date=datetime.date.min,
                 via=child.via,
@@ -1327,13 +1324,9 @@ def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEn
     raise ValueError(f"item {item_id!r} has no primary work unit — pass --parent <hash> explicitly")
 
 
-# Cap-refusal reasons open with these — the one place they are matched.
-_CAP_REASON_PREFIXES = ("url cap (", "depth cap (")
-
-
 def _is_cap_refusal(entry: LedgerEntry) -> bool:
     """True for a cap-fire marker line — refused work, not an admitted unit."""
-    return entry.status is Status.SKIPPED and (entry.reason or "").startswith(_CAP_REASON_PREFIXES)
+    return entry.capped
 
 
 def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
@@ -1399,6 +1392,7 @@ def _admit_fetch(
                 item=item_id,
                 kind=detect_kind(url, drain.ctx.drivers),
                 status=Status.SKIPPED,
+                capped=True,
                 engine="seed",
                 date=datetime.date.min,
                 via="harvest",
@@ -1540,8 +1534,8 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         status: The corrected status.
         reason: The stated reason (required for manual/skipped).
         path: Output path, for done heals that wrote a file.
-        needs: The needed capability, for waiting heals (defaults to the
-            prior entry's).
+        needs: The needed capability, for waiting/blocked heals (defaults
+            to the prior entry's).
 
     Returns:
         A one-line confirmation.
@@ -1571,9 +1565,10 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         kind=prior.kind,
         format=prior.format,
         status=status,
-        # A stray --needs on a non-waiting status passes through and fails
-        # schema validation loudly rather than being silently dropped.
-        needs=(needs or prior.needs) if status is Status.WAITING else needs,
+        # A stray --needs on a status that cannot carry it passes through
+        # and fails schema validation loudly rather than being silently
+        # dropped.
+        needs=(needs or prior.needs) if status in (Status.WAITING, Status.BLOCKED) else needs,
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
         engine="seed",  # stamped in record
         date=datetime.date.min,
