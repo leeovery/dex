@@ -47,7 +47,19 @@ reference at the step that names it, not before.
    so compact is what settles superseded lines and union merges, and
    the health check is its home: no other operating surface runs it.
 
-9. **Log, push, report.** Append a `wiki/log.md` line — `## [YYYY-MM-DD]
+9. **Reconcile the counts.** Three questions, answered from what the
+   check already put in front of you — a checklist, not an audit:
+   corpus items, digests, and total taxonomy memberships tell one
+   consistent story (every live item digested or parked, every digest's
+   item alive, every membership backed by an item — the report's own
+   rows should already account for any gap); an owner-visible config
+   change since the last check produced the effect it implies (media
+   turned back on means rested media drained); and nothing the report
+   claims contradicts what you saw on disk while repairing. A
+   discrepancy no lint row explains is an engine defect — file it per
+   the rubric in dex-run's `references/processing.md`, then carry on.
+
+10. **Log, push, report.** Append a `wiki/log.md` line — `## [YYYY-MM-DD]
    lint | <what the check found>`. The op word is `lint` exactly: dex-run
    reads this line to decide whether a health check is due. Commit and
    push (a local-only instance, with no origin remote, commits without

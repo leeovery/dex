@@ -1963,7 +1963,18 @@ The filer above fires on exceptions. A session can also SEE a defect
 nothing raised — a report contradicting state on disk, a documented
 behaviour that did not happen, a verb writing the wrong thing quietly —
 and on a scheduled run that observation reaches nobody unless it is
-filed. `bin/dex issue --file <payload.json>` (its own `dex-issue` entry
+filed. Noticing is not left to chance: the skills carry a small
+reconciliation checklist (dex-run's end-of-run Reconcile step, the
+health check's count reconciliation) run at the moments the session
+already holds both sides — the report's promises against the files it
+just read, the captures it ingested against the final accounting,
+corpus against digests against taxonomy. The checklist exists because
+the two producers otherwise share a blind spot: an exception producer
+cannot see a defect that raises nothing, and an observation producer
+cannot see an ABSENCE — something true that failed to appear — unless
+the session is told exactly which promises to reconcile. Mechanical
+reconciliation (ledger lines, shapes, engine-computed counts) stays in
+lint; the checklist covers only what needs eyes. `bin/dex issue --file <payload.json>` (its own `dex-issue` entry
 point, since the shim dispatches `bin/dex <cmd>` to `dex-<cmd>`) is the
 observation-shaped producer over the SAME mechanism: both producers
 reduce to one `Filable` shape and go through one filing pass
