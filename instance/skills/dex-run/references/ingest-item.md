@@ -46,7 +46,8 @@ which stays `raw` on no units and no files because it still owes its
 description and its digest. So `enrichment: []` on an `enriched` item is
 not a fault: a URL two captures share is fetched once and its output lands
 under whichever item hit first, and the listing names only that item's own
-directory. `bin/dex enrich status <item>` is where the shared unit shows.
+directory. `bin/dex enrich status --item <id>` is where the shared unit
+shows.
 
 Then delete the capture file — the capture is preserved in git history and
 its content lives on in the corpus.
@@ -73,8 +74,9 @@ substantive enough to stand in for the media in text-only contexts.
 
 For a cognitive job the report listed (a document no extractor reads, a
 scanned PDF): read the file directly, write the enrichment as
-`enrichment/<id>/<kind>-<hash6>.md` (the ledger row for that URL carries
-the hash — grep `state/enrichment-ledger.jsonl`), then close the loop:
+`enrichment/<id>/<kind>-<hash6>.md` — `hash6` is the first 6 characters
+of the ledger row's `hash` (grep `state/enrichment-ledger.jsonl` for the
+URL) — then close the loop:
 
 ```
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>
@@ -146,10 +148,10 @@ confirmation says so — so there is no separate pass command to run here.
 
 A parked item (waiting/blocked/manual) still exists — provenance and note
 were captured at ingest — but gets no digest or wiki work until its
-sources land. Don't force it; the run report's **incomplete** section names
-each such item and what it is still owed ("3 of 4 units landed — 1 waiting
-on transcription"), and the item stays `status: raw` until the last unit
-lands.
+sources land. Don't force it; the run report's **Not finished** section
+names each such item and what it is still owed ("3 of 4 units landed — 1
+waiting on transcription"), and the item stays `status: raw` until the
+last unit lands.
 
 ## 7. Place (judgment)
 
@@ -205,6 +207,10 @@ by writing the ledger through the sanctioned verb**:
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>
 bin/dex enrich mark <url> skipped --reason "<why it stays unfetched>"
 ```
+
+A **Needs you** row tagged `resting` is not a manual park and owes no
+heal: `media_fetch: none` parks it, and the engine fetches it again once
+the owner turns media back on. Leave it as it stands.
 
 The ledger must match reality when the session ends — a hand-heal that
 skips `mark` recreates the incident this pipeline was rebuilt to end.

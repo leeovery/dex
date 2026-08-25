@@ -99,9 +99,9 @@ Then do a run now, whatever the host.
    action. Complete the per-item cognitive work
    (`references/ingest-item.md`) for *everything* under **Needs writing
    up** — fresh captures, drained reruns, rewritten items, newly drained
-   waiting cohorts — plus everything under **Read these yourself** and
-   its no-source items (text or image captures — nothing to fetch,
-   everything to describe and digest). Items you created this session
+   waiting cohorts, and no-source items (text or image captures — nothing
+   to fetch, everything to describe and digest) — plus everything under
+   **Read these yourself**. Items you created this session
    always get the full per-item procedure whether or not the report names
    them. **Needs you** holds the entries the engine has given up on, each
    with a stated reason: judge them per the reference's heal procedure.
@@ -143,7 +143,9 @@ Then do a run now, whatever the host.
 - Borderline scope calls are skipped and reported, never guessed
   (details in the reference).
 - Cap-fired events (depth/URL caps) are internal — they live in the
-  ledger for the health check and appear in no report you write.
+  ledger for the health check. An `enrich fetch` refusal is already
+  answered on the engine's own report; the summaries and receipts you
+  write never restate cap fires.
 
 ## State writes
 
@@ -153,8 +155,8 @@ corpus items come from `enrich item new`, digests from `enrich item digest
 lines from `enrich mark` and the run itself, harvest and wiki stage
 records from `enrich pass`. You supply the judgment as JSON
 or arguments; the engine decides the shape, so a malformed file cannot be
-written. Same motion as rendering, below. `state/taxonomy.json` is the one
-you still write directly.
+written. Same motion as rendering, below. `state/taxonomy.json` and
+`state/entity-members.json` are the ones you still write directly.
 
 ## Rendering
 
@@ -179,8 +181,10 @@ A converted export must give every message `id`, `type` (`Default` or
 `name` or `nickname`; any attachment needs `url` and `fileName`. A message
 missing one is skipped rather than fatal, and a whole channel whose file
 cannot be read is named and skipped while the rest normalize — so read the
-`warn:` lines in the normalize summary before treating a backfill as
-complete. A silently short cohort is the failure this reports.
+whole normalize summary before treating a backfill as complete: the
+`warn:` lines, any `export unreadable — skipped` channel, and any
+`channel incomplete` line. A silently short cohort is the failure this
+reports.
 
 `bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex
 exclude <file.json>`) → `bin/dex enrich run` → the per-item work at scale.
