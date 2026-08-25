@@ -7,24 +7,15 @@ state formats). This file holds what's *next*, not what is.
 
 ## Bugs
 
-- **Enricher marks blocked sites dead, and heals don't reach the ledger** —
-  observed 2026-08-19 during the dex-curated install: Cloudflare challenged
-  the enricher's fetch of curatedretail.uk (transient — the same fetch
-  succeeds later from another machine), wayback had no snapshot, and the URL
-  was ledgered `dead`, a terminal status that is never retried. Root cause:
-  `fetch_blog` uses `trafilatura.fetch_url`, which returns None for every
-  failure — 403 challenge, 404, DNS — so blocked and gone are
-  indistinguishable. Claude healed in-session (hand-fetched 11 pages into
-  enrichment/) but the ledger still says `dead` with no path while the corpus
-  item says enriched — healed state and ledger disagree and nothing
-  reconciles them. Fix directions: fetch via urllib with the module's browser
-  UA so status codes are visible (trafilatura for extraction only); a
-  retryable `blocked` status for 403/429/503, `dead` reserved for DNS/404;
-  the heal procedure in dex-ingest appends a corrected ledger entry
-  (append-only, last-per-hash wins — already works mechanically, the skill
-  just never does it). Fix designed into the pipeline rewrite (blocked
-  status, urllib+UA fetch, heal-appends-ledger-entry) — see
-  `design/ingestion-pipeline.md`; open until that ships.
+- **Pre-rewrite `dead` ledger entries need healing, per instance** — the old
+  enricher could not tell a blocked fetch from a gone one, so transient blocks
+  were ledgered `dead`, a terminal status that is never retried. The engine no
+  longer does this (403/429/5xx → `blocked`, retried every run; `dead` reserved
+  for 404/410/NXDOMAIN), but migration 2 seeds only `done` entries — verdicts
+  the old code condemned are not reseeded. Known case: curatedretail.uk in
+  dex-curated (2026-08-19), hand-healed into `enrichment/` while the ledger
+  still says `dead`, so healed state and ledger disagree. Close these out with
+  `bin/dex enrich mark` during each instance's post-merge sync review.
 
 ## Queued discussions (not yet designed)
 
@@ -50,13 +41,13 @@ state formats). This file holds what's *next*, not what is.
   they need a clone-first run mode and a stored per-instance PAT; not
   built, not needed yet.
 
-- **Driver-based ingestion architecture** — DESIGNED 2026-08-19, see
-  `design/ingestion-pipeline.md`; implementation pending. Covers the driver
-  registry, PDF + office formats (anydoc), podcasts, X thread walk-up,
-  harvest subject rule (absorbs the site-driver idea), capability providers
-  (transcription/extraction/OCR), tag-pinned releases, migrations, and the
-  issue filer. Still open on this roadmap: instagram, X walk-down, engine
-  OCR providers, hosted transcription pick.
+- **Driver-based ingestion architecture** — DESIGNED 2026-08-19, BUILT
+  2026-08-20; the design in force is `design/ingestion-pipeline.md`. Shipped:
+  the driver registry, PDF + office formats (anydoc), podcasts, X thread
+  walk-up, harvest subject rule (absorbs the site-driver idea), capability
+  providers (transcription/extraction/OCR), tag-pinned releases, migrations,
+  and the issue filer. Still open on this roadmap: instagram, X walk-down,
+  engine OCR providers, hosted transcription pick.
 - **Per-instance context instructions (beyond scope)** — some instances need
   more than a scope list: standing context that steers scanning, enrichment,
   and digestion (e.g. which link shapes are noise here, what the community's

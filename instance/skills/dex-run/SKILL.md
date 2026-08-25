@@ -43,6 +43,11 @@ owner's machine with their full environment. The task:
 - Local tasks fire only while the app is open and the machine awake; a
   missed schedule catches up once on wake. Captures wait in the inbox
   meanwhile — nothing is lost.
+- An owner who doesn't use the desktop app has no local task to arm. The
+  trigger is theirs then — a cron or launchd entry that starts a session in
+  this instance, or nothing at all, since asking for a run does the same
+  work. Record what they chose and move on: an unscheduled instance is a
+  supported state, not a failed setup.
 
 Then do a run now, whatever the host.
 
