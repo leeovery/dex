@@ -111,9 +111,10 @@ this file — they propose changes in the run report.
 
 ## `.env` — local secrets, gitignored
 
-`KEY=VALUE` lines at the instance root (`#` comments skipped). The enrich
-CLI folds it into the environment on every command, real environment
-variables winning — so `OPENAI_API_KEY=…` here is how whisper-api gets its
+`KEY=VALUE` lines at the instance root (`#` comments skipped; one layer of
+surrounding quotes stripped, so `KEY="sk-…"` and `KEY=sk-…` mean the same
+thing). The enrich CLI folds it into the environment on every command, real
+environment variables winning — so `OPENAI_API_KEY=…` here is how whisper-api gets its
 key on this machine without the secret ever being committed. Config stays
 for non-secrets (base_url, model names).
 
@@ -133,7 +134,10 @@ a malformed record impossible:
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `capped` marks a skip that records
   cap-refused work, not an admitted unit. Heals and manual resolutions:
-  `bin/dex enrich mark`.
+  `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
+  the exact stored key for units recorded verbatim (bad seeds and every
+  `via: media` line), so pass the URL as the ledger shows it and the heal
+  lands on that entry.
 - `state/enrichment-ledger.unmigrated.jsonl` — the migration quarantine
   (normally ABSENT/empty): ledger lines a migration could not provably
   translate. Lint flags it non-empty. **The quarantine review procedure**

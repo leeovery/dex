@@ -46,6 +46,7 @@ from .transcribe import (
     acquire_podcast_audio,
     acquire_youtube_audio,
     podcast_body,
+    read_enrichment,
     youtube_body,
     yt_dlp_audio,
 )
@@ -113,6 +114,48 @@ HARVEST_RULES_VERSION = 1
 
 _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
+
+# Whitespace and control characters anywhere in a URL make the HTTP client
+# refuse the request outright (as a ValueError, outside the
+# connection-failure lifecycle every other fetch failure travels).
+_UNFETCHABLE_CHARS = re.compile(r"[\s\x00-\x1f\x7f]")
+
+
+def _unfetchable_media(url: str) -> str | None:
+    """Why the transport could never fetch ``url``, or None when it can.
+
+    Media URLs are fetched verbatim — they are checked before they are
+    ledgered, so a URL that cannot be a request never enters the queue.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "the URL cannot be parsed"
+    if parts.scheme not in ("http", "https"):
+        return "the scheme is not http(s)"
+    if not parts.netloc:
+        return "the URL names no host"
+    if _UNFETCHABLE_CHARS.search(url):
+        return "the URL contains whitespace or control characters"
+    return None
+
+
+def _is_media_file(path: Path) -> bool:
+    """Whether ``path`` is one of the item's media-family files.
+
+    Downloads (``media-<n>.<ext>``) and extraction assets
+    (``<hash6>-asset-<n>.<ext>``) — the files the 4-per-item cap counts.
+    Markdown is never one of them: ``media-<n>.md`` is the session's
+    written description of a media capture, and reading it as a file the
+    cap counts (or as a slot already taken) let a download land beyond the
+    cap, beside a description of something else entirely.
+    """
+    return (
+        path.is_file()
+        and path.suffix != ".md"
+        and (path.name.startswith("media-") or "-asset-" in path.name)
+    )
+
 
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
@@ -342,7 +385,17 @@ class _Drain:
                 count=True,
             )
             return
-        fmt = sniff_format(_sniff_bytes(file_path), name=repo_path.rsplit("/", 1)[-1])
+        try:
+            data = _sniff_bytes(file_path)
+        except OSError as e:
+            # Seeding's one file read: an unreadable media file (permissions,
+            # a vanished LFS object) is named on the report, never fatal.
+            detail = " ".join(str(e).split())
+            self.notes.append(
+                f"media file {repo_path} could not be read — {detail} — skipped this run"
+            )
+            return
+        fmt = sniff_format(data, name=repo_path.rsplit("/", 1)[-1])
         if fmt is None:
             return
         self.record(
@@ -451,20 +504,20 @@ class _Drain:
 
     def _process(self, entry: LedgerEntry) -> bool:
         """Process one unit; False means a cap-deferred no-op (nothing spent)."""
-        if entry.via == "media":
-            # The ONE via-routed dispatch: the media stage gives blocked downloads
-            # normal retry rules, and via is the only mark they carry.
-            self._download_media(entry, prior=entry)
-            return True
-        transcribe_job = _is_transcribe_job(entry)
+        # The ONE via-routed dispatch: the media stage gives blocked downloads
+        # normal retry rules, and via is the only mark they carry.
+        media_job = entry.via == "media"
+        transcribe_job = not media_job and _is_transcribe_job(entry)
         if transcribe_job and not self._transcribe_slot():
             return False  # stays waiting untouched; the deferral is noted once
         try:
             # The try spans ALL per-unit processing:
-            # fetch/transcribe, output write, media stage, children
+            # fetch/transcribe/download, output write, media stage, children
             # admission. An engine bug anywhere in it ledgers `error` — the
             # outcome line supersedes any partial one — never aborts the run.
-            if transcribe_job:
+            if media_job:
+                self._download_media(entry)
+            elif transcribe_job:
                 self._transcribe_unit(entry)
             else:
                 self._drive_unit(entry)
@@ -684,6 +737,7 @@ class _Drain:
         path = None
         if result.body is not None:
             path = self._write_output(entry, result)
+            _drop_superseded_outputs(self.ctx.instance, entry, path)
         title = result.meta.get("title")
         self.record_outcome(
             entry,
@@ -711,10 +765,11 @@ class _Drain:
         ping-pong. Across runs a unit may correct again: the world
         genuinely changes, and ``via`` is provenance history, not a lock.
 
-        The previous kind's output is unlinked: the correction supersedes
-        it, and leaving it beside the new output would hand the digest
-        layer superseded content. The ledger's audit trail preserves the
-        history; the disk does not.
+        The previous kind's output stays on disk until the corrected unit
+        lands one of its own (:func:`_drop_superseded_outputs`). Unlinking
+        it here would strip an item of the enrichment it already had the
+        moment a corrected fetch parked — status back to raw, digest
+        orphaned, nothing left to re-derive from.
         """
         if entry.hash in self.redetected_hashes:
             self.record_outcome(
@@ -727,13 +782,6 @@ class _Drain:
             )
             return
         self.redetected_hashes.add(entry.hash)
-        stale = (
-            self.ctx.instance.enrichment_dir
-            / entry.item
-            / f"{entry.kind.value}-{entry.hash[:6]}.md"
-        )
-        if entry.kind is not redetect.kind and stale.exists():
-            stale.unlink()
         self.record(
             LedgerEntry(
                 hash=entry.hash,
@@ -869,18 +917,16 @@ class _Drain:
         item_dir = self.ctx.instance.enrichment_dir / item_id
         if not item_dir.is_dir():
             return 0
-        return sum(
-            1
-            for path in item_dir.iterdir()
-            if path.is_file()
-            and path.suffix != ".md"
-            and (path.name.startswith("media-") or "-asset-" in path.name)
-        )
+        return sum(1 for path in item_dir.iterdir() if _is_media_file(path))
 
     # -- media stage ------------------------------------------------
 
     def _media_stage(self, parent: LedgerEntry, urls: list[str]) -> None:
         for url in urls:
+            refusal = _unfetchable_media(url)
+            if refusal is not None:
+                self._park_unfetchable_media(parent, url, refusal)
+                continue
             unit_hash = work_hash(url)
             existing = self.entries.get(unit_hash)
             if existing is not None:
@@ -900,15 +946,53 @@ class _Drain:
             )
             # The birth line lands BEFORE the download (entries exist from
             # birth) — a crash mid-download leaves a queued via:media entry
-            # the next run's redrain path picks up.
+            # the next run's redrain path picks up. The download itself goes
+            # through _process, so a failure of any class is charged to the
+            # media unit rather than to the page that pointed at it.
             self.record(child)
-            self._download_media(self.entries[unit_hash], prior=None)
+            self._process(self.entries[unit_hash])
 
-    def _download_media(self, entry: LedgerEntry, *, prior: LedgerEntry | None) -> None:
+    def _park_unfetchable_media(self, parent: LedgerEntry, url: str, why: str) -> None:
+        """Park a media URL nothing could fetch — as its own unit, manual.
+
+        The bad-seed pattern, one layer in: garbage never enters the queue,
+        and the refusal is charged to the media unit, never to the page
+        whose markup merely named it. Keyed on the raw URL like every other
+        media line, so ``enrich mark`` can heal it.
+        """
+        if not url or "\n" in url or "\r" in url:
+            # A multi-line value cannot be a ledger identity at all (the
+            # schema is single-line) — the report is the only place it fits.
+            self.notes.append(
+                f"item {parent.item}: a media URL found on {parent.url} spans "
+                "multiple lines and was dropped — it cannot become a work unit"
+            )
+            return
+        unit_hash = work_hash(url)
+        if unit_hash in self.entries:
+            return
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=url,
+                item=parent.item,
+                kind=parent.kind,
+                status=Status.MANUAL,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                via="media",
+                parent=parent.hash,
+                depth=(parent.depth or 0) + 1,
+                reason=f"unfetchable media URL — {why}",
+            ),
+            count=True,
+        )
+
+    def _download_media(self, entry: LedgerEntry) -> None:
         # Cap and oversize skips below land in the report's unit counts —
         # deliberately: they are unit outcomes, unlike the re-entry cap
         # fires, which never surface.
-        slot = self._media_slot(entry.item)
+        slot = self._media_slot(entry)
         if slot is None:
             # Capacity checked BEFORE any fetch — no bandwidth spent on a
             # file the cap would refuse. Downloads are synchronous, so
@@ -928,11 +1012,11 @@ class _Drain:
             response = self.ctx.transport(entry.url)
         except OSError as e:
             failure = classify_connection(e)
-            self._media_failure(entry, prior, failure.status, failure.reason)
+            self._media_failure(entry, failure.status, failure.reason)
             return
         if not response.ok:
             failure = classify_http(response.status)
-            self._media_failure(entry, prior, failure.status, failure.reason)
+            self._media_failure(entry, failure.status, failure.reason)
             return
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
@@ -954,13 +1038,12 @@ class _Drain:
             return False  # inconclusive — the GET will surface the truth
         return probe.ok and (probe.content_length or 0) > MEDIA_MAX_BYTES
 
-    def _media_failure(
-        self, entry: LedgerEntry, prior: LedgerEntry | None, status: Status, reason: str
-    ) -> None:
+    def _media_failure(self, entry: LedgerEntry, status: Status, reason: str) -> None:
         match status:
             case Status.BLOCKED:
-                base = dataclasses.replace(entry, attempts=(prior.attempts if prior else None))
-                self._apply_blocked(base, reason)
+                # The entry IS the prior line — a birth line carries no
+                # attempts, a redrained one carries what it has earned.
+                self._apply_blocked(entry, reason)
             case Status.MANUAL | Status.DEAD:
                 self.record_outcome(entry, status=status, reason=reason)
             case _:
@@ -968,24 +1051,48 @@ class _Drain:
                 # else is an engine bug, not a quiet default.
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
-    def _media_slot(self, item_id: str) -> int | None:
-        """The next free media index for the item, or None at the cap.
+    def _media_slot(self, entry: LedgerEntry) -> int | None:
+        """This unit's media index — stable across runs — or None at the cap.
 
-        The cap is shared with extraction assets — 4 media-family files per
-        item total, whichever route wrote them.
+        The index is the unit's position among the item's media units in
+        ledger order, NOT the next free index on disk: a crash between the
+        file write and the outcome line leaves an orphaned file, and a
+        next-free scan would then write a second copy beside it. Reruns
+        overwrite, never duplicate.
+
+        The index NAMES the file; it never decides the cap. The cap counts
+        media-family files that exist — 4 per item, shared with extraction
+        assets, whichever route wrote them — so a unit's parked, dead or
+        skipped siblings spend nothing, and an index past the cap is
+        ordinary (a thread pooling six photos whose first two 404 still
+        lands four files, at ``media-2`` through ``media-5``). Counting
+        positions instead recorded a terminal "media cap reached" on units
+        no file had displaced, losing them permanently under a false
+        reason. A slot already on disk is this unit's own file, overwritten
+        in place, and likewise spends nothing new.
         """
-        if self._media_file_count(item_id) >= MEDIA_MAX_FILES:
+        slot = self._media_position(entry)
+        item_dir = self.ctx.instance.enrichment_dir / entry.item
+        if any(_is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
+            return slot
+        if self._media_file_count(entry.item) >= MEDIA_MAX_FILES:
             return None
-        item_dir = self.ctx.instance.enrichment_dir / item_id
-        taken = {
-            int(path.stem.split("-")[1])
-            for path in item_dir.glob("media-*.*")
-            if path.stem.split("-")[1].isdigit()
-        }
-        for slot in range(MEDIA_MAX_FILES):
-            if slot not in taken:
-                return slot
-        return None
+        return slot
+
+    def _media_position(self, entry: LedgerEntry) -> int:
+        """How many of the item's media units were ledgered before this one.
+
+        Counted regardless of status: the position is an identity, so a
+        parked or skipped sibling still holds its place — a position that
+        moved as statuses changed would rename files under the item.
+        """
+        seen = 0
+        for unit_hash, other in self.entries.items():
+            if unit_hash == entry.hash:
+                break
+            if other.item == entry.item and other.via == "media":
+                seen += 1
+        return seen
 
     # -- children -----------------------------------------------
 
@@ -1177,6 +1284,37 @@ class _Drain:
         ]
 
 
+def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
+    """Drop the unit's earlier-kind output — once ``path`` replaces it.
+
+    A redetection relabels a unit, so its output file is renamed by kind.
+    The stale file leaves the disk here, on the success that replaces it,
+    and never earlier: a corrected fetch that parks must leave the item
+    exactly as enriched as it found it. The ledger's audit trail keeps the
+    history either way. Both routes to a unit's own output come through
+    here — the drain's write, and a hand-written file closed by ``mark``.
+
+    Candidate names are the closed ``<kind>-<hash6>.md`` set, and each
+    candidate must PROVE it belongs to this unit by the URL it records:
+    ``hash6`` is six hex digits, so two units under one item share one often
+    enough that a real pair was found by hand, and matching on the name
+    alone unlinked the neighbour's enrichment while its ledger line still
+    read ``done``. Nothing is dropped for a replacement that is not on disk
+    — a mistyped ``mark --path`` must not cost the item its enrichment.
+    """
+    if not (instance.root / path).is_file():
+        return
+    item_dir = instance.enrichment_dir / entry.item
+    current = Path(path).name
+    for kind in Kind:
+        stale = item_dir / f"{kind.value}-{entry.hash[:6]}.md"
+        if stale.name == current or not stale.is_file():
+            continue
+        fields, _body = read_enrichment(stale)
+        if fields.get("url") == entry.url:
+            stale.unlink()
+
+
 def _refresh_item_frontmatter(
     instance: Instance, item_id: str, path: Path | None = None
 ) -> str | None:
@@ -1195,7 +1333,10 @@ def _refresh_item_frontmatter(
         path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     try:
         item = corpus.read_item(path)
-    except (OSError, corpus.CorpusSchemaError):
+    except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+        # UnicodeDecodeError is a ValueError, not an OSError: without it a
+        # single non-UTF-8 item made mark and pass exit 1 AFTER their write
+        # had landed, and the retry duplicated the record.
         return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
     try:
@@ -1384,10 +1525,14 @@ def _admit_fetch(
     existing = drain.entries.get(unit_hash)
     if existing is not None:
         if existing.item != item_id:
-            raise ValueError(
-                f"{canonical} already enriches under item {existing.item!r} — one URL "
-                f"enriches under one item; it cannot be fetched into {item_id!r}"
+            # One URL enriches under one item — but refusing the BATCH would
+            # abort the URLs already ledgered ahead of this one and swallow
+            # the report with them. The refusal is reported; the rest fetch.
+            drain.notes.append(
+                f"{canonical} already enriches under item {existing.item} — one URL "
+                f"enriches under one item; not fetched into {item_id}"
             )
+            return None
         if _is_cap_refusal(existing):
             # A cap-refusal marker is not an admitted unit: it falls through
             # to the cap logic below, so a repeat fetch without --force is
@@ -1405,24 +1550,31 @@ def _admit_fetch(
             if force
             else f"url cap ({MAX_URLS_PER_ITEM} per item) reached — rerun with --force to exceed"
         )
-        drain.record(
-            LedgerEntry(
-                hash=unit_hash,
-                url=canonical,
-                item=item_id,
-                kind=detect_kind(url, drain.ctx.drivers),
-                status=Status.SKIPPED,
-                capped=True,
-                engine="seed",
-                date=datetime.date.min,
-                via="harvest",
-                parent=parent.hash,
-                depth=depth,
-                reason=reason,
-            ),
-            count=not force,
-        )
+        repeat = existing is not None and _is_cap_refusal(existing) and existing.reason == reason
+        if not repeat:
+            # A refusal that says byte-for-byte what the last one said adds
+            # nothing to the audit trail.
+            drain.record(
+                LedgerEntry(
+                    hash=unit_hash,
+                    url=canonical,
+                    item=item_id,
+                    kind=detect_kind(url, drain.ctx.drivers),
+                    status=Status.SKIPPED,
+                    capped=True,
+                    engine="seed",
+                    date=datetime.date.min,
+                    via="harvest",
+                    parent=parent.hash,
+                    depth=depth,
+                    reason=reason,
+                ),
+                count=not force,
+            )
         if not force:
+            # An owner-requested refusal IS surfaced: the owner asked, and a
+            # bare "skipped 1" leaves the --force route unreachable.
+            drain.notes.append(f"not fetched — {canonical}: {reason}")
             return None
     try:
         detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
@@ -1548,9 +1700,15 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     The owning item's derived frontmatter is refreshed in the same call, so
     a hand-written enrichment file is listed the moment its heal lands.
 
+    A unit is found by its canonical identity, or — failing that — by the
+    exact key it was stored under: bad seeds and every ``via: media`` line
+    are keyed on the URL verbatim (canonicalization failed, or never ran),
+    so a canonical-only lookup could never reach them, and the contract
+    forbids healing them by hand.
+
     Args:
         ctx: The run context.
-        url: The unit's URL (canonicalized here).
+        url: The unit's URL — canonicalized first, then matched verbatim.
         status: The corrected status.
         reason: The stated reason (required for manual/skipped).
         path: Output path, for done heals that wrote a file.
@@ -1573,8 +1731,15 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # scrubber does for engine-produced reasons.
         reason = " ".join(reason.split()) or None
     drain = _Drain(ctx=ctx)
-    canonical, unit_hash = drain.identify(url)
-    prior = drain.entries.get(unit_hash)
+    try:
+        canonical, _ = drain.identify(url)
+    except ValueError:
+        # The URL a bad seed was parked for cannot be canonicalized — that
+        # is why it parked. The verbatim key is the only one it ever had.
+        canonical = url
+    prior = drain.entries.get(work_hash(canonical))
+    if prior is None:
+        prior = drain.entries.get(work_hash(url))
     if prior is None:
         raise ValueError(f"no ledger entry for {canonical!r} — mark heals existing state")
     effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
@@ -1602,8 +1767,16 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         reason=reason,
     )
     drain.record(healed)
+    if status is Status.DONE and effective_path is not None:
+        # A hand-written enrichment closed by mark is one of the unit's own
+        # outputs, so it supersedes an earlier kind's exactly as a drained
+        # one does. This is the prescribed route out of a redetection whose
+        # corrected fetch parks (a scanned PDF, no extractor); without the
+        # drop the item keeps two files for one unit and serves the stale
+        # pre-correction view to the digest and query layers forever.
+        _drop_superseded_outputs(ctx.instance, healed, effective_path)
     _refresh_item_frontmatter(ctx.instance, prior.item)
-    return f"marked {canonical} ({unit_hash}) {status.value}"
+    return f"marked {prior.url} ({prior.hash}) {status.value}"
 
 
 def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
@@ -1684,7 +1857,7 @@ _YAML_TIMESTAMP_RE = re.compile(
 def _render_enrichment(
     url: str, fetched: datetime.date, meta: dict[str, str | int | None], body: str
 ) -> str:
-    lines = ["---", f"url: {url}", f"fetched: {fetched.isoformat()}"]
+    lines = ["---", f"url: {_yaml_value(url)}", f"fetched: {fetched.isoformat()}"]
     for key, value in meta.items():
         if value is None or value == "":
             continue

@@ -269,8 +269,8 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     )
     parent, depth = provenance if provenance is not None else (None, None)
     path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
-    # Reasons are single-line by schema — every writer normalizes.
-    single_line = st.text(min_size=1).filter(lambda s: "\n" not in s)
+    # Reasons and work keys are single-line by schema — every writer normalizes.
+    single_line = st.text(min_size=1).filter(lambda s: "\n" not in s and "\r" not in s)
     if status in (Status.MANUAL, Status.SKIPPED):
         reason = draw(single_line)
     elif status in _REASON_OPTIONAL:
@@ -285,7 +285,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         needs = None
     return LedgerEntry(
         hash=draw(st.sampled_from(_HASHES)),
-        url=draw(st.text(min_size=1)),
+        url=draw(single_line),
         item=draw(st.text(min_size=1)),
         kind=kind,
         format=draw(st.none() | st.sampled_from(list(Format))) if kind is Kind.FILE else None,

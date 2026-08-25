@@ -176,8 +176,14 @@ def _load_env(root: Path) -> None:
 
     The local-secret slot: keys (``OPENAI_API_KEY`` for whisper-api) live
     here rather than in the committed config. Simple ``KEY=VALUE`` lines,
-    ``#`` comments and malformed lines skipped; setdefault semantics — a
-    real environment variable always wins.
+    ``#`` comments and malformed lines skipped; one layer of surrounding
+    quotes stripped (``KEY="sk-…"`` is how a shell-shaped file is written,
+    and a literal quote in the value 401s every call); setdefault
+    semantics — a real environment variable always wins.
+
+    Raises:
+        OSError: The file exists but cannot be read (a directory, say).
+        UnicodeDecodeError: The file is not UTF-8.
     """
     env = root / ".env"
     if not env.exists():
@@ -187,15 +193,24 @@ def _load_env(root: Path) -> None:
             continue
         key, _, value = line.partition("=")
         if key.strip():  # a nameless `=value` line would crash setdefault
-            os.environ.setdefault(key.strip(), value.strip())
+            os.environ.setdefault(key.strip(), _unquoted(value.strip()))
+
+
+def _unquoted(value: str) -> str:
+    """One layer of matched surrounding quotes off a ``.env`` value."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":  # noqa: PLR2004 — a quoted value is two quotes plus content
+        return value[1:-1]
+    return value
 
 
 def main(argv: list[str] | None = None) -> None:
     """Parse, build the context from the instance at cwd, call the pipeline."""
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
-    _load_env(instance.root)
     try:
+        # Inside the wrapper: an unreadable .env is instance state like any
+        # other, and it must fail as a stated line, not a traceback.
+        _load_env(instance.root)
         config = Config.load(instance.config_path)
         # One Capabilities object feeds the drain seam, the transcribe path,
         # the file driver, and the status surface — they cannot disagree.

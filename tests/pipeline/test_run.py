@@ -45,6 +45,7 @@ from dex_engine.pipeline.types import (
     LedgerEntry,
     MediaFetch,
     Need,
+    Redetection,
     Result,
     Status,
 )
@@ -260,6 +261,26 @@ class TestSeedAndDone:
         assert poisoned.kind is Kind.FILE
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
 
+    def test_unreadable_media_file_is_noted_and_seeding_continues(self, instance, monkeypatch):
+        # Seeding's one file read: an unreadable media file (permissions, a
+        # vanished LFS object) is judgment work, never fatal to the run.
+        media = instance.root / "media" / "aaaaaa" / "paper.pdf"
+        media.parent.mkdir(parents=True)
+        media.write_bytes(b"%PDF-1.4 fine on disk")
+        write_item(instance, media=["media/aaaaaa/paper.pdf"])
+
+        def unreadable(_path):
+            raise PermissionError("Operation not permitted")
+
+        monkeypatch.setattr(run_mod, "_sniff_bytes", unreadable)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert "media file media/aaaaaa/paper.pdf could not be read" in flat
+        assert "Operation not permitted" in flat
+        entries = ledger.load(instance.ledger_path)
+        assert work_hash("file:media/aaaaaa/paper.pdf") not in entries  # nothing guessed
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731
@@ -269,7 +290,9 @@ class TestSeedAndDone:
         run_mod.run(ctx)
         content = (instance.root / entry_for(ctx).path).read_text()
         assert 'title: "Ledgers: a Field Report"' in content
-        assert content.startswith(f"---\nurl: {URL}\nfetched: 2026-08-20\n")
+        # The url line is a value like any other — a work key can carry a
+        # colon-space (`file:media/plan: v2.pdf`) and unparse the block.
+        assert content.startswith(f'---\nurl: "{URL}"\nfetched: 2026-08-20\n')
 
 
 class TestFrontmatterRefresh:
@@ -766,6 +789,60 @@ class TestMediaStage:
         assert all(e.status is Status.SKIPPED for e in skipped)
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
 
+    def test_dead_media_siblings_never_spend_the_file_cap(self, instance):
+        # The wild shape: an X thread pooling 6 photos whose first two 404.
+        # The cap bounds FILES, so all four survivors must land — a cap that
+        # counted ledger positions instead recorded a terminal `skipped
+        # media cap` on two units with only two files on disk, and terminal
+        # means lost forever, with a false reason on the record.
+        urls = [f"https://cdn.example.test/p{n}.png" for n in range(MEDIA_MAX_FILES + 2)]
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        responses = {
+            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls[2:]
+        }
+        responses[urls[0]] = gone
+        responses[urls[1]] = gone
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch(urls)),
+            transport=FakeTransport(responses),
+        )
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        statuses = [entries[work_hash(url)].status for url in urls]
+        assert statuses == [Status.DEAD, Status.DEAD] + [Status.DONE] * MEDIA_MAX_FILES
+        files = sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*"))
+        assert len(files) == MEDIA_MAX_FILES
+        for url in urls[2:]:
+            path = entries[work_hash(url)].path
+            assert path is not None
+            assert (instance.root / path).is_file()
+
+    def test_a_session_written_media_description_never_unlocks_the_cap(self, instance):
+        # `media-N.md` is the session's description of a media capture, not a
+        # media file — `_media_file_count` excludes it and the slot check
+        # must too, or the item ends with five media-family files and a
+        # downloaded `media-0.png` beside a `media-0.md` about something else.
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        for n in range(MEDIA_MAX_FILES):
+            (item_dir / f"aaaaaa-asset-{n}.png").write_bytes(b"asset")
+        (item_dir / "media-0.md").write_text("the captured photo, described\n", encoding="utf-8")
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport(
+                {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+            ),
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.SKIPPED
+        assert entry.reason == f"media cap ({MEDIA_MAX_FILES} files) reached"
+        assert not (item_dir / "media-0.png").exists()
+
     def test_media_entries_are_born_queued_before_the_download(self, instance):
         # Entries exist from birth — a crash mid-download must leave a queued
         # via:media line the next run's redrain path picks up.
@@ -819,6 +896,100 @@ class TestMediaStage:
         assert "Content-Length" in (entry.reason or "")
         media_calls = [call for call in transport.calls if call[1] == self.IMG1]
         assert media_calls == [("HEAD", self.IMG1)]  # the body was never fetched
+
+    def og_image_page(self, content: str) -> bytes:
+        return (
+            f'<html><head><meta property="og:image" content="{content}">'
+            "</head><body>page</body></html>"
+        ).encode()
+
+    def web_ctx(self, instance, transport):
+        web = WebDriver(transport=transport, extract=lambda _html: "extracted body " * 40)
+        return make_ctx(instance, FakeDriver(), drivers=[web], transport=transport)
+
+    def test_relative_og_image_resolves_and_downloads(self, instance):
+        # The media stage fetches verbatim, so a page-relative og:image used
+        # to reach the transport as an unfetchable URL and take the run down.
+        hero = "https://example.test/img/hero.png"
+        transport = FakeTransport(
+            {
+                URL: HttpResponse(
+                    status=200, content_type="text/html", body=self.og_image_page("/img/hero.png")
+                ),
+                hero: HttpResponse(status=200, content_type="image/png", body=b"png"),
+            }
+        )
+        write_item(instance)
+        ctx = self.web_ctx(instance, transport)
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DONE
+        assert entries[work_hash(hero)].path == f"enrichment/{ITEM}/media-0.png"
+
+    def test_protocol_relative_og_image_takes_the_page_scheme(self, instance):
+        hero = "https://cdn.example.test/hero.png"
+        transport = FakeTransport(
+            {
+                URL: HttpResponse(
+                    status=200,
+                    content_type="text/html",
+                    body=self.og_image_page("//cdn.example.test/hero.png"),
+                ),
+                hero: HttpResponse(status=200, content_type="image/png", body=b"png"),
+            }
+        )
+        write_item(instance)
+        run_mod.run(self.web_ctx(instance, transport))
+        assert ledger.load(instance.ledger_path)[work_hash(hero)].status is Status.DONE
+
+    def test_unfetchable_media_url_is_charged_to_the_media_unit(self, instance):
+        # A host with a space: the transport refuses it as a ValueError, so
+        # the old inline download superseded the PARENT's done line with an
+        # error and killed every later run. It never reaches a fetch now.
+        bad = "https://exa mple.test/a.png"
+        write_item(instance)
+        transport = FakeTransport({})
+        driver = FakeDriver(fetch_fn=self.media_fetch([bad]))
+        ctx = make_ctx(instance, driver, transport=transport)
+        report = run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DONE  # the parent stands
+        media = entries[work_hash(bad)]
+        assert media.status is Status.MANUAL
+        assert media.via == "media"
+        assert media.parent == work_hash(URL)
+        assert "unfetchable media URL" in (media.reason or "")
+        assert all(call[1] != bad for call in transport.calls)  # never fetched
+        assert bad in report
+
+        # And the next run is clean: the park is terminal, nothing retries.
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        assert ledger.load(instance.ledger_path)[work_hash(bad)].status is Status.MANUAL
+
+    def test_crash_window_redrain_overwrites_its_own_media_file(self, instance):
+        # Birth line, file written, crash before the outcome line. The
+        # redrain must overwrite media-0 — never write media-1 beside the
+        # orphan a disk scan would take for someone else's slot.
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        lines = [
+            line for line in instance.ledger_path.read_text().split("\n") if line.strip()
+        ]
+        assert json.loads(lines[-1])["hash"] == work_hash(self.IMG1)
+        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")  # the crash
+        assert (instance.enrichment_dir / ITEM / "media-0.png").exists()
+
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
+            "media-0.png"
+        ]
 
     def test_media_does_not_count_toward_the_url_cap(self, instance):
         write_item(instance)
@@ -1008,17 +1179,23 @@ class TestVerbs:
         assert entry.depth == 1
         assert "1 unit processed" in report
 
-    def test_fetch_urls_refuses_to_steal_another_items_unit(self, instance):
+    def test_fetch_urls_reports_a_cross_item_url_and_the_batch_continues(self, instance):
+        # One URL enriches under one item — but raising aborted the batch
+        # mid-flight, losing the report for URLs already ledgered.
         write_item(instance, "2026-08-19-first-aaaaaa", urls=[URL])
         write_item(instance, "2026-08-19-second-bbbbbb", urls=["https://example.test/other"])
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
-        with pytest.raises(ValueError, match="2026-08-19-first-aaaaaa"):
-            run_mod.fetch_urls(ctx, "2026-08-19-second-bbbbbb", [URL])
+        good = "https://example.test/docs"
+        report = run_mod.fetch_urls(ctx, "2026-08-19-second-bbbbbb", [URL, good])
+        flat = " ".join(report.split())
+        assert "already enriches under item 2026-08-19-first-aaaaaa" in flat
         # The unit stayed with its owner, provenance intact:
-        entry = ledger.load(instance.ledger_path)[work_hash(URL)]
-        assert entry.item == "2026-08-19-first-aaaaaa"
-        assert entry.status is Status.DONE
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].item == "2026-08-19-first-aaaaaa"
+        assert entries[work_hash(URL)].status is Status.DONE
+        assert entries[work_hash(good)].item == "2026-08-19-second-bbbbbb"
+        assert entries[work_hash(good)].status is Status.DONE  # the batch continued
 
     def test_fetch_urls_on_the_items_own_unit_is_a_rerun_in_place(self, instance):
         write_item(instance)
@@ -1083,6 +1260,31 @@ class TestVerbs:
         # The cap fire stayed in the audit trail:
         lines = instance.ledger_path.read_text().split("\n")
         assert any("exceeded by --force" in line for line in lines)
+
+    def test_a_capped_fetch_refusal_is_surfaced_with_its_force_route(self, instance):
+        # An owner-requested refusal IS surfaced — a bare "skipped 1" leaves
+        # the --force affordance unreachable.
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        extra = "https://example.test/extra"
+        report = run_mod.fetch_urls(ctx, ITEM, [extra])
+        flat = " ".join(report.split())
+        assert extra in flat
+        assert "url cap (12 per item) reached — rerun with --force to exceed" in flat
+
+    def test_repeat_capped_refusals_do_not_append_identical_lines(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        extra = "https://example.test/extra"
+        run_mod.fetch_urls(ctx, ITEM, [extra])
+        before = instance.ledger_path.read_text()
+        report = run_mod.fetch_urls(ctx, ITEM, [extra])  # refused again
+        assert instance.ledger_path.read_text() == before  # nothing new to say
+        assert "--force" in " ".join(report.split())  # still answered
 
     def test_cap_markers_are_recognized_by_the_flag_not_the_wording(self, instance):
         urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
@@ -1188,6 +1390,69 @@ class TestVerbs:
         run_mod.run(ctx)
         with pytest.raises(ValueError, match="reason"):
             run_mod.mark(ctx, URL, Status.MANUAL, reason=" \n\t ")
+
+    def test_mark_heals_a_bad_seed_parked_on_its_raw_url(self, instance):
+        # A bad seed is keyed on the URL exactly as captured — canonicalizing
+        # it is what failed — so a canonical-only lookup never reaches it and
+        # the whole class would be unhealable.
+        bad_url = "https://[bad-ipv6"
+        write_item(instance, urls=[bad_url])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(bad_url)].status is Status.MANUAL
+        confirmation = run_mod.mark(ctx, bad_url, Status.DEAD, reason="the host never existed")
+        healed = ledger.load(instance.ledger_path)[work_hash(bad_url)]
+        assert healed.status is Status.DEAD
+        assert healed.url == bad_url  # the entry keeps its own key
+        assert work_hash(bad_url) in confirmation
+
+    def test_mark_heals_a_via_media_entry_by_its_verbatim_url(self, instance):
+        # Media URLs are ledgered verbatim — signed params ARE the resource —
+        # so the canonical hash of one can never meet its stored key.
+        signed = "https://cdn.example.test/hero.png?si=abc123"
+        write_item(instance)
+        fetch = lambda _unit: Result(  # noqa: E731
+            status=Status.DONE, meta={}, body="b" * 400, media=[signed]
+        )
+        outage = HttpResponse(status=503, content_type="image/png", body=b"")
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({signed: outage})
+        )
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(signed)].status is Status.BLOCKED
+        run_mod.mark(ctx, signed, Status.SKIPPED, reason="the signed link expired")
+        healed = ledger.load(instance.ledger_path)[work_hash(signed)]
+        assert healed.status is Status.SKIPPED
+        assert healed.via == "media"  # provenance carried forward
+
+    def test_mark_prefers_the_canonical_match_when_both_keys_exist(self, instance):
+        raw = f"{URL}?si=abc123"  # canonicalizes to URL; ledgered verbatim as media
+        write_item(instance)
+        fetch = lambda _unit: Result(  # noqa: E731
+            status=Status.DONE, meta={}, body="b" * 400, media=[raw]
+        )
+        image = HttpResponse(status=200, content_type="image/png", body=b"png")
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image})
+        )
+        run_mod.run(ctx)
+        run_mod.mark(ctx, raw, Status.DEAD, reason="the page is gone")
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.DEAD  # canonical wins
+        assert entries[work_hash(raw)].status is Status.DONE  # the media line untouched
+
+    def test_verbs_survive_a_non_utf8_corpus_item(self, instance):
+        # The derived-frontmatter refresh follows the write: a
+        # UnicodeDecodeError there used to exit 1 AFTER the ledger (or
+        # passes) line had landed, and the retry duplicated the record.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").write_bytes(b"---\nid: x\n---\n\xff\xfe")
+        run_mod.mark(ctx, URL, Status.DEAD, reason="the source is gone")
+        assert entry_for(ctx).status is Status.DEAD
+        assert run_mod.record_pass(ctx, ITEM, "digest").startswith("recorded")
+        assert instance.passes_path.read_text().count("\n") == 1  # one record, no retry
 
     def test_mark_error_is_refused(self, instance):
         ctx = make_ctx(instance, FakeDriver())
@@ -1632,6 +1897,134 @@ class TestRedetection:
         assert "re-detection loop" not in report
         assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
 
+    def test_a_parked_correction_keeps_the_old_output_until_one_replaces_it(self, instance):
+        # The wild rerun path: an item enriched as web re-detects to file,
+        # and the corrected fetch parks. Unlinking the web output at
+        # redetect time left the item at `raw` with an orphaned digest and
+        # nothing on disk to re-derive from.
+        item_path = write_item(instance)
+        mode = {"redetect": False, "extract": False}
+
+        def web_fetch(_unit):
+            if mode["redetect"]:
+                return Result(
+                    status=Status.QUEUED,
+                    meta={},
+                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+                )
+            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+
+        def file_fetch(_unit):
+            if mode["extract"]:
+                return Result(status=Status.DONE, meta={"title": "t"}, body="extracted " * 40)
+            return Result(status=Status.MANUAL, meta={}, reason="no extractor for pdf here")
+
+        web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
+        files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
+        ctx = make_ctx(instance, web, drivers=[web, files])
+        run_mod.run(ctx)
+        web_out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        assert web_out.exists()
+
+        mode["redetect"] = True
+        self._requeue(ctx, URL)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        parked = entry_for(ctx)
+        assert parked.kind is Kind.FILE
+        assert parked.status is Status.MANUAL
+        assert web_out.exists()  # the enrichment the item already had stands
+        assert corpus.read_item(item_path).enrichment == [web_out.name]
+        assert corpus.read_item(item_path).status == "enriched"
+
+        # The success that replaces it is what drops it.
+        mode["extract"] = True
+        self._requeue(ctx, URL, reason=None)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        done = entry_for(ctx)
+        assert done.status is Status.DONE
+        assert not web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [f"file-{done.hash[:6]}.md"]
+
+    # These two URLs share a sha1[:6] (6f0d01) and detect as different
+    # kinds, so under one item they want output names that differ only by
+    # the kind prefix — the shape a name-pattern drop cannot tell apart.
+    COLLIDING_WEB = "https://example.test/post-26969"
+    COLLIDING_PDF = "https://example.test/doc-2.pdf"
+
+    def test_a_hash6_collision_never_drops_the_neighbours_output(self, instance):
+        assert work_hash(self.COLLIDING_WEB)[:6] == work_hash(self.COLLIDING_PDF)[:6]
+        article = fixture_text("web", "article.html")
+        transport = FakeTransport(
+            {
+                self.COLLIDING_WEB: HttpResponse(
+                    status=200, content_type="text/html", body=article.encode()
+                ),
+                self.COLLIDING_PDF: HttpResponse(
+                    status=200, content_type="application/pdf", body=fixture_bytes("paper.pdf")
+                ),
+            }
+        )
+        item_path = write_item(instance, urls=[self.COLLIDING_WEB, self.COLLIDING_PDF])
+        quiet = Config(media_fetch=MediaFetch.NONE)
+        ctx = make_ctx(
+            instance, FakeDriver(), drivers=self._drivers(instance, transport), config=quiet
+        )
+        run_mod.run(ctx)
+        entries = [entry_for(ctx, self.COLLIDING_WEB), entry_for(ctx, self.COLLIDING_PDF)]
+        assert [e.status for e in entries] == [Status.DONE, Status.DONE]
+        # A done line pointing at nothing is the failure this pins.
+        for entry in entries:
+            assert entry.path is not None
+            assert (instance.root / entry.path).is_file()
+        shared = work_hash(self.COLLIDING_WEB)[:6]
+        assert corpus.read_item(item_path).enrichment == [
+            f"file-{shared}.md",
+            f"web-{shared}.md",
+        ]
+
+    def test_a_mark_landed_output_drops_the_superseded_one(self, instance):
+        # The prescribed recovery for a web→file correction whose corrected
+        # fetch parks: the session writes the enrichment by hand and closes
+        # it with `enrich mark ... done --path`. The stale web view of the
+        # PDF must leave with it — the drain's route is not the only one.
+        item_path = write_item(instance)
+        mode = {"redetect": False}
+
+        def web_fetch(_unit):
+            if mode["redetect"]:
+                return Result(
+                    status=Status.QUEUED,
+                    meta={},
+                    redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+                )
+            return Result(status=Status.DONE, meta={"title": "t"}, body="b" * 400)
+
+        def file_fetch(_unit):
+            return Result(status=Status.MANUAL, meta={}, reason="scanned pdf — no extractor")
+
+        web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
+        files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
+        ctx = make_ctx(instance, web, drivers=[web, files])
+        run_mod.run(ctx)
+        web_out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        assert web_out.exists()
+
+        mode["redetect"] = True
+        self._requeue(ctx, URL)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        assert entry_for(ctx).status is Status.MANUAL
+        assert web_out.exists()  # the park leaves the item as enriched as it found it
+
+        # The session reads the PDF with its eyes and closes the unit.
+        hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"
+        hand_written.write_text(
+            _render_enrichment(URL, TODAY, {"title": "t"}, "read by hand " * 40),
+            encoding="utf-8",
+        )
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{hand_written.name}")
+        assert not web_out.exists()
+        assert corpus.read_item(item_path).enrichment == [hand_written.name]
+
     def test_redetected_rerun_spends_one_cohort_slot(self, instance):
         url = self.PDF_URL
         transport = FakeTransport(
@@ -1752,6 +2145,25 @@ class TestYamlValue:
 
     def test_ints_are_emitted_bare(self):
         assert _yaml_value(42) == "42"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "file:media/plan: v2.pdf",  # wild filenames are space-rich
+            "file:media/2026-08-21/notes: draft.docx",
+            "https://example.test/post",
+        ],
+    )
+    def test_the_url_line_is_a_value_like_any_other(self, url, tmp_path):
+        # A work key carrying a colon-space made the whole block unparseable
+        # — and the url line is the one field that used to bypass quoting.
+        text = _render_enrichment(url, TODAY, {"title": "t"}, "body")
+        record = tmp_path / "file-abc123.md"
+        record.write_text(text)
+        head = text[4:].partition("\n---\n")[0]
+        assert yaml.safe_load(head)["url"] == url
+        fields, _ = read_enrichment(record)
+        assert fields["url"] == url  # and the engine's own reader round-trips it
 
     def test_tabbed_value_leaves_the_block_parseable_by_a_real_yaml_reader(self, tmp_path):
         value = "col1\tcol2"

@@ -166,6 +166,10 @@ def _validate_unit_identity(
         )
     if not url:
         raise ValueError("url must not be empty")
+    if "\n" in url or "\r" in url:
+        # Every legitimate writer produces a single-line work key; the
+        # single-line surfaces (item status, the report) render it verbatim.
+        raise ValueError(f"url must be a single line: {url!r}")
     if not item:
         raise ValueError("item must not be empty")
     if kind in _NON_WORK_KINDS:
