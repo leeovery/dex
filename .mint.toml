@@ -3,6 +3,31 @@ diff_exclude = ["design/"]
 [release]
 version_file = "pyproject.toml"
 version_pattern = 'version = "{version}"'
+# One-off for v0.1.0: the v0.0.1 → v0.1.0 diff is the whole rewrite, far past
+# the AI notes ceiling, so the body is fixed here and used via --no-ai.
+# Remove after tagging so later releases go back to AI notes from the diff.
+fallback = '''
+The ingestion-pipeline rewrite: dex becomes a driver-based engine.
+
+- Driver architecture with a typed outcome contract (Content | Missing |
+  Refused | Unusable | NeedsCapability | Redetected); drivers for web, X,
+  YouTube, GitHub, arxiv, podcasts, and documents (PDF/Word/PPT and
+  friends), with capability routing for transcription and extraction.
+- One admission door for all work: canonical identity, dedupe, caps,
+  provenance; harvest promotion with depth and URL bounds; media staging
+  with LFS tracked by name shape.
+- Append-only ledger with clock protections, union merges across machines,
+  and verb-written state throughout: digests, passes, exclusions, and
+  engine-defect reports all land through verbs.
+- Deterministic markdown report surfaces; a health check with judgment
+  repairs and a reconciliation checklist; session-observed issue filing
+  with reject-not-scrub privacy.
+- Releases, pinning, and three migrations that carry a v0.0.1 instance to
+  this engine losslessly, rehearsed on faithful copies of five real
+  instances before tagging.
+- Install and operating docs: start.md owns setup and scheduling; the
+  phone shortcut captures links, text, images, PDFs, and media.
+'''
 
 [release.hooks]
 # Instances pin tags, so a broken tag reaches every instance at its next sync
