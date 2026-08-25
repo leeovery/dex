@@ -1,4 +1,4 @@
-"""The drivers' HTTP seam: one urllib GET/HEAD with a browser UA (§5).
+"""The drivers' HTTP seam: one urllib GET/HEAD with a browser UA.
 
 Every driver takes a :data:`Transport` in its constructor so tests are
 hermetic; :func:`urllib_transport` is the one real implementation. It
@@ -7,7 +7,7 @@ included, so callers can route status codes through the central classifier —
 and lets connection-level failures (DNS, refused, timeout) propagate as
 ``OSError`` for ``classify_connection``.
 
-The browser UA is deliberate (§5): the motivating incident was Cloudflare
+The browser UA is deliberate: the motivating incident was Cloudflare
 challenging trafilatura's own fetch client; urllib with a browser UA avoids
 the block outright more often than not.
 """

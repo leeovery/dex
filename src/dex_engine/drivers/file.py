@@ -1,17 +1,24 @@
-"""The file driver: local repo files and URL-served binaries, routed by Format (§3).
+"""The file driver: local repo files and URL-served binaries, routed by Format.
 
 Two work shapes, one driver: ``file:<repo-path>`` keys (materialized media
 captures) read from the instance tree; http(s) URLs (a PDF served from an
 arbitrary address, rerouted here by detection's HEAD sniff) fetch through
 the transport with classified failures. Bytes are then byte-signature
-sniffed — authoritative over whatever a server claimed (§1) — and handed to
-the first available mechanical extractor for the format (§6).
+sniffed — authoritative over whatever a server claimed — and handed to
+the first available mechanical extractor for the format.
 
 No provider for the format → ``waiting`` + ``needs: extract`` with the
 registry's stated reason. A scanned/image-only document → ``waiting`` +
 ``needs: ocr``. Embedded assets ride the Result for the run layer to write
-under the §7 media caps, ledgered ``via: extract-asset`` — this driver, like
-every driver, never touches the ledger or the disk outputs (§2).
+under the media caps, ledgered ``via: extract-asset`` — this driver, like
+every driver, never touches the ledger or the disk outputs.
+
+The reverse of the web driver's mid-fetch discovery lives here too: a URL
+that detection routed to file work (a ``.pdf`` path, a lying HEAD) whose
+BYTES turn out to be an HTML page signals a redetection back to ``web`` —
+the run layer re-routes once per run, and in-run mutual re-detection parks
+for judgment. Bytes decide, never the content type alone. Local ``file:``
+work never re-detects: a captured HTML file is not a page to fetch.
 """
 
 from pathlib import Path
@@ -24,7 +31,15 @@ from dex_engine.pipeline.classify import (
     classify_http,
 )
 from dex_engine.pipeline.detect import sniff_format
-from dex_engine.pipeline.types import Format, Kind, Need, Result, Status, WorkUnit
+from dex_engine.pipeline.types import (
+    Format,
+    Kind,
+    Need,
+    Redetection,
+    Result,
+    Status,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical
 
 from .transport import Transport, urllib_transport
@@ -32,6 +47,13 @@ from .transport import Transport, urllib_transport
 __all__ = ["FileDriver"]
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs"
+
+_HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
+
+
+def _looks_like_html(data: bytes) -> bool:
+    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
+    return lead.startswith(_HTML_LEADS)
 
 
 class FileDriver:
@@ -50,7 +72,7 @@ class FileDriver:
         """Wire the extract registry, the instance root, and the HTTP seam.
 
         Args:
-            capabilities: The resolved capability registries (§6).
+            capabilities: The resolved capability registries.
             root: The instance root for ``file:`` work; ``None`` is legal
                 only for registries that never fetch local files (pattern
                 matching, normalize).
@@ -65,7 +87,7 @@ class FileDriver:
         return url.startswith("file:")
 
     def canonical(self, url: str) -> str:
-        """File keys are already canonical — the repo path IS the identity (§5)."""
+        """File keys are already canonical — the repo path IS the identity."""
         if url.startswith("file:"):
             return url
         return base_canonical(url)
@@ -76,13 +98,27 @@ class FileDriver:
         if isinstance(loaded, Result):
             return loaded
         data, name = loaded
-        fmt = sniff_format(data, name=name) or unit.format
         if data.startswith(_LFS_POINTER_PREFIX):
             return Result(
                 status=Status.MANUAL,
                 meta={},
                 reason=f"{name or 'file'} is an unsmudged LFS pointer — run `git lfs pull`",
             )
+        # Byte signatures are authoritative over whatever the URL's path or
+        # a HEAD claimed. A URL-served body with no document signature whose
+        # BYTES read as HTML is a web page mislabeled into file work —
+        # re-route it rather than feeding HTML to a document extractor.
+        # Bytes decide, never the content type alone: a lying text/html
+        # header over signature-less bytes (a real CSV) must proceed to
+        # extraction under its claimed format. Only for http(s) work: a
+        # local captured file is not a page to fetch.
+        if (
+            not unit.url.startswith("file:")
+            and sniff_format(data) is None
+            and _looks_like_html(data)
+        ):
+            return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.WEB))
+        fmt = sniff_format(data, name=name) or unit.format
         if fmt is None:
             return Result(
                 status=Status.MANUAL,
@@ -131,7 +167,7 @@ class FileDriver:
     def _extract(self, data: bytes, fmt: Format, name: str | None) -> Result:
         extractor = self._capabilities.extractor(fmt)
         if extractor is None:
-            # No mechanical provider for THIS format (§6): waiting, with the
+            # No mechanical provider for THIS format: waiting, with the
             # registry's stated reason — the cognitive floor surfaces it on
             # the report for the session.
             availability = self._capabilities.available(Need.EXTRACT, fmt)
@@ -139,7 +175,7 @@ class FileDriver:
                 status=Status.WAITING, meta={}, needs=Need.EXTRACT, reason=availability.reason
             )
         try:
-            # ProviderInputError propagates: the run loop maps it → manual (§5).
+            # ProviderInputError propagates: the run loop maps it → manual.
             extraction = extractor.extract(data, fmt)
         except ScannedDocumentError as e:
             return Result(status=Status.WAITING, meta={}, needs=Need.OCR, reason=str(e))

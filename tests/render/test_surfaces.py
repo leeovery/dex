@@ -40,6 +40,7 @@ class TestRenderDispatch:
         assert set(SURFACES) == {
             "enrich-report",
             "status",
+            "item-status",
             "capability-report",
             "sync-report",
             "ingest-receipt",
@@ -214,7 +215,7 @@ class TestSyncReport:
                         "anomalies": ["ledger line 40 had both error and path"],
                     }
                 ],
-                "skills_synced": 6,
+                "machinery_changes": 6,
             },
         )
         assert "sync — pin bumped v0.2.1 → v0.3.0" in out
@@ -223,21 +224,21 @@ class TestSyncReport:
         assert "repair with judgment" in out
         assert "corpus/2025/odd.md — frontmatter does not parse" in out
         assert "REVIEW REQUIRED" in out
-        assert "skills synced: 6" in out
+        assert "machinery changes: 6" in out
         assert_no_trailing_whitespace(out)
 
     def test_steady_state_sync(self):
-        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "skills_synced": 6})
+        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 6})
         assert "sync — engine pinned at v0.3.0" in out
         assert "migrations applied — none (state already current)" in out
 
     def test_unpinned_pre_first_release(self):
-        # §12: before any release tag exists, sync runs without pinning.
+        # Before any release tag exists, sync runs without pinning.
         out = render(
             "sync-report",
             {
                 "migrations": [],
-                "skills_synced": 3,
+                "machinery_changes": 3,
                 "notes": ["no release tags on the remote yet — running unpinned"],
             },
         )
@@ -248,23 +249,206 @@ class TestSyncReport:
         with pytest.raises(PayloadError, match="previous requires pin"):
             render(
                 "sync-report",
-                {"previous": "v0.1.0", "migrations": [], "skills_synced": 0},
+                {"previous": "v0.1.0", "migrations": [], "machinery_changes": 0},
             )
 
-    def test_missing_skills_synced_is_loud(self):
-        with pytest.raises(PayloadError, match="skills_synced"):
+    def test_missing_machinery_changes_is_loud(self):
+        with pytest.raises(PayloadError, match="machinery_changes"):
             render("sync-report", {"pin": "v0.3.0", "migrations": []})
 
     def test_migration_without_intent_is_loud(self):
         with pytest.raises(PayloadError, match="intent"):
             render(
                 "sync-report",
-                {"pin": "v1", "migrations": [{"number": 1}], "skills_synced": 0},
+                {"pin": "v1", "migrations": [{"number": 1}], "machinery_changes": 0},
             )
 
 
-class TestStubs:
-    @pytest.mark.parametrize("surface", ["ingest-receipt", "health-report"])
-    def test_stubs_raise_with_a_clear_message(self, surface):
-        with pytest.raises(NotImplementedError, match="later phase"):
-            render(surface, {})
+HEALTH_PAYLOAD = {
+    "summary": {"corpus_items": 120, "pages": 14, "cited": 118},
+    "broken_links": [{"page": "pour-over", "target": "brewing"}],
+    "reserved_links": 3,
+    "bad_citations": [{"page": "pour-over", "id": "2026-01-01-gone-aaaaaa"}],
+    "shortid_citations": [{"page": "index", "token": "a1b2c3"}],
+    "orphans": ["2026-01-02-orphan-bbbbbb"],
+    "unindexed": ["new-page"],
+    "ghost_index": ["deleted-page"],
+    "stale_pages": [{"page": "pour-over", "newer": 2}],
+    "count_drift": [{"page": "pour-over", "recorded": "3", "actual": 5}],
+    "restated": [
+        {"page": "pour-over", "first": "The dose is 60g/L.", "second": "Use a 60g/L dose."}
+    ],
+    "ledger_entries": 42,
+    "waiting": {"transcribe": 3},
+    "cognitive": [
+        {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
+    ],
+    "stale_passes": [{"item": "2026-01-04-old-dddddd", "rules": 0}],
+    "quarantine": 2,
+    "digest_orphans": ["2026-01-05-undigested-eeeeee"],
+    "reconciled": ["pour-over: items: 3 -> 5"],
+    "notes": ["one free note"],
+}
+
+
+class TestItemStatus:
+    def test_full_item_view(self):
+        out = render(
+            "item-status",
+            {
+                "item": "2026-08-19-example-55ad7b",
+                "units": [
+                    {"url": "https://example.test/post", "status": "done",
+                     "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md"},
+                    {"url": "https://youtube.test/w", "status": "waiting",
+                     "needs": "transcribe", "via": "harvest", "depth": 1},
+                    {"url": "https://paywalled.test/a", "status": "manual",
+                     "reason": "thin-extraction"},
+                ],
+            },
+        )
+        assert out.startswith("item 2026-08-19-example-55ad7b — 3 units")
+        assert "done" in out
+        assert "→ enrichment/2026-08-19-example-55ad7b/web-73bd78.md" in out
+        assert "needs transcribe" in out
+        assert "(via harvest, depth" in out  # provenance may wrap at width
+        assert "manual" in out
+        assert "thin-extraction" in out
+
+    def test_no_units_reads_honestly(self):
+        out = render("item-status", {"item": "2026-08-19-note-aaaaaa", "units": []})
+        assert "no ledger work units" in out
+        assert "no-source capture" in out
+
+    def test_units_are_required(self):
+        with pytest.raises(PayloadError, match="units"):
+            render("item-status", {"item": "2026-08-19-note-aaaaaa"})
+
+    def test_bad_status_is_loud(self):
+        with pytest.raises(PayloadError, match="finished"):
+            render(
+                "item-status",
+                {"item": "x-a", "units": [{"url": "https://a.test", "status": "finished"}]},
+            )
+
+    def test_bad_needs_is_loud(self):
+        with pytest.raises(PayloadError, match="transcode"):
+            render(
+                "item-status",
+                {"item": "x-a",
+                 "units": [{"url": "https://a.test", "status": "waiting",
+                            "needs": "transcode"}]},
+            )
+
+    def test_unknown_unit_key_is_loud(self):
+        with pytest.raises(PayloadError, match="parent"):
+            render(
+                "item-status",
+                {"item": "x-a",
+                 "units": [{"url": "https://a.test", "status": "done",
+                            "parent": "abc"}]},
+            )
+
+
+class TestHealthReport:
+    def test_full_report(self):
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert out.startswith("health check — 120 corpus items · 14 pages · 118 cited")
+        assert "broken wikilinks — 1" in out
+        assert "pour-over -> [[brewing]]" in out
+        assert "reserved/unbuilt links: 3" in out
+        assert "bad citations (id not in corpus) — 1" in out
+        assert "shortid-shaped citations (citations are full item ids, always) — 1" in out
+        assert "index -> `a1b2c3`" in out
+        assert "orphan items (uncited, unledgered) — 1" in out
+        assert "pages missing from index — 1" in out
+        assert "ghost index entries — 1" in out
+        assert "stale pages (members newer than the page) — 1" in out
+        assert "pour-over: 2 newer item(s)" in out
+        assert "item-count drift (frontmatter items: vs members) — 1" in out
+        assert "pour-over: items: 3, members 5" in out
+        assert "possible restated facts (same page — merge?) — 1" in out
+        assert "ledger — 42 entries, schema valid" in out
+        assert "waiting cohorts: transcribe 3" in out
+        assert "cognitive jobs (the session completes these with eyes) — 1" in out
+        assert "harvest passes under old rules (re-judge) — 1" in out
+        assert "QUARANTINE NOT EMPTY — 2 lines" in out
+        assert "enrich mark" in out
+        assert "enrichment newer than digest" in out
+        assert "reconciled by --write:" in out
+        assert "notes:" in out
+
+    def test_clean_instance_reads_clean(self):
+        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
+        assert "broken wikilinks — none" in out
+        assert "waiting cohorts: none" in out
+        assert "QUARANTINE" not in out
+        assert "reconciled" not in out
+
+    def test_ledger_error_renders_loud(self):
+        out = render(
+            "health-report",
+            {
+                "summary": {"corpus_items": 1, "pages": 0, "cited": 0},
+                "ledger_error": "state/enrichment-ledger.jsonl:3: unknown field(s) ['note']",
+            },
+        )
+        assert "LEDGER SCHEMA FAILURE" in out
+        assert "unknown field(s)" in out
+
+    def test_summary_is_required(self):
+        with pytest.raises(PayloadError, match="summary"):
+            render("health-report", {})
+
+    def test_unknown_key_is_loud(self):
+        with pytest.raises(PayloadError, match="broken_wikilinks"):
+            render(
+                "health-report",
+                {"summary": {"corpus_items": 0, "pages": 0, "cited": 0},
+                 "broken_wikilinks": []},
+            )
+
+    def test_bad_waiting_need_is_loud(self):
+        with pytest.raises(PayloadError, match="transcode"):
+            render(
+                "health-report",
+                {"summary": {"corpus_items": 0, "pages": 0, "cited": 0},
+                 "waiting": {"transcode": 1}},
+            )
+
+
+class TestIngestReceipt:
+    def test_full_receipt(self):
+        out = render(
+            "ingest-receipt",
+            {
+                "item": "2026-08-18-rag-eval-harness-a1b2c3",
+                "title": "RAG eval harness",
+                "fetched": 3,
+                "parked": 1,
+                "signal": "high",
+                "topics": ["agent-architecture"],
+                "pages": ["agent-architecture", "evals"],
+                "notes": ["thread walk-up found the repo link"],
+            },
+        )
+        assert out.startswith("ingested 2026-08-18-rag-eval-harness-a1b2c3 — RAG eval harness")
+        assert "fetched 3 · parked 1" in out
+        assert "signal high · topics: agent-architecture" in out
+        assert "pages: agent-architecture, evals" in out
+        assert "- thread walk-up found the repo link" in out
+
+    def test_minimal_receipt_is_one_line(self):
+        out = render("ingest-receipt", {"item": "2026-08-18-note-a1b2c3"})
+        assert out == "ingested 2026-08-18-note-a1b2c3\n"
+
+    def test_item_is_required(self):
+        with pytest.raises(PayloadError, match="item"):
+            render("ingest-receipt", {"title": "no item"})
+
+    def test_bad_signal_is_loud(self):
+        with pytest.raises(PayloadError, match="signal"):
+            render(
+                "ingest-receipt",
+                {"item": "2026-08-18-note-a1b2c3", "signal": "shrug"},
+            )

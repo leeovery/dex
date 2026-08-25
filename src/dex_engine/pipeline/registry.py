@@ -1,4 +1,4 @@
-"""The driver registry (§2): an explicit ordered list — ordering is semantics.
+"""The driver registry: an explicit ordered list — ordering is semantics.
 
 No auto-discovery. Specialized drivers first, ``web`` last as the
 catch-all; :func:`~dex_engine.pipeline.detect.detect` treats a match on the
@@ -32,11 +32,11 @@ __all__ = ["DRIVERS", "build_drivers", "driver_for"]
 
 
 def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> list[SourceDriver]:
-    """The ordered registry, wired to an instance (§2).
+    """The ordered registry, wired to an instance.
 
     Args:
         capabilities: The resolved capability registries — the file driver
-            routes formats through them (§6).
+            routes formats through them.
         root: The instance root, for ``file:<repo-path>`` work.
 
     Returns:
@@ -50,12 +50,12 @@ def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> li
         PaperDriver(web=web),
         PodcastDriver(),
         FileDriver(capabilities=capabilities, root=root),
-        web,  # the catch-all — ALWAYS last (§2)
+        web,  # the catch-all — ALWAYS last
     ]
 
 
 # The default registry: default provider order, no instance root. The typed
-# literal is the Protocol-conformance point (§2). Constructing providers
+# literal is the Protocol-conformance point. Constructing providers
 # reads no ambient state — credentials resolve lazily at availability time.
 DRIVERS: list[SourceDriver] = build_drivers(capabilities=Capabilities.build(Config()))
 

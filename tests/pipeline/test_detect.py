@@ -47,7 +47,7 @@ class TestPatternDetection:
 
     def test_m_youtube_divergence_is_dead(self):
         # The historical kind_of duplication disagreed on m.youtube.com —
-        # one shared module means one answer, everywhere (§2).
+        # one shared module means one answer, everywhere.
         assert detect_kind("https://m.youtube.com/watch?v=a", DRIVERS) is Kind.YOUTUBE
         assert detect(("https://m.youtube.com/watch?v=a"), DRIVERS).kind is Kind.YOUTUBE
 
@@ -124,7 +124,7 @@ class TestFileKeys:
 
 
 class TestSniffFormat:
-    """Byte-signature detection (§1) — real fixture bytes, anydoc-backed."""
+    """Byte-signature detection — real fixture bytes, anydoc-backed."""
 
     @pytest.mark.parametrize(
         ("fixture", "fmt"),

@@ -1,4 +1,4 @@
-"""Tests for the podcast driver (§9): resolution paths, honest failures."""
+"""Tests for the podcast driver: resolution paths, honest failures."""
 
 import xml.etree.ElementTree as ET
 
@@ -38,8 +38,8 @@ class TestDetection:
 
     def test_bare_feed_vocabulary_belongs_to_the_web_driver(self):
         # Blogs own /feed, /rss and feeds.* — over-claiming them stole
-        # ordinary blog URLs from the web driver (phase-3 review). The
-        # long-term answer for a feed URL with no audio is §1 corrected-kind
+        # ordinary blog URLs from the web driver. The
+        # long-term answer for a feed URL with no audio is corrected-kind
         # re-entry, out of scope this phase.
         d = PodcastDriver()
         assert not d.matches("https://example.test/podcast/feed")
@@ -60,7 +60,7 @@ class TestDetection:
 
 class TestAppleResolution:
     def test_lookup_feed_match_enclosure(self):
-        # §9: Apple link → iTunes lookup (keyless) → show RSS → match → enclosure.
+        # Apple link → iTunes lookup (keyless) → show RSS → match → enclosure.
         d = driver(
             {
                 LOOKUP_URL: html_response(fixture_text("podcast", "itunes-lookup.json")),
@@ -83,7 +83,7 @@ class TestAppleResolution:
         )
         result = d.fetch(make_unit(APPLE_URL, Kind.PODCAST))
         assert result.body is not None
-        assert "[Ada Guest](https://example.test/guest)" in result.body  # harvestable (§9)
+        assert "[Ada Guest](https://example.test/guest)" in result.body  # harvestable
         assert "- Why JSONL merges" in result.body
 
     def test_show_link_without_episode_param_is_manual(self):
@@ -128,7 +128,7 @@ class TestSpotifyResolution:
     )
 
     def test_og_title_search_feed_match(self):
-        # §9: Spotify link → og-title → iTunes search → RSS → match.
+        # Spotify link → og-title → iTunes search → RSS → match.
         d = driver(
             {
                 SPOTIFY_URL: html_response(fixture_text("podcast", "spotify-episode.html")),
@@ -142,7 +142,7 @@ class TestSpotifyResolution:
         assert result.meta["enclosure"] == ENCLOSURE
 
     def test_exclusive_fails_honestly_manual(self):
-        # §9: Spotify exclusives are not in the podcast index — manual, with
+        # Spotify exclusives are not in the podcast index — manual, with
         # the rescue route stated; never dead, never a crash.
         d = driver(
             {
@@ -216,7 +216,7 @@ class TestRssIshResolution:
         assert "capture an episode link" in reason_of(result)
 
     def test_indie_episode_page_resolves_via_its_feed_link(self):
-        # §9: an explicit .rss URL that actually serves the episode PAGE —
+        # An explicit .rss URL that actually serves the episode PAGE —
         # the driver follows the page's <link rel> feed pointer and matches.
         page_url = PAGE_URL + ".rss"
         d = driver(

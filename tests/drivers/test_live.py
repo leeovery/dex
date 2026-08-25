@@ -1,4 +1,4 @@
-"""Live API drift checks — opt-in via ``pytest -m live`` (§15).
+"""Live API drift checks — opt-in via ``pytest -m live``.
 
 These hit real endpoints with the real transport. CI and the default run
 never execute them (``-m "not live"`` in pyproject); they exist to catch

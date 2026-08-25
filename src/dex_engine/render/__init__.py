@@ -1,4 +1,4 @@
-"""Rendering: judgment decides, code renders (§11).
+"""Rendering: judgment decides, code renders.
 
 ``kernel`` is pure layout with zero dex vocabulary; ``surfaces`` names the
 reports and validates their payloads loudly. Never hand-draw a table or

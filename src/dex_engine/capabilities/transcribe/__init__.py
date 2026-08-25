@@ -1,1 +1,1 @@
-"""Transcription providers (§6): whisper-local (the floor), whisper-api."""
+"""Transcription providers: whisper-local (the floor), whisper-api."""

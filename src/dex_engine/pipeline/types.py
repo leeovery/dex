@@ -1,9 +1,5 @@
 """Pipeline vocabulary: enums, work-unit dataclasses, instance paths, config.
 
-Design reference: design/ingestion-pipeline.md — §2 (interfaces and typing
-discipline), §3 (enums), §5 (ledger schema and status lifecycle), §14
-(implementation standards).
-
 This module is the bottom of the dependency graph: it imports nothing from
 the rest of the package.
 """
@@ -31,6 +27,7 @@ __all__ = [
     "MediaFetch",
     "MigrationReport",
     "Need",
+    "Redetection",
     "Result",
     "Skipped",
     "SourceDriver",
@@ -43,7 +40,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Enums (§3). StrEnum so ledgers and frontmatter serialize as plain strings.
+# Enums. StrEnum so ledgers and frontmatter serialize as plain strings.
 # No aliases: renames are a clean break executed by migration 1.
 # ---------------------------------------------------------------------------
 
@@ -82,7 +79,7 @@ class Format(StrEnum):
 
 
 class Status(StrEnum):
-    """Ledger status lifecycle (§5)."""
+    """Ledger status lifecycle."""
 
     QUEUED = "queued"
     DONE = "done"
@@ -103,7 +100,7 @@ class Need(StrEnum):
 
 
 class MediaFetch(StrEnum):
-    """Instance policy for the media stage's URL downloads (§7)."""
+    """Instance policy for the media stage's URL downloads."""
 
     NONE = "none"
     LEAD = "lead"
@@ -112,14 +109,16 @@ class MediaFetch(StrEnum):
 # `queued` is a birth state, not a driver outcome, and `error` is RAISED,
 # never returned — a Result has no error channel, so a returned `error`
 # could only carry a fabricated message; the run loop's single broad except
-# is the one place errors are made (§2/§5).
+# is the one place errors are made. ONE exception: a Result carrying a
+# `redetect` returns `queued`, because a mid-fetch kind correction IS a
+# re-birth — the unit re-enters the queue under its corrected identity.
 DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
 
 
 # ---------------------------------------------------------------------------
-# Provenance vocabulary. `via` stays a documented string, not an enum (§3):
+# Provenance vocabulary. `via` stays a documented string, not an enum:
 # `migration-<n>` is parameterized and provenance is descriptive, never
-# dispatched on. It is still validated against the known shapes (§5).
+# dispatched on. It is still validated against the known shapes.
 # ---------------------------------------------------------------------------
 
 _VIA_EXACT = frozenset({"harvest", "thread", "media", "sniff", "extract-asset"})
@@ -134,11 +133,11 @@ def _validate_via(via: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared work-unit identity invariants (§2/§3/§5), enforced on WorkUnit and
+# Shared work-unit identity invariants, enforced on WorkUnit and
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
 
-# The stated-reason contract (§1/§5), shared by Result and LedgerEntry:
+# The stated-reason contract, shared by Result and LedgerEntry:
 # manual and skipped exist only by deliberate decision, so the decision must
 # be recorded; waiting/blocked/dead may carry one; done/queued need none, and
 # error carries the scrubbed `error` field instead (ledger) or no reason at
@@ -148,7 +147,7 @@ _REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
 # sha1(work key)[:10] — the ledger key format.
 _HASH_RE = re.compile(r"^[0-9a-f]{10}$")
-# Corpus-frontmatter vocabulary only; never work units (§3).
+# Corpus-frontmatter vocabulary only; never work units.
 _NON_WORK_KINDS = frozenset({Kind.IMAGE, Kind.TEXT})
 
 
@@ -157,7 +156,7 @@ def _validate_unit_identity(
 ) -> None:
     if not _HASH_RE.match(unit_hash):
         raise ValueError(
-            f"hash must be 10 lowercase hex characters (sha1(work key)[:10], §5), got {unit_hash!r}"
+            f"hash must be 10 lowercase hex characters (sha1(work key)[:10]), got {unit_hash!r}"
         )
     if not url:
         raise ValueError("url must not be empty")
@@ -166,10 +165,10 @@ def _validate_unit_identity(
     if kind in _NON_WORK_KINDS:
         raise ValueError(
             f"kind {kind!r} is corpus-frontmatter vocabulary only and never becomes "
-            "a work unit (§3)"
+            "a work unit"
         )
     if unit_format is not None and kind is not Kind.FILE:
-        raise ValueError(f"format is file-work only (§5), got kind {kind!r}")
+        raise ValueError(f"format is file-work only, got kind {kind!r}")
 
 
 def _validate_depth(depth: int) -> None:
@@ -180,7 +179,7 @@ def _validate_depth(depth: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Work-unit dataclasses (§2). All frozen, slots, kw_only.
+# Work-unit dataclasses. All frozen, slots, kw_only.
 # ---------------------------------------------------------------------------
 
 
@@ -197,7 +196,7 @@ class WorkUnit:
     """What the pipeline hands a driver.
 
     Deliberately not :class:`LedgerEntry`: drivers never see ``attempts``,
-    ``engine``, or ``rerun`` bookkeeping (§2).
+    ``engine``, or ``rerun`` bookkeeping.
     """
 
     hash: str
@@ -220,7 +219,7 @@ class WorkUnit:
         if (self.parent is None) != (self.depth == 0):
             raise ValueError(
                 "parent and depth travel together: depth 0 is the shared URL (no "
-                "parent); spawned units carry both (§2)"
+                "parent); spawned units carry both"
             )
 
 
@@ -240,14 +239,43 @@ class Child:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Redetection:
+    """A mid-fetch kind correction: the content is not what detection said.
+
+    The canonical case: detection said web (a HEAD lied or was
+    inconclusive), the GET returned a PDF. The unit re-enters the queue
+    under the corrected identity — same URL, same hash — with
+    ``via: "sniff"`` provenance; the run layer enforces once-only.
+    """
+
+    kind: Kind
+    format: Format | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind in _NON_WORK_KINDS:
+            raise ValueError(
+                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
+                "never becomes a work unit"
+            )
+        if self.format is not None and self.kind is not Kind.FILE:
+            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Result:
     """What a driver's ``fetch`` returns.
 
-    ``reason`` mirrors the ledger's stated-reason contract (§2/§5): required
+    ``reason`` mirrors the ledger's stated-reason contract: required
     when a driver returns ``manual``/``skipped`` (the driver knows why),
     optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
     run layer may append classifier context to it but never invents what the
     driver knew.
+
+    ``redetect`` is the mid-fetch kind-correction signal: the fetched bytes
+    are a different kind of content than detection assigned. It travels
+    with ``status: queued`` and nothing else — a redetection carries the
+    corrected identity only; outputs belong to the driver that owns the
+    corrected kind.
     """
 
     status: Status
@@ -255,39 +283,61 @@ class Result:
     body: str | None = None
     media: list[str] = field(default_factory=list)
     children: list[Child] = field(default_factory=list)
-    # Extraction assets (§6): embedded images have no URL, so bytes are the
-    # only possible form — and drivers never touch the disk (§2), so the
+    # Extraction assets: embedded images have no URL, so bytes are the
+    # only possible form — and drivers never touch the disk, so the
     # Result is the one channel through which they can reach the run layer's
     # asset-writing step.
     assets: list["Asset"] = field(default_factory=list)
     needs: Need | None = None
     reason: str | None = None
+    redetect: Redetection | None = None
 
     def __post_init__(self) -> None:
+        if self.redetect is not None:
+            if self.status is not Status.QUEUED:
+                raise ValueError(
+                    f"a redetection travels with status 'queued' (a re-birth under the "
+                    f"corrected kind), got {self.status!r}"
+                )
+            if (
+                self.meta
+                or self.body
+                or self.media
+                or self.children
+                or self.assets
+                or self.needs
+                or self.reason
+            ):
+                raise ValueError(
+                    "a redetection carries the corrected identity only — outputs belong "
+                    "to the driver that owns the corrected kind"
+                )
+            return
         if self.status not in DRIVER_STATUSES:
             raise ValueError(
                 f"drivers may not return status {self.status!r} — 'queued' is a birth "
-                "state and 'error' is raised, never returned (§2/§5)"
+                "state (returnable only as a redetection) and 'error' is raised, never "
+                "returned"
             )
         if self.status is Status.WAITING and self.needs is None:
-            raise ValueError("status 'waiting' requires needs (§5)")
+            raise ValueError("status 'waiting' requires needs")
         if self.needs is not None and self.status is not Status.WAITING:
             raise ValueError(
                 f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
             )
         if self.status in _REASON_REQUIRED and not self.reason:
             raise ValueError(
-                f"a driver returning status {self.status!r} must state its reason (§2/§5)"
+                f"a driver returning status {self.status!r} must state its reason"
             )
         if self.status in _REASON_FORBIDDEN and self.reason is not None:
-            raise ValueError(f"reason is forbidden on a {self.status!r} result (§2/§5)")
+            raise ValueError(f"reason is forbidden on a {self.status!r} result")
         if self.assets and self.status is not Status.DONE:
-            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r} (§6)")
+            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r}")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Asset:
-    """An embedded asset extracted from inside a container document (§6).
+    """An embedded asset extracted from inside a container document.
 
     Embedded images have no URL — bytes are the only possible form.
     """
@@ -305,16 +355,16 @@ class Extraction:
 
 
 # ---------------------------------------------------------------------------
-# Capability providers (§2/§6): structural, resolved per capability by the
+# Capability providers: structural, resolved per capability by the
 # registries in dex_engine.capabilities. Conformance is verified at the typed
 # provider lists there, exactly like the driver registry literal.
 # ---------------------------------------------------------------------------
 
 
 class Transcriber(Protocol):
-    """A transcription capability provider (§6).
+    """A transcription capability provider.
 
-    ``model`` is the model identifier the provider runs — §6 requires raw
+    ``model`` is the model identifier the provider runs requires raw
     transcripts stamped ``via``/``model`` in enrichment frontmatter, so the
     drain must be able to read it off the provider.
     """
@@ -323,7 +373,7 @@ class Transcriber(Protocol):
     model: str
 
     def available(self) -> Availability:
-        """Honest availability: install intact, credentials present (§6)."""
+        """Honest availability: install intact, credentials present."""
         ...
 
     def transcribe(self, audio: Path, initial_prompt: str) -> str:
@@ -331,13 +381,13 @@ class Transcriber(Protocol):
 
         Raises ``ProviderInputError`` for audio it cannot decode (→ manual)
         and ``ProviderUnavailableError`` for capability-level failures
-        discovered at call time (→ the job stays waiting, §6).
+        discovered at call time (→ the job stays waiting).
         """
         ...
 
 
 class Extractor(Protocol):
-    """A document-extraction capability provider (§6).
+    """A document-extraction capability provider.
 
     The Format is the contract, not the tool: providers register per format
     via ``supports``, so each format falls back (or parks) independently.
@@ -350,7 +400,7 @@ class Extractor(Protocol):
         ...
 
     def available(self) -> Availability:
-        """Honest availability: install intact (§6)."""
+        """Honest availability: install intact."""
         ...
 
     def extract(self, data: bytes, fmt: Format) -> Extraction:
@@ -358,13 +408,13 @@ class Extractor(Protocol):
 
         Raises ``ProviderInputError`` for documents it cannot parse
         (→ manual) and ``ScannedDocumentError`` for image-only documents
-        (→ the §6 OCR path: ``waiting`` + ``needs: ocr``).
+        (→ the OCR path: ``waiting`` + ``needs: ocr``).
         """
         ...
 
 
 # ---------------------------------------------------------------------------
-# Driver interface (§2): structural, one per source shape. Conformance is
+# Driver interface: structural, one per source shape. Conformance is
 # verified at the typed registry literal (pipeline/registry.py) — the one
 # assignment where the checker matches every driver against this Protocol.
 # ---------------------------------------------------------------------------
@@ -390,7 +440,7 @@ class SourceDriver(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Ledger entry (§5): frozen, validated — the schema comments are runtime
+# Ledger entry: frozen, validated — the schema comments are runtime
 # invariants, enforced here so a malformed entry cannot exist in memory.
 # Serialization happens in exactly one place: pipeline/ledger.py.
 # ---------------------------------------------------------------------------
@@ -398,7 +448,7 @@ class SourceDriver(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LedgerEntry:
-    """One work unit in the enrichment ledger (§5)."""
+    """One work unit in the enrichment ledger."""
 
     hash: str
     url: str
@@ -419,7 +469,7 @@ class LedgerEntry:
     path: str | None = None
     title: str | None = None
     error: str | None = None
-    # the stated parking reason (§1) — see _REASON_REQUIRED/_REASON_FORBIDDEN
+    # the stated parking reason — see _REASON_REQUIRED/_REASON_FORBIDDEN
     reason: str | None = None
 
     def __post_init__(self) -> None:
@@ -431,7 +481,7 @@ class LedgerEntry:
             unit_format=self.format,
         )
         if not self.engine:
-            raise ValueError("every ledger entry records the engine version that wrote it (§5)")
+            raise ValueError("every ledger entry records the engine version that wrote it")
         _validate_entry_queue_fields(self)
         _validate_entry_outcome_fields(self)
         _validate_entry_provenance(self)
@@ -439,33 +489,33 @@ class LedgerEntry:
 
 def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
     if entry.status is Status.WAITING and entry.needs is None:
-        raise ValueError("status 'waiting' requires needs (§5)")
+        raise ValueError("status 'waiting' requires needs")
     if entry.needs is not None and entry.status is not Status.WAITING:
-        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"needs={entry.needs!r} is waiting-only, got status {entry.status!r}")
     if isinstance(entry.attempts, bool):
         raise ValueError("attempts must be an integer, not a boolean")
     if entry.status is Status.BLOCKED and (entry.attempts is None or entry.attempts < 1):
-        raise ValueError("status 'blocked' requires attempts >= 1 (§5)")
+        raise ValueError("status 'blocked' requires attempts >= 1")
     if entry.attempts is not None and entry.status is not Status.BLOCKED:
-        raise ValueError(f"attempts is blocked-only bookkeeping, got status {entry.status!r} (§5)")
+        raise ValueError(f"attempts is blocked-only bookkeeping, got status {entry.status!r}")
 
 
 def _validate_entry_outcome_fields(entry: LedgerEntry) -> None:
     if entry.status is Status.ERROR and not entry.error:
-        raise ValueError("status 'error' requires a scrubbed error message (§5)")
+        raise ValueError("status 'error' requires a scrubbed error message")
     if entry.error is not None and entry.status is not Status.ERROR:
-        raise ValueError(f"error message is error-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"error message is error-only, got status {entry.status!r}")
     if entry.status in _REASON_REQUIRED and not entry.reason:
-        raise ValueError(f"status {entry.status!r} requires a stated reason (§1/§5)")
+        raise ValueError(f"status {entry.status!r} requires a stated reason")
     if entry.status in _REASON_FORBIDDEN and entry.reason is not None:
         raise ValueError(
-            f"reason is forbidden on status {entry.status!r} (§5) — error entries carry "
+            f"reason is forbidden on status {entry.status!r} — error entries carry "
             "the scrubbed 'error' field instead; done/queued park nothing"
         )
     if (entry.path is not None or entry.title is not None) and entry.status is not Status.DONE:
-        raise ValueError(f"outputs (path/title) are success-only, got status {entry.status!r} (§5)")
+        raise ValueError(f"outputs (path/title) are success-only, got status {entry.status!r}")
     if entry.title is not None and entry.path is None:
-        raise ValueError("title without path: outputs travel together (§5)")
+        raise ValueError("title without path: outputs travel together")
 
 
 def _validate_entry_provenance(entry: LedgerEntry) -> None:
@@ -474,11 +524,11 @@ def _validate_entry_provenance(entry: LedgerEntry) -> None:
     if entry.depth is not None:
         _validate_depth(entry.depth)
     if (entry.parent is None) != (entry.depth is None):
-        raise ValueError("parent and depth are paired provenance — both or neither (§5)")
+        raise ValueError("parent and depth are paired provenance — both or neither")
 
 
 # ---------------------------------------------------------------------------
-# Migration report (§12) — surfaces render it, so it gets the same
+# Migration report — surfaces render it, so it gets the same
 # frozen-dataclass treatment as LedgerEntry.
 # ---------------------------------------------------------------------------
 
@@ -493,7 +543,7 @@ class Skipped:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MigrationReport:
-    """What a migration did — reviewed by Claude in-session (§12)."""
+    """What a migration did — reviewed by Claude in-session."""
 
     actions: list[str] = field(default_factory=list)
     skipped: list[Skipped] = field(default_factory=list)
@@ -501,7 +551,7 @@ class MigrationReport:
 
 
 # ---------------------------------------------------------------------------
-# Instance and config (§14): no import-time globals — both are built in the
+# Instance and config: no import-time globals — both are built in the
 # CLI entry point and constructor-injected everywhere.
 # ---------------------------------------------------------------------------
 
@@ -519,7 +569,7 @@ class Instance:
 
     @property
     def state_dir(self) -> Path:
-        """``state/`` — JSONL/JSON machinery state (§4)."""
+        """``state/`` — JSONL/JSON machinery state."""
         return self.root / "state"
 
     @property
@@ -534,12 +584,12 @@ class Instance:
 
     @property
     def ledger_path(self) -> Path:
-        """``state/enrichment-ledger.jsonl`` — the work queue (§5)."""
+        """``state/enrichment-ledger.jsonl`` — the work queue."""
         return self.state_dir / "enrichment-ledger.jsonl"
 
     @property
     def passes_path(self) -> Path:
-        """``state/passes.jsonl`` — per-item stage records (§4)."""
+        """``state/passes.jsonl`` — per-item stage records."""
         return self.state_dir / "passes.jsonl"
 
     @property
@@ -549,35 +599,34 @@ class Instance:
 
     @property
     def config_path(self) -> Path:
-        """``state/config.json`` — instance config (§4)."""
+        """``state/config.json`` — instance config."""
         return self.state_dir / "config.json"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
-    """Instance configuration from ``state/config.json`` (§4).
+    """Instance configuration from ``state/config.json``.
 
     Parsed loudly: defaults apply only when the file is genuinely missing;
     a present-but-malformed file raises instead of being silently ignored
     (the old config-read-at-import behind a bare ``except`` is the named
-    anti-pattern, §14).
+    anti-pattern).
     """
 
     media_fetch: MediaFetch = MediaFetch.LEAD
     transcribe_model: str = "medium"
-    # whisper-api credentials (§6): base_url + key from config/env — config
+    # whisper-api credentials: base_url + key from config/env — config
     # wins, the OPENAI_* environment variables are the fallback (read by the
     # provider at availability time, never at import).
     transcribe_base_url: str | None = None
     transcribe_api_key: str | None = None
-    # The API-side model name (§6) — its own key because local size names
+    # The API-side model name — its own key because local size names
     # (medium, small) never map onto provider model ids (whisper-1,
     # whisper-large-v3). None → the provider's default; per-call --model
     # still overrides.
     transcribe_api_model: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
-    name_map: dict[str, str] = field(default_factory=dict)
     internal_domains: list[str] = field(default_factory=list)
     noise_prefixes: list[str] = field(default_factory=list)
 
@@ -601,8 +650,27 @@ class Config:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
             raise ValueError(f"{path}: invalid JSON: {e}") from e
+        return cls.from_raw(raw, source=str(path))
+
+    @classmethod
+    def from_raw(cls, raw: object, *, source: str) -> "Config":
+        """Validate already-parsed config content; ``source`` names it in errors.
+
+        The migration path uses this to validate content it is about to
+        write, without a file round-trip.
+
+        Args:
+            raw: The parsed JSON value (must be an object).
+            source: Where the content came from, for error messages.
+
+        Returns:
+            The parsed configuration.
+
+        Raises:
+            ValueError: Unknown keys, or a value of the wrong shape.
+        """
         if not isinstance(raw, dict):
-            raise ValueError(f"{path}: expected a JSON object, got {type(raw).__name__}")
+            raise ValueError(f"{source}: expected a JSON object, got {type(raw).__name__}")
         known = {
             "media_fetch",
             "transcribe_model",
@@ -611,96 +679,86 @@ class Config:
             "transcribe_api_model",
             "report_issues",
             "providers",
-            "name_map",
             "internal_domains",
             "noise_prefixes",
         }
         unknown = sorted(set(raw) - known)
         if unknown:
             raise ValueError(
-                f"{path}: unknown config keys {unknown} — "
+                f"{source}: unknown config keys {unknown} — "
                 f"known keys are {sorted(known)} (a typo'd key would otherwise be silently dead)"
             )
         return cls(
-            media_fetch=_config_enum(path, raw, "media_fetch", default=MediaFetch.LEAD),
-            transcribe_model=_config_str(path, raw, "transcribe_model", default="medium"),
-            transcribe_base_url=_config_opt_str(path, raw, "transcribe_base_url"),
-            transcribe_api_key=_config_opt_str(path, raw, "transcribe_api_key"),
-            transcribe_api_model=_config_opt_str(path, raw, "transcribe_api_model"),
-            report_issues=_config_bool(path, raw, "report_issues", default=True),
-            providers=_config_providers(path, raw),
-            name_map=_config_str_map(path, raw, "name_map"),
-            internal_domains=_config_str_list(path, raw, "internal_domains"),
-            noise_prefixes=_config_str_list(path, raw, "noise_prefixes"),
+            media_fetch=_config_enum(source, raw, "media_fetch", default=MediaFetch.LEAD),
+            transcribe_model=_config_str(source, raw, "transcribe_model", default="medium"),
+            transcribe_base_url=_config_opt_str(source, raw, "transcribe_base_url"),
+            transcribe_api_key=_config_opt_str(source, raw, "transcribe_api_key"),
+            transcribe_api_model=_config_opt_str(source, raw, "transcribe_api_model"),
+            report_issues=_config_bool(source, raw, "report_issues", default=True),
+            providers=_config_providers(source, raw),
+            internal_domains=_config_str_list(source, raw, "internal_domains"),
+            noise_prefixes=_config_str_list(source, raw, "noise_prefixes"),
         )
 
 
 def _config_enum(
-    path: Path, raw: dict[str, object], key: str, *, default: MediaFetch
+    source: str, raw: dict[str, object], key: str, *, default: MediaFetch
 ) -> MediaFetch:
     if key not in raw:
         return default
     value = raw[key]
     if not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     try:
         return MediaFetch(value)
     except ValueError as e:
         options = ", ".join(m.value for m in MediaFetch)
-        raise ValueError(f"{path}: {key} must be one of {options}, got {value!r}") from e
+        raise ValueError(f"{source}: {key} must be one of {options}, got {value!r}") from e
 
 
-def _config_str(path: Path, raw: dict[str, object], key: str, *, default: str) -> str:
+def _config_str(source: str, raw: dict[str, object], key: str, *, default: str) -> str:
     value = raw.get(key, default)
     if not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     return value
 
 
-def _config_opt_str(path: Path, raw: dict[str, object], key: str) -> str | None:
+def _config_opt_str(source: str, raw: dict[str, object], key: str) -> str | None:
     value = raw.get(key)
     if value is not None and not isinstance(value, str):
-        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     return value or None  # an empty string is "not configured", not a credential
 
 
-def _config_bool(path: Path, raw: dict[str, object], key: str, *, default: bool) -> bool:
+def _config_bool(source: str, raw: dict[str, object], key: str, *, default: bool) -> bool:
     value = raw.get(key, default)
     if not isinstance(value, bool):
-        raise ValueError(f"{path}: {key} must be a boolean, got {type(value).__name__}")
+        raise ValueError(f"{source}: {key} must be a boolean, got {type(value).__name__}")
     return value
 
 
-def _config_str_list(path: Path, raw: dict[str, object], key: str) -> list[str]:
+def _config_str_list(source: str, raw: dict[str, object], key: str) -> list[str]:
     value = raw.get(key, [])
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise ValueError(f"{path}: {key} must be a list of strings")
+        raise ValueError(f"{source}: {key} must be a list of strings")
     return value
 
 
-def _config_str_map(path: Path, raw: dict[str, object], key: str) -> dict[str, str]:
-    value = raw.get(key, {})
-    if not isinstance(value, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
-    ):
-        raise ValueError(f"{path}: {key} must be an object of string -> string")
-    return value
 
-
-def _config_providers(path: Path, raw: dict[str, object]) -> dict[str, list[str]]:
+def _config_providers(source: str, raw: dict[str, object]) -> dict[str, list[str]]:
     value = raw.get("providers", {})
     if not isinstance(value, dict) or not all(
         isinstance(cap, str) and isinstance(names, list) and all(isinstance(n, str) for n in names)
         for cap, names in value.items()
     ):
         raise ValueError(
-            f"{path}: providers must be an object of capability -> list of provider names"
+            f"{source}: providers must be an object of capability -> list of provider names"
         )
     capabilities = {need.value for need in Need}
     unknown = sorted(set(value) - capabilities)
     if unknown:
         raise ValueError(
-            f"{path}: providers key(s) {unknown} are not capabilities — "
+            f"{source}: providers key(s) {unknown} are not capabilities — "
             f"known capabilities: {sorted(capabilities)} (a typo'd key would silently "
             "never resolve)"
         )
@@ -708,7 +766,7 @@ def _config_providers(path: Path, raw: dict[str, object]) -> dict[str, list[str]
 
 
 # ---------------------------------------------------------------------------
-# Engine versions (§5): comparisons parse to tuples, never compare strings —
+# Engine versions: comparisons parse to tuples, never compare strings —
 # "0.10.0" > "0.9.1" is False as strings, and that bug would file issues
 # about itself.
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Migration 1 against synthetic fixtures reproducing the wild shapes (§12).
+"""Migration 1 against synthetic fixtures reproducing the wild shapes.
 
 Fixtures are constructed here from the pre-rewrite engine's writer code —
 never copied from a real instance (this repo is public; instances are
@@ -10,13 +10,14 @@ nocaptions/toolong statuses), error-as-reason on non-error statuses, the
 
 import datetime
 import json
+from typing import ClassVar
 
 import pytest
 
 from dex_engine.corpus import read_item
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Config, Kind, LedgerEntry, Need, Status
 
 ENGINE = "0.5.0"
 
@@ -248,7 +249,7 @@ class TestLedgerTranslation:
         assert ledger.load(path)["eeeeeeeeee"].reason == "unstated (pre-migration)"
 
     def test_done_error_text_preserved_in_report_not_line(self, tmp_path, migration):
-        # §5 forbids reason on done: the choice is stated in the report and
+        # The schema forbids reason on done: the choice is stated in the report and
         # the text lives there, never silently dropped.
         path = write_ledger(
             tmp_path,
@@ -293,7 +294,7 @@ class TestLedgerTranslation:
         entry = ledger.load(path)["abcdefabcd"]
         assert entry.status is Status.ERROR
         assert entry.error == "unrecorded (pre-migration error)"
-        # engine 0.0.1 is what makes retry-on-new-engine fire (§5/§12).
+        # engine 0.0.1 is what makes retry-on-new-engine fire.
         assert entry.engine == "0.0.1"
 
     def test_via_whisper_dropped_with_note(self, tmp_path, migration):
@@ -363,6 +364,28 @@ class TestLedgerTranslation:
         report = migration.apply(tmp_path)
         assert ledger.load(path)["2222222222"].title is None
         assert any("stray title" in action for action in report.actions)
+
+    def test_identical_notes_collapse_to_one_with_a_count(self, tmp_path, migration):
+        # Superseded lines of one hash repeat the same translation verbatim
+        # (last-per-hash keeps the audit trail) — the report says it once,
+        # multiplicity kept, nothing dropped.
+        record = {
+            "hash": "2222222222",
+            "url": "https://a.test/t",
+            "kind": "paper",
+            "status": "error",
+            "date": "2026-05-01",
+            "title": "a paper",
+            "error": "boom",
+            "item": "2026-05-01-item-a1b2c3",
+        }
+        other = dict(record, hash="3333333333", url="https://a.test/u", title="another")
+        write_ledger(tmp_path, [record] * 8 + [other])
+        report = migration.apply(tmp_path)
+        stray = [action for action in report.actions if "stray title" in action]
+        assert len(stray) == 2  # one per distinct note, not one per line
+        assert any("(x8)" in action and "'a paper'" in action for action in stray)
+        assert any("(x" not in action and "'another'" in action for action in stray)
 
     def test_unattributable_line_quarantined_verbatim(self, tmp_path, migration):
         # No item, no path, no corpus URL hashing to it: not provably safe.
@@ -498,7 +521,7 @@ class TestLedgerTranslation:
         assert path.read_text() == original
 
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
-        # Un-pulled repos are a supported input (§12).
+        # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
         assert report.skipped == []
 
@@ -508,15 +531,33 @@ class TestConfigRename:
         '{\n  "name_map": {"u1": "lee"},\n  "internal_domains": ["a.test"],\n'
         '  "noise_prefixes": ["fwd:"]\n}\n'
     )
+    # What the migration writes: OLD minus name_map (dropped, not carried).
+    CLEANED: ClassVar[dict] = {"internal_domains": ["a.test"], "noise_prefixes": ["fwd:"]}
 
-    def test_renamed_carrying_content(self, tmp_path, migration):
+    def test_renamed_carrying_content_minus_name_map(self, tmp_path, migration):
         state = tmp_path / "state"
         state.mkdir()
         (state / "normalize-config.json").write_text(self.OLD)
         report = migration.apply(tmp_path)
         assert not (state / "normalize-config.json").exists()
-        assert (state / "config.json").read_text() == self.OLD
+        assert json.loads((state / "config.json").read_text()) == self.CLEANED
+        Config.load(state / "config.json")  # the migrated file parses loudly clean
         assert any("normalize-config.json → config.json" in action for action in report.actions)
+        assert any(
+            "name_map removed — never applied by any engine version" in action
+            and "Discord/Space backfill" in action
+            for action in report.actions
+        )
+
+    def test_config_without_name_map_gets_no_note(self, tmp_path, migration):
+        state = tmp_path / "state"
+        state.mkdir()
+        (state / "normalize-config.json").write_text('{"internal_domains": ["a.test"]}\n')
+        report = migration.apply(tmp_path)
+        assert json.loads((state / "config.json").read_text()) == {
+            "internal_domains": ["a.test"]
+        }
+        assert not any("name_map" in action for action in report.actions)
 
     def test_unknown_key_skipped_for_the_session(self, tmp_path, migration):
         state = tmp_path / "state"
@@ -528,10 +569,12 @@ class TestConfigRename:
         assert any("does not fit the new config schema" in s.why for s in report.skipped)
 
     def test_identical_racing_copy_settled(self, tmp_path, migration):
+        # The racing machine ran THIS migration first, so its config.json
+        # already holds the cleaned (name_map-free) content.
         state = tmp_path / "state"
         state.mkdir()
         (state / "normalize-config.json").write_text(self.OLD)
-        (state / "config.json").write_text(self.OLD)
+        (state / "config.json").write_text(json.dumps(self.CLEANED, indent=2) + "\n")
         report = migration.apply(tmp_path)
         assert not (state / "normalize-config.json").exists()
         assert any("racing machine" in action for action in report.actions)

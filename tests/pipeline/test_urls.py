@@ -93,7 +93,7 @@ class TestCanonicalIdempotency:
     @given(_url)
     def test_every_registered_driver_canonical_is_idempotent(self, url):
         # Canonicalization keys the ledger hash — a non-idempotent case IS a
-        # duplicate-entry bug (§15).
+        # duplicate-entry bug.
         for driver in DRIVERS:
             once = driver.canonical(url)
             assert driver.canonical(once) == once

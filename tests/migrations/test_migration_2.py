@@ -1,4 +1,4 @@
-"""Migration 2: the rerun seed for pre-rewrite web/x enrichments (§12)."""
+"""Migration 2: the rerun seed for pre-rewrite web/x enrichments."""
 
 import datetime
 import json
@@ -38,7 +38,7 @@ class TestBuildGuard:
         assert build(today=fixed_today, engine_version="0.1.0").number == 2
 
 
-def entry(  # noqa: PLR0913 — one keyword per exercised §5 schema slot
+def entry(  # noqa: PLR0913 — one keyword per exercised schema slot
     unit_hash, *, kind, status=Status.DONE, engine="0.0.1", reason=None, error=None
 ):
     path = (
@@ -85,7 +85,7 @@ class TestSeeding:
             assert seed.via == "migration-2"
             assert seed.engine == ENGINE
             assert seed.date == TODAY
-            assert seed.path is None  # queued entries carry no outputs (§5)
+            assert seed.path is None  # queued entries carry no outputs
         assert any(
             "1 x (thread walk-up), 1 web (link keeping)" in action for action in report.actions
         )
@@ -163,7 +163,7 @@ class TestSeeding:
         assert len(seeds) == 1
 
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
-        # Un-pulled repos are a supported input (§12).
+        # Un-pulled repos are a supported input.
         report = migration.apply(tmp_path)
         assert report.actions == []
         assert report.skipped == []

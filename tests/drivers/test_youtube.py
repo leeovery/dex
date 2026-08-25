@@ -112,7 +112,7 @@ class TestCaptions:
 class TestWaitingParks:
     def test_no_captions_parks_waiting_transcribe_and_never_downloads_audio(self):
         # The empty FakeTransport is the pin: ANY download attempt raises —
-        # audio acquisition belongs to the drain, not the driver (§6).
+        # audio acquisition belongs to the drain, not the driver.
         driver = driver_for(INFO_WITHOUT)
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
         assert result.status is Status.WAITING
@@ -155,7 +155,7 @@ class TestProbeClassification:
 
     def test_transient_network_failure_is_blocked_never_dead(self):
         # THE regression pin for the probe path: the motivating-incident
-        # class was "cannot distinguish transient trouble from gone" (§5).
+        # class was "cannot distinguish transient trouble from gone".
         failure = ProbeError(
             "ERROR: Unable to download webpage: <urlopen error [Errno 60] "
             "Operation timed out> (caused by URLError(TimeoutError(60, "

@@ -1,4 +1,4 @@
-"""The ingestion pipeline's public surface (§14): types and enums.
+"""The ingestion pipeline's public surface: types and enums.
 
 Dependency direction, structurally enforced: ``types`` imports nothing from
 this package; ``ledger``/``classify``/``urls`` import only ``types``;
@@ -27,6 +27,7 @@ from .types import (
     MediaFetch,
     MigrationReport,
     Need,
+    Redetection,
     Result,
     Skipped,
     SourceDriver,
@@ -53,6 +54,7 @@ __all__ = [
     "MediaFetch",
     "MigrationReport",
     "Need",
+    "Redetection",
     "Result",
     "Skipped",
     "SourceDriver",

@@ -133,10 +133,10 @@ class TestBootstrap:
     def test_bootstrap_runs_migrations_and_template_sync(self, inst, template):
         channel, _ = make_channel(listing_for("v0.1.0"))
         report, _ = run(inst, channel, template)
-        assert read_applied(log_path(inst.root)) == {1, 2}
+        assert read_applied(log_path(inst.root)) == {1, 2, 3}
         assert (inst.root / "bin" / "dex").read_text() == "#!/bin/sh\nshim\n"
         assert (inst.root / ".gitattributes").exists()
-        assert "migrations applied — 2:" in report
+        assert "migrations applied — 3:" in report
 
     def test_unreleased_newer_engine_stays_unpinned(self, inst, template):
         channel, calls = make_channel(listing_for("v0.1.0"))
@@ -175,7 +175,7 @@ class TestBumpAndReexec:
         assert not (inst.root / "bin" / "dex").exists()
 
     def test_tag_ordering_is_numeric_never_lexicographic(self, inst, template):
-        # "0.10.0" > "0.9.1" is False as strings (§5) — the bump must compare tuples.
+        # "0.10.0" > "0.9.1" is False as strings — the bump must compare tuples.
         write_pin(inst.root, "v0.9.1")
         channel, calls = make_channel(listing_for("v0.9.1", "v0.10.0"))
         run(inst, channel, template)
@@ -230,8 +230,8 @@ class TestSteadyStateAndEdges:
         assert calls["exec"] == []
         assert "engine unpinned" in report
         assert "no release tags on the remote yet" in report
-        # Migrations + template sync still ran (§12 pre-first-tag mode).
-        assert read_applied(log_path(inst.root)) == {1, 2}
+        # Migrations + template sync still ran (pre-first-tag mode).
+        assert read_applied(log_path(inst.root)) == {1, 2, 3}
         assert (inst.root / "bin" / "dex").exists()
 
     def test_failed_release_check_is_a_note_not_a_dead_instance(self, inst, template):
@@ -302,18 +302,53 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert sync(inst.root, template=template) == []
 
+    def test_retired_engine_skills_are_removed(self, inst, template):
+        retired = inst.root / ".claude" / "skills" / "dex-ingest"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("stale procedure\n")
+        changed = sync(inst.root, template=template)
+        assert not retired.exists()
+        assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
+
+    def test_retired_skill_symlinks_unlink_without_following(self, inst, template):
+        target = inst.root / "elsewhere"
+        target.mkdir()
+        (target / "SKILL.md").write_text("linked content\n")
+        skills = inst.root / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        (skills / "dex-ingest").symlink_to(target)
+        changed = sync(inst.root, template=template)
+        assert not (skills / "dex-ingest").exists()
+        assert (target / "SKILL.md").exists()  # the link's target is untouched
+        assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
+
+    def test_non_engine_skills_are_never_touched(self, inst, template):
+        theirs = inst.root / ".claude" / "skills" / "my-own-skill"
+        theirs.mkdir(parents=True)
+        (theirs / "SKILL.md").write_text("instance-owned\n")
+        sync(inst.root, template=template)
+        assert (theirs / "SKILL.md").read_text() == "instance-owned\n"
+
+    def test_removals_render_on_the_sync_report(self, inst, template):
+        retired = inst.root / ".claude" / "skills" / "dex-ingest"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("stale\n")
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "removed .claude/skills/dex-ingest" in report
+
     def test_instance_owned_files_untouched(self, inst, template):
         (inst.root / "CLAUDE.md").write_text("mine\n")
         write_pin(inst.root, "v0.1.0")
         sync(inst.root, template=template)
         assert (inst.root / "CLAUDE.md").read_text() == "mine\n"
-        assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned (§12)
+        assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned
 
     def test_refreshed_files_appear_in_the_report_notes(self, inst, template):
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "refreshed: bin/dex" in report
-        assert "skills synced: 6" in report
+        assert "machinery changes: 6" in report
 
 
 class TestMain:
@@ -325,7 +360,7 @@ class TestMain:
         main([])
         out = capsys.readouterr().out
         assert "sync — engine unpinned" in out
-        assert "migrations applied — 2:" in out
+        assert "migrations applied — 3:" in out
 
     def test_main_is_loud_on_a_garbage_pin(self, inst, template, monkeypatch):
         (inst.root / PIN_FILE).write_text("garbage\n")

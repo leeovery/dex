@@ -19,6 +19,7 @@ from dex_engine.pipeline.types import (
     MediaFetch,
     MigrationReport,
     Need,
+    Redetection,
     Result,
     Skipped,
     Status,
@@ -60,7 +61,7 @@ class TestEnums:
             Kind("blog")
 
     def test_driver_statuses_exclude_queued_and_error(self):
-        # queued is a birth state; error is raised, never returned (§2/§5).
+        # queued is a birth state; error is raised, never returned.
         assert Status.QUEUED not in DRIVER_STATUSES
         assert Status.ERROR not in DRIVER_STATUSES
         assert frozenset(Status) - {Status.QUEUED, Status.ERROR} == DRIVER_STATUSES
@@ -169,8 +170,50 @@ class TestResult:
         assert result.needs is Need.TRANSCRIBE
 
 
+class TestRedetection:
+    def test_queued_with_redetect_is_the_sanctioned_re_birth(self):
+        result = Result(
+            status=Status.QUEUED,
+            meta={},
+            redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+        )
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.FILE
+
+    def test_redetect_requires_queued(self):
+        with pytest.raises(ValueError, match="queued"):
+            Result(status=Status.DONE, meta={}, redetect=Redetection(kind=Kind.WEB))
+
+    def test_redetect_carries_identity_only(self):
+        with pytest.raises(ValueError, match="identity only"):
+            Result(
+                status=Status.QUEUED,
+                meta={},
+                body="smuggled",
+                redetect=Redetection(kind=Kind.WEB),
+            )
+
+    def test_meta_is_forbidden_too(self):
+        # meta becomes enrichment frontmatter — smuggling it through a
+        # redetection would be output by another name.
+        with pytest.raises(ValueError, match="identity only"):
+            Result(
+                status=Status.QUEUED,
+                meta={"title": "smuggled"},
+                redetect=Redetection(kind=Kind.WEB),
+            )
+
+    def test_non_work_kinds_are_rejected(self):
+        with pytest.raises(ValueError, match="never becomes a work unit"):
+            Redetection(kind=Kind.IMAGE)
+
+    def test_format_is_file_work_only(self):
+        with pytest.raises(ValueError, match="file-work only"):
+            Redetection(kind=Kind.WEB, format=Format.PDF)
+
+
 class TestResultReason:
-    """Result.reason mirrors the ledger's stated-reason contract (§2/§5)."""
+    """Result.reason mirrors the ledger's stated-reason contract."""
 
     @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
     def test_reason_is_required_on_deliberate_parking(self, status):
@@ -195,7 +238,7 @@ class TestResultReason:
 
     def test_error_is_not_a_driver_outcome_at_all(self):
         # Errors are raised, never returned — a Result has no error channel,
-        # so a returned 'error' could only fabricate its message (§2/§5).
+        # so a returned 'error' could only fabricate its message.
         with pytest.raises(ValueError, match="raised, never returned"):
             Result(status=Status.ERROR, meta={})
 
@@ -372,7 +415,6 @@ class TestConfig:
         assert config.transcribe_api_model is None
         assert config.report_issues is True
         assert config.providers == {}
-        assert config.name_map == {}
         assert config.internal_domains == []
         assert config.noise_prefixes == []
 
@@ -386,7 +428,6 @@ class TestConfig:
                     "transcribe_api_model": "whisper-large-v3",
                     "report_issues": False,
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
-                    "name_map": {"lee.overy": "Lee"},
                     "internal_domains": ["example.internal"],
                     "noise_prefixes": ["Updated room membership"],
                 }
@@ -398,9 +439,16 @@ class TestConfig:
         assert config.transcribe_api_model == "whisper-large-v3"
         assert config.report_issues is False
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
-        assert config.name_map == {"lee.overy": "Lee"}
         assert config.internal_domains == ["example.internal"]
         assert config.noise_prefixes == ["Updated room membership"]
+
+    def test_deleted_name_map_key_is_rejected(self, tmp_path: Path):
+        # name_map was deleted (never applied by any engine version);
+        # migration 1 drops it — a survivor must fail loudly, not lurk.
+        path = tmp_path / "config.json"
+        path.write_text('{"name_map": {}}')
+        with pytest.raises(ValueError, match="name_map"):
+            Config.load(path)
 
     def test_invalid_json_is_loud(self, tmp_path: Path):
         path = tmp_path / "config.json"
@@ -447,7 +495,7 @@ class TestConfig:
 
 class TestVersions:
     def test_tuple_compare_not_string_compare(self):
-        # The §5 pin: "0.10.0" > "0.9.1" is False as strings.
+        # The pin: "0.10.0" > "0.9.1" is False as strings.
         assert "0.10.0" < "0.9.1"  # noqa: PLR0133 — the string-compare trap, demonstrated
         assert version_newer("0.10.0", "0.9.1") is True
 

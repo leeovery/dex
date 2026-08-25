@@ -1,4 +1,4 @@
-"""Corpus items: the ONE frontmatter read/write point (§14).
+"""Corpus items: the ONE frontmatter read/write point.
 
 A :class:`CorpusItem` is the typed form of one corpus file. ``parse`` and
 ``serialize`` round-trip it: the Claude-authored body passes through
@@ -7,7 +7,7 @@ layout — semantically identical). Structure never passes through freehand
 writing, so a malformed item cannot be written.
 
 ``kinds`` is deliberately ``list[str]``, not ``list[Kind]``: corpus
-frontmatter kinds are provisional forever (the ledger is authoritative, §1),
+frontmatter kinds are provisional forever (the ledger is authoritative),
 and migration 1 must parse pre-rename vocabulary (``tweet``/``blog``) in
 order to rewrite it.
 """

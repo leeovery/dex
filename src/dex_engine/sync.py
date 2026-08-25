@@ -1,4 +1,4 @@
-"""dex-sync: pin-aware engine sync — step 0 of every dex-run session (§12).
+"""dex-sync: pin-aware engine sync — step 0 of every dex-run session.
 
 Flow::
 
@@ -31,6 +31,7 @@ import argparse
 import contextlib
 import datetime
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,7 +71,7 @@ class ReleaseCheckError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReleaseChannel:
-    """The seams between sync and the world outside the instance (§14/§15).
+    """The seams between sync and the world outside the instance.
 
     ``ls_remote`` lists the remote's tags (raw ``git ls-remote --tags``
     output); ``execute`` replaces this process with the given argv. Both are
@@ -99,7 +100,7 @@ def _git_ls_remote(repo_url: str) -> str:
 
 def _exec_argv(argv: list[str]) -> None:
     """Replace this process with ``argv`` — the production re-exec seam."""
-    os.execvp(argv[0], argv)  # noqa: S606 — re-exec at the new tag IS the mechanism (§12)
+    os.execvp(argv[0], argv)  # noqa: S606 — re-exec at the new tag IS the mechanism
 
 
 def default_channel() -> ReleaseChannel:
@@ -144,7 +145,7 @@ def _validate_pin(pin: str) -> None:
     except ValueError as e:
         raise ValueError(
             f"{PIN_FILE} holds {pin!r}, which is not a release tag — repair the pin "
-            "line (rollback is editing it, §12)"
+            "line (rollback is editing it)"
         ) from e
 
 
@@ -208,7 +209,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
 ) -> bool:
     """Settle the pin against the remote's releases; True means re-exec'd.
 
-    The pin is bumped *before* the re-exec (§12 order): if the exec fails,
+    The pin is bumped *before* the re-exec, deliberately: if the exec fails,
     the pin already names the new tag and the next shim run lands there.
     """
     if not tags:
@@ -248,7 +249,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
     own = next((tag for tag, version in tags if version == running), None)
     if own is not None:
         write_pin(root, own)
-        notes.append(f"first tag-aware sync — pinned this engine's own release {own} (§12)")
+        notes.append(f"first tag-aware sync — pinned this engine's own release {own}")
     else:
         notes.append(
             f"running engine {running_version} is newer than the latest release "
@@ -264,7 +265,7 @@ def _announce(
         banner = "=" * 68
         echo(banner)
         echo(f"MAJOR ENGINE UPGRADE: {current} → {latest_tag}")
-        echo("Auto-applying — the always-migratable commitment (§12). Migrations")
+        echo("Auto-applying — the always-migratable commitment. Migrations")
         echo("run before anything touches state; review the sync report closely.")
         echo(banner)
     echo(
@@ -311,24 +312,33 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     """Refresh engine-managed machinery from the bundled instance template.
 
     Copies ``.claude/skills/dex-*`` (recursively), ``.claude/dex-contract.md``,
-    ``bin/dex`` (kept executable), and ``.gitattributes``. Instance-owned
-    files (CLAUDE.md, README, content, ``.dex-engine-pin``) are never
-    touched. ``dex-new`` calls this directly to seed a fresh instance.
+    ``bin/dex`` (kept executable), and ``.gitattributes`` — and REMOVES any
+    ``dex-*`` skill directory the template no longer ships (the ``dex-``
+    namespace under ``.claude/skills`` is engine-owned; a retired skill left
+    in place would keep loading its stale procedure in sessions).
+    Instance-owned files (CLAUDE.md, README, content, ``.dex-engine-pin``,
+    non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
+    to seed a fresh instance.
 
     Args:
         root: The instance root.
         template: The template tree; ``None`` uses the running engine's
             bundled copy (which is what "sync copies from the bundled
-            template of the running — pinned — version" means, §12).
+            template of the running — pinned — version" means).
 
     Returns:
-        Paths (relative to ``root``) that were written because they differed.
+        Change descriptions: paths (relative to ``root``) that were written
+        because they differed, plus ``removed <path>`` entries for retired
+        skills.
     """
     tpl = template if template is not None else _bundled_template()
     changed: list[str] = []
+    template_skills: set[str] = set()
     for skill in (tpl / "skills").iterdir():
         if skill.is_dir():
+            template_skills.add(skill.name)
             _copy_tree(root, skill, root / ".claude" / "skills" / skill.name, changed)
+    _remove_retired_skills(root, template_skills, changed)
     _write_if_changed(
         root,
         root / ".claude" / "dex-contract.md",
@@ -348,6 +358,25 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     return changed
 
 
+def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[str]) -> None:
+    skills_dir = root / ".claude" / "skills"
+    if not skills_dir.is_dir():
+        return
+    for existing in sorted(skills_dir.iterdir()):
+        if (
+            existing.is_dir()
+            and existing.name.startswith("dex-")
+            and existing.name not in template_skills
+        ):
+            if existing.is_symlink():
+                # rmtree refuses symlinks; unlink drops the link and leaves
+                # whatever it pointed at alone.
+                existing.unlink()
+            else:
+                shutil.rmtree(existing)
+            changed.append(f"removed .claude/skills/{existing.name} (retired engine skill)")
+
+
 # ---------------------------------------------------------------------------
 # The full sync flow
 # ---------------------------------------------------------------------------
@@ -364,12 +393,12 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     previous_pin: str | None = None,
     migrate: Callable[[Path], list[AppliedMigration]] | None = None,
 ) -> str | None:
-    """Run the §12 sync flow against the instance at ``instance.root``.
+    """Run the sync flow (pin check → migrations → template → report) at ``instance.root``.
 
     Args:
         instance: The instance.
-        running_version: The running engine's version (injected, §14).
-        today: Injected clock (§14).
+        running_version: The running engine's version (injected).
+        today: Injected clock.
         channel: Release-check and re-exec seams.
         echo: Where progress and the loud major announcement go (print in
             production) — distinct from the returned report.
@@ -409,14 +438,16 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     else:
         applied = migrations.run_pending(root, today=today, engine_version=running_version)
     changed = sync(root, template=template)
-    notes.extend(f"refreshed: {rel}" for rel in changed)
+    notes.extend(
+        rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed
+    )
     if changed or read_pin(root) != pin:
         notes.append("review + commit the refreshed files and the pin")
     payload = _report_payload(
         pin=read_pin(root),
         previous=previous_pin,
         applied=applied,
-        skills_synced=len(changed),
+        machinery_changes=len(changed),
         notes=notes,
     )
     return surfaces.render("sync-report", payload)
@@ -427,7 +458,7 @@ def _report_payload(
     pin: str | None,
     previous: str | None,
     applied: list[AppliedMigration],
-    skills_synced: int,
+    machinery_changes: int,
     notes: list[str],
 ) -> dict[str, object]:
     migrations_payload: list[dict[str, object]] = [
@@ -442,7 +473,7 @@ def _report_payload(
     ]
     payload: dict[str, object] = {
         "migrations": migrations_payload,
-        "skills_synced": skills_synced,
+        "machinery_changes": machinery_changes,
     }
     if pin is not None:
         payload["pin"] = pin
@@ -454,7 +485,7 @@ def _report_payload(
 
 
 # ---------------------------------------------------------------------------
-# CLI — parse, build, call; zero business logic (§14)
+# CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
 
@@ -463,7 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dex-sync",
         description="Sync engine-managed machinery into the instance at cwd: "
-        "pin check, migrations, template refresh, sync report (§12).",
+        "pin check, migrations, template refresh, sync report.",
     )
     parser.add_argument(
         "--previous-pin",
@@ -486,7 +517,7 @@ def main(argv: list[str] | None = None) -> None:
             echo=print,
             previous_pin=args.previous_pin,
         )
-    except (ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-sync: {e}")
     if report is not None:
         sys.stdout.write(report if report.endswith("\n") else report + "\n")
