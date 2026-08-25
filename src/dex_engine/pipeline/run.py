@@ -66,7 +66,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import work_hash
+from .urls import resolve_repo_path, work_hash
 
 __all__ = [
     "HARVEST_RULES_VERSION",
@@ -313,7 +313,24 @@ class _Drain:
         unit_hash = work_hash(work_key)
         if unit_hash in self.entries:
             return
-        file_path = self.ctx.instance.root / repo_path
+        file_path = resolve_repo_path(self.ctx.instance.root, repo_path)
+        if file_path is None:
+            # An escaping media path is a bad seed, parked before any read —
+            # frontmatter is owner-editable data, never a path to trust.
+            self.record(
+                LedgerEntry(
+                    hash=unit_hash,
+                    url=work_key,
+                    item=item_id,
+                    kind=Kind.FILE,
+                    status=Status.MANUAL,
+                    engine="seed",  # stamped in record
+                    date=datetime.date.min,
+                    reason="media path points outside the instance root — heal the capture",
+                ),
+                count=True,
+            )
+            return
         data = file_path.read_bytes() if file_path.is_file() else b""
         fmt = sniff_format(data, name=repo_path.rsplit("/", 1)[-1])
         if fmt is None:

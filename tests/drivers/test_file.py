@@ -76,6 +76,50 @@ class TestLocalFiles:
             d.fetch(make_unit("file:media/abc/doc.pdf", Kind.FILE))
 
 
+class TestPathContainment:
+    """Repo paths are owner-editable frontmatter: data, never trusted as paths."""
+
+    def _driver(self, root) -> FileDriver:
+        return FileDriver(capabilities=caps(FakeExtractor()), root=root)
+
+    def test_absolute_path_is_manual_never_read(self, tmp_path):
+        root = tmp_path / "instance"
+        root.mkdir()
+        outside = tmp_path / "secret.pdf"
+        outside.write_bytes(fixture_bytes("paper.pdf"))
+        result = self._driver(root).fetch(make_unit(f"file:{outside}", Kind.FILE))
+        assert result.status is Status.MANUAL
+        assert "outside the instance root" in reason_of(result)
+
+    def test_dotdot_escape_is_manual_never_read(self, tmp_path):
+        root = tmp_path / "instance"
+        root.mkdir()
+        (tmp_path / "secret.pdf").write_bytes(fixture_bytes("paper.pdf"))
+        result = self._driver(root).fetch(make_unit("file:../secret.pdf", Kind.FILE))
+        assert result.status is Status.MANUAL
+        assert "outside the instance root" in reason_of(result)
+
+    def test_symlink_pointing_outside_the_root_is_manual_never_read(self, tmp_path):
+        root = tmp_path / "instance"
+        media = root / "media"
+        media.mkdir(parents=True)
+        outside = tmp_path / "secret.pdf"
+        outside.write_bytes(fixture_bytes("paper.pdf"))
+        (media / "doc.pdf").symlink_to(outside)
+        result = self._driver(root).fetch(make_unit("file:media/doc.pdf", Kind.FILE))
+        assert result.status is Status.MANUAL
+        assert "outside the instance root" in reason_of(result)
+
+    def test_nested_path_staying_inside_the_root_keeps_working(self, tmp_path):
+        media = tmp_path / "media" / "abc123"
+        media.mkdir(parents=True)
+        (media / "doc.pdf").write_bytes(fixture_bytes("paper.pdf"))
+        # Dot segments that RESOLVE inside the root are legitimate.
+        unit = make_unit("file:media/abc123/../abc123/doc.pdf", Kind.FILE)
+        result = self._driver(tmp_path).fetch(unit)
+        assert result.status is Status.DONE
+
+
 class TestUrlServedBinaries:
     def test_downloads_sniffs_and_extracts(self):
         transport = FakeTransport(

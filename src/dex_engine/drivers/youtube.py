@@ -1,5 +1,12 @@
 """The youtube driver: yt-dlp metadata + cleaned VTT captions.
 
+A video's identity is its video id: every single-video URL shape —
+``watch?v=``, bare and ``/live|/shorts|/embed`` youtu.be short links,
+``youtube.com/live|shorts|embed|v/<id>`` — canonicalizes to
+``watch?v=<id>``, one fetchable work unit per video. A playlist page's
+identity is its list id; playlist units park ``manual`` (a playlist is a
+collection, and which entries deserve capture is judgment).
+
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
@@ -12,7 +19,7 @@ only a confirmed-unavailable video is ``dead``.
 
 import re
 from collections.abc import Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from dex_engine.pipeline.classify import (
     PAYWALL_REASON,
@@ -29,7 +36,9 @@ from .transport import Transport, urllib_transport
 __all__ = ["ProbeError", "YouTubeDriver", "classify_probe_failure", "clean_vtt", "yt_dlp_probe"]
 
 _HOSTS = frozenset({"youtube.com", "youtu.be"})
-_KEEP_PARAMS = frozenset({"v"})
+# Path prefixes that address a single video, on youtube.com and youtu.be
+# alike: /live/<id>, /shorts/<id>, /embed/<id>, the legacy /v/<id>.
+_VIDEO_PREFIXES = frozenset({"live", "shorts", "embed", "v"})
 
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
@@ -100,15 +109,23 @@ class YouTubeDriver:
         return host_of(url) in _HOSTS
 
     def canonical(self, url: str) -> str:
-        """youtu.be short links become watch URLs; only the ``v`` param survives."""
-        parts = urlsplit(url)
-        if host_of(url) == "youtu.be":
-            video_id = parts.path.strip("/")
-            url = f"https://youtube.com/watch?v={video_id}"
-        return base_canonical(url, keep_params=_KEEP_PARAMS)
+        """Video shapes collapse to ``watch?v=<id>``; playlist pages keep their list id."""
+        video_id = _video_id(url)
+        if video_id is not None:
+            return "https://youtube.com/watch?" + urlencode({"v": video_id})
+        playlist_id = _playlist_id(url)
+        if playlist_id is not None:
+            return "https://youtube.com/playlist?" + urlencode({"list": playlist_id})
+        return base_canonical(url)
 
     def fetch(self, unit: WorkUnit) -> Result:
         """Probe the video; captions become the transcript, or the unit parks."""
+        if _playlist_id(unit.url) is not None:
+            return Result(
+                status=Status.MANUAL,
+                meta={},
+                reason="playlist link — capture the videos worth keeping individually",
+            )
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
@@ -153,6 +170,36 @@ class YouTubeDriver:
                 reason="captions track too thin to be a transcript",
             )
         return Result(status=Status.DONE, meta=meta, body=_body(info, transcript))
+
+
+def _video_id(url: str) -> str | None:
+    """The video id a URL addresses, or None for non-video shapes."""
+    host = host_of(url)
+    parts = urlsplit(url)
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if host == "youtu.be":
+        if len(segments) == 1:
+            return segments[0]
+        if len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
+            return segments[1]
+        return None
+    if host == "youtube.com":
+        if segments == ["watch"]:
+            return dict(parse_qsl(parts.query)).get("v")
+        if len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
+            return segments[1]
+    return None
+
+
+def _playlist_id(url: str) -> str | None:
+    """The list id of a playlist-page URL, or None."""
+    parts = urlsplit(url)
+    is_playlist_page = host_of(url) == "youtube.com" and [
+        segment for segment in parts.path.split("/") if segment
+    ] == ["playlist"]
+    if not is_playlist_page:
+        return None
+    return dict(parse_qsl(parts.query)).get("list")
 
 
 def classify_probe_failure(message: str) -> Classification:

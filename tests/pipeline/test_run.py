@@ -205,6 +205,23 @@ class TestSeedAndDone:
         transcribe_report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
         assert "is unreadable" in " ".join(transcribe_report.split())
 
+    def test_escaping_media_path_parks_manual_at_seed_never_read(self, instance):
+        # `media:` frontmatter is owner-editable data: an absolute path or a
+        # ../ climb must park as a bad seed, not have its bytes read into
+        # the pipeline.
+        outside = instance.root.parent / "secret.pdf"
+        outside.write_bytes(b"%PDF-1.4 not for the corpus")
+        write_item(instance, media=[str(outside), "../secret.pdf"])
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        for work_key in (f"file:{outside}", "file:../secret.pdf"):
+            entry = entries[work_hash(work_key)]
+            assert entry.status is Status.MANUAL
+            assert entry.kind is Kind.FILE
+            assert "outside the instance root" in (entry.reason or "")
+        assert "outside the instance root" in report  # parked rows are printed
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731

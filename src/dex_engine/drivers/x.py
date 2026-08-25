@@ -1,5 +1,10 @@
 """The x driver (renamed from tweet): fxtwitter fetch + thread walk-up.
 
+A post's identity is its status id: every share shape — the username form,
+``/i/web/status/<id>``, ``/i/status/<id>``, the legacy ``/statuses/``
+spelling, the twitter.com and mobile.twitter.com hosts — canonicalizes to
+one id-keyed form, so one post is one work unit however it was shared.
+
 The chain above a captured post is context, not new first-class sources:
 one enrichment file, one ledger entry. The walk follows fxtwitter parent
 pointers bottom-to-top (cap 20 hops); storage is reading order — root
@@ -13,6 +18,7 @@ far the walk got. Walk-down is explicitly unsolved — backlog.
 """
 
 import json
+import re
 import urllib.parse
 
 from dex_engine.pipeline.classify import (
@@ -28,7 +34,12 @@ from .transport import Transport, urllib_transport
 __all__ = ["XDriver"]
 
 _API = "https://api.fxtwitter.com/"
-_HOSTS = frozenset({"x.com", "twitter.com"})
+_HOSTS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
+
+# Every status-URL path shape in the wild: /<user>/status/<id>,
+# /i/web/status/<id>, /i/status/<id>, the legacy /statuses/ spelling —
+# with or without a /photo/1-style tail.
+_STATUS_PATH_RE = re.compile(r"/status(?:es)?/(\d+)")
 
 # Thread walk-up cap: 20 parent hops above the captured post.
 MAX_HOPS = 20
@@ -45,23 +56,29 @@ class XDriver:
         self._transport = transport
 
     def matches(self, url: str) -> bool:
-        """True for x.com and twitter.com hosts."""
+        """True for x.com, twitter.com, and mobile.twitter.com hosts."""
         return host_of(url) in _HOSTS
 
     def canonical(self, url: str) -> str:
-        """The generic canonical form; x.com and twitter.com hash separately (as before)."""
+        """Status URLs collapse to ``https://x.com/i/status/<id>`` — the id is the identity."""
+        status_id = _status_id(url)
+        if status_id is not None:
+            return f"https://x.com/i/status/{status_id}"
         return base_canonical(url)
 
     def fetch(self, unit: WorkUnit) -> Result:
         """Fetch the captured post, walk its parent chain, render reading order."""
-        path = urllib.parse.urlsplit(unit.url).path.lstrip("/")
-        if "/status/" not in f"/{path}":
+        status_id = _status_id(unit.url)
+        if status_id is None:
             return Result(
                 status=Status.MANUAL,
                 meta={},
                 reason="not a status URL — fxtwitter serves posts only",
             )
-        captured = self._fetch_post(path)
+        # Bare status/<id> is the one fxtwitter path that serves every share
+        # shape: the API ignores a username segment but 404s on /i/web/…,
+        # and that 404 would misread as a dead post.
+        captured = self._fetch_post(f"status/{status_id}")
         if isinstance(captured, Classification):
             return Result(status=captured.status, meta={}, reason=captured.reason)
         posts, walk_meta = self._walk_up(captured)
@@ -112,6 +129,12 @@ class XDriver:
             posts.append(parent)
             current = parent
         return posts, walk_meta
+
+
+def _status_id(url: str) -> str | None:
+    """The post's status id, or None for a non-status URL."""
+    match = _STATUS_PATH_RE.search(urllib.parse.urlsplit(url).path)
+    return match.group(1) if match else None
 
 
 def _render(captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]) -> Result:
