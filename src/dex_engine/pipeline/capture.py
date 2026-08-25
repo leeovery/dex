@@ -133,7 +133,9 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient
         OSError: The capture file cannot be read.
     """
     frontmatter, body = parse_capture(capture_path.read_text(encoding="utf-8"))
-    urls = [url.rstrip(".,") for url in dict.fromkeys(_URL_RE.findall(body))]
+    # Punctuation strips BEFORE dedupe: "…/post." and "…/post" in one note
+    # are the same URL and must land in the frontmatter once.
+    urls = list(dict.fromkeys(url.rstrip(".,") for url in _URL_RE.findall(body)))
     media = frontmatter.get("media")
     kinds: list[str]
     media_list: list[str] = []

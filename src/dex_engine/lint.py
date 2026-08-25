@@ -117,7 +117,7 @@ def run_lint(
     special = _pre_taxonomy_outcome(instance)
     if special is not None:
         return special
-    taxonomy = json.loads((instance.state_dir / "taxonomy.json").read_text(encoding="utf-8"))
+    taxonomy, taxonomy_error = _load_taxonomy(instance)
     entity_members = _entity_members(instance)
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
@@ -125,9 +125,7 @@ def run_lint(
         pages, taxonomy, entity_members, corpus_ids, write=write, today=today
     )
 
-    ledgered = set(
-        taxonomy.get("topics", {}).get("uncategorized-shares", {}).get("items", [])
-    )
+    ledgered = _uncategorized_items(taxonomy)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
     unindexed, ghost_index = _index_consistency(instance, pages, taxonomy)
     # Shortid-shaped citations flag everywhere — index included: latent
@@ -157,17 +155,50 @@ def run_lint(
         "count_drift": scan.count_drift,
         "restated": scan.restated,
     }
+    if taxonomy_error is not None:
+        payload["taxonomy_error"] = taxonomy_error
     ledger_error = _state_checks(instance, payload, is_cognitive)
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
         payload["notes"] = scan.notes
 
-    failed = bool(scan.broken_links or scan.bad_citations or ledger_error)
+    failed = bool(
+        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error
+    )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
         exit_code=1 if failed else 0,
     )
+
+
+def _load_taxonomy(instance: Instance) -> tuple[dict[str, object], str | None]:
+    """The parsed taxonomy, or an empty one plus the finding when it is broken.
+
+    Lint's job is reporting broken state files, so a malformed
+    ``state/taxonomy.json`` becomes a loud finding — never a crash; the
+    wiki checks still run, against the empty taxonomy.
+    """
+    path = instance.state_dir / "taxonomy.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return {}, f"{path.name}: invalid JSON ({' '.join(str(e).split())})"
+    if not isinstance(raw, dict):
+        return {}, f"{path.name}: expected a JSON object, got {type(raw).__name__}"
+    return raw, None
+
+
+def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
+    """The uncategorized-shares ledger's item ids, tolerating malformed shapes."""
+    topics = taxonomy.get("topics", {})
+    uncategorized = (
+        topics.get("uncategorized-shares", {}) if isinstance(topics, dict) else {}
+    )
+    items = uncategorized.get("items", []) if isinstance(uncategorized, dict) else []
+    if not isinstance(items, list):
+        return set()
+    return {item for item in items if isinstance(item, str)}
 
 
 def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
@@ -316,7 +347,11 @@ def _scan_staleness(
         return
     members = topics[topic.group(1)]
     items = members.get("items", []) if isinstance(members, dict) else []
-    newer = sum(1 for item_id in items if item_id[:10] > generated.group(1))
+    if not isinstance(items, list):
+        items = []
+    newer = sum(
+        1 for item_id in items if isinstance(item_id, str) and item_id[:10] > generated.group(1)
+    )
     if newer:
         scan.stale_pages.append({"page": name, "newer": newer})
 
@@ -563,7 +598,10 @@ def main(argv: list[str] | None = None) -> None:
             today=datetime.date.today,
             write=args.write,
         )
-    except (ValueError, RuntimeError, OSError) as e:
+    except (ValueError, RuntimeError, OSError, TypeError, AttributeError) as e:
+        # TypeError/AttributeError are the backstop for state files whose
+        # shape no isinstance guard anticipated — a named exit, never a
+        # traceback.
         sys.exit(f"dex-lint: {e}")
     sys.stdout.write(outcome.report)
     if outcome.exit_code:

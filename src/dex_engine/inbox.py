@@ -128,10 +128,12 @@ def _run_git(args: list[str]) -> tuple[int, str]:
     completed = subprocess.run(  # noqa: S603 — engine-built args, no shell
         ["git", *args],  # noqa: S607 — git resolves via PATH like every dev tool
         capture_output=True,
-        text=True,
         check=False,
     )
-    return completed.returncode, completed.stdout
+    # Decoded tolerantly, never text=True: `cat-file -p` on a raw binary
+    # staged blob — the very case the LFS pointer check exists to catch —
+    # must yield a comparable string, not a UnicodeDecodeError.
+    return completed.returncode, completed.stdout.decode("utf-8", "replace")
 
 
 def _api_request(
@@ -415,7 +417,11 @@ def _report_orphans(reconciler: _Reconcile, repo: str, token: str) -> None:
     referenced: set[int] = set()
     inbox_dir = reconciler.instance.root / "inbox"
     for path in inbox_dir.glob("*.md"):
-        frontmatter, _ = parse_capture(path.read_text(encoding="utf-8"))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # already reported as FAIL by the reconcile loop
+        frontmatter, _ = parse_capture(text)
         match = re.search(r"/assets/(\d+)$", frontmatter.get("asset", ""))
         if match:
             referenced.add(int(match.group(1)))
@@ -473,12 +479,20 @@ def reconcile(instance: Instance, seams: GithubSeams) -> int:
         return 0
     reconciler = _Reconcile(instance=instance, seams=seams)
     captures = sorted(inbox_dir.glob("*.md"))
-    staged = [
-        (path, frontmatter, body)
-        for path in captures
-        for frontmatter, body in [parse_capture(path.read_text(encoding="utf-8"))]
-        if "asset" in frontmatter
-    ]
+    staged: list[tuple[Path, dict[str, str], str]] = []
+    unreadable = 0
+    for path in captures:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            # A capture that cannot even be read (raw bytes saved as .md,
+            # a permissions accident) fails alone — never the reconcile.
+            echo(f"  FAIL {path.name}: unreadable capture ({e})")
+            unreadable += 1
+            continue
+        frontmatter, body = parse_capture(text)
+        if "asset" in frontmatter:
+            staged.append((path, frontmatter, body))
     token = seams.token()
     repo = reconciler.repo()
 
@@ -490,10 +504,11 @@ def reconcile(instance: Instance, seams: GithubSeams) -> int:
         return 1
 
     materialized, failures = _materialize_all(reconciler, staged, token or "")
+    failures += unreadable
     if staged:
         echo(
             f"inbox: {materialized}/{len(staged)} staged asset(s) materialized; "
-            f"{len(captures) - len(staged)} text capture(s) untouched."
+            f"{len(captures) - len(staged) - unreadable} text capture(s) untouched."
         )
     else:
         echo(f"inbox: {len(captures)} capture(s), none with staged assets.")
@@ -577,7 +592,10 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     seams = default_seams()
-    code = ensure(instance, seams) if args.command == "ensure" else reconcile(instance, seams)
+    try:
+        code = ensure(instance, seams) if args.command == "ensure" else reconcile(instance, seams)
+    except (OSError, ValueError, RuntimeError) as e:
+        sys.exit(f"dex-inbox: {e}")
     if code:
         sys.exit(code)
 

@@ -189,6 +189,21 @@ class TestSeedAndDone:
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
         assert "unfetchable capture URL" in report  # parked rows are printed
 
+    def test_one_malformed_corpus_item_is_skipped_and_reported_never_fatal(self, instance):
+        write_item(instance)
+        bad = instance.corpus_dir / "2026" / "2026-08-19-broken-ffffff.md"
+        bad.write_text("---\nid: broken\n")  # unterminated frontmatter
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)  # completes — no abort
+        assert entry_for(ctx).status is Status.DONE  # the readable item enriched
+        flat = " ".join(report.split())  # notes wrap at width
+        assert "corpus item corpus/2026/2026-08-19-broken-ffffff.md is unreadable" in flat
+        assert "unterminated frontmatter" in flat
+        assert "repair the file by hand" in flat
+        # Every seeding verb shares the containment through seed_from_corpus:
+        transcribe_report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
+        assert "is unreadable" in " ".join(transcribe_report.split())
+
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
         fetch = lambda _unit: Result(  # noqa: E731
@@ -877,6 +892,26 @@ class TestVerbs:
         with pytest.raises(ValueError, match="unknown corpus item"):
             run_mod.fetch_urls(ctx, "2026-01-01-nope-000000", ["https://example.test/x"])
 
+    def test_fetch_urls_parks_a_non_http_url_and_the_batch_continues(self, instance):
+        # The sniff HEAD refuses non-http(s) URLs with a ValueError; that
+        # parks the ONE bad URL — the rest of the batch drains and the
+        # report renders (no partial ledger writes with no report).
+        write_item(instance)
+        bad = "ftp://example.test/archive.tar"
+        good = "https://example.test/docs"
+        transport = FakeTransport(
+            {bad: ValueError(f"transport fetches http(s) URLs only, got {bad!r}")}
+        )
+        ctx = make_ctx(instance, FakeDriver(), transport=transport)
+        run_mod.run(ctx)
+        report = run_mod.fetch_urls(ctx, ITEM, [bad, good])
+        entries = ledger.load(instance.ledger_path)
+        parked = entries[work_hash(bad)]
+        assert parked.status is Status.MANUAL
+        assert "unfetchable fetch URL" in (parked.reason or "")
+        assert entries[work_hash(good)].status is Status.DONE  # the batch continued
+        assert "unfetchable fetch URL" in report  # parked rows are printed
+
     def test_fetch_urls_respects_the_cap_and_force_exceeds_it(self, instance):
         urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
         write_item(instance, urls=urls)
@@ -956,6 +991,22 @@ class TestVerbs:
         run_mod.run(ctx)
         with pytest.raises(ValueError, match="reason"):
             run_mod.mark(ctx, URL, Status.MANUAL)
+
+    def test_mark_normalizes_a_multiline_reason_so_the_item_view_still_renders(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        run_mod.mark(ctx, URL, Status.MANUAL, reason="paywalled;\nrescue\tby hand")
+        assert entry_for(ctx).reason == "paywalled; rescue by hand"
+        view = run_mod.status_report(ctx, item_id=ITEM)  # would raise PayloadError on \n
+        assert "paywalled; rescue by hand" in " ".join(view.split())
+
+    def test_mark_whitespace_only_reason_on_manual_is_loud_not_blank(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        with pytest.raises(ValueError, match="reason"):
+            run_mod.mark(ctx, URL, Status.MANUAL, reason=" \n\t ")
 
     def test_mark_error_is_refused(self, instance):
         ctx = make_ctx(instance, FakeDriver())

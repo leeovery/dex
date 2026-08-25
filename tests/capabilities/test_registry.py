@@ -125,7 +125,7 @@ class TestResolution:
 
 
 class TestReport:
-    def test_active_dormant_and_floor_states(self):
+    def test_active_dormant_unavailable_and_floor_states(self):
         c = caps(
             transcribers=(
                 FakeTranscriber("whisper-local"),
@@ -135,9 +135,11 @@ class TestReport:
         )
         by_name = provider_rows(c.report_payload())
         assert by_name["transcribe"][0] == {"name": "whisper-local", "state": "active"}
+        # A provider whose available() said no is UNAVAILABLE with its
+        # reason — never "available", which is a ready dormant provider.
         assert by_name["transcribe"][1] == {
             "name": "whisper-api",
-            "state": "available",
+            "state": "unavailable",
             "note": "set OPENAI_API_KEY",
         }
         assert by_name["extract"][0]["state"] == "active"
@@ -155,8 +157,8 @@ class TestReport:
         ]
 
     def test_payload_renders_on_the_surface(self):
-        # The designed example line, verbatim shape: active first, dormant with
-        # its unmet requirement after the dot.
+        # The designed example line, verbatim shape: active first, the
+        # unavailable provider with its unmet requirement after the dash.
         c = caps(
             transcribers=(
                 FakeTranscriber("whisper-local"),
@@ -166,7 +168,7 @@ class TestReport:
         report = surfaces.render("capability-report", c.report_payload())
         flat = " ".join(report.split())  # the kernel may wrap long value lines
         assert "whisper-local (active)" in flat
-        assert "whisper-api available — set OPENAI_API_KEY" in flat
+        assert "whisper-api unavailable — set OPENAI_API_KEY" in flat
 
     def test_real_build_payload_renders(self):
         # The registry built from a default Config must always produce a

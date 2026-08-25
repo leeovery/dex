@@ -55,6 +55,21 @@ class TestRunExclude:
         run_exclude(instance, [{"id": ITEM}])
         assert load_exclusions(instance.state_dir / "exclusions.tsv") == {"55ad7b"}
 
+    def test_reason_whitespace_collapses_so_the_tsv_stays_parseable(self, instance):
+        # A tab or newline in the LLM-authored reason would shear the TSV:
+        # a stray line computes a bogus shortid and can silently suppress
+        # an unrelated cluster's regeneration.
+        write_item_stub(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme\tthread —\nno technical content"}])
+        recorded = (instance.state_dir / "exclusions.tsv").read_text()
+        assert recorded == f"{ITEM}\tmeme thread — no technical content\n"
+        assert load_exclusions(instance.state_dir / "exclusions.tsv") == {"55ad7b"}
+
+    def test_whitespace_only_reason_falls_back_to_the_default(self, instance):
+        write_item_stub(instance)
+        run_exclude(instance, [{"id": ITEM, "reason": " \n\t "}])
+        assert f"{ITEM}\tout of scope\n" in (instance.state_dir / "exclusions.tsv").read_text()
+
 
 class TestCli:
     def test_main_excludes_from_a_file(self, instance, monkeypatch, capsys):

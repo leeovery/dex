@@ -49,7 +49,10 @@ def run_exclude(instance: Instance, entries: list[dict[str, str]]) -> str:
             item_id = entry.get("id")
             if not item_id:
                 raise ValueError(f"exclusion entry has no id: {entry!r}")
-            reason = entry.get("reason", _DEFAULT_REASON)
+            # The reason is LLM-authored free text: collapse every
+            # whitespace run (tabs and newlines included) so the TSV stays
+            # one record per line, tab-delimited, by construction.
+            reason = " ".join(entry.get("reason", _DEFAULT_REASON).split()) or _DEFAULT_REASON
             if item_id not in existing:
                 f.write(f"{item_id}\t{reason}\n")
             item_path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
