@@ -357,3 +357,91 @@ class TestEdges:
         result = driver_for({}).fetch(make_unit("https://x.com/carol", Kind.X))
         assert result.status is Status.MANUAL
         assert "not a status URL" in reason_of(result)
+
+
+class TestVideoPosts:
+    """fxtwitter nests videos beside photos; reading photos alone lied."""
+
+    URL = "https://x.com/ines/status/800"
+    VIDEO = "https://video.example.test/ext_tw_video/800/vid/1280x720/v800.mp4"
+
+    def video_result(self):
+        responses = {API + "status/800": api_fixture("video-800.json")}
+        return driver_for(responses).fetch(make_unit(self.URL, Kind.X))
+
+    def test_a_video_only_post_is_done_with_the_video_pooled(self):
+        # It parked `manual` on "fxtwitter returned no text or media" — a
+        # statement the payload itself contradicts — and dropped the video
+        # the media stage would have fetched.
+        result = self.video_result()
+        assert result.status is Status.DONE
+        assert result.reason is None
+        assert result.media == [self.VIDEO]
+
+    def test_the_body_names_the_media_it_actually_holds(self):
+        body = body_of(self.video_result())
+        assert "@ines" in body
+        assert "(video post)" in body
+        assert "(photo post)" not in body
+
+    def test_media_is_pooled_once_however_many_lists_repeat_it(self):
+        # `all` is fxtwitter's union of `photos` and `videos`, so every
+        # media object appears twice in one payload; pooling it twice would
+        # spend two of the item's four media slots on one file.
+        result = self.video_result()
+        assert result.media.count(self.VIDEO) == 1
+
+    def _mixed_post(self) -> dict:
+        photo = {"type": "photo", "url": "https://pbs.example.test/media/p900.jpg"}
+        gif = {"type": "gif", "url": "https://video.example.test/tweet_video/g900.mp4"}
+        return {
+            "id": "900",
+            "text": "",
+            "created_at": "Sat Aug 22 15:00:00 +0000 2026",
+            "author": {"name": "Ines Duarte", "screen_name": "ines"},
+            "replying_to": None,
+            "replying_to_status": None,
+            "media": {"all": [photo, gif], "photos": [photo], "videos": [gif]},
+        }
+
+    def test_photos_and_videos_pool_together_in_post_order(self):
+        responses = {API + "status/900": json_response({"tweet": self._mixed_post()})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        assert result.status is Status.DONE
+        assert result.media == [
+            "https://pbs.example.test/media/p900.jpg",
+            "https://video.example.test/tweet_video/g900.mp4",
+        ]
+        assert "(media post)" in body_of(result)  # neither label alone would be true
+
+    def test_a_payload_without_the_union_list_still_pools_both(self):
+        # `all` leads, but nothing depends on it: the typed lists carry the
+        # same media, and the existing photo fixtures have only those.
+        post = self._mixed_post()
+        del post["media"]["all"]
+        responses = {API + "status/900": json_response({"tweet": post})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        assert result.media == [
+            "https://pbs.example.test/media/p900.jpg",
+            "https://video.example.test/tweet_video/g900.mp4",
+        ]
+
+    def test_a_parents_video_joins_the_pool_behind_the_captured_posts(self):
+        # Chain media is pooled, captured post's first — media stage cap and
+        # all. A parent's video is media like any other.
+        parent = json.loads(fixture_text("fxtwitter", "video-800.json"))["tweet"]
+        captured = json.loads(fixture_text("fxtwitter", "captured-300.json"))["tweet"]
+        captured["replying_to"], captured["replying_to_status"] = "ines", "800"
+        responses = {
+            API + "status/300": json_response({"tweet": captured}),
+            API + "ines/status/800": json_response({"tweet": parent}),
+        }
+        result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
+        assert result.media == ["https://pbs.example.test/media/p300.jpg", self.VIDEO]
+
+    def test_a_payload_with_no_media_at_all_still_says_so_honestly(self):
+        # The reason survives — it just has to be true when it is said.
+        responses = {API + "status/500": api_fixture("no-text-500.json")}
+        result = driver_for(responses).fetch(make_unit("https://x.com/frank/status/500", Kind.X))
+        assert result.status is Status.MANUAL
+        assert reason_of(result) == "fxtwitter returned no text or media"

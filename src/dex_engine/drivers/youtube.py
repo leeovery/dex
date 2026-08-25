@@ -17,6 +17,13 @@ segment is a channel unless it is one of youtube.com's own functional
 paths, which are named explicitly so ``/watch``, ``/playlist``,
 ``/results``, ``/feed`` and their kin keep working.
 
+Captions ARE a transcript, and the body that carries one says so in its
+frontmatter: the captions route stamps ``via: captions``, the same slot the
+transcribe drain stamps its provider into. The heading was never the
+answer — the drain reads ``via`` to find where the notes end, so an
+unstamped captions body read back as description end to end and a later
+whisper drain stacked a second ``## Transcript`` under the first.
+
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
@@ -135,6 +142,16 @@ _GONE_MARKERS = ("video unavailable", "removed", "terminated")
 # (it imports this one), so the pairing is pinned by test instead.
 _DESCRIPTION_HEADING = "## Description"
 _TRANSCRIPT_HEADING = "## Transcript"
+
+# The transcript-provenance stamp the CAPTIONS route writes into meta, and
+# thereby into the enrichment frontmatter. **The frontmatter, not the
+# heading, says whether a body holds a transcript** (design §6): the drain
+# reads `via` back to find where the notes end, so a captions transcript
+# that carried no `via` was read as description end to end and a later
+# whisper drain appended a SECOND transcript under the first — old caption
+# text and new whisper text in one file. A park still stamps nothing: its
+# body IS notes end to end.
+_CAPTIONS_VIA = "captions"
 
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
@@ -263,7 +280,13 @@ class YouTubeDriver:
                 needs=Need.TRANSCRIBE,
                 reason="captions track too thin to be a transcript",
             )
-        return Result(status=Status.DONE, meta=meta, body=_body(info, transcript))
+        # Stamped only on the route that actually produces a transcript —
+        # the two parks above share this meta and must stay unstamped.
+        return Result(
+            status=Status.DONE,
+            meta={**meta, "via": _CAPTIONS_VIA},
+            body=_body(info, transcript),
+        )
 
 
 def _video_id(url: str) -> str | None:

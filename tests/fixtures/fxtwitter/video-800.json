@@ -1,0 +1,37 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "800",
+    "url": "https://x.com/ines/status/800",
+    "text": "",
+    "created_at": "Sat Aug 22 14:40:00 +0000 2026",
+    "author": {"name": "Ines Duarte", "screen_name": "ines"},
+    "replying_to": null,
+    "replying_to_status": null,
+    "media": {
+      "all": [
+        {
+          "type": "video",
+          "url": "https://video.example.test/ext_tw_video/800/vid/1280x720/v800.mp4",
+          "thumbnail_url": "https://pbs.example.test/ext_tw_video_thumb/800/img/t800.jpg",
+          "width": 1280,
+          "height": 720,
+          "duration": 42.5,
+          "format": "video/mp4"
+        }
+      ],
+      "videos": [
+        {
+          "type": "video",
+          "url": "https://video.example.test/ext_tw_video/800/vid/1280x720/v800.mp4",
+          "thumbnail_url": "https://pbs.example.test/ext_tw_video_thumb/800/img/t800.jpg",
+          "width": 1280,
+          "height": 720,
+          "duration": 42.5,
+          "format": "video/mp4"
+        }
+      ]
+    }
+  }
+}
