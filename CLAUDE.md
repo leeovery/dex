@@ -36,10 +36,10 @@ the engine stays unaware of which ones exist.
 - `instance/` — the template for a new instance, bundled into the wheel:
   the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
   contract, synced to `.claude/dex-contract.md` and imported by every
-  instance's CLAUDE.md), and `skills/` (`dex-capture`, `dex-run` with its
-  `references/`, `dex-query`, `dex-lint` — each dir synced recursively into
-  `.claude/skills/`; the `dex-` skill namespace is engine-owned and sync
-  retires skills the template drops). `CLAUDE.md` and `README.md` are
+  instance's CLAUDE.md), and `skills/` (`dex-capture`, `dex-query`, and
+  `dex-run` + `dex-lint` each with their `references/` — each dir synced
+  recursively into `.claude/skills/`; the `dex-` skill namespace is
+  engine-owned and sync retires skills the template drops). `CLAUDE.md` and `README.md` are
   scaffold seeds — written by `dex-new` at creation, instance-owned
   afterwards (they hold only identity, scope, and instance-specifics;
   everything shared lives in the synced contract).
