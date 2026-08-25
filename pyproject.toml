@@ -25,3 +25,87 @@ packages = ["src/dex_engine"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "instance" = "dex_engine/instance"
+
+[dependency-groups]
+dev = [{ include-group = "lint" }, { include-group = "test" }]
+lint = [
+    "ruff>=0.16.3",
+    "ty>=0.0.73",
+]
+test = [
+    "hypothesis>=6.165.10",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Legacy modules predate the ingestion-pipeline rewrite and are replaced across
+# phases 2-5 (design/ingestion-pipeline.md §15a); they are excluded rather than
+# retrofitted. Remove each exclusion in the phase that rewrites the module.
+extend-exclude = [
+    "src/dex_engine/enrich.py",
+    "src/dex_engine/exclude.py",
+    "src/dex_engine/inbox.py",
+    "src/dex_engine/lint.py",
+    "src/dex_engine/new.py",
+    "src/dex_engine/normalize.py",
+    "src/dex_engine/sync.py",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # formatter conflict
+    "ISC001",  # formatter conflict
+    "CPY001",  # no copyright headers in this repo
+    "D105",    # docstrings on magic methods (__post_init__) add nothing
+    "EM101",   # string literals in raises — messages inline is house style here
+    "EM102",   # f-strings in raises — same
+    "TRY003",  # long exception messages — loud, specific errors are the design
+    "TRY004",  # schema/payload errors are typed ValueErrors by design, not TypeErrors
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # asserts are the point
+    "D",       # docstrings not required on tests
+    "ANN",     # type annotations not required on tests
+    "PLR2004", # magic values are expected in assertions
+    "INP001",  # pytest test dirs are not packages
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -m 'not live'"
+markers = [
+    "live: hits real network APIs — opt-in via `-m live` (CI runs hermetic only)",
+]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ty.rules]
+possibly-unresolved-reference = "error"
+unused-ignore-comment = "warn"
+
+[tool.ty.src]
+# Same legacy-module story as the ruff excludes above.
+exclude = [
+    "src/dex_engine/enrich.py",
+    "src/dex_engine/exclude.py",
+    "src/dex_engine/inbox.py",
+    "src/dex_engine/lint.py",
+    "src/dex_engine/new.py",
+    "src/dex_engine/normalize.py",
+    "src/dex_engine/sync.py",
+    "example/",
+    "dist/",
+]
