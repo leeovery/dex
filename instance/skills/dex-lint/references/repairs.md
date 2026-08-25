@@ -98,3 +98,12 @@ other repairs need):
   resolve to you are already listed under **read these yourself**.
 - **Enrichment newer than digest** — an interrupted session: finish
   digest → place → wiki for each listed item.
+
+A repair can also surface a defect in the ENGINE itself: the lint
+report states something false, a verb writes the wrong thing, a
+documented behaviour does not happen. File it with `bin/dex issue` per
+the "Engine defects" rubric in
+`.claude/skills/dex-run/references/processing.md` — engine misbehaviour
+only, mechanics only (never slugs, ids, URLs or paths; the verb refuses
+leaks and names the field to abstract) — then carry on with the check:
+filing is a side errand, never a stop.

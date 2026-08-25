@@ -628,7 +628,7 @@ Files:
 | `state/enrichment-ledger.jsonl` | work units (§5) |
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10). The digest pass is recorded by `enrich item digest` itself, in the same call as the file (§10); `enrich pass` records the harvest and wiki stages, and remains the manual re-record for any stage |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
-| `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
+| `state/issue-reports.jsonl` | filed/commented issue fingerprints; observed-report records also carry the local-only `note` (§13) |
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
@@ -1685,14 +1685,13 @@ Shipping migrations for this rewrite:
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
 
-   **Open question — a guard on an absent or empty corpus.** Migration 1
-   reads the corpus to attribute ledger lines, so it could refuse to run
-   where the corpus is missing or empty rather than dropping every line it
-   cannot attribute. The recommendation is no guard: corpus and ledger live
-   in the same repo and arrive together, so an empty corpus beside a
-   populated ledger is not a state a checkout produces — and a guard teaches
-   a migration to distrust its own repo, which is the ghost-item sweep's
-   mistake in a different costume. Not ruled on.
+   No guard on an absent or empty corpus — settled. Migration 1 reads the
+   corpus to attribute ledger lines, and it runs without checking the
+   corpus is populated first: corpus and ledger live in the same repo and
+   arrive together, so an empty corpus beside a populated ledger is not a
+   state a checkout produces — and a guard would teach a migration to
+   distrust its own repo, which is the ghost-item sweep's mistake in a
+   different costume. The dress rehearsal drives the real states.
 2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
    this order. First, identities: the rewrite moved canonical identity
    for two kinds (x posts are keyed by status id; youtube's single-video
@@ -1862,9 +1861,12 @@ per-run cap (default 10) so a first sync never monopolizes a machine.
 
 Instances auto-file engine bugs at the public engine repo; the owner's Claude
 session fixes; Mint releases; every instance heals at next sync. Human
-involvement: the engine owner only.
+involvement: the engine owner only. One mechanism, two producers: the
+exception path below, and the session-observed verb at the end of this
+section.
 
-- **Fires only on `status: error`** (deterministic engine exceptions).
+- **The exception producer fires only on `status: error`** (deterministic
+  engine exceptions).
   `blocked/dead/manual/waiting` never file — the world misbehaving is not an
   engine bug.
 - **Sanitized by construction — public issue bodies carry NO free text**
@@ -1898,6 +1900,57 @@ involvement: the engine owner only.
 - Config: `report_issues: true` (default) in `state/config.json`. Filings
   appear in the run report, so the human always knows.
 
+### The second producer: session-observed reports (`bin/dex issue`)
+
+The filer above fires on exceptions. A session can also SEE a defect
+nothing raised — a report contradicting state on disk, a documented
+behaviour that did not happen, a verb writing the wrong thing quietly —
+and on a scheduled run that observation reaches nobody unless it is
+filed. `bin/dex issue --file <payload.json>` (its own `dex-issue` entry
+point, since the shim dispatches `bin/dex <cmd>` to `dex-<cmd>`) is the
+observation-shaped producer over the SAME mechanism: both producers
+reduce to one `Filable` shape and go through one filing pass
+(`file_reports`), sharing `ENGINE_REPO`, the `gh` seam, fingerprint
+dedup against `state/issue-reports.jsonl`, the open→comment /
+closed→regression arithmetic, the rate limit, the `report_issues` gate
+and the note-never-crash edge.
+
+- **Structured payload, nothing free-form filed**: `verb` — the
+  misbehaving command, validated against the actual CLI vocabulary (a
+  maintained constant, pinned by test to pyproject's entry points and
+  enrich's argparse tree); `expected` and `observed` — one mechanics
+  sentence each, ≤ 90 chars; optional `steps` — ≤ 8 statements, ≤ 120
+  chars each. Title:
+  `[observed] <verb>: expected <clause>; observed <clause> fp-<hash>`
+  (the clause bounds keep it under GitHub's 256-char title cap); body =
+  the validated fields + engine version + date + fingerprint, the same
+  enumerated-allowlist discipline as the exception body. Fingerprint =
+  `sha1("observed|" + verb|expected|observed)[:12]` — steps and note
+  excluded (repro detail churns without the defect changing), the
+  domain prefix disjoint from exception fingerprints.
+- **Privacy by REJECTION, never scrubbing** (owner ruling): every
+  public field runs the scrubber's own detectors — URL, email, home
+  path, the strict item-id grammar, instance-content tokens; one
+  spelling, shared via `classify.py` — and any hit refuses the whole
+  payload with per-field reasons naming what to abstract. Nothing is
+  filed, nothing written, exit nonzero. Where the exception path
+  eliminates free text structurally, this path admits two
+  session-written clauses only because a mechanical detector stands
+  between them and the public repo — and the detector's answer to a
+  leak is no, never a redaction with residual risk.
+- **The local note split**: the payload may carry `note` — free text,
+  ≤ 2000 chars, exempt from the detectors BECAUSE it is never filed. It
+  lands only in this instance's `issue-reports.jsonl` record
+  (`{fingerprint, action, engine, date, issue?, note?}`), where the
+  owner reads it and forwards what matters by hand.
+- **Skills**: the rubric lives where a session is when it would notice
+  a defect — a guardrail in dex-run's SKILL.md, the full rubric in its
+  processing reference (file for engine misbehaviour only, never for
+  world/content failures; mechanics, never content; filing is a side
+  errand, never a stop), the payload shapes in the state-formats
+  reference, and dex-lint's repairs reference pointing at the same
+  rubric.
+
 ## 14. Module layout and dependencies
 
 ```
@@ -1920,7 +1973,13 @@ src/dex_engine/
                              `entities` and the facts, and `date`/`media:`
                              are read off the corpus item rather than
                              taken from a caller
-               issues.py     the issue filer (§13)
+               issues.py     the issue filer (§13): the shared filing
+                             mechanism (Filable → file_reports) plus the
+                             exception-shaped producer
+               observed.py   `dex issue`: the observation-shaped producer
+                             (§13) — payload validation and the leak
+                             rejectors (refusal, never redaction) over
+                             classify's own detectors
                ownership.py — which live corpus item claims a work unit
                  (its urls:/media: hashed exactly as seeding does), the one
                  answer to "is this entry's item still there?"; lint and
@@ -1990,6 +2049,10 @@ src/dex_engine/
                  Rewriting is allowed and carries
                  nothing over: every field is the payload's judgment or
                  the corpus item's fact)
+  issue.py     thin CLI: `bin/dex issue --file <payload>` — files one
+                 session-observed engine defect through the shared filer
+                 (§13); a payload naming instance content is refused with
+                 per-field reasons, nothing filed and nothing written
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential

@@ -21,9 +21,14 @@ from dataclasses import dataclass
 from .types import Missing, Refused, Status
 
 __all__ = [
+    "EMAIL_RE",
+    "HOME_RE",
+    "INSTANCE_TOKEN_RE",
+    "ITEM_ID_PATTERN",
     "MIN_SUBSTANTIAL_CHARS",
     "PAYWALL_REASON",
     "THIN_EXTRACTION_REASON",
+    "URL_RE",
     "Classification",
     "ProviderInputError",
     "ProviderUnavailableError",
@@ -193,8 +198,13 @@ def classify_connection(exc: OSError) -> Classification:
 
 # One scrubber feeds both the ledger `error` field and the issue filer's
 # bodies. Code, not judgment, so it can't leak by judgment lapse.
-_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+#
+# The compiled detectors are public on purpose: the observed-report
+# rejectors (pipeline/observed.py) run the SAME patterns and refuse where
+# scrub() redacts, so the two surfaces cannot drift apart on what counts
+# as a leak. A detector added to scrub() must gain a mirror rejector.
+URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Every shape of "under a user's home": macOS, Linux (including the root
 # account and systemd's /var/home), and Windows in both slash spellings.
 _HOME_ANCHOR = r"(?:/Users/|/home/|/root/|/var/home/|[A-Za-z]:[\\/]Users[\\/])"
@@ -221,23 +231,27 @@ _BRACKETED = "|".join(
 _PATH_CHAR = rf"[^\s{_DELIMITERS}]"
 _PATH_WORD = rf"(?:{_PATH_CHAR}|[{_DELIMITERS}](?={_PATH_CHAR}))"
 _SPACED_FILENAME_TAIL = rf"(?:(?:[ \t]+{_PATH_WORD}+){{1,4}}?\.[A-Za-z0-9]{{1,6}})?"
-_HOME_RE = re.compile(rf"(?:{_BRACKETED}|{_HOME_ANCHOR}{_PATH_WORD}*{_SPACED_FILENAME_TAIL})")
+HOME_RE = re.compile(rf"(?:{_BRACKETED}|{_HOME_ANCHOR}{_PATH_WORD}*{_SPACED_FILENAME_TAIL})")
 _TOKEN_RE = re.compile(r"\S+")
+# The strict corpus item id grammar (YYYY-MM-DD-<slug>-<6 hex>) — the ONE
+# spelling: lint's citation regex and the observed-report rejectors both
+# build from it, so the grammar cannot fork.
+ITEM_ID_PATTERN = r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6}"
 # Instance content is owner data even in RELATIVE paths (they never touch
 # the home redaction): item ids embed note-derived slugs, media names are
 # owner-chosen, and dex-* names the owner's instance repo. Any token
 # carrying an instance-directory segment, a dex-* segment, or an
 # item-id-shaped substring is redacted whole.
-_INSTANCE_TOKEN_RE = re.compile(
+INSTANCE_TOKEN_RE = re.compile(
     r"(?:^|[^\w])(?:corpus|enrichment|media|inbox|cache|raw|state)[/\\]"
     r"|(?:^|[^\w])dex-\w"
-    r"|\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6}"
+    rf"|{ITEM_ID_PATTERN}"
 )
 
 
 def _redact_token(match: re.Match[str]) -> str:
     token = match.group(0)
-    return "<path>" if _INSTANCE_TOKEN_RE.search(token) else token
+    return "<path>" if INSTANCE_TOKEN_RE.search(token) else token
 
 
 def scrub(text: str) -> str:
@@ -253,8 +267,8 @@ def scrub(text: str) -> str:
     Returns:
         The redacted, single-line message.
     """
-    text = _URL_RE.sub("<url>", text)
-    text = _EMAIL_RE.sub("<email>", text)
-    text = _HOME_RE.sub("<home>", text)
+    text = URL_RE.sub("<url>", text)
+    text = EMAIL_RE.sub("<email>", text)
+    text = HOME_RE.sub("<home>", text)
     text = _TOKEN_RE.sub(_redact_token, text)
     return " ".join(text.split())

@@ -62,6 +62,46 @@ A digest that went through the verb cannot fail any of that — the check is
 a backstop for files that predate the verb or were edited by hand, and the
 repair for one is to rewrite it through the verb.
 
+## `bin/dex issue` — session-observed engine bug reports
+
+When the ENGINE misbehaves with nothing raised — output contradicting
+state on disk, a documented behaviour that did not happen, a verb
+writing the wrong thing — file it upstream through the verb (when to
+file, and when never, is the "Engine defects" rubric in
+`processing.md`, this directory). The observation goes in as JSON:
+
+```json
+{"verb": "enrich run",
+ "expected": "one mechanics sentence: what the engine should have done",
+ "observed": "one mechanics sentence: what it did instead",
+ "steps": ["optional, short mechanics statements to reproduce"],
+ "note": "optional fuller free text — never filed, local record only"}
+```
+
+then `bin/dex issue --file cache/issue.json`. Every public field is
+mechanics, single-line and bounded: `verb` is the misbehaving command
+from the real CLI vocabulary (`lint`, `enrich run`, `enrich item
+digest`, …); `expected` and `observed` are one mechanics sentence each,
+at most 90 characters; `steps` is at most 8 statements of at most 120
+characters. The verb REFUSES the whole payload — files nothing, writes
+nothing — when any public field contains a corpus item id, a URL, a
+filesystem path, an email, or instance content (an instance-directory
+segment or a `dex-*` name); the refusal names each field and what to
+abstract. Rewrite the clause abstractly ("an item with two URLs", "the
+config") and run it again — never try to sneak detail past the
+detectors.
+
+`note` is the other half of the split: free text, at most 2000
+characters, newlines allowed, and NEVER filed. It lands only in this
+instance's `state/issue-reports.jsonl` record, so the concrete detail —
+ids, paths, the story — belongs there, for the owner to read and
+forward by hand.
+
+Dedup, the `report_issues` gate and failure behaviour match the crash
+filer: the same defect files once and then comments or stays silent;
+`gh` trouble is a stated line in the verb's output and never stops the
+run.
+
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a
@@ -142,7 +182,7 @@ this file — they propose changes in the run report.
 | `media_fetch` | `none` \| `lead` — media-stage URL downloads |
 | `transcribe_model` | whisper-local size (default `medium`) |
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
-| `report_issues` | auto-file engine bugs upstream (default `true`) |
+| `report_issues` | file engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`) |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
@@ -198,8 +238,13 @@ a malformed record impossible:
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
 - `state/issue-reports.jsonl` — what this instance filed/commented
-  upstream `{fingerprint, action, engine, date, issue?}`. Written by the
-  issue filer; the owner's visible record.
+  upstream `{fingerprint, action, engine, date, issue?, note?}`.
+  Written by the issue filer (crash reports) and by `bin/dex issue`
+  (session-observed reports, above); the owner's visible record.
+  `note` exists only on records the issue verb wrote and is the local
+  half of the privacy split: the fuller free-text context that is never
+  part of the public issue — the owner reads it here and forwards what
+  matters by hand.
 - `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
   stay excluded across re-normalization. The verb purges the item
   completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
