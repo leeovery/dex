@@ -95,6 +95,82 @@ def _is_internal(url: str, internal_domains: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _is_text(value: object) -> bool:
+    """Whether a field arrived as the non-empty string the code reads it as."""
+    return isinstance(value, str) and bool(value)
+
+
+def _unreadable_reason(message: object) -> str | None:
+    """Why this message cannot be read, or ``None`` when it can.
+
+    Every field the clustering and emit passes index directly is checked
+    here once, so those passes may index — and checked in the shape those
+    passes use it, not merely for presence: a container they index into, a
+    timestamp they parse, a display name the corpus takes as a scalar.
+    DiscordChatExporter writes all of them, in those shapes, at every
+    version that exports JSON. An export converted from another source is
+    where a field goes missing or arrives in another shape — Discord's own
+    data package holds a message's attachment as a single URL string, and
+    a conversion that copies the field across emits that verbatim — and
+    such a message is skipped and counted rather than aborting its channel.
+    """
+    if not isinstance(message, dict):
+        return "message is not an object"
+    return (
+        _unreadable_scalar_reason(message)
+        or _unreadable_list_reason(message)
+        or _unreadable_author_reason(message.get("author"))
+    )
+
+
+def _unreadable_scalar_reason(message: dict) -> str | None:
+    """Why the message's own fields cannot be read, or ``None`` when they can."""
+    for field in ("id", "type", "timestamp"):
+        if not message.get(field):
+            return f"no {field}"
+    try:
+        datetime.fromisoformat(message["timestamp"])
+    except (TypeError, ValueError):
+        return "timestamp is not ISO 8601"
+    content = message.get("content")
+    if content is not None and not isinstance(content, str):
+        return "content is not text"
+    if not isinstance(message.get("reference") or {}, dict):
+        return "reference is not an object"
+    return None
+
+
+def _unreadable_list_reason(message: dict) -> str | None:
+    """Why the message's lists cannot be read, or ``None`` when they can."""
+    for field in ("attachments", "embeds", "reactions"):
+        entries = message.get(field) or []
+        if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+            return f"{field} is not a list of objects"
+    if any(
+        not _is_text(attachment.get("url")) or not _is_text(attachment.get("fileName"))
+        for attachment in message.get("attachments") or []
+    ):
+        return "attachment has no url or fileName"
+    return None
+
+
+def _unreadable_author_reason(author: object) -> str | None:
+    """Why the message's author cannot be read, or ``None`` when it can."""
+    if not author:
+        return "no author"
+    if not isinstance(author, dict):
+        return "author is not an object"
+    if not author.get("id"):
+        return "author has no id"
+    name = author.get("nickname") or author.get("name")
+    if not name or not isinstance(name, str):
+        return "author has no name"
+    if name != name.strip() or "\n" in name:
+        # It becomes shared_by, a corpus scalar: one line, no edge space.
+        return "author name is not a single trimmed line"
+    return None
+
+
 def _clusters(messages: list[dict]) -> list[list[dict]]:
     """Group messages: replies join their target; same-author runs merge (gap rule)."""
     clusters: list[list[dict]] = []
@@ -135,7 +211,9 @@ def _cluster_body(messages: list[dict], embed_titles: dict[str, str]) -> str:
             lines.append(message["content"])
         lines.extend(
             f"*[attached: {attachment['fileName']}]*"
-            for attachment in message.get("attachments", [])
+            # `or []`, not a default: a conversion writes the empty list
+            # as null, and the read pass reads that as no attachments.
+            for attachment in message.get("attachments") or []
         )
         if message is first:
             lines.extend(f"> unfurl: {title}" for title in embed_titles.values())
@@ -159,7 +237,7 @@ def _emit_cluster(
     attachments = [
         attachment["url"]
         for message in messages
-        for attachment in message.get("attachments", [])
+        for attachment in message.get("attachments") or []
         if not attachment["url"].startswith("http")
     ]
     substance = len(re.sub(r"\s+", " ", URL_RE.sub("", all_text)).strip())
@@ -172,7 +250,7 @@ def _emit_cluster(
     embed_titles = {
         embed["url"]: embed["title"]
         for message in messages
-        for embed in message.get("embeds", [])
+        for embed in message.get("embeds") or []
         if embed.get("url") and embed.get("title")
     }
     if external and embed_titles.get(external[0]):
@@ -180,9 +258,9 @@ def _emit_cluster(
     else:
         slug = slugify(URL_RE.sub("", all_text)[:80])
     reactions = sum(
-        reaction.get("count", 0)
+        reaction.get("count") or 0
         for message in messages
-        for reaction in message.get("reactions", [])
+        for reaction in message.get("reactions") or []
     )
     item = corpus.CorpusItem(
         id=f"{date:%Y-%m-%d}-{slug}-{shortid}",
@@ -241,6 +319,98 @@ def _write_preserving(
     corpus.write_item(path, item)
 
 
+def _read_channel(chan_dir: Path, channel: str, warn: Callable[[str], None]) -> list[list[dict]]:
+    """The clusters of one channel export — the whole read, before any write.
+
+    Every fault a channel's own export can raise belongs here: the file is
+    read, the messages that survive :func:`_unreadable_reason` are the ones
+    the emit pass can index and the corpus will take, and clustering is
+    finished. So a channel that raises has written nothing, and the caller
+    may say it was skipped.
+
+    Args:
+        chan_dir: ``raw/discord/<channel>/`` holding ``messages.json``.
+        channel: The channel name (named in the unreadable-message warnings).
+        warn: Where non-fatal warnings go.
+
+    Returns:
+        The clusters, in export order.
+
+    Raises:
+        ValueError: The file is not readable as an exporter JSON export.
+    """
+    data = json.loads((chan_dir / "messages.json").read_text(encoding="utf-8"))
+    export = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(export, list):
+        # Not this exporter's shape: a Discord data-package dump (a bare
+        # array, and named messages.json too), or a conversion that never
+        # landed. The caller names the channel and moves on.
+        raise ValueError("no messages array — not a DiscordChatExporter JSON export")
+    messages: list[dict] = []
+    unreadable: dict[str, int] = {}
+    for message in export:
+        reason = _unreadable_reason(message)
+        if reason is not None:
+            unreadable[reason] = unreadable.get(reason, 0) + 1
+        elif message["type"] in ("Default", "Reply") and (
+            message.get("content") or message.get("attachments")
+        ):
+            messages.append(message)
+    for reason, count in sorted(unreadable.items()):
+        # Counted per reason, not per message: a conversion that drops a
+        # field drops it on every message, and one line says so.
+        warn(f"warn: raw/discord/{channel}: {count} message(s) unreadable ({reason}) — skipped")
+    return _clusters(messages)
+
+
+def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config, exclusions, warn
+    clusters: list[list[dict]],
+    channel: str,
+    *,
+    instance: Instance,
+    config: Config,
+    excluded: set[str],
+    warn: Callable[[str], None],
+) -> tuple[int, int, Exception | None]:
+    """Write a channel's clusters as corpus items.
+
+    A fault here is never the export's doing — the read pass has already
+    taken every unreadable message out — but a full disk or a read-only
+    tree still lands one mid-channel, with items on disk. The channel
+    stops there and the fault comes back rather than up, so the caller
+    names it beside the count that did land: a channel that wrote is never
+    reported as skipped, and no channel's fault costs the run its report.
+
+    Args:
+        clusters: The clusters from :func:`_read_channel`.
+        channel: The channel name (stamped into provenance).
+        instance: The instance.
+        config: Instance config — ``internal_domains`` filters link noise.
+        excluded: Shortids from :func:`load_exclusions` — never regenerated.
+        warn: Where non-fatal regeneration warnings go.
+
+    Returns:
+        ``(written, skipped, fault)`` — the cluster counts up to the fault
+        that stopped the channel, or ``None`` when it wrote them all.
+    """
+    written = skipped = 0
+    for cluster in clusters:
+        first = cluster[0]
+        shortid = hashlib.sha1(f"{channel}/{first['id']}".encode()).hexdigest()[:6]  # noqa: S324 — content key, not a security context
+        if shortid in excluded:
+            skipped += 1
+            continue
+        try:
+            kept = _emit_cluster(cluster, channel, instance, config, warn)
+        except (OSError, ValueError) as e:
+            return written, skipped, e
+        if kept:
+            written += 1
+        else:
+            skipped += 1
+    return written, skipped, None
+
+
 def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config, exclusions, warn
     chan_dir: Path,
     channel: str,
@@ -262,25 +432,25 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
 
     Returns:
         ``(written, skipped)`` cluster counts.
+
+    Raises:
+        ValueError: The file is not readable as an exporter JSON export.
+            Nothing has been written when it raises: the read finishes
+            before the first item is emitted.
+        OSError: A corpus item could not be written. Items written before
+            it are on disk — this channel is part-normalized.
     """
-    data = json.loads((chan_dir / "messages.json").read_text(encoding="utf-8"))
-    messages = [
-        message
-        for message in data["messages"]
-        if message["type"] in ("Default", "Reply")
-        and (message.get("content") or message.get("attachments"))
-    ]
-    written = skipped = 0
-    for cluster in _clusters(messages):
-        first = cluster[0]
-        shortid = hashlib.sha1(f"{channel}/{first['id']}".encode()).hexdigest()[:6]  # noqa: S324 — content key, not a security context
-        if shortid in excluded:
-            skipped += 1
-            continue
-        if _emit_cluster(cluster, channel, instance, config, warn):
-            written += 1
-        else:
-            skipped += 1
+    clusters = _read_channel(chan_dir, channel, warn)
+    written, skipped, fault = _emit_clusters(
+        clusters,
+        channel,
+        instance=instance,
+        config=config,
+        excluded=excluded,
+        warn=warn,
+    )
+    if fault is not None:
+        raise fault
     return written, skipped
 
 
@@ -304,14 +474,37 @@ def run_normalize(instance: Instance, config: Config) -> list[str]:
     for chan_dir in channel_dirs:
         if not (chan_dir / "messages.json").exists():
             continue
-        written, skipped = normalize_discord(
-            chan_dir,
+        try:
+            clusters = _read_channel(chan_dir, chan_dir.name, lines.append)
+        except (OSError, ValueError) as e:
+            # An export that cannot be read at all — truncated mid-write,
+            # non-UTF-8, the wrong tool's JSON — fails alone: it is named
+            # here and every other channel still normalizes. Only the read
+            # is contained, because only the read leaves the corpus
+            # untouched: "skipped" has to be the whole truth about the
+            # channel, never a calm word over a part-written one.
+            detail = " ".join(str(e).split())
+            lines.append(f"discord/{chan_dir.name}: export unreadable ({detail}) — skipped")
+            continue
+        written, skipped, fault = _emit_clusters(
+            clusters,
             chan_dir.name,
             instance=instance,
             config=config,
             excluded=excluded,
             warn=lines.append,
         )
+        if fault is not None:
+            # Not the export's fault and not a skip: this channel has items
+            # on disk and the rest of it does not. Named as that, with the
+            # count, and the run finishes so its report still reaches the
+            # operator — who has a part-normalized channel to re-run.
+            detail = " ".join(str(fault).split())
+            lines.append(
+                f"discord/{chan_dir.name}: {written} items written, then write failed "
+                f"({detail}) — channel incomplete"
+            )
+            continue
         lines.append(
             f"discord/{chan_dir.name}: {written} items written, {skipped} clusters skipped"
         )

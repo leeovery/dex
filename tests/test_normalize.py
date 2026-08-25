@@ -214,6 +214,249 @@ class TestNormalize:
             run_normalize(instance, Config())
 
 
+class TestVariantExports:
+    """One unreadable export never aborts the rest — the containment rule."""
+
+    def write_raw(self, instance: Instance, channel: str, text: str) -> None:
+        chan_dir = instance.root / "raw" / "discord" / channel
+        chan_dir.mkdir(parents=True, exist_ok=True)
+        (chan_dir / "messages.json").write_text(text)
+
+    def test_a_data_package_dump_is_named_and_the_run_continues(self, instance):
+        # Discord's own data package writes a bare array — under the same
+        # messages.json name the exporter's channel export uses.
+        write_export(instance, [message("m1", "https://example.test/post")])
+        self.write_raw(
+            instance,
+            "exported-by-hand",
+            json.dumps([{"ID": "1", "Timestamp": "2026-08-19", "Contents": "hi"}]),
+        )
+        lines = run_normalize(instance, Config())
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert any(
+            line.startswith("discord/exported-by-hand: export unreadable")
+            and "not a DiscordChatExporter JSON export" in line
+            for line in lines
+        )
+        assert len(items(instance)) == 1
+
+    def test_a_truncated_export_is_named_and_the_run_continues(self, instance):
+        # The exporter flushes as it goes: an interrupted export leaves a
+        # messages.json whose JSON stops mid-object.
+        write_export(instance, [message("m1", "https://example.test/post")])
+        self.write_raw(instance, "interrupted", '{"messages": [{"id": "m1", "typ')
+        lines = run_normalize(instance, Config())
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert any(line.startswith("discord/interrupted: export unreadable") for line in lines)
+        assert len(items(instance)) == 1
+
+    @pytest.mark.parametrize(
+        ("missing", "reason"),
+        [
+            ("id", "no id"),
+            ("type", "no type"),
+            ("timestamp", "no timestamp"),
+            ("author", "no author"),
+            ("author.id", "author has no id"),
+            ("author.name", "author has no name"),
+            ("attachments.url", "attachment has no url or fileName"),
+            ("attachments.fileName", "attachment has no url or fileName"),
+        ],
+    )
+    def test_a_message_missing_a_field_the_code_reads_is_skipped(self, instance, missing, reason):
+        # A backfill converted from another source into the exporter's
+        # shape is where a field goes missing — DiscordChatExporter itself
+        # writes every one of them. The rest of the export still normalizes.
+        variant = message(
+            "m2",
+            "https://example.test/other",
+            nickname=None,
+            timestamp="2026-08-19T10:05:00+00:00",
+            attachments=[{"url": "assets/photo.png", "fileName": "photo.png"}],
+        )
+        field, _, leaf = missing.partition(".")
+        if not leaf:
+            del variant[field]
+        elif field == "attachments":
+            del variant[field][0][leaf]
+        else:
+            del variant[field][leaf]
+        write_export(instance, [message("m1", "https://example.test/post"), variant])
+        lines = run_normalize(instance, Config())
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_an_author_name_the_corpus_will_not_take_is_skipped(self, instance):
+        # A conversion that carries display names through verbatim can hand
+        # over "Bob " — a name shared_by, a corpus scalar, refuses. Caught
+        # in the read, so the channel's earlier clusters are not already on
+        # disk under a line calling the whole channel skipped.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message(
+                    "m2",
+                    "https://example.test/post",
+                    author_id="u2",
+                    name="bob",
+                    nickname="Bob ",
+                    timestamp="2026-08-19T12:00:00+00:00",
+                ),
+            ],
+        )
+        lines = run_normalize(instance, Config())
+        reason = "author name is not a single trimmed line"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        assert not any("export unreadable" in line for line in lines)
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_a_timestamp_that_does_not_parse_is_skipped(self, instance):
+        # The reply joins its target's cluster, so the gap rule never parses
+        # its timestamp — the emit pass does, one cluster after the first
+        # has already been written.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message("m2", "https://example.test/post", timestamp="2026-08-19T12:00:00+00:00"),
+                message(
+                    "m3",
+                    "reply from someone else",
+                    author_id="u2",
+                    name="sam",
+                    nickname=None,
+                    msg_type="Reply",
+                    reference="m2",
+                    timestamp="not-a-timestamp",
+                ),
+            ],
+        )
+        lines = run_normalize(instance, Config())
+        reason = "timestamp is not ISO 8601"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 2 items written, 0 clusters skipped" in lines
+        assert not any("export unreadable" in line for line in lines)
+        assert sorted(item[-6:] for item in items(instance)) == sorted(
+            [shortid("m1"), shortid("m2")]
+        )
+
+    def test_a_write_that_fails_is_named_with_its_count_not_called_skipped(
+        self, instance, monkeypatch
+    ):
+        # A full disk faults the emit pass, not the read. The channel has
+        # items on disk by then, so it cannot be reported as skipped — and
+        # the run still finishes with its report for every other channel.
+        write_export(
+            instance,
+            [
+                message("m1", SUBSTANTIAL),
+                message("m2", "https://example.test/post", timestamp="2026-08-19T12:00:00+00:00"),
+            ],
+        )
+        write_export(instance, [message("n1", "https://example.test/other")], channel="zzz-later")
+        done = []
+        real_write_item = corpus.write_item
+
+        def failing_write(path, item):
+            if done:
+                raise OSError(28, "No space left on device")
+            done.append(path)
+            real_write_item(path, item)
+
+        monkeypatch.setattr(corpus, "write_item", failing_write)
+        lines = run_normalize(instance, Config())
+        assert (
+            "discord/general: 1 items written, then write failed "
+            "([Errno 28] No space left on device) — channel incomplete" in lines
+        )
+        assert not any("skipped" in line for line in lines if line.startswith("discord/general"))
+        assert any(line.startswith("discord/zzz-later:") for line in lines)  # the run finished
+
+    @pytest.mark.parametrize(
+        ("field", "value", "reason"),
+        [
+            # Discord's own data package holds the attachment as a single
+            # URL string, and a conversion that copies the field across
+            # emits that verbatim — with the author beside it.
+            ("attachments", "https://cdn.test/photo.png", "attachments is not a list of objects"),
+            ("attachments", ["https://cdn.test/photo.png"], "attachments is not a list of objects"),
+            ("embeds", "https://example.test/post", "embeds is not a list of objects"),
+            ("reactions", "3", "reactions is not a list of objects"),
+            ("author", "alex", "author is not an object"),
+            ("reference", "m1", "reference is not an object"),
+            ("content", ["a block", "another"], "content is not text"),
+        ],
+    )
+    def test_a_field_of_the_wrong_type_is_skipped_like_a_missing_one(
+        self, instance, field, value, reason
+    ):
+        variant = message(
+            "m2",
+            "https://example.test/other",
+            timestamp="2026-08-19T12:00:00+00:00",
+        )
+        variant[field] = value
+        write_export(instance, [message("m1", "https://example.test/post"), variant])
+        lines = run_normalize(instance, Config())
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+        (item_id,) = items(instance)
+        assert item_id.endswith(shortid("m1"))
+
+    def test_a_message_that_is_not_an_object_is_skipped(self, instance):
+        # A conversion that emits the channel's messages as bare strings.
+        export: list = [message("m1", "https://example.test/post"), "2026-08-19 alex: hi"]
+        write_export(instance, export)
+        lines = run_normalize(instance, Config())
+        reason = "message is not an object"
+        assert f"warn: raw/discord/general: 1 message(s) unreadable ({reason}) — skipped" in lines
+        assert "discord/general: 1 items written, 0 clusters skipped" in lines
+
+    def test_an_empty_list_written_as_null_is_read_as_empty(self, instance):
+        # A conversion that writes null for an empty collection is not
+        # unreadable — it says the message has no attachments, no embeds
+        # and no reactions, and the message still normalizes.
+        variant = message("m1", "https://example.test/post")
+        variant.update(attachments=None, embeds=None, reactions=None, reference=None)
+        write_export(instance, [variant])
+        lines = run_normalize(instance, Config())
+        assert lines == ["discord/general: 1 items written, 0 clusters skipped"]
+        item = next(iter(items(instance).values()))
+        assert item.attachments == []
+        assert item.reactions is None
+
+    def test_a_wrong_typed_field_never_costs_the_run_its_report(self, instance):
+        # The whole harm of a crash here: summaries accumulate and print at
+        # the end, so one bad message used to take every channel's line
+        # with it — including channels that had already written items.
+        write_export(instance, [message("m1", "https://example.test/post")], channel="aaa-first")
+        variant = message("m2", "https://example.test/other")
+        variant["attachments"] = "https://cdn.test/photo.png"
+        write_export(instance, [variant], channel="zzz-later")
+        lines = run_normalize(instance, Config())
+        assert "discord/aaa-first: 1 items written, 0 clusters skipped" in lines
+        assert "discord/zzz-later: 0 items written, 0 clusters skipped" in lines
+
+    def test_unreadable_messages_are_counted_once_per_reason(self, instance):
+        # A conversion that drops a field drops it on every message: the
+        # operator wants the count and the reason, not one line per message.
+        stripped = []
+        for n in range(3):
+            variant = message(f"x{n}", SUBSTANTIAL, timestamp=f"2026-08-19T1{n}:00:00+00:00")
+            del variant["timestamp"]
+            stripped.append(variant)
+        write_export(instance, [message("m1", "https://example.test/post"), *stripped])
+        lines = run_normalize(instance, Config())
+        expected = "warn: raw/discord/general: 3 message(s) unreadable (no timestamp) — skipped"
+        assert expected in lines
+        assert len(items(instance)) == 1
+
+
 class TestRegeneration:
     def test_regeneration_is_byte_identical(self, instance):
         write_export(instance, [message("m1", "https://example.test/post\nnote")])
