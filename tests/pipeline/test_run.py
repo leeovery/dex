@@ -1940,7 +1940,7 @@ class TestStatusReport:
         ctx = make_ctx(instance, FakeDriver())
         assert "Nothing to report from this run" in run_mod.run(ctx)  # nothing drainable
         report = run_mod.status_report(ctx)
-        assert "### Needs you — 1 entry the engine has given up on" in report
+        assert "### Needs you — 1 entry only you can move" in report
         assert ITEM in report
         assert URL in report
         assert "no extractor for this format" in report
@@ -2418,6 +2418,21 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.status is Status.DONE
         assert entry.rerun is True  # requeued in place, then drained
         assert entry.parent is None  # never re-parented under itself
+
+    def test_the_requeued_line_itself_is_written_under_the_live_id(self, instance):
+        # The transient QUEUED line is a write like any other. Carried from
+        # the held line it spelled the dead id — superseded by the drain's
+        # outcome in the same run, but standing alone if the run dies
+        # between the requeue and the drain.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.fetch_urls(ctx, NEW_ITEM, [URL])
+        queued = [
+            json.loads(line)
+            for line in instance.ledger_path.read_text().split("\n")
+            if line.strip() and json.loads(line).get("status") == "queued"
+        ]
+        assert [line["item"] for line in queued] == [NEW_ITEM]
 
     def _spent_budget(self, instance) -> RunContext:
         """The item's 12-URL budget, spent entirely under the old id."""

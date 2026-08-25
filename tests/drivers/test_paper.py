@@ -82,6 +82,27 @@ class TestIdentity:
         once = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
         assert driver.canonical(once) == once
 
+    def test_canonical_collapses_old_style_spellings_to_one_key(self):
+        # Pre-2007 ids spell <archive>[.<subclass>]/<YYMMNNN>. The subject
+        # class is dropped with the version: the export API resolves only
+        # the bare <archive>/<number> form, so the spellings are one fetch.
+        driver = driver_for({})
+        for url in (
+            "https://arxiv.org/abs/math/0309285",
+            "https://arxiv.org/abs/math/0309285v2",
+            "https://arxiv.org/pdf/math/0309285.pdf",
+            "https://arxiv.org/html/math/0309285v1",
+            "https://arxiv.org/abs/math.NA/0309285",
+            "https://arxiv.org/abs/math.NA/0309285v2/",
+            "http://www.arxiv.org/abs/math/0309285?context=cs.DS",
+        ):
+            assert driver.canonical(url) == "https://arxiv.org/abs/math/0309285"
+
+    def test_old_style_canonical_is_idempotent_across_the_rewrite(self):
+        driver = driver_for({})
+        once = driver.canonical("https://arxiv.org/pdf/math.NA/0309285v2.pdf")
+        assert driver.canonical(once) == once
+
     def test_non_arxiv_paper_keys_keep_the_generic_canonical_form(self):
         driver = driver_for({})
         assert driver.canonical("https://openreview.net/forum?id=abc") == (
@@ -94,6 +115,17 @@ class TestIdentity:
         assert driver.canonical("https://arxiv.org/list/cs.AI/recent") == (
             "https://arxiv.org/list/cs.AI/recent"
         )
+        assert driver.canonical("https://arxiv.org/archive/math") == (
+            "https://arxiv.org/archive/math"
+        )
+        # Six digits is not an old-style id — YYMMNNN is seven.
+        assert driver.canonical("https://arxiv.org/abs/math/030928") == (
+            "https://arxiv.org/abs/math/030928"
+        )
+        # An arxiv-shaped path on another host names no arxiv paper.
+        assert driver.canonical("https://example.test/abs/math/0309285") == (
+            "https://example.test/abs/math/0309285"
+        )
 
 
 # Modern arxiv ids are YYMM.NNNNN, optionally versioned; the strategy
@@ -104,6 +136,12 @@ _arxiv_ids = st.builds(
     st.integers(min_value=1, max_value=99999).map(lambda n: f"{n:05d}"),
 )
 _versions = st.sampled_from(["", "v1", "v2", "v11"])
+# Old-style (pre-2007) ids are <archive>[.<subclass>]/<YYMMNNN>; the
+# archive and subclass spellings come from arxiv's own taxonomy, hyphens
+# and both letter cases included.
+_old_archives = st.sampled_from(["math", "cs", "hep-th", "astro-ph", "cond-mat", "q-bio"])
+_old_subclasses = st.sampled_from(["", ".GT", ".AI", ".CO", ".str-el", ".dis-nn"])
+_old_numbers = st.integers(min_value=0, max_value=9999999).map(lambda n: f"{n:07d}")
 
 
 def _paper_shapes(arxiv_id: str, version: str) -> list[str]:
@@ -143,6 +181,41 @@ class TestIdentityProperties:
         hashes_b = {work_hash(driver.canonical(s)) for s in _paper_shapes(id_b, "v2")}
         assert hashes_a.isdisjoint(hashes_b)
 
+    @given(_old_archives, _old_subclasses, _old_numbers, _versions)
+    def test_every_spelling_of_an_old_style_paper_is_one_work_unit(
+        self, archive, subclass, number, version
+    ):
+        # The subject class goes the way of the version: the export API
+        # resolves only the bare <archive>/<number> form, so math.GT/0309136
+        # and math/0309136v2 fetch exactly what math/0309136 fetches.
+        driver = driver_for({})
+        canonicals = {
+            driver.canonical(shape)
+            for shape in _paper_shapes(f"{archive}{subclass}/{number}", version)
+        }
+        assert canonicals == {f"https://arxiv.org/abs/{archive}/{number}"}
+
+    @given(_old_archives, _old_numbers, _old_archives, _old_numbers)
+    def test_different_old_style_papers_stay_different_work_units(
+        self, archive_a, number_a, archive_b, number_b
+    ):
+        assume((archive_a, number_a) != (archive_b, number_b))
+        driver = driver_for({})
+        shapes_a = _paper_shapes(f"{archive_a}/{number_a}", "")
+        shapes_b = _paper_shapes(f"{archive_b}/{number_b}", "v2")
+        hashes_a = {work_hash(driver.canonical(s)) for s in shapes_a}
+        hashes_b = {work_hash(driver.canonical(s)) for s in shapes_b}
+        assert hashes_a.isdisjoint(hashes_b)
+
+    @given(_old_archives, _old_numbers, _arxiv_ids)
+    def test_old_and_new_style_papers_stay_different_work_units(self, archive, number, new_id):
+        driver = driver_for({})
+        old_hashes = {
+            work_hash(driver.canonical(s)) for s in _paper_shapes(f"{archive}/{number}", "")
+        }
+        new_hashes = {work_hash(driver.canonical(s)) for s in _paper_shapes(new_id, "")}
+        assert old_hashes.isdisjoint(new_hashes)
+
 
 class TestArxiv:
     def test_the_canonical_key_is_what_fetch_reads(self):
@@ -159,6 +232,23 @@ class TestArxiv:
         result = driver.fetch(make_unit(canonical, Kind.PAPER))
         assert result.status is Status.DONE
         assert result.meta["arxiv_id"] == "2408.12345"
+
+    def test_an_old_style_id_fetches_through_the_api_not_the_web_delegate(self):
+        # An old-style abs page read as an article was the bug: the id has
+        # to reach the export API, in the bare form the API resolves.
+        api_url = "https://export.arxiv.org/api/query?id_list=math/0309285"
+        html_url = "https://arxiv.org/html/math/0309285"
+        driver = PaperDriver(
+            transport=FakeTransport(
+                {api_url: xml_response(FEED), html_url: html_page("<html>paper</html>")}
+            ),
+            extract=long_extract,
+            web=_RefusingWeb(),
+        )
+        canonical = driver.canonical("https://arxiv.org/abs/math.NA/0309285v2")
+        result = driver.fetch(make_unit(canonical, Kind.PAPER))
+        assert result.status is Status.DONE
+        assert result.meta["arxiv_id"] == "math/0309285"
 
     def test_abstract_and_full_text_sections(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}

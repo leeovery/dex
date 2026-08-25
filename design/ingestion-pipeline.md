@@ -1336,8 +1336,7 @@ glyphs, and identity is never split.
 
 **Headings.** `##` opens the report and names it plus its scale
 (`## Enrich run — 6 units processed`). `###` opens each section and names
-the section plus its scale (`### Needs you — 1 entry the engine has given up
-on`). A reader who stops at the headings still knows what happened and how
+the section plus its scale (`### Needs you — 1 entry only you can move`). A reader who stops at the headings still knows what happened and how
 much of it there is. **No surface is exempt**: the two that carried bare
 headings — the capability report's `## Capabilities` and its per-capability
 `###`, and the health report's `### Wiki` / `### State` / `### Digests` —

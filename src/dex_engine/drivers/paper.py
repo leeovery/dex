@@ -11,6 +11,12 @@ would give one paper two ledger entries, two enrichment files and two
 copies of one abstract in the digest — while both of them fetched the same
 bytes. Identity has to agree with what fetch retrieves.
 
+Both id generations key this way: modern ``YYMM.NNNNN`` ids and the
+pre-2007 ``<archive>[.<subclass>]/<YYMMNNN>`` ids, whose subject class
+goes the way of the version — the export API resolves only the bare
+``<archive>/<number>`` form, so ``math.GT/0309136`` and ``math/0309136``
+are one paper because they are one fetch.
+
 arxiv papers get the abstract from the export API (Atom, parsed properly —
 no regex-over-XML) plus full text from arxiv's own HTML rendering, falling
 back to ar5iv. A missing full text degrades to abstract-only with a note —
@@ -47,6 +53,14 @@ _ARXIV_HOST = "arxiv.org"
 # links carry ``?context=cs`` — cannot hide the id and split the paper off
 # into a second work unit.
 ARXIV_ID = re.compile(r"^/(?:abs|pdf|html)/([\d.]+?)(?:v\d+)?(?:\.pdf)?/?$")
+# The pre-2007 shape: ``<archive>[.<subclass>]/<YYMMNNN>``. The subject
+# class is discarded alongside the version — the export API resolves only
+# the bare ``<archive>/<number>`` form. The seven-digit number is what
+# keeps ``/list/cs.AI/recent`` and the other archive pages falling
+# through to the web driver.
+ARXIV_OLD_ID = re.compile(
+    r"^/(?:abs|pdf|html)/([a-z-]+)(?:\.[A-Za-z-]+)?/(\d{7})(?:v\d+)?(?:\.pdf)?/?$"
+)
 
 _ARXIV_API = "https://export.arxiv.org/api/query?id_list="
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -170,7 +184,7 @@ class PaperDriver:
 
 
 def _arxiv_id(url: str) -> str | None:
-    """The arxiv paper id a URL addresses, version stripped, or None.
+    """The arxiv paper id a URL addresses, version and subclass stripped, or None.
 
     The one place a URL is read as an arxiv paper: ``canonical`` keys the
     work unit on it and ``fetch`` asks the API for it, so the identity and
@@ -178,8 +192,12 @@ def _arxiv_id(url: str) -> str | None:
     """
     if host_of(url) != _ARXIV_HOST:
         return None
-    match = ARXIV_ID.match(urlsplit(url).path)
-    return match.group(1) if match else None
+    path = urlsplit(url).path
+    match = ARXIV_ID.match(path)
+    if match:
+        return match.group(1)
+    old = ARXIV_OLD_ID.match(path)
+    return f"{old.group(1)}/{old.group(2)}" if old else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
