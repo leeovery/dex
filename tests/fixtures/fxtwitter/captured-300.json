@@ -1,0 +1,18 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "300",
+    "url": "https://x.com/carol/status/300",
+    "text": "And that is why the ledger, not the corpus, is the work queue.",
+    "created_at": "Wed Aug 19 16:12:00 +0000 2026",
+    "author": {"name": "Carol Chen", "screen_name": "carol"},
+    "replying_to": "bob",
+    "replying_to_status": "200",
+    "media": {
+      "photos": [
+        {"type": "photo", "url": "https://pbs.example.test/media/p300.jpg"}
+      ]
+    }
+  }
+}

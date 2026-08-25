@@ -1,12 +1,13 @@
 """The ingestion pipeline's public surface (§14): types and enums.
 
 Dependency direction, structurally enforced: ``types`` imports nothing from
-this package; ``ledger`` imports only ``types``; only ``registry``/``run``
-(later phases) import drivers — which prevents the normalize/detect/drivers
+this package; ``ledger``/``classify``/``urls`` import only ``types``;
+``detect`` takes the driver list as an argument; only ``registry``/``run``
+import drivers — which prevents the normalize/detect/drivers
 circular-import trap.
 
-Ledger persistence is used as a module: ``from dex_engine.pipeline import
-ledger``.
+Ledger persistence and the other submodules are used as modules:
+``from dex_engine.pipeline import ledger``.
 """
 
 from .ledger import LedgerSchemaError
@@ -26,6 +27,7 @@ from .types import (
     Need,
     Result,
     Skipped,
+    SourceDriver,
     Status,
     WorkUnit,
     parse_version,
@@ -49,6 +51,7 @@ __all__ = [
     "Need",
     "Result",
     "Skipped",
+    "SourceDriver",
     "Status",
     "WorkUnit",
     "parse_version",

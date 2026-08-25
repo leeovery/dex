@@ -45,7 +45,6 @@ target-version = "py311"
 # phases 2-5 (design/ingestion-pipeline.md §15a); they are excluded rather than
 # retrofitted. Remove each exclusion in the phase that rewrites the module.
 extend-exclude = [
-    "src/dex_engine/enrich.py",
     "src/dex_engine/exclude.py",
     "src/dex_engine/inbox.py",
     "src/dex_engine/lint.py",
@@ -99,7 +98,6 @@ unused-ignore-comment = "warn"
 [tool.ty.src]
 # Same legacy-module story as the ruff excludes above.
 exclude = [
-    "src/dex_engine/enrich.py",
     "src/dex_engine/exclude.py",
     "src/dex_engine/inbox.py",
     "src/dex_engine/lint.py",

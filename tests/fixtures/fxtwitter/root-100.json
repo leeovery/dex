@@ -1,0 +1,13 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "100",
+    "url": "https://x.com/alice/status/100",
+    "text": "Two things every ingestion pipeline gets wrong, a short thread:",
+    "created_at": "Wed Aug 19 16:00:00 +0000 2026",
+    "author": {"name": "Alice Ives", "screen_name": "alice"},
+    "replying_to": null,
+    "replying_to_status": null
+  }
+}

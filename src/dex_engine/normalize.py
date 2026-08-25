@@ -13,6 +13,9 @@ import re
 import sys
 from pathlib import Path
 
+from dex_engine.pipeline.detect import detect_kind
+from dex_engine.pipeline.registry import DRIVERS
+
 ROOT = Path.cwd()  # engine runs from the instance repo root
 CORPUS = ROOT / "corpus"
 
@@ -49,17 +52,17 @@ def is_internal(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in INTERNAL_DOMAINS)
 
 
+# Kind detection is the shared pipeline module's job (design §2): the private
+# kind_of copy — and its divergence from the enricher's — is deleted. Kinds
+# are stamped pattern-only here and are provisional forever; the ledger is
+# authoritative. This is vocabulary + two deliberate convergences, not a
+# pure no-op: it stamps the post-rename names (x/web), gist.github.com
+# moves blog->github (this module's old copy missed gists), and the
+# enricher's side of the m.youtube.com split moves blog->youtube. Migration
+# 1 rewrites pre-rename corpus frontmatter to match, and regeneration
+# re-derives through this same module, so the two converge.
 def kind_of(url: str) -> str:
-    host = re.sub(r"^https?://", "", url).split("/")[0].lower().removeprefix("www.")
-    if host in ("youtube.com", "youtu.be", "m.youtube.com"):
-        return "youtube"
-    if host == "github.com":
-        return "github"
-    if host in ("arxiv.org", "openreview.net") or "huggingface.co/papers" in url:
-        return "paper"
-    if host in ("x.com", "twitter.com"):
-        return "tweet"
-    return "blog"
+    return str(detect_kind(url, DRIVERS))
 
 
 def slugify(text: str, max_len: int = 40) -> str:

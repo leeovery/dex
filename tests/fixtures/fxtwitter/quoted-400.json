@@ -1,0 +1,20 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "400",
+    "url": "https://x.com/dana/status/400",
+    "text": "This is the best writeup of blocked-vs-dead I have seen.",
+    "created_at": "Thu Aug 20 09:30:00 +0000 2026",
+    "author": {"name": "Dana Osei", "screen_name": "dana"},
+    "replying_to": null,
+    "replying_to_status": null,
+    "quote": {
+      "id": "50",
+      "url": "https://x.com/erik/status/50",
+      "text": "A 403 is not a 404.\nRecord the difference.",
+      "created_at": "Mon Aug 17 08:00:00 +0000 2026",
+      "author": {"name": "Erik Lund", "screen_name": "erik"}
+    }
+  }
+}

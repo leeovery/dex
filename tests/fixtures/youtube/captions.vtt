@@ -1,0 +1,32 @@
+WEBVTT
+Kind: captions
+Language: en
+
+1
+00:00:00.000 --> 00:00:03.200 align:start position:0%
+<c.colorCFCFCF>So the first thing to understand</c>
+
+2
+00:00:03.200 --> 00:00:06.500
+So the first thing to understand
+about enrichment ledgers is that they
+
+3
+00:00:06.500 --> 00:00:09.900
+about enrichment ledgers is that they
+are not receipts, they are the queue.
+
+4
+00:00:09.900 --> 00:00:14.100
+Every unit of work is a line with a status,
+and the run drains whatever is not terminal.
+
+5
+00:00:14.100 --> 00:00:18.000
+A 403 challenge is recorded as blocked,
+retried on the next run, and escalates
+
+6
+00:00:18.000 --> 00:00:21.500
+to manual only after five honest attempts.
+Nothing is ever silently mislabeled dead.

@@ -59,9 +59,11 @@ class TestEnums:
         with pytest.raises(ValueError, match="blog"):
             Kind("blog")
 
-    def test_driver_statuses_exclude_only_queued(self):
+    def test_driver_statuses_exclude_queued_and_error(self):
+        # queued is a birth state; error is raised, never returned (§2/§5).
         assert Status.QUEUED not in DRIVER_STATUSES
-        assert frozenset(Status) - {Status.QUEUED} == DRIVER_STATUSES
+        assert Status.ERROR not in DRIVER_STATUSES
+        assert frozenset(Status) - {Status.QUEUED, Status.ERROR} == DRIVER_STATUSES
 
 
 class TestAvailability:
@@ -165,6 +167,37 @@ class TestResult:
     def test_waiting_with_needs_ok(self):
         result = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
         assert result.needs is Need.TRANSCRIBE
+
+
+class TestResultReason:
+    """Result.reason mirrors the ledger's stated-reason contract (§2/§5)."""
+
+    @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
+    def test_reason_is_required_on_deliberate_parking(self, status):
+        with pytest.raises(ValueError, match="reason"):
+            Result(status=status, meta={})
+        with pytest.raises(ValueError, match="reason"):
+            Result(status=status, meta={}, reason="")
+        assert Result(status=status, meta={}, reason="thin-extraction").reason == "thin-extraction"
+
+    def test_reason_is_optional_on_waiting_blocked_dead(self):
+        waiting = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
+        assert waiting.reason is None
+        primed = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions")
+        assert primed.reason == "no captions"
+        assert Result(status=Status.BLOCKED, meta={}, reason="HTTP 403").reason == "HTTP 403"
+        assert Result(status=Status.DEAD, meta={}).reason is None
+        assert Result(status=Status.DEAD, meta={}, reason="HTTP 404").reason == "HTTP 404"
+
+    def test_reason_is_forbidden_on_done(self):
+        with pytest.raises(ValueError, match="forbidden"):
+            Result(status=Status.DONE, meta={}, body="text", reason="unneeded")
+
+    def test_error_is_not_a_driver_outcome_at_all(self):
+        # Errors are raised, never returned — a Result has no error channel,
+        # so a returned 'error' could only fabricate its message (§2/§5).
+        with pytest.raises(ValueError, match="raised, never returned"):
+            Result(status=Status.ERROR, meta={})
 
 
 class TestLedgerEntryInvariants:
@@ -321,6 +354,8 @@ class TestInstance:
         assert inst.cache_dir == tmp_path / "cache"
         assert inst.ledger_path == tmp_path / "state" / "enrichment-ledger.jsonl"
         assert inst.config_path == tmp_path / "state" / "config.json"
+        assert inst.passes_path == tmp_path / "state" / "passes.jsonl"
+        assert inst.digests_dir == tmp_path / "state" / "digests"
 
     def test_fixture_builds_the_skeleton(self, instance: Instance):
         assert instance.corpus_dir.is_dir()

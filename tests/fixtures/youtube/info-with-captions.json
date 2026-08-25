@@ -1,0 +1,20 @@
+{
+  "id": "dQw4w9WgXcA",
+  "title": "Ledgers as Work Queues: a Field Report",
+  "channel": "Systems Field Notes",
+  "uploader": "Systems Field Notes",
+  "duration": 754,
+  "upload_date": "20260810",
+  "description": "A walkthrough of driver-based ingestion: detection, classification, and why blocked is not dead.\n\nLinks:\nhttps://example.test/ledger-driven-design",
+  "subtitles": {
+    "en": [
+      {"ext": "json3", "url": "https://captions.example.test/track.json3"},
+      {"ext": "vtt", "url": "https://captions.example.test/track.vtt"}
+    ]
+  },
+  "automatic_captions": {
+    "en": [
+      {"ext": "vtt", "url": "https://captions.example.test/auto.vtt"}
+    ]
+  }
+}
