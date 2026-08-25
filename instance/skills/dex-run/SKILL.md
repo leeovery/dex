@@ -112,6 +112,10 @@ Then do a run now, whatever the host.
    these** is an interrupted previous session: complete its digest →
    place → wiki steps now. Every item listed is digestible; one still owing
    a unit is `raw` and never appears there, however long it stays parked.
+   **Needs you** and **Waiting on the engine** here are the standing view of
+   everything parked in the instance, not just this session's: judge the
+   **Needs you** entries per the reference's heal procedure exactly as on
+   the run report, and act on nothing under **Waiting on the engine**.
 
 9. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
    health check reads `## [<date>] lint | …`. If `wiki/log.md` holds no such
@@ -137,6 +141,16 @@ Then do a run now, whatever the host.
 - Cap-fired events (depth/URL caps) are internal — they live in the
   ledger for the health check and appear in no report you write.
 
+## State writes
+
+Where a state file has a verb, the verb writes it and you never do:
+corpus items come from `enrich item new`, digests from `enrich item digest
+--file cache/digest.json`, ledger lines from `enrich mark` and the run
+itself, stage records from `enrich pass`. You supply the judgment as JSON
+or arguments; the engine decides the shape, so a malformed file cannot be
+written. Same motion as rendering, below. `state/taxonomy.json` is the one
+you still write directly.
+
 ## Rendering
 
 Never hand-draw a receipt or report — there is a surface for it. Surfaces
@@ -154,6 +168,14 @@ Getting exports: Discord via
 [DiscordChatExporter](https://github.com/Tyrrrz/DiscordChatExporter), as
 JSON — the format `bin/dex normalize` reads. Other sources: convert to that
 shape, or feed items through capture instead.
+
+A converted export must give every message `id`, `type` (`Default` or
+`Reply`), `timestamp` as ISO 8601, and an `author` carrying `id` plus
+`name` or `nickname`; any attachment needs `url` and `fileName`. A message
+missing one is skipped rather than fatal, and a whole channel whose file
+cannot be read is named and skipped while the rest normalize — so read the
+`warn:` lines in the normalize summary before treating a backfill as
+complete. A silently short cohort is the failure this reports.
 
 `bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex
 exclude <file.json>`) → `bin/dex enrich run` → the per-item work at scale.

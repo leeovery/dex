@@ -286,8 +286,7 @@ def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
         return ""
     if mine:
         title = (
-            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} "
-            "the engine has given up on"
+            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} the engine has given up on"
         )
     else:
         # "retries" never agrees with the count: the subject of the clause
@@ -709,12 +708,18 @@ def _render_capability_report(payload: Mapping[str, object]) -> str:
     capabilities = _obj_list_at(surface, payload, "capabilities", required=True)
     if not capabilities:
         _fail(surface, "capabilities must name at least one capability")
-    blocks = [kernel.heading("Capabilities")]
+    scale = kernel.plural(len(capabilities), "capability", "capabilities")
+    blocks = [kernel.heading(f"Capabilities — {scale}")]
     for i, capability in enumerate(capabilities):
         where = f"capabilities[{i}]."
         _check_keys(surface, capability, required=frozenset({"name", "providers"}), where=where)
-        blocks += ["", kernel.heading(_need_at(surface, capability, "name", where), level=3), ""]
+        name = _need_at(surface, capability, "name", where)
         providers = _obj_list_at(surface, capability, "providers", required=True)
+        blocks += [
+            "",
+            kernel.heading(f"{name} — {kernel.plural(len(providers), 'provider')}", level=3),
+            "",
+        ]
         if not providers:
             blocks.append(kernel.bullet("no providers"))
             continue
@@ -945,6 +950,7 @@ _HEALTH_OPTIONAL = frozenset(
         "stale_passes",
         "capped",
         "incomplete_threads",
+        "digests",
         "digest_errors",
         "digest_orphans",
         "reconciled",
@@ -998,6 +1004,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
           "incomplete_threads": [{"path": str, "why": str}],      # short thread walk-ups
           # digests
+          "digests": int,
           "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
           "digest_orphans": [str],
           # --write outcomes and free notes
@@ -1024,7 +1031,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         ]
     )
     blocks = [kernel.heading(f"Health check — {scale}")]
-    blocks += _health_wiki(surface, payload)
+    blocks += _health_wiki(surface, payload, _int_at(surface, summary, "pages", "summary."))
     blocks += _health_state(surface, payload)
     blocks += _health_digests(surface, payload)
     reconciled = _str_list_at(surface, payload, "reconciled")
@@ -1035,8 +1042,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     return kernel.document(blocks)
 
 
-def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("Wiki", level=3), ""]
+def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> list[str]:
+    blocks = ["", kernel.heading(f"Wiki — {kernel.plural(pages, 'page')}", level=3), ""]
     if "taxonomy_error" in payload:
         blocks.append(
             kernel.bullet(
@@ -1046,19 +1053,30 @@ def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
         )
         blocks.append(kernel.bullet(_str_at(surface, payload, "taxonomy_error"), depth=1))
     blocks += _health_pairs(
-        surface, payload, "broken_links", "broken wikilinks",
-        ("page", "target"), lambda p, t: f"{kernel.bold(p)} → `[[{t}]]`",
+        surface,
+        payload,
+        "broken_links",
+        "broken wikilinks",
+        ("page", "target"),
+        lambda p, t: f"{kernel.bold(p)} → `[[{t}]]`",
     )
     reserved = _int_at(surface, payload, "reserved_links", default=0)
     blocks.append(_health_count("reserved/unbuilt links (informational)", reserved))
     blocks += _health_pairs(
-        surface, payload, "bad_citations", "bad citations (id not in corpus)",
-        ("page", "id"), lambda p, i: f"{kernel.bold(p)} → {kernel.bold(i)}",
+        surface,
+        payload,
+        "bad_citations",
+        "bad citations (id not in corpus)",
+        ("page", "id"),
+        lambda p, i: f"{kernel.bold(p)} → {kernel.bold(i)}",
     )
     blocks += _health_pairs(
-        surface, payload, "shortid_citations",
+        surface,
+        payload,
+        "shortid_citations",
         "shortid-shaped citations (citations are full item ids, always)",
-        ("page", "token"), lambda p, t: f"{kernel.bold(p)} → `{t}`",
+        ("page", "token"),
+        lambda p, t: f"{kernel.bold(p)} → `{t}`",
     )
     blocks += _health_names(
         surface, payload, "orphans", "items no page cites and the taxonomy does not record"
@@ -1069,8 +1087,10 @@ def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
     blocks += _health_listing(
         "stale pages (members newer than the page)",
         stale,
-        lambda row: f"{kernel.bold(str(row['page']))} — "
-        f"{kernel.plural(int(str(row['newer'])), 'newer item')}",
+        lambda row: (
+            f"{kernel.bold(str(row['page']))} — "
+            f"{kernel.plural(int(str(row['newer'])), 'newer item')}"
+        ),
     )
     drift = _health_rows(
         surface, payload, "count_drift", ("page", "recorded"), int_keys=("actual",)
@@ -1078,8 +1098,9 @@ def _health_wiki(surface: str, payload: Mapping[str, object]) -> list[str]:
     blocks += _health_listing(
         "item-count drift (frontmatter `items:` vs members)",
         drift,
-        lambda row: f"{kernel.bold(str(row['page']))} — "
-        f"`items: {row['recorded']}`, {row['actual']} members",
+        lambda row: (
+            f"{kernel.bold(str(row['page']))} — `items: {row['recorded']}`, {row['actual']} members"
+        ),
     )
     blocks += _health_restated(surface, payload)
     return blocks
@@ -1103,7 +1124,17 @@ def _health_restated(surface: str, payload: Mapping[str, object]) -> list[str]:
 
 
 def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("State", level=3), ""]
+    # The ledger is the section's scale, and a ledger that will not load has
+    # none to state — saying "0 entries" there would report an unreadable
+    # file as an empty one.
+    scale = (
+        "ledger unreadable"
+        if "ledger_error" in payload
+        else kernel.plural(
+            _int_at(surface, payload, "ledger_entries", default=0), "ledger entry", "ledger entries"
+        )
+    )
+    blocks = ["", kernel.heading(f"State — {scale}", level=3), ""]
     if "ledger_error" in payload:
         blocks.append(
             kernel.bullet(
@@ -1123,17 +1154,26 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
     blocks += _health_listing(
         "ledger items with no corpus file",
         ghost,
-        lambda row: f"{kernel.bold(str(row['item']))} — "
-        f"{kernel.plural(int(str(row['entries'])), 'entry', 'entries')} ({row['why']})",
+        lambda row: (
+            f"{kernel.bold(str(row['item']))} — "
+            f"{kernel.plural(int(str(row['entries'])), 'entry', 'entries')} ({row['why']})"
+        ),
     )
     blocks += _health_pairs(
-        surface, payload, "missing_outputs", "done entries whose output file is gone from disk",
-        ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
+        surface,
+        payload,
+        "missing_outputs",
+        "done entries whose output file is gone from disk",
+        ("item", "path"),
+        lambda i, p: f"{kernel.bold(i)} → `{p}`",
     )
     blocks += _health_pairs(
-        surface, payload, "misfiled_outputs",
+        surface,
+        payload,
+        "misfiled_outputs",
         "done entries whose output sits under another item's directory",
-        ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
+        ("item", "path"),
+        lambda i, p: f"{kernel.bold(i)} → `{p}`",
     )
     waiting = _needs_counts(surface, payload, "waiting")
     if waiting:
@@ -1155,18 +1195,26 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
     )
     blocks += _health_cap_fires(surface, payload)
     blocks += _health_pairs(
-        surface, payload, "incomplete_threads",
+        surface,
+        payload,
+        "incomplete_threads",
         "stored threads recorded incomplete (never cite one as whole)",
-        ("path", "why"), lambda p, w: f"`{p}` — {w}",
+        ("path", "why"),
+        lambda p, w: f"`{p}` — {w}",
     )
     return blocks
 
 
 def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
-    blocks = ["", kernel.heading("Digests", level=3), ""]
+    digests = _int_at(surface, payload, "digests", default=0)
+    blocks = ["", kernel.heading(f"Digests — {kernel.plural(digests, 'digest')}", level=3), ""]
     blocks += _health_pairs(
-        surface, payload, "digest_errors", "MALFORMED DIGESTS (the wiki layer reads these)",
-        ("item", "why"), lambda i, w: f"{kernel.bold(i)} — {w}",
+        surface,
+        payload,
+        "digest_errors",
+        "MALFORMED DIGESTS (the wiki layer reads these)",
+        ("item", "why"),
+        lambda i, w: f"{kernel.bold(i)} — {w}",
     )
     # The repair ("digest these") is the label; the procedure lives in the
     # dex-lint skill.
@@ -1195,8 +1243,7 @@ def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
         per_reason[str(row["reason"])] = per_reason.get(str(row["reason"]), 0) + 1
     lines = [
         kernel.bullet(
-            f"{label} — {kernel.bold(str(len(rows)))} across "
-            f"{kernel.plural(len(per_item), 'item')}"
+            f"{label} — {kernel.bold(str(len(rows)))} across {kernel.plural(len(per_item), 'item')}"
         ),
         kernel.bullet(
             "by bound: "
@@ -1275,9 +1322,7 @@ def _health_pairs(  # noqa: PLR0913, PLR0917 — a formatting helper: surface, p
     shape: Callable[[str, str], str],
 ) -> list[str]:
     rows = _health_rows(surface, payload, key, fields)
-    return _health_listing(
-        label, rows, lambda row: shape(str(row[fields[0]]), str(row[fields[1]]))
-    )
+    return _health_listing(label, rows, lambda row: shape(str(row[fields[0]]), str(row[fields[1]])))
 
 
 # The typed registry literal is the conformance point: every renderer is

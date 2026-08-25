@@ -192,8 +192,7 @@ def _validate_unit_identity(
         raise ValueError("item must not be empty")
     if kind in _NON_WORK_KINDS:
         raise ValueError(
-            f"kind {kind!r} is corpus-frontmatter vocabulary only and never becomes "
-            "a work unit"
+            f"kind {kind!r} is corpus-frontmatter vocabulary only and never becomes a work unit"
         )
     if unit_format is not None and kind is not Kind.FILE:
         raise ValueError(f"format is file-work only, got kind {kind!r}")
@@ -354,9 +353,7 @@ class Result:
                 f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
             )
         if self.status in _REASON_REQUIRED and not self.reason:
-            raise ValueError(
-                f"a driver returning status {self.status!r} must state its reason"
-            )
+            raise ValueError(f"a driver returning status {self.status!r} must state its reason")
         if self.status in _REASON_FORBIDDEN and self.reason is not None:
             raise ValueError(f"reason is forbidden on a {self.status!r} result")
         if self.assets and self.status is not Status.DONE:
@@ -796,7 +793,6 @@ def _config_str_list(source: str, raw: dict[str, object], key: str) -> list[str]
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ValueError(f"{source}: {key} must be a list of strings")
     return value
-
 
 
 def _config_providers(source: str, raw: dict[str, object]) -> dict[str, list[str]]:

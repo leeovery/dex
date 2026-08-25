@@ -14,7 +14,7 @@ import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from dex_engine import corpus
+from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.github import GitHubDriver
@@ -26,6 +26,7 @@ from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
@@ -210,6 +211,33 @@ class TestSeedAndDone:
         assert "unfetchable capture URL" in (bad.reason or "")
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
         assert "unfetchable capture URL" in report  # parked rows are printed
+
+    def test_a_driver_canonical_that_raises_parks_that_url_never_aborts(self, instance):
+        # Seeding caught only ValueError, so a driver's canonical raising
+        # anything else took the whole run down — while the ownership map
+        # broad-caught the same call and resolved the unit on the raw URL's
+        # hash. One URL, two identities and two outcomes; now both paths
+        # read a refusal the same way and the park keys the raw URL, which
+        # is exactly what `work_identity` falls back to.
+        bad_url = "https://example.test/explodes"
+
+        class Exploding(FakeDriver):
+            def canonical(self, url: str) -> str:
+                if url == bad_url:
+                    raise TypeError("expected str, got tuple")
+                return super().canonical(url)
+
+        write_item(instance, urls=[bad_url, URL])
+        ctx = make_ctx(instance, Exploding())
+        report = run_mod.run(ctx)  # completes — no abort
+        entries = ledger.load(instance.ledger_path)
+        parked = entries[work_hash(bad_url)]
+        assert parked.status is Status.MANUAL
+        assert "unfetchable capture URL" in (parked.reason or "")
+        assert "TypeError" in (parked.reason or "")
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
+        assert "unfetchable capture URL" in report
+        assert work_identity(bad_url, [Exploding()]) == parked.hash
 
     def test_one_malformed_corpus_item_is_skipped_and_reported_never_fatal(self, instance):
         write_item(instance)
@@ -886,8 +914,7 @@ class TestRerun:
         run_mod.run(ctx)
         item_dir = instance.enrichment_dir / ITEM
         snapshot = {
-            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-            for path in item_dir.iterdir()
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in item_dir.iterdir()
         }
         before = ledger.load(instance.ledger_path)
         for entry in before.values():
@@ -906,8 +933,7 @@ class TestRerun:
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         after = ledger.load(instance.ledger_path)
         assert {
-            path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-            for path in item_dir.iterdir()
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in item_dir.iterdir()
         } == snapshot
         assert set(after) == set(before)  # no new units minted, audit lines only
         assert all(entry.status is Status.DONE for entry in after.values())
@@ -959,6 +985,46 @@ class TestMediaStage:
         assert media.path == f"enrichment/{ITEM}/media-0.png"
         assert (instance.root / media.path).read_bytes() == b"png"
         assert entries[work_hash(self.IMG2)].path == f"enrichment/{ITEM}/media-1.jpg"
+
+    def test_a_downloaded_media_file_lands_atomically(self, instance, monkeypatch):
+        # A media file is content, not a scratch artifact: a run killed
+        # mid-download must not leave a half-image standing where the
+        # ledger says a whole one is. Asserting the seam, because a plain
+        # write_bytes leaves no evidence behind once it succeeds.
+        written: list[Path] = []
+        real = atomic.write_bytes
+
+        def spy(path, data):
+            written.append(path)
+            real(path, data)
+
+        monkeypatch.setattr(run_mod.atomic, "write_bytes", spy)
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(kind=Kind.X, fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        standing = instance.root / f"enrichment/{ITEM}/media-0.png"
+        assert standing.read_bytes() == b"png"
+        assert standing in written
+
+    def test_a_failed_media_write_leaves_the_standing_file_whole(self, instance, monkeypatch):
+        write_item(instance)
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(kind=Kind.X, fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        standing = instance.root / f"enrichment/{ITEM}/media-0.png"
+        before = sorted(p.name for p in standing.parent.iterdir())
+
+        failing_fdopen(monkeypatch)
+        with pytest.raises(OSError, match="No space left"):
+            run_mod.atomic.write_bytes(standing, b"truncated")
+        assert standing.read_bytes() == b"png"
+        # No half-written temp left beside it.
+        assert sorted(p.name for p in standing.parent.iterdir()) == before
 
     def test_media_config_none_gates_the_stage_off(self, instance):
         write_item(instance)
@@ -1213,9 +1279,7 @@ class TestMediaStage:
         )
         driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
         run_mod.run(make_ctx(instance, driver, transport=transport))
-        lines = [
-            line for line in instance.ledger_path.read_text().split("\n") if line.strip()
-        ]
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
         assert json.loads(lines[-1])["hash"] == work_hash(self.IMG1)
         instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")  # the crash
         assert (instance.enrichment_dir / ITEM / "media-0.png").exists()
@@ -1670,9 +1734,7 @@ class TestVerbs:
             status=Status.DONE, meta={}, body="b" * 400, media=[raw]
         )
         image = HttpResponse(status=200, content_type="image/png", body=b"png")
-        ctx = make_ctx(
-            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image})
-        )
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({raw: image}))
         run_mod.run(ctx)
         run_mod.mark(ctx, raw, Status.DEAD, reason="the page is gone")
         entries = ledger.load(instance.ledger_path)
@@ -1933,9 +1995,7 @@ class TestStatusReport:
             instance, enriched=datetime.date(2026, 8, 19), digested=datetime.date(2026, 8, 18)
         )
         with instance.passes_path.open("a", encoding="utf-8") as passes:
-            passes.write(
-                json.dumps({"stage": "digest", "item": ITEM, "date": "2026-08-20"}) + "\n"
-            )
+            passes.write(json.dumps({"stage": "digest", "item": ITEM, "date": "2026-08-20"}) + "\n")
         assert run_mod.digest_orphans(instance) == []
 
     def test_a_digest_predating_the_pass_record_is_not_stale(self, instance):
@@ -2734,10 +2794,12 @@ class TestRerunPacing:
         ctx = make_ctx(instance, driver)
         self._seed_reruns(ctx, run_mod.RERUN_DRAIN_CAP + 5)
         report = run_mod.run(ctx)
-        done = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                if e.status is Status.DONE]
-        queued = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                  if e.status is Status.QUEUED]
+        done = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.DONE
+        ]
+        queued = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.QUEUED
+        ]
         assert len(done) == run_mod.RERUN_DRAIN_CAP
         assert len(queued) == 5
         assert (
@@ -2746,8 +2808,9 @@ class TestRerunPacing:
         ) in report
         # The next run drains the remainder and says so.
         second = run_mod.run(make_ctx(instance, FakeDriver()))
-        remaining = [e for e in ledger.load(ctx.instance.ledger_path).values()
-                     if e.status is Status.QUEUED]
+        remaining = [
+            e for e in ledger.load(ctx.instance.ledger_path).values() if e.status is Status.QUEUED
+        ]
         assert remaining == []
         assert "rerun cohort: 5 of 5 drained" in second
         assert "queue for the next run" not in second
@@ -2913,11 +2976,7 @@ class TestRedetection:
         # the content type, file re-routes back on the bytes — the second
         # correction hits the once-only guard.
         transport = FakeTransport(
-            {
-                self.PDF_URL: HttpResponse(
-                    status=200, content_type="application/pdf", body=self.HTML
-                )
-            }
+            {self.PDF_URL: HttpResponse(status=200, content_type="application/pdf", body=self.HTML)}
         )
         write_item(instance, urls=[self.PDF_URL])
         ctx = make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport))
@@ -2959,9 +3018,7 @@ class TestRedetection:
         # enrichment: listing; the ledger audit trail is the history.
         article = fixture_text("web", "article.html")
         responses = {
-            self.PDF_URL: HttpResponse(
-                status=200, content_type="text/html", body=article.encode()
-            )
+            self.PDF_URL: HttpResponse(status=200, content_type="text/html", body=article.encode())
         }
         transport = FakeTransport(responses)
         item_path = write_item(instance, urls=[self.PDF_URL])

@@ -368,8 +368,8 @@ def drop_items(
     **The unit is the hash, and a claimed hash is never purged.** A work
     unit is keyed by URL, not by item: where two corpus items list one URL
     they share one entry, and that entry names only one of them. Purging on
-    the stored name alone deletes a history the other item still claims —
-    on real state 80 hashes are claimed by more than one live item. So the
+    the stored name alone deletes a history the other item still claims,
+    and a hash two live items share is common in a real instance. So the
     hash is judged on the line ``load`` resolves to, and ``claimed`` — the
     work every surviving corpus item still lists — vetoes the removal. What
     goes is a hash whose live line names a purged item and which no live

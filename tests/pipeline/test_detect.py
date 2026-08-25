@@ -12,6 +12,7 @@ from dex_engine.pipeline.detect import (
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Format, Kind
 from tests.capabilities.conftest import fixture_bytes
+from tests.conftest import FakeDriver
 
 
 class RecordingSniff:
@@ -114,6 +115,31 @@ class TestCanonicalDelegation:
         assert canonical_url("http://www.example.test/a/?ref=x", DRIVERS) == (
             "https://example.test/a"
         )
+
+    def test_anything_a_driver_raises_leaves_here_as_one_refusal_type(self):
+        # A driver's canonical is arbitrary code over owner-written data, and
+        # its callers disagreed about what a fault meant: seeding caught
+        # ValueError and let anything else abort the run, while the ownership
+        # map caught everything and keyed the unit on the raw URL — the same
+        # URL with two identities. The refusal is typed here instead.
+        class Exploding(FakeDriver):
+            def canonical(self, url: str) -> str:  # noqa: ARG002 — every URL explodes
+                raise TypeError("expected str, got tuple")
+
+        with pytest.raises(ValueError, match="canonicalization failed") as excinfo:
+            canonical_url("https://example.test/a", [Exploding()])
+        assert "TypeError" in str(excinfo.value)
+        assert isinstance(excinfo.value.__cause__, TypeError)
+
+    def test_a_drivers_own_refusal_passes_through_unwrapped(self):
+        # A ValueError is already the refusal type; re-wrapping it would bury
+        # the driver's own stated reason inside a second message.
+        class Refusing(FakeDriver):
+            def canonical(self, url: str) -> str:  # noqa: ARG002 — every URL is refused
+                raise ValueError("malformed IPv6 literal")
+
+        with pytest.raises(ValueError, match=r"^malformed IPv6 literal$"):
+            canonical_url("https://[bad", [Refusing()])
 
 
 class TestFileKeys:

@@ -294,10 +294,7 @@ def _write_preserving(
         try:
             existing = corpus.parse(on_disk)
         except corpus.CorpusSchemaError as e:
-            warn(
-                f"warn: {path} does not parse ({e}); regenerating fresh — "
-                "status/enrichment reset"
-            )
+            warn(f"warn: {path} does not parse ({e}); regenerating fresh — status/enrichment reset")
         else:
             item = corpus.CorpusItem(
                 id=item.id,

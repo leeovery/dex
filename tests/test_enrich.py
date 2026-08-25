@@ -56,12 +56,28 @@ class TestParser:
 
     def test_item_new_takes_capture_slug_shared_by(self):
         args = build_parser().parse_args(
-            ["item", "new", "inbox/20260818-101530.md", "--slug", "great-post",
-             "--shared-by", "Alex"]
+            [
+                "item",
+                "new",
+                "inbox/20260818-101530.md",
+                "--slug",
+                "great-post",
+                "--shared-by",
+                "Alex",
+            ]
         )
         assert (args.command, args.item_command) == ("item", "new")
         assert str(args.capture) == "inbox/20260818-101530.md"
         assert (args.slug, args.shared_by) == ("great-post", "Alex")
+
+    def test_item_digest_takes_a_payload_file(self):
+        args = build_parser().parse_args(["item", "digest", "--file", "cache/digest.json"])
+        assert (args.command, args.item_command) == ("item", "digest")
+        assert str(args.file) == "cache/digest.json"
+
+    def test_item_digest_requires_the_payload_file(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["item", "digest"])
 
     def test_item_requires_a_subcommand(self):
         with pytest.raises(SystemExit):
@@ -113,6 +129,30 @@ class TestMain:
         out = capsys.readouterr().out
         assert out.startswith("created corpus/2026/")
         assert len(list(instance.corpus_dir.glob("*/*.md"))) == 1
+
+    def test_item_digest_writes_the_digest(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        capture = instance.root / "inbox" / "20260818-101530.md"
+        capture.parent.mkdir()
+        capture.write_text("https://example.test/post\n\nwhy I saved it\n")
+        main(["item", "new", str(capture)])
+        item_id = next(instance.corpus_dir.glob("*/*.md")).stem
+        payload = instance.cache_dir / "digest.json"
+        payload.write_text(
+            json.dumps({"id": item_id, "signal": "high", "topics": ["brewing"], "facts": ["a."]})
+        )
+        capsys.readouterr()
+        main(["item", "digest", "--file", str(payload)])
+        assert capsys.readouterr().out == f"wrote state/digests/{item_id}.md\n"
+        assert (instance.digests_dir / f"{item_id}.md").read_text().startswith("---\n")
+
+    def test_a_refused_digest_payload_exits_with_a_stated_line(self, instance, monkeypatch):
+        monkeypatch.chdir(instance.root)
+        payload = instance.cache_dir / "digest.json"
+        payload.write_text('{"id": "2026-08-19-x-55ad7b", "signal": "urgent"}')
+        with pytest.raises(SystemExit) as excinfo:
+            main(["item", "digest", "--file", str(payload)])
+        assert "missing required key(s) ['facts', 'topics']" in str(excinfo.value)
 
     def test_compact_prints_the_result(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

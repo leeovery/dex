@@ -188,9 +188,7 @@ _BRACKETED = "|".join(
 _PATH_CHAR = rf"[^\s{_DELIMITERS}]"
 _PATH_WORD = rf"(?:{_PATH_CHAR}|[{_DELIMITERS}](?={_PATH_CHAR}))"
 _SPACED_FILENAME_TAIL = rf"(?:(?:[ \t]+{_PATH_WORD}+){{1,4}}?\.[A-Za-z0-9]{{1,6}})?"
-_HOME_RE = re.compile(
-    rf"(?:{_BRACKETED}|{_HOME_ANCHOR}{_PATH_WORD}*{_SPACED_FILENAME_TAIL})"
-)
+_HOME_RE = re.compile(rf"(?:{_BRACKETED}|{_HOME_ANCHOR}{_PATH_WORD}*{_SPACED_FILENAME_TAIL})")
 _TOKEN_RE = re.compile(r"\S+")
 # Instance content is owner data even in RELATIVE paths (they never touch
 # the home redaction): item ids embed note-derived slugs, media names are

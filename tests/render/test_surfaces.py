@@ -6,9 +6,8 @@ import pytest
 
 from dex_engine.render.surfaces import SURFACES, PayloadError, render
 
-# Shaped like the owner's real data: ids average 58 characters and the
-# longest real URL in a live instance is 375. Both are identity, and no
-# surface may shorten either.
+# Shaped like real instance data, where ids run long and URLs run longer
+# still. Both are identity, and no surface may shorten either.
 LONG_ID = "2026-08-19-laravel-read-through-filesystem-migrations-with-real-drivers-14bf49"
 LONG_URL = "https://example.test/watch?v=abcdefghijk&" + "&".join(
     f"utm_source=partner-{n}&utm_campaign=very-long-campaign-name-{n}" for n in range(9)
@@ -121,10 +120,18 @@ class TestEnrichReport:
             "counts": {},
             "items": [],
             "parked": [
-                {"item": "a", "url": "https://a.test", "status": "waiting",
-                 "reason": "waiting on transcribe"},
-                {"item": "b", "url": "https://b.test", "status": "error",
-                 "reason": "connection reset"},
+                {
+                    "item": "a",
+                    "url": "https://a.test",
+                    "status": "waiting",
+                    "reason": "waiting on transcribe",
+                },
+                {
+                    "item": "b",
+                    "url": "https://b.test",
+                    "status": "error",
+                    "reason": "connection reset",
+                },
             ],
         }
         out = render("enrich-report", payload)
@@ -276,9 +283,7 @@ class TestStatusSurface:
         assert "**done** 40 · **manual** 1 · **waiting** 3" in out
         assert "### Waiting on a capability — 3 units" in out
         assert "- `transcribe` — 3" in out
-        assert (
-            "### Digest these — 1 item whose enrichment is newer than its digest"
-        ) in out
+        assert ("### Digest these — 1 item whose enrichment is newer than its digest") in out
         assert "- **2026-08-19-example-55ad7b**" in out
         assert_no_trailing_whitespace(out)
 
@@ -361,12 +366,14 @@ class TestCapabilityReport:
                 ]
             },
         )
-        assert out.startswith("## Capabilities\n")
-        assert "### transcribe" in out
+        # Every heading states its scale — a reader who stops at them knows
+        # how many capabilities there are and how many providers each has.
+        assert out.startswith("## Capabilities — 2 capabilities\n")
+        assert "### transcribe — 2 providers" in out
         assert "- **whisper-local** · `active`" in out
         assert "- **whisper-api** · `available`" in out
         assert "  ↳ set OPENAI_API_KEY" in out
-        assert "### ocr" in out
+        assert "### ocr — 0 providers" in out
         assert "- no providers" in out
         assert_no_trailing_whitespace(out)
 
@@ -475,6 +482,7 @@ HEALTH_PAYLOAD = {
         {"page": "pour-over", "first": "The dose is 60g/L.", "second": "Use a 60g/L dose."}
     ],
     "ledger_entries": 42,
+    "digests": 7,
     "waiting": {"transcribe": 3},
     "cognitive": [
         {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
@@ -483,16 +491,27 @@ HEALTH_PAYLOAD = {
     "capped": [
         # lint sends the bound, one canonical label per bound — never the
         # ledger line's stated reason.
-        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/deep",
-         "reason": "depth cap (4)"},
-        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/wide",
-         "reason": "url cap (12 per item)"},
-        {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
-         "reason": "url cap (12 per item)"},
+        {
+            "item": "2026-01-06-deep-ffffff",
+            "url": "https://example.test/deep",
+            "reason": "depth cap (4)",
+        },
+        {
+            "item": "2026-01-06-deep-ffffff",
+            "url": "https://example.test/wide",
+            "reason": "url cap (12 per item)",
+        },
+        {
+            "item": "2026-01-07-wide-999999",
+            "url": "https://example.test/other",
+            "reason": "url cap (12 per item)",
+        },
     ],
     "incomplete_threads": [
-        {"path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
-         "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone"}
+        {
+            "path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
+            "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone",
+        }
     ],
     "digest_errors": [{"item": "2026-01-09-broken-777777", "why": "frontmatter missing topics"}],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
@@ -510,12 +529,23 @@ class TestItemStatus:
             {
                 "item": "2026-08-19-example-55ad7b",
                 "units": [
-                    {"url": "https://example.test/post", "status": "done",
-                     "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md"},
-                    {"url": "https://youtube.test/w", "status": "waiting",
-                     "needs": "transcribe", "via": "harvest", "depth": 1},
-                    {"url": "https://paywalled.test/a", "status": "manual",
-                     "reason": "thin-extraction"},
+                    {
+                        "url": "https://example.test/post",
+                        "status": "done",
+                        "path": "enrichment/2026-08-19-example-55ad7b/web-73bd78.md",
+                    },
+                    {
+                        "url": "https://youtube.test/w",
+                        "status": "waiting",
+                        "needs": "transcribe",
+                        "via": "harvest",
+                        "depth": 1,
+                    },
+                    {
+                        "url": "https://paywalled.test/a",
+                        "status": "manual",
+                        "reason": "thin-extraction",
+                    },
                 ],
             },
         )
@@ -548,18 +578,20 @@ class TestItemStatus:
         with pytest.raises(PayloadError, match="transcode"):
             render(
                 "item-status",
-                {"item": "x-a",
-                 "units": [{"url": "https://a.test", "status": "waiting",
-                            "needs": "transcode"}]},
+                {
+                    "item": "x-a",
+                    "units": [{"url": "https://a.test", "status": "waiting", "needs": "transcode"}],
+                },
             )
 
     def test_unknown_unit_key_is_loud(self):
         with pytest.raises(PayloadError, match="parent"):
             render(
                 "item-status",
-                {"item": "x-a",
-                 "units": [{"url": "https://a.test", "status": "done",
-                            "parent": "abc"}]},
+                {
+                    "item": "x-a",
+                    "units": [{"url": "https://a.test", "status": "done", "parent": "abc"}],
+                },
             )
 
 
@@ -567,7 +599,7 @@ class TestHealthReport:
     def test_full_report(self):
         out = render("health-report", HEALTH_PAYLOAD)
         assert out.startswith("## Health check — 120 corpus items · 14 pages · 118 cited\n")
-        assert "### Wiki" in out
+        assert "### Wiki — 14 pages" in out
         assert "- broken wikilinks — **1**" in out
         assert "  - **pour-over** → `[[brewing]]`" in out
         assert "- reserved/unbuilt links (informational) — **3**" in out
@@ -583,12 +615,12 @@ class TestHealthReport:
         assert "- item-count drift (frontmatter `items:` vs members) — **1**" in out
         assert "  - **pour-over** — `items: 3`, 5 members" in out
         assert "- possible restated facts (same page, merge?) — **1**" in out
-        assert "### State" in out
+        assert "### State — 42 ledger entries" in out
         assert "- ledger — **42 entries**, schema valid" in out
         assert "- waiting on a capability — `transcribe` 3" in out
         assert "- read these yourself (the engine cannot do them) — **1**" in out
         assert "- harvest passes under old rules (re-judge) — **1**" in out
-        assert "### Digests" in out
+        assert "### Digests — 7 digests" in out
         assert "- digest these (enrichment newer than digest) — **1**" in out
         assert "### Reconciled by `--write`" in out
         assert "### Notes" in out
@@ -612,14 +644,26 @@ class TestHealthReport:
         # so the same ledger always renders the same line.
         payload = dict(HEALTH_PAYLOAD)
         payload["capped"] = [
-            {"item": "2026-01-07-wide-999999", "url": "https://example.test/a",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/b",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-07-wide-999999", "url": "https://example.test/c",
-             "reason": "url cap (12 per item)"},
-            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/d",
-             "reason": "url cap (12 per item)"},
+            {
+                "item": "2026-01-07-wide-999999",
+                "url": "https://example.test/a",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-06-deep-ffffff",
+                "url": "https://example.test/b",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-07-wide-999999",
+                "url": "https://example.test/c",
+                "reason": "url cap (12 per item)",
+            },
+            {
+                "item": "2026-01-06-deep-ffffff",
+                "url": "https://example.test/d",
+                "reason": "url cap (12 per item)",
+            },
         ]
         out = render("health-report", payload)
         assert "most often: **2026-01-06-deep-ffffff** 2 · **2026-01-07-wide-999999** 2" in out
@@ -691,6 +735,10 @@ class TestHealthReport:
         )
         assert "**LEDGER SCHEMA FAILURE**" in out
         assert "unknown field(s)" in out
+        # The section states its scale off the ledger, and a ledger that will
+        # not load has none: "0 ledger entries" would report an unreadable
+        # file as an empty one.
+        assert "### State — ledger unreadable" in out
 
     def test_taxonomy_error_renders_loud(self):
         out = render(
@@ -790,8 +838,7 @@ class TestIdentityIsNeverTruncated:
         base = "https://example.test/a-very-long-path-segment-that-forces-a-line-break/"
         urls = [base + f"{n:04d}" + "?utm_campaign=" + "x" * 200 for n in range(40)]
         parked = [
-            {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"}
-            for url in urls
+            {"item": LONG_ID, "url": url, "status": "manual", "reason": "paywall"} for url in urls
         ]
         out = render("enrich-report", {"counts": {}, "items": [], "parked": parked})
         rendered = [line for line in out.splitlines() if line.strip().startswith("↳ https")]
@@ -860,9 +907,7 @@ SURFACE_PAYLOADS = {
     "status": {"counts": {"done": 4}, "waiting": {"ocr": 1}, "orphans": [LONG_ID]},
     "item-status": {"item": LONG_ID, "units": [{"url": LONG_URL, "status": "done"}]},
     "capability-report": {
-        "capabilities": [
-            {"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}
-        ]
+        "capabilities": [{"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}]
     },
     "sync-report": {"pin": "v1", "migrations": [], "machinery_changes": 2},
     "ingest-receipt": {"item": LONG_ID, "fetched": 2},
@@ -872,7 +917,6 @@ SURFACE_PAYLOADS = {
 
 class TestNoSurfaceRendersATable:
     """Markdown, headings and bullets — no tables, and no hard wrapping."""
-
 
     def test_every_surface_has_a_payload_here(self):
         assert set(SURFACE_PAYLOADS) == set(SURFACES)

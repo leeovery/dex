@@ -64,9 +64,10 @@ never state, never synced.
   forever.
 - **State is written through verbs, never by hand.** Every `state/*.jsonl`
   is append-only and verb-written: ledger heals via `bin/dex enrich mark`,
-  stage records via `bin/dex enrich pass`. A hand-appended line is how
-  state and reality diverge; the verbs are what make a malformed record
-  impossible.
+  stage records via `bin/dex enrich pass`. Digests too: the judgment goes
+  in as JSON and `bin/dex enrich item digest --file <payload>` writes the
+  file. A hand-appended line is how state and reality diverge; the verbs
+  are what make a malformed record impossible.
 - `wiki/` is a build artifact: regenerable, never the only home of a fact. Pages cite
   corpus item ids in backticks — full ids, ALWAYS, and NEVER other wiki
   pages — so citations stay mechanically checkable.

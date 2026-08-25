@@ -114,21 +114,34 @@ nothing" must be distinguishable from "never ran"):
 bin/dex enrich pass <item-id> --stage harvest
 ```
 
-## 6. Digest (judgment — the values ARE the judgment)
+## 6. Digest (judgment — the values ARE the judgment; the verb writes it)
 
-Read the enrichment fully — including viewing any media — and write
-`state/digests/<id>.md` per `state-formats.md` (this directory):
-frontmatter (id, date, `signal: high|medium|low`, topics, entities,
-`media:` when the item has media) + one standalone fact bullet per fact
-the source actually yields, with concrete specifics, each readable without
-the source in front of you. No target count: a rich paper earns many
-bullets and a two-line tweet earns two, and padding to a number invents
-facts.
-`signal` and `topics` are the judgment — no verb writes digests; lint
-verifies their shape. Interpretive context lives here, not in item bodies.
-Topics: canonical names from `state/taxonomy.json` when it exists;
-otherwise 2–5 kebab-case candidates. Then
-`bin/dex enrich pass <item-id> --stage digest`.
+Read the enrichment fully — including viewing any media — then write the
+judgment as JSON and let the engine serialize it:
+
+```json
+{"id": "<item-id>", "signal": "high", "topics": ["agent-architecture"],
+ "entities": ["claude-code"],
+ "facts": ["one standalone fact per fact the source actually yields", "..."]}
+```
+
+```
+bin/dex enrich item digest --file cache/digest.json
+```
+
+`signal`, `topics`, `entities` and the facts are the judgment; the fence,
+the field order and the bullets are the engine's, so a digest cannot come
+out malformed. Never hand-write `state/digests/<id>.md`. The item's `date`
+and `media:` are the engine's to fill from the corpus item — passing either
+is refused. Full shape in `state-formats.md` (this directory).
+
+Each fact carries concrete specifics and reads without the source in front
+of you. No target count: a rich paper earns many bullets and a two-line
+tweet earns two, and padding to a number invents facts. Interpretive
+context lives here, not in item bodies. Topics: canonical names from
+`state/taxonomy.json` when it exists; otherwise 2–5 kebab-case candidates.
+Revising a digest later is the same call with a new payload — the file is
+rewritten whole. Then `bin/dex enrich pass <item-id> --stage digest`.
 
 A parked item (waiting/blocked/manual) still exists — provenance and note
 were captured at ingest — but gets no digest or wiki work until its

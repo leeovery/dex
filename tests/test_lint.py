@@ -297,9 +297,7 @@ class TestWrite:
         assert "items: 1" in rewritten
         assert "items: 3" not in rewritten
         # A second run is clean — the reconcile converged.
-        assert "item-count drift (frontmatter `items:` vs members) — none" in lint(
-            instance
-        ).report
+        assert "item-count drift (frontmatter `items:` vs members) — none" in lint(instance).report
 
     def test_missing_closing_fence_is_a_note_never_a_claimed_repair(self, instance):
         write_corpus_stub(instance)
@@ -315,9 +313,7 @@ class TestWrite:
     def test_write_adds_missing_generated_date(self, instance):
         write_corpus_stub(instance)
         write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
-        write_page(
-            instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n")
-        )
+        write_page(instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance, write=True)
         assert "generated: 2026-08-20 added" in outcome.report
@@ -327,15 +323,16 @@ class TestWrite:
     def test_without_write_missing_generated_is_a_note(self, instance):
         write_corpus_stub(instance)
         write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
-        write_page(
-            instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n")
-        )
+        write_page(instance, "brewing", page_text(items=1, generated=None, body=f"cite `{ITEM}`\n"))
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert "no generated: date" in outcome.report
-        assert "generated:" not in (
-            instance.root / "wiki" / "topics" / "brewing.md"
-        ).read_text().split("\n---\n")[0]
+        assert (
+            "generated:"
+            not in (instance.root / "wiki" / "topics" / "brewing.md")
+            .read_text()
+            .split("\n---\n")[0]
+        )
 
     def test_write_never_touches_existing_generated_dates(self, instance):
         write_corpus_stub(instance)
@@ -348,9 +345,7 @@ class TestWrite:
 
 
 def stamped(entry: LedgerEntry) -> LedgerEntry:
-    return ledger.stamp(
-        entry, today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0"
-    )
+    return ledger.stamp(entry, today=lambda: TODAY, now=lambda: NOW, engine_version="0.1.0")
 
 
 def waiting_entry(needs: Need, unit_hash: str = "73bd784849") -> LedgerEntry:
@@ -401,8 +396,12 @@ class TestStateChecks:
         self._bare_wiki(instance)
         records = [
             {"stage": "harvest", "item": ITEM, "rules": 0, "date": "2026-08-01"},
-            {"stage": "harvest", "item": "2026-08-19-current-dddddd", "rules": 1,
-             "date": "2026-08-19"},
+            {
+                "stage": "harvest",
+                "item": "2026-08-19-current-dddddd",
+                "rules": 1,
+                "date": "2026-08-19",
+            },
             {"stage": "digest", "item": ITEM, "date": "2026-08-01"},
         ]
         instance.passes_path.write_text("".join(json.dumps(r) + "\n" for r in records))
@@ -498,9 +497,7 @@ class TestReferentialIntegrity:
         renamed = "2026-08-19-example-renamed-55ad7b"
         url = "https://example.test/moved"
         write_corpus_item(instance, renamed, urls=[url])
-        ledger.append(
-            instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url)
-        )
+        ledger.append(instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url))
         outcome = lint(instance)
         assert f"**{ITEM}** — 1 entry (renamed — {renamed} lists this work)" in outcome.report
         assert "no live corpus item lists this work" not in outcome.report
@@ -787,9 +784,7 @@ class TestCapFires:
     def test_fires_are_counted_by_bound_and_by_item(self, instance):
         self._bare_wiki(instance)
         other = "2026-08-19-other-bbbbbb"
-        for i, (item, cap) in enumerate(
-            [(ITEM, Cap.DEPTH), (ITEM, Cap.URL), (other, Cap.URL)]
-        ):
+        for i, (item, cap) in enumerate([(ITEM, Cap.DEPTH), (ITEM, Cap.URL), (other, Cap.URL)]):
             ledger.append(
                 instance.ledger_path,
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
@@ -1012,9 +1007,7 @@ class TestThreadCompleteness:
         # The driver stamps the string "true"; the field's presence says
         # nothing on its own, and a walk that completed can say so.
         self._bare_wiki(instance)
-        write_enrichment(
-            instance, "x-abc123.md", 'thread_cap_hit: "false"\nchain_incomplete: ""\n'
-        )
+        write_enrichment(instance, "x-abc123.md", 'thread_cap_hit: "false"\nchain_incomplete: ""\n')
         outcome = lint(instance)
         assert (
             "stored threads recorded incomplete (never cite one as whole) — none"
@@ -1229,6 +1222,19 @@ class TestDigestShape:
         self._bare_wiki(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+        assert "### Digests — 0 digests" in outcome.report
+
+    def test_the_digest_section_states_how_many_digests_there_are(self, instance):
+        # Every heading states its scale; this one had none, so a reader who
+        # stopped at it could not tell an instance with no digests from one
+        # whose digests all conform.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=2))
+        second = "2026-08-19-second-bbbbbb"
+        write_digest(instance, second, digest_text(item=second, bullets=1))
+        outcome = lint(instance)
+        assert "### Digests — 2 digests" in outcome.report
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
 
 

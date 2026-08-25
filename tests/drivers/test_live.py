@@ -48,8 +48,7 @@ class TestItunesLookupShape:
         # the ?i= episode id it answers resultCount 0 — so the episode is
         # matched by trackId inside the show's returned episode window.
         url = (
-            "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/"
-            "id1434243584?i=1000716969529"
+            "https://podcasts.apple.com/us/podcast/lex-fridman-podcast/id1434243584?i=1000716969529"
         )
         result = PodcastDriver(transport=urllib_transport).fetch(make_unit(url, Kind.PODCAST))
         assert result.status is Status.WAITING

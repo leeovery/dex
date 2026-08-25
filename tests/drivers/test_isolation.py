@@ -28,8 +28,7 @@ def driver_modules() -> dict[str, ast.Module]:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         if any(
-            isinstance(node, ast.ClassDef) and node.name.endswith("Driver")
-            for node in tree.body
+            isinstance(node, ast.ClassDef) and node.name.endswith("Driver") for node in tree.body
         ):
             modules[path.stem] = tree
     return modules

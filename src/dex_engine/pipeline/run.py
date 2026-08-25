@@ -6,9 +6,11 @@ deterministically named outputs (reruns overwrite, never duplicate),
 downloads media, re-enters children with provenance and caps, and
 renders its report through the ``enrich-report`` surface.
 
-Exactly ONE ``except Exception`` exists in the whole pipeline: the per-unit
-loop here. Every ledger write goes through ``ledger.stamp`` with the
-injected clocks and engine version.
+TWO ``except Exception`` exist in the whole pipeline, and both are named
+where they sit: the per-unit loop here, and the canonicalization seam in
+``detect``, which types whatever a driver's ``canonical`` raises as the one
+refusal every caller already handles. Every ledger write goes through
+``ledger.stamp`` with the injected clocks and engine version.
 """
 
 import dataclasses
@@ -295,9 +297,7 @@ class _ItemOutcome:
     def reason(self) -> str:
         """What landed, named — "3 new" never said new *what*."""
         parts = [
-            f"{self.new} new enrichment {'file' if self.new == 1 else 'files'}"
-            if self.new
-            else "",
+            f"{self.new} new enrichment {'file' if self.new == 1 else 'files'}" if self.new else "",
             f"{self.changed} rewritten" if self.changed else "",
             f"{self.media} media {'file' if self.media == 1 else 'files'}" if self.media else "",
         ]
@@ -587,7 +587,7 @@ class _Drain:
                 self._drive_unit(entry)
         except ProviderInputError as e:
             self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
-        except Exception as e:  # noqa: BLE001 — THE one broad catch in the pipeline
+        except Exception as e:  # noqa: BLE001 — the per-unit broad catch, one of two
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
             self.error_events.append(
                 issues.error_event(
@@ -729,9 +729,7 @@ class _Drain:
         enrichment = self.ctx.instance.enrichment_dir / self.owner_of(entry) / name
         match entry.kind:
             case Kind.YOUTUBE:
-                return acquire_youtube_audio(
-                    entry, enrichment, audio_dir, self.ctx.download_audio
-                )
+                return acquire_youtube_audio(entry, enrichment, audio_dir, self.ctx.download_audio)
             case Kind.PODCAST:
                 return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
             case _:
@@ -968,7 +966,7 @@ class _Drain:
                 continue
             changed = not out.exists() or out.read_bytes() != asset.data
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(asset.data)
+            atomic.write_bytes(out, asset.data)
             if changed:
                 self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
             self._asset_outcome(entry, rel, status=Status.DONE, path=rel)
@@ -1117,7 +1115,7 @@ class _Drain:
         owner = self.owner_of(entry)
         out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{_ext_of(entry.url)}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(response.body)
+        atomic.write_bytes(out, response.body)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(
             entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))
@@ -1777,9 +1775,7 @@ def run_transcribe(ctx: RunContext, *, limit: int = TRANSCRIBE_RUN_CAP) -> str:
     if not availability.ok:
         drain.notes.append(f"no transcription provider available — {availability.reason}")
         return _finish(drain)
-    targets = {
-        unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)
-    }
+    targets = {unit_hash for unit_hash, entry in drain.entries.items() if _is_transcribe_job(entry)}
     drain.drain(only=targets)
     return _finish(drain)
 

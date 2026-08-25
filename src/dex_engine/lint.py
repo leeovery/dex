@@ -32,8 +32,9 @@ Checks:
 
   digests — the shape ``state/digests/<id>.md`` promises: frontmatter with
   ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
-  least one fact bullet. No verb writes digests, so lint is the only thing
-  that verifies them.
+  least one fact bullet. ``enrich item digest`` writes digests and cannot
+  write any of those faults, so this is the backstop for the files that
+  predate the verb and for anything hand-edited since.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -149,9 +150,7 @@ def run_lint(
     entity_members = _entity_members(instance)
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
-    scan = _scan_wiki(
-        pages, taxonomy, entity_members, corpus_ids, write=write, today=today
-    )
+    scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
 
     ledgered = _uncategorized_items(taxonomy)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
@@ -185,10 +184,9 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
-    ledger_error = _state_checks(
-        instance, payload, is_cognitive, corpus_ids, notes=scan.notes
-    )
-    digest_errors = _digest_checks(instance)
+    ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids, notes=scan.notes)
+    digests, digest_errors = _digest_checks(instance)
+    payload["digests"] = digests
     payload["digest_errors"] = digest_errors
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
@@ -196,11 +194,7 @@ def run_lint(
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links
-        or scan.bad_citations
-        or ledger_error
-        or taxonomy_error
-        or digest_errors
+        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error or digest_errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -228,9 +222,7 @@ def _load_taxonomy(instance: Instance) -> tuple[dict[str, object], str | None]:
 def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     """The uncategorized-shares ledger's item ids, tolerating malformed shapes."""
     topics = taxonomy.get("topics", {})
-    uncategorized = (
-        topics.get("uncategorized-shares", {}) if isinstance(topics, dict) else {}
-    )
+    uncategorized = topics.get("uncategorized-shares", {}) if isinstance(topics, dict) else {}
     items = uncategorized.get("items", []) if isinstance(uncategorized, dict) else []
     if not isinstance(items, list):
         return set()
@@ -275,9 +267,7 @@ def _entity_members(instance: Instance) -> dict[str, list[str]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: expected an object of entity -> item list")
-    return {
-        name: members for name, members in raw.items() if isinstance(members, list)
-    }
+    return {name: members for name, members in raw.items() if isinstance(members, list)}
 
 
 def _frontmatter(text: str) -> str | None:
@@ -423,14 +413,8 @@ def _scan_counts(  # noqa: PLR0913 — the reconcile touches scan, page identity
         return text
     updated = frontmatter
     recorded = ITEMS_RE.search(frontmatter)
-    if (
-        recorded is not None
-        and expected is not None
-        and int(recorded.group(1)) != expected
-    ):
-        scan.count_drift.append(
-            {"page": name, "recorded": recorded.group(1), "actual": expected}
-        )
+    if recorded is not None and expected is not None and int(recorded.group(1)) != expected:
+        scan.count_drift.append({"page": name, "recorded": recorded.group(1), "actual": expected})
         if write:
             updated = ITEMS_RE.sub(f"items: {expected}", updated, count=1)
             scan.reconciled.append(f"{name}: items: {recorded.group(1)} -> {expected}")
@@ -470,9 +454,7 @@ def _restated_pairs(name: str, text: str) -> list[dict[str, str]]:
                 and matcher.quick_ratio() >= RESTATED_RATIO
                 and matcher.ratio() >= RESTATED_RATIO
             ):
-                pairs.append(
-                    {"page": name, "first": _clip(raw_a), "second": _clip(raw_b)}
-                )
+                pairs.append({"page": name, "first": _clip(raw_a), "second": _clip(raw_b)})
     return pairs
 
 
@@ -564,9 +546,7 @@ def _state_checks(
                 continue
             waiting[entry.needs.value] = waiting.get(entry.needs.value, 0) + 1
             if is_cognitive(entry.needs, entry.format):
-                cognitive.append(
-                    {"item": entry.item, "url": entry.url, "need": entry.needs.value}
-                )
+                cognitive.append({"item": entry.item, "url": entry.url, "need": entry.needs.value})
         payload["waiting"] = waiting
         payload["cognitive"] = cognitive
         integrity = _referential_integrity(instance, entries, corpus_ids)
@@ -704,8 +684,7 @@ def _referential_integrity(
     misfiled: list[dict[str, str]] = [
         {"item": owner, "path": path}
         for path, owner in landed
-        if (instance.root / path).exists()
-        and Path(path).parent != Path("enrichment") / owner
+        if (instance.root / path).exists() and Path(path).parent != Path("enrichment") / owner
     ]
     misfiled.sort(key=lambda row: (row["item"], row["path"]))
     return _IntegrityScan(ghost=ghost, missing=missing, misfiled=misfiled)
@@ -814,9 +793,7 @@ def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
         if entry.cap is Cap.URL_REQUESTED:
             requested += 1
             continue
-        scan.rows.append(
-            {"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]}
-        )
+        scan.rows.append({"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]})
     if requested:
         scan.notes.append(
             f"{requested} owner-requested fetch refusal{'' if requested == 1 else 's'} "
@@ -893,22 +870,28 @@ def _unread_note(rel: str, why: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Digest shape. No verb writes digests — `signal` and `topics` are the
-# judgment — so this is the only thing that checks what the session wrote.
+# Digest shape. `enrich item digest` serializes the judgment, so a digest
+# written since it shipped conforms by construction; this reads the ones
+# that predate it, and anything a hand has been through since.
 # ---------------------------------------------------------------------------
 
 
-def _digest_checks(instance: Instance) -> list[dict[str, str]]:
-    """The digests that do not conform, and how each one breaks.
+def _digest_checks(instance: Instance) -> tuple[int, list[dict[str, str]]]:
+    """How many digests there are, and the ones that do not conform.
 
     Shape only. How MANY facts a digest states is the source's business —
     two lines of tweet yield two facts and no honest digest can invent a
     third — so there is no target count and no count finding. Stating
     none at all is different in kind: the file is empty of the one thing
     it exists to hold.
+
+    The count comes back with the errors because the section's heading
+    states its scale, and this pass is the one that walks the directory.
     """
     errors: list[dict[str, str]] = []
+    digests = 0
     for path in sorted(instance.digests_dir.glob("*.md")):
+        digests += 1
         item = path.stem or path.name
         try:
             text = path.read_text(encoding="utf-8")
@@ -922,7 +905,7 @@ def _digest_checks(instance: Instance) -> list[dict[str, str]]:
         why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
         if why is not None:
             errors.append({"item": item, "why": why})
-    return errors
+    return digests, errors
 
 
 def _digest_body_fault(body: str) -> str | None:
@@ -935,9 +918,9 @@ def _digest_body_fault(body: str) -> str | None:
 def _digest_parts(text: str) -> tuple[dict[str, str | list[str]] | None, str]:
     """A digest's frontmatter fields and body; fields None without a fence.
 
-    The YAML a session actually writes, not a canonical subset of it: no
-    verb writes a digest, nothing tells the session to leave a scalar
-    unquoted, and its only other reader is a session reading YAML. So
+    Any YAML a digest may hold, not the canonical subset the verb emits:
+    the files this reads are the ones written before the verb or edited by
+    hand since, and nothing told that hand to leave a scalar unquoted. So
     quotes come off (the same way every other frontmatter reader takes
     them off), and a list is read in either form — flow (``[a, b]``) or
     block (``- a`` lines under the key). A shape check that failed on a

@@ -134,8 +134,7 @@ def error_event(
         if _PACKAGE_MARKER in frame.filename
     ]
     frames = "\n".join(
-        f"{_package_path(frame.filename)}:{frame.lineno} in {frame.name}"
-        for frame in engine_frames
+        f"{_package_path(frame.filename)}:{frame.lineno} in {frame.name}" for frame in engine_frames
     )
     return ErrorEvent(
         unit_hash=unit_hash,
@@ -201,9 +200,7 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
         # Everything raised here must be in the filer's never-fatal catch
         # set — a torn-but-valid-JSON record (union merges, hand damage)
         # must degrade to an "issue filing failed" note, never kill the run.
-        missing = [
-            key for key in ("fingerprint", "action", "engine", "date") if key not in raw
-        ]
+        missing = [key for key in ("fingerprint", "action", "engine", "date") if key not in raw]
         if missing:
             raise ValueError(
                 f"{path.name}:{lineno}: issue-reports record missing field(s) {missing}"
@@ -416,9 +413,7 @@ class _Filer:
         number = _issue_number(out)
         self._remember(fp, action="filed", issue=number)
         label = f"#{number}" if number is not None else f"fp-{fp}"
-        self.notes.append(
-            f"filed engine issue {label}: {event.error_class} in {event.function}"
-        )
+        self.notes.append(f"filed engine issue {label}: {event.error_class} in {event.function}")
 
     def _remember(self, fp: str, *, action: str, issue: int | None) -> None:
         record = _MemoryRecord(

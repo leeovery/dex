@@ -208,8 +208,11 @@ class TestMaterialize:
             return DATA[:3]
 
         seams = GithubSeams(
-            api=gh.api, download=short_download, git=gh.git,
-            token=lambda: "tok", echo=gh.lines.append,
+            api=gh.api,
+            download=short_download,
+            git=gh.git,
+            token=lambda: "tok",
+            echo=gh.lines.append,
         )
         assert reconcile(instance, seams) == 1
         assert "expected" in gh.out
@@ -265,8 +268,11 @@ class TestMaterialize:
             return gh.git(args)
 
         seams = GithubSeams(
-            api=gh.api, download=gh.download, git=raw_blob_git,
-            token=lambda: "tok", echo=gh.lines.append,
+            api=gh.api,
+            download=gh.download,
+            git=raw_blob_git,
+            token=lambda: "tok",
+            echo=gh.lines.append,
         )
         assert reconcile(instance, seams) == 1
         assert "did not stage as an LFS pointer" in gh.out
@@ -313,8 +319,11 @@ class TestReconcileModes:
             return gh.git(args)
 
         seams = GithubSeams(
-            api=gh.api, download=gh.download, git=no_remote,
-            token=lambda: "tok", echo=gh.lines.append,
+            api=gh.api,
+            download=gh.download,
+            git=no_remote,
+            token=lambda: "tok",
+            echo=gh.lines.append,
         )
         assert reconcile(instance, seams) == 0
         assert "no origin remote" in gh.out
@@ -332,8 +341,12 @@ class TestReconcileModes:
         gh = FakeGithub(
             assets=[
                 {"id": 123, "name": NAME, "size": 3, "url": ASSET_URL},
-                {"id": 999, "name": "stray.png", "size": 7,
-                 "url": "https://api.github.com/repos/owner/instance/releases/assets/999"},
+                {
+                    "id": 999,
+                    "name": "stray.png",
+                    "size": 7,
+                    "url": "https://api.github.com/repos/owner/instance/releases/assets/999",
+                },
             ]
         )
         reconcile(instance, gh.seams())

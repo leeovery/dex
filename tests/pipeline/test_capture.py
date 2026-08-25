@@ -25,9 +25,7 @@ def write_capture(instance, name: str, text: str):
 
 
 def new(instance, path, **kwargs) -> str:
-    return item_new(
-        path, instance=instance, drivers=DRIVERS, today=lambda: TODAY, **kwargs
-    )
+    return item_new(path, instance=instance, drivers=DRIVERS, today=lambda: TODAY, **kwargs)
 
 
 def only_item(instance) -> corpus.CorpusItem:
@@ -195,9 +193,7 @@ class TestGuards:
             new(instance, path)
 
     def test_created_item_round_trips_through_corpus(self, instance):
-        path = write_capture(
-            instance, "20260818-101530.md", "https://example.test/p\n\nnote\n"
-        )
+        path = write_capture(instance, "20260818-101530.md", "https://example.test/p\n\nnote\n")
         new(instance, path)
         item = only_item(instance)  # read_item validates the schema
         assert item.enrichment == []

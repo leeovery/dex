@@ -306,10 +306,7 @@ def _collection_reason(url: str) -> str | None:
     tail = _channel_tab(segments, first)
     if tail is None or tail == [_CHANNEL_LIVE_TAB]:
         return None
-    return (
-        "channel link — a channel is a collection: capture the videos worth "
-        "keeping individually"
-    )
+    return "channel link — a channel is a collection: capture the videos worth keeping individually"
 
 
 def _channel_tab(segments: list[str], first: str) -> list[str] | None:

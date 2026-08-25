@@ -21,7 +21,7 @@ addresses: during a production instance install (2026-08-19), Cloudflare
 transiently challenged the enricher's fetch of the owner's own website; the
 enricher — unable to distinguish a 403 challenge from a dead domain —
 ledgered it `dead` (terminal, never retried), and Claude's in-session heal
-(hand-fetching 11 pages) left the ledger contradicting the corpus.
+(hand-fetching the pages) left the ledger contradicting the corpus.
 
 What the design does about that class — honestly stated, since no design
 can force a site to serve us: (1) the redesigned web driver often avoids
@@ -137,6 +137,16 @@ digested whole, after their children land. The only entries that survive a
 session are `waiting` / `blocked` / `error` / `manual`, each parked for a
 stated reason, each printed in the report.
 
+The report that prints them is the report of the run that parked them. A
+unit that outlives that run is untouched standing state, so it is `enrich
+status` that names it — id, URL, status and stated reason, split by who owns
+the next action, exactly as the run report splits its own. Counts alone
+(`**manual** 1`) left a long-standing park on no surface at all while its
+item sat permanently raw and permanently undigestable. Sourcing the run
+report from every surviving entry instead would reinstate what this section
+already refuses: the same parked item listed as work to do on every run,
+forever.
+
 **Mid-fetch kind discovery** (a server lied to HEAD; "this is actually a
 PDF") — implemented on owner order after an initial unauthorized deferral,
 and NOT as a child (early drafts said "child-re-entry"; a child is a
@@ -160,8 +170,9 @@ pre-correction view of the item was served to the digest and query layers
 permanently. **The file dropped is named, never pattern-matched**: a
 candidate is `<kind>-<hash6>.md` for one of the closed set of kinds, and it
 must record this unit's `url:` to be dropped at all. `hash6` is six hex
-digits, so two units under one item do collide (a real `web-6968e3.md` /
-`file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
+digits, so two units under one item can collide — a `web-…`/`file-…` pair
+under one hash6 has been seen in a live instance — and a name-pattern
+unlink deleted
 the neighbour's enrichment while its ledger line still read `done`. Nothing
 is dropped for a replacement that is not itself on disk. Works in both
 directions (web→file, file→web), and carries two further discoveries that
@@ -189,7 +200,7 @@ keyed on) and `fetched:` (the run date), followed by the driver's `meta`
 verbatim, then the body. Empty and null meta values are dropped rather
 than written blank. Values are quoted defensively against **YAML 1.1
 retyping**, because a plain scalar that merely *looks* like something else
-comes back as that something else: `no`/`off`/`y` and friends read as
+comes back as that something else: `no`/`off`/`on` and friends read as
 booleans, a leading `-`, `?` or `,` or any of the YAML indicator
 characters changes the parse, a tab anywhere invalidates the block, and a
 date-shaped or number-shaped title reads back as a date or a float — so a
@@ -334,10 +345,15 @@ Typing discipline (binding for the implementation):
   deliberately **partial** — a Kind or Status that is a valid member but
   not applicable at that site (transcript bodies and audio acquisition
   cover youtube and podcast only; the acquisition-failure and classifier
-  arms take the three statuses their classifier can return) — closes with
-  a runtime `case _: raise` naming the mismatch instead. Four sites do
-  this, and each one is a loud engine bug when it fires, never a quiet
-  default.
+  arms take the three statuses their classifier can return) — states the
+  mismatch at runtime instead of defaulting quietly. Three do it by
+  raising: the transcript-body dispatch, the acquisition-failure arm and
+  the classifier arm, each a loud engine bug when it fires. The
+  audio-acquisition arm is the one that does not — it returns
+  `Classification(status: manual, …)` naming the same mismatch, so the unit
+  parks with the reason stated and the rest of the drain runs. The fourth
+  `case _: raise` in the tree belongs to none of this: it is `enrich.py`'s
+  argparse guard, unreachable while argparse enforces the command set.
 
 Capability resolution: **per format / per need, first available *mechanical*
 provider wins**, order set by instance config. The **cognitive provider** is
@@ -412,9 +428,11 @@ decision: either the delegation is legitimate and named, or fetch, wayback
 and extraction hoist into a lib and the exception goes.
 
 **What this replaces.** `Result` becomes the union above rather than a flat
-dataclass whose fields are only meaningful for some statuses. Today 204
-legal combinations carry `media` or `children` on a non-done result, and
-`assets` is validated done-only while the others are not. Making the wrong
+dataclass whose fields are only meaningful for some statuses. Today a
+`Result` may carry `media` or `children` on a non-done result: `assets` is
+validated done-only while those two are not, so the type admits outputs on
+a result that produced none, and nothing but convention keeps them off.
+Making the wrong
 states unrepresentable is the point, not a side effect. (The sketch above
 does not say where `assets` and the driver-stated `reason` ride on the
 union; settle that when it is built.)
@@ -427,8 +445,11 @@ nothing here states that, so it is a decision rather than a rename.
 
 Two related shapes settle with it:
 
-- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so 828
-  of 2484 legal ledger states cannot convert. One rule, stated once.
+- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so a
+  whole class of legal ledger states cannot convert: an entry pairs
+  `parent` with *having* a depth, a unit pairs it with a **non-zero**
+  depth, so `LedgerEntry(parent set, depth 0)` is legal and the same
+  `WorkUnit` is refused. One rule, stated once.
 - `via` carries provenance, routing (`via == "media"` dispatches, §3) and a
   migration marker. Three jobs, one field. Provenance and routing separate.
 
@@ -529,7 +550,7 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/digests/<id>.md` | per-item fact indexes, Claude-written; the one markdown corner of `state/` |
+| `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
@@ -761,18 +782,29 @@ independently is seven chances to reintroduce it):
 - Providers **raise** a typed `ProviderInputError` for bad inputs (corrupt
   audio, unparseable file); the run loop maps it → `manual`, anything
   uncaught → `error`. Classification judgment lives in one place.
-- Exactly **one** `except Exception` in the whole pipeline: the per-unit
+- **Two** `except Exception` in the whole pipeline, each named where it
+  sits. The first is the per-unit
   loop in `run.py` (→ `error` + issue filing). **Every** dispatch route runs
   inside it — driver fetch, transcribe drain, and media download alike,
   the media stage's own first download included — so no unit's failure can
   escape the drain or be charged to another unit's line.
-  Drivers and providers never
+  The second is the canonicalization seam in `detect.canonical_url`, and it
+  exists because a driver's `canonical` is arbitrary code over data an
+  owner wrote into frontmatter, so what it raises is not a vocabulary any
+  caller can plan for. Its two callers read a fault differently — seeding
+  caught `ValueError` and let anything else abort the run, the ownership
+  map caught everything and keyed the unit on the raw URL's hash — which
+  is one URL holding two identities and two outcomes. The refusal is
+  therefore typed once, at the one place the driver is called: whatever a
+  driver raises leaves as a `ValueError` carrying the original, and each
+  caller's narrow guard does its own right thing — seeding parks the bad
+  seed keyed on the raw URL, which is exactly the identity the ownership
+  fallback resolves to. Drivers and providers never
   broad-catch; internal raises use `raise … from e` so filed tracebacks
   keep their cause. Migrations have the one counterpart outside the
-  pipeline, on the same reasoning: canonicalizing one stored URL runs a
-  driver's arbitrary code over owner data, and a migration that dies
-  part-way leaves state half-moved — so the per-entry canonicalization is
-  broad-caught and skipped-with-why (§12). The scrubber feeds the ledger `error` field; issue
+  pipeline, on the same reasoning: a migration that dies part-way leaves
+  state half-moved, so the per-entry canonicalization is caught and
+  skipped-with-why rather than aborting the chain (§12). The scrubber feeds the ledger `error` field; issue
   bodies carry no free text at all (the filer ruling in the issue-filer
   section).
 
@@ -1055,12 +1087,14 @@ a download beyond the cap and beside a description of something else.
   `article.preview_text`, and `raw_text.text` holding only the shortlink to
   the article; the body is title + preview text + that link. A body that is
   nothing but a shortlink is **not content** — the "no text or media"
-  `manual` park applies, because a post ledgered `done` on ~74 characters of
-  URL is thin garbage the digest layer cannot tell from real capture.
+  `manual` park applies, because a post ledgered `done` on a shortlink and
+  nothing else is thin garbage the digest layer cannot tell from real
+  capture.
 - Chain media pooled, captured post's first, media-stage cap applies.
 - **Incomplete chains are recorded, never silently presented as complete**
-  (learned from a 2026-08-20 production run — a thread's root promised
-  "8 things", six existed publicly): a parent fetch failing mid-walk is
+  (learned from a 2026-08-20 production run — a thread's root promised a
+  numbered list and not all of it existed publicly): a parent fetch failing
+  mid-walk is
   mechanical — the driver records the gap in meta
   (`chain_incomplete: true` + how far it got). A chain that's
   *semantically* short (deleted/restricted posts detectable only by
@@ -1115,8 +1149,9 @@ underneath; the audio lives in the feed's `<enclosure>`:
   text-to-speech widgets and encyclopedias embed media samples, and the
   catch-all rule handed those articles to `podcast`, which resolved the
   widget as the enclosure and parked `waiting: transcribe` with an **empty
-  body** — the article never extracted, its links never harvested (~1 in
-  145 real web URLs). The asymmetry decides every tie: a false positive
+  body** — the article never extracted, its links never harvested. An
+  uncommon shape, and one a real corpus does contain. The asymmetry
+  decides every tie: a false positive
   costs the whole article, a false negative costs a podcast page keeping
   its show notes instead of a transcript. A bare link to an mp3 is not the
   signal either: a post linking one is still a post. The signal itself is
@@ -1207,8 +1242,9 @@ The surfaces were originally laid out for a person at a 72-column terminal:
 fixed-width tables, column fitting to the widest cell, greedy wrapping, and
 hanging-indent continuation. Nothing was ever elided or truncated — the old
 kernel had no elision and no display-column measurement in it — but a token
-wider than the budget was hard-split across lines mid-string. A 375-character
-URL arrived in the reader as several fragments, and an item id could break
+wider than the budget was hard-split across lines mid-string. A URL of
+several hundred characters arrived in the reader as several fragments, and
+an item id could break
 across a line boundary the same way. That costs the two things these reports
 exist for: an id a grep can find, and a URL that survives a copy. It also
 bought nothing, because the primary reader is a Claude session in a client
@@ -1223,7 +1259,16 @@ glyphs, and identity is never split.
 (`## Enrich run — 6 units processed`). `###` opens each section and names
 the section plus its scale (`### Needs you — 1 entry the engine has given up
 on`). A reader who stops at the headings still knows what happened and how
-much of it there is.
+much of it there is. **No surface is exempt**: the two that carried bare
+headings — the capability report's `## Capabilities` and its per-capability
+`###`, and the health report's `### Wiki` / `### State` / `### Digests` —
+state capabilities, providers, pages, ledger entries and digests
+respectively, every one of which the site already had in hand. The health
+report's `State` is the case worth stating: a ledger that will not load has
+no scale, so that heading says `ledger unreadable` rather than `0 ledger
+entries`, which would report an unreadable file as an empty one. Where a
+section genuinely has no number to give, that is the heading's problem to
+say out loud, not a licence to drop the scale.
 
 **Bullets.** `-` for every list. One entry per bullet. A detail hanging off
 an entry is a continuation line indented two spaces and opened with `↳`;
@@ -1242,7 +1287,8 @@ match; it is never prose.
 
 **Identity is never truncated and never wrapped.** An item id, a URL, or a
 file path renders whole, on its own line, whatever its length. Real item ids
-average 58 characters and one real URL in a live instance is 375. Nothing in
+are long and real URLs longer still — several hundred characters is an
+ordinary length for one. Nothing in
 the render path may shorten one, split one, or elide the middle of one. The
 code that could split one is deleted rather than bounded, because a bound is
 a setting and a deletion is a guarantee — and with it went the rest of the
@@ -1410,7 +1456,7 @@ Authoring rules:
   **Attribution resolves to a LIVE corpus item or it does not resolve**
   (owner ruling at phase-4 review, on real state): if an item is dead, its
   stuff goes; nobody gets clever rescuing it. An excluded item loses its
-  corpus file and its `enrichment/<id>/` directory, but a done line's
+  corpus file, its `enrichment/<id>/` directory and its digest, but a done line's
   recorded `path` still spells the id — and every derived attribution is
   therefore checked against `corpus/<id[:4]>/<id>.md` before it is accepted.
   An id with no corpus file is skipped over, the next attribution is tried,
@@ -1450,8 +1496,8 @@ Shipping migrations for this rewrite:
    **immediately drainable** now (whisper-local exists; chunking removed the
    length limit), resurrecting work the old system permanently gave up on.
    Old `error` entries adopt retry-on-new-engine semantics. The old ledger
-   used `error` as an informal reason field on non-error statuses (28 wild
-   lines: dead/nocaptions/done/skipped/manual, plus one `note` field) —
+   used `error` as an informal reason field on non-error statuses (wild
+   lines across dead/nocaptions/done/skipped/manual, plus a `note` field) —
    migration 1 **never destroys those values**: on a status that may carry
    a reason they move into `reason`, on `error` they stay in `error`, and
    on `done`/`queued` — where §5 forbids `reason` outright — the text is
@@ -1523,7 +1569,8 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item, its enrichment **and the ledger entries
+   `dex exclude` deletes the item, its enrichment, its digest **and the
+   ledger entries
    for work no surviving item claims**, so a seed keyed to a purged item
    would re-fetch content ruled out of scope and put an owner ruling back in
    the queue. (Purges made before `exclude` swept the ledger left their
@@ -1532,8 +1579,9 @@ Shipping migrations for this rewrite:
    ledger every entry names a live item.)
    **`exclude` purges work units, not item names** (amended at phase-4
    review, on real state): a unit is keyed by URL, so two corpus items
-   listing one URL share one entry that names only one of them — 80 hashes
-   in dex-engineering are claimed by more than one live item. The hash is
+   listing one URL share one entry that names only one of them, and a hash
+   claimed by more than one live item is common in a real instance. The
+   hash is
    judged on the line `load` resolves to, and a hash any surviving corpus
    item still claims is kept whole; the corpus is scanned after the
    deletions, so a purged item cannot claim its own work. A kept landing
@@ -1572,6 +1620,15 @@ Shipping migrations for this rewrite:
    The re-key pass already ran, so a qualifying entry's hash and URL are
    the current identity: the seed appends under them directly, corpus
    seeding dedupes against it, and the drain fetches once.
+
+   Lint reads the same three cases and asks the `state/exclusions.tsv`
+   record **before** the claim. A hash two live items shared always has
+   another claimant once one of them is excluded, so asking the claim first
+   reported every deliberate on-the-record exclusion as a rename — asserting
+   a cause the check never established over the one the owner wrote down.
+   The claim still shows (`excluded on record — <id> shares this work`), as
+   the reason those lines survived the purge rather than as what became of
+   the item.
    The draining session re-fetches with current code (stored text is the
    fallback for URLs now dead) and completes the cognitive steps from the
    run report, same as any capture. Legacy items whose `urls:` lists carry
@@ -1600,7 +1657,7 @@ to tidy a handful of lines in one instance. Its predicate — infer "purged"
 from "the corpus file is missing" — is ambiguous by construction: a rename,
 a partial checkout and a hand deletion look identical to it, and every guard
 bolted on afterwards was a patch over that first guess. It cost a real
-17-minute transcription before it was caught. The residue it existed to
+transcription before it was caught. The residue it existed to
 clean is created by migration 1 attributing a line to a dead item, so the
 fix belongs there and nowhere else: migration 1 attributes to a **live**
 corpus item or drops the line, per the attribution rule above.
@@ -1669,6 +1726,12 @@ src/dex_engine/
                urls.py       canonicalization and the work-key hash — the
                              one place a ledger identity is computed
                capture.py    `enrich item new`: capture file → corpus item
+               digest.py     `enrich item digest`: JSON judgment → the
+                             digest file. The ONE digest write point; the
+                             payload carries `signal`, `topics`, optional
+                             `entities` and the facts, and `date`/`media:`
+                             are read off the corpus item rather than
+                             taken from a caller
                issues.py     the issue filer (§13)
                ownership.py — which live corpus item claims a work unit
                  (its urls:/media: hashed exactly as seeding does), the one
@@ -1719,6 +1782,15 @@ src/dex_engine/
                  carrying `asset:`/`name:` frontmatter is refused loudly —
                  `dex inbox` has not run, and creating a text item would
                  drop the binary's provenance silently)
+               · item digest --file <payload>  (writes the digest: the
+                 session's judgment arrives as JSON, the fence, field
+                 order, list style and bullets are the engine's. Loud
+                 total validation — a missing, unknown or mistyped key, a
+                 `signal` outside the vocabulary, empty `topics` or
+                 `facts`, an id naming no corpus item — and nothing is
+                 written on a refusal. Rewriting is allowed and carries
+                 nothing over: every field is the payload's judgment or
+                 the corpus item's fact)
   normalize.py imports shared detect/types (private kind_of copy deleted)
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential
@@ -1730,7 +1802,9 @@ src/dex_engine/
                  asked of the owning item, §4),
                  waiting cohorts, pass records, the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
-                 markers off enrichment frontmatter), and digest shape
+                 markers off enrichment frontmatter), and digest shape —
+                 the backstop for digests written before `item digest`,
+                 and for anything hand-edited since
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 
@@ -1826,14 +1900,16 @@ Skill changes shipping with this:
   running `enrich mark <url> <status>` (the sanctioned ledger-correction
   verb); migration-report review (§12).
 - **Corpus items are created by `item new`, never freehand** — code writes
-  frontmatter, Claude writes prose. The governing line: mechanize where
-  the *values* are mechanical (item provenance comes from the capture
-  file); stay freehand where the values are judgment (digests — `signal`
-  and `topics` are the judgment, so a verb would add ceremony without
-  removing a decision; lint verifies their shape instead). Frontmatter
-  thereby converges on the same guarantee as the ledger: a malformed item
-  can't be written, because structure never passes through freehand
-  writing. Corollary, closing a drift current practice shows: **the item
+  frontmatter, Claude writes prose. The governing line: judgment supplies
+  the values, code writes the shape. It holds even where every value is
+  judgment — **digests go through `item digest` too**: `signal`, `topics`,
+  `entities` and the facts are the session's, and serializing them is not
+  a decision the session should be able to get wrong. Frontmatter thereby
+  converges on the same guarantee as the ledger: a malformed item or
+  digest can't be written, because structure never passes through freehand
+  writing, and lint's digest check becomes the backstop for files that
+  predate the verb rather than the primary guard. Corollary, closing a
+  drift current practice shows: **the item
   body is the owner's note verbatim and stays that way** — Claude's
   interpretive context (what a linked video is, how a thread relates)
   belongs in the digest, not the item body; thread context itself lives in
@@ -1869,7 +1945,7 @@ Skill changes shipping with this:
 - **Wiki frontmatter's derived fields are lint-repaired, not carefully
   authored**: `lint --write` reconciles `items:` counts and `generated:`
   dates mechanically at health checks (the field the 2026-08-20 analysis
-  found drifting on 16 pages). Wiki *bodies* remain the most freehand
+  found drifting across the wiki). Wiki *bodies* remain the most freehand
   artifact in the system, on purpose — synthesis is the judgment.
 - **Shipping obligations in the same change**: `dex-contract.md` updated
   (operations become capture/run/query/lint; dataflow adds `cache/`, the
@@ -1881,8 +1957,8 @@ Skill changes shipping with this:
   regeneration rather than fighting it — including its ORDER. Normalize
   emits `sorted({kind_of(url) …})`, so the migration emits kinds sorted
   and deduped too; anything else and the first regeneration after the
-  migration rewrites those items again for ordering alone (82 real corpus
-  files), burying the migration's own commit in noise. Per the repo's anti-drift rules:
+  migration rewrites every one of those items again for ordering alone,
+  burying the migration's own commit in noise. Per the repo's anti-drift rules:
   pyproject entry points, the shim usage line, the README command table,
   and `docs/capture.md` + `docs/start.md` (dex-capture changes the capture
   story) all move together.
@@ -1897,9 +1973,9 @@ Skill changes shipping with this:
   "possible restated fact — merge?" warnings at health checks, and a
   **page item-count consistency check** (frontmatter `items:` vs the
   page's topic/entity MEMBER count — never its citation count; the wild
-  convention and the "16 drifting pages" figure are both member-semantics —
-  16 pages were silently drifting when the 2026-08-20 analysis looked,
-  caught by accident rather than mechanism), and a **shortid-shaped
+  convention and the drift the 2026-08-20 analysis found are both
+  member-semantics — pages were silently drifting when it looked, caught by
+  accident rather than mechanism), and a **shortid-shaped
   citation flag**: backticked 6-hex shortids are probable malformed
   citations everywhere — index included — not just where full-id resolution
   happens to fail (a 2026-08-20 production run found latent shortid
@@ -1988,8 +2064,6 @@ and the outcome union settles several of these on its way past.
 - **A per-item fetched-count cache.** `_cap_fired` recounts the item's
   entries per admission, which is quadratic in the item's ledger.
 - **One long-lived append handle for the ledger.**
-- **A repo-wide `ruff format` pass.** 43 files drift under ruff 0.16.3 —
-  one mechanical reformat commit, on its own.
 - **A cheap guard in `run._admit_children`.** Unreachable until a driver
   emits children.
 

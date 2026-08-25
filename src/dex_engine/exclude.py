@@ -132,8 +132,7 @@ def run_exclude(
     if collapsed:
         counted += f" ({collapsed} duplicate id(s) collapsed)"
     summary = (
-        f"excluded {counted}: removed {removed} items ({missing} already gone), "
-        f"{digests} digests, "
+        f"excluded {counted}: removed {removed} items ({missing} already gone), {digests} digests, "
     )
     if not instance.ledger_path.exists():
         return summary + _purge_counts(0, 0)
