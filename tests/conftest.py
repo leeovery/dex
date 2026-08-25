@@ -6,10 +6,22 @@ dir; ``FakeDriver`` is the scriptable driver the pipeline tests drive;
 toggle.
 """
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
+
+if "MUTANT_UNDER_TEST" in os.environ:
+    # A mutmut run collects its test-to-function map and then re-runs the
+    # covering tests to prove the tree is clean — both inside one process, so
+    # every `@given` property is called from two executors and hypothesis fails
+    # it as a correctness health check. Here it is an artifact of the harness,
+    # not of the test: the same property passes alone. Only mutmut sets this
+    # variable, so the ordinary suite keeps the check.
+    settings.register_profile("mutmut", suppress_health_check=[HealthCheck.differing_executors])
+    settings.load_profile("mutmut")
 
 from dex_engine.pipeline.types import (
     Availability,

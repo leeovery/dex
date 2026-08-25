@@ -1278,6 +1278,9 @@ class TestTokenEstimate:
         assert estimated_tokens("абвг") > estimated_tokens("abcd")
 
     @pytest.mark.live
+    @pytest.mark.ci_hostile  # a cold runner pulls whisper-tiny's ~2.4MB
+    # tokenizer.json from HuggingFace, which throttles anonymous datacenter
+    # traffic; a red morning reports HF's mood, not a drifted cost table.
     def test_the_estimate_covers_what_whispers_tokenizer_actually_does(self):
         # Opt-in: needs openai/whisper-tiny's tokenizer.json from HuggingFace.
         # Drift check on the cost table — a prompt this estimator passes must

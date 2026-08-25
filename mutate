@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+# Targeted mutation audit — the release-procedure entry point for mutmut.
+# One module at a time; see CLAUDE.md "Mutation testing" for reading results.
+#   ./mutate run "dex_engine.pipeline.classify.*"
+#   ./mutate results
+#   ./mutate show <mutant>
+[ -n "$1" ] || { echo 'usage: ./mutate run "<module>.*" | results | show <mutant> | <mutmut verb>'; exit 1; }
+exec uv run --group mutation mutmut "$@"
