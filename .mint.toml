@@ -3,10 +3,6 @@ diff_exclude = ["design/"]
 [release]
 version_file = "pyproject.toml"
 version_pattern = 'version = "{version}"'
-# One-off for v0.1.0: the v0.0.1 → v0.1.0 diff is the whole rewrite, far past
-# the AI notes ceiling, so the body is fixed here and used via --no-ai.
-# Remove after tagging so later releases go back to AI notes from the diff.
-fallback = '''
 ✨ Added
 
 - Driver-based ingestion for web pages, X posts, YouTube, GitHub, arXiv papers, podcasts, and documents — each source is fetched by the driver that understands its shape.
