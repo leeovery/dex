@@ -1,7 +1,28 @@
-"""Migration 2 — rerun seed: requeue two known-deficient cohorts.
+"""Migration 2 — identity re-key, then rerun seed.
 
-Two fixes shipped with the rewrite that make old stored enrichments
-deficient:
+Two steps over one ledger read, in this order.
+
+**Step 1 — identity re-key.** The rewrite moved canonical identity for two
+kinds: x posts are keyed by status id (every share spelling of one post
+collapses to ``x.com/i/status/<id>``), and youtube's single-video shapes
+(``/live/``, ``/shorts/``, ``/embed/``, youtu.be) collapse to
+``watch?v=<id>``. A pre-rewrite entry's stored hash is therefore no longer
+the hash the engine computes for its URL — and left alone, the first run's
+corpus seeding would mint fresh queued units under the new hashes and
+re-fetch work already done, or worse, work deliberately parked: a
+``manual`` verdict resurrected as a fresh fetch. So EVERY readable entry is
+re-keyed first: recompute ``work_hash(canonical_url(entry.url))`` and,
+where it differs from the stored hash, rewrite the line in place under the
+new hash + canonical URL with every other field preserved — statuses are
+sacred; a ``manual`` verdict stays ``manual`` under its new identity.
+Where two old entries collapse to one new hash (the x.com and twitter.com
+spellings of one post), file order is kept, so the ledger's own
+last-per-hash rule decides — the later line wins — and the report names
+the collapse. The rewrite is atomic; a second apply finds every hash
+already current and re-keys nothing.
+
+**Step 2 — rerun seed.** Two fixes shipped with the rewrite make old
+stored enrichments deficient:
 
 - **web**: the old extractor stripped hyperlinks; the rewrite keeps them
   (links are harvest input);
@@ -20,28 +41,25 @@ seeded — old ``error`` entries already retry under the new-engine rule, and
 The seed is queue seeding with provenance, one of the two permitted acts:
 the existing URL-keyed work unit re-enters as ``{status: queued, rerun:
 true, via: migration-2}`` — a real URL through the front door; the pipeline
-does the actual work with current code. Each seed carries the CURRENT
-engine's identity: the stored URL is re-canonicalized through the driver
-registry (the same seam the run layer's seeding uses) and a changed
-canonical re-keys the seed under the recomputed url + hash, so the next
-run's corpus seeding dedupes against it instead of raising the same work
-fresh under the new key — and the drain fetches once. Where identity has
-changed (x is id-keyed now), the superseded ``done`` line stays under its
-old hash as inert history.
+does the actual work with current code. The re-key pass already ran, so a
+qualifying entry's hash and URL ARE the current identity: the seed appends
+under them directly, the next run's corpus seeding dedupes against it, and
+the drain fetches once.
 
-Idempotent both ways: an identity-unchanged seed appends under the same
-hash and last-per-hash wins (the latest line is no longer ``done``, so it
-never seeds twice); a re-keyed identity already present in the ledger —
-from a prior apply or a corpus seed — is never seeded over.
+Idempotent both ways: the re-key pass moves nothing on a second apply, and
+a seeded hash's latest line is the queued seed — no longer ``done``, so it
+never seeds twice.
 """
 
 import datetime
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
+from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
-from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line
+from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, to_line
 from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import (
     Kind,
@@ -53,13 +71,14 @@ from dex_engine.pipeline.types import (
 )
 from dex_engine.pipeline.urls import work_hash
 
-__all__ = ["RerunSeed", "build"]
+__all__ = ["IdentityRekeyAndRerunSeed", "build"]
 
 NUMBER = 2
 INTENT = (
-    "rerun seed: requeue every pre-rewrite done web/x entry as {queued, rerun, via: "
-    "migration-2} — the old engine (0.0.1) had neither the link-keeping fix (web) nor "
-    "thread walk-up (x), so all its stored web/x enrichments qualify"
+    "identity re-key + rerun seed: every ledger entry moves to its current canonical "
+    "identity (x id-keying, youtube shape collapse) with status preserved; then every "
+    "pre-rewrite done web/x entry requeues as {queued, rerun, via: migration-2} — the "
+    "old engine (0.0.1) had neither the link-keeping fix (web) nor thread walk-up (x)"
 )
 
 _PRE_REWRITE = (0, 0, 1)
@@ -70,7 +89,7 @@ def build(
     *,
     today: Callable[[], datetime.date],
     engine_version: str,
-) -> "RerunSeed":
+) -> "IdentityRekeyAndRerunSeed":
     """Build migration 2 with the injected clock and running engine version.
 
     Raises:
@@ -86,10 +105,10 @@ def build(
             "the pre-rewrite marker (migration 1's stamp) — seeds stamped with it "
             "would corrupt their own membership test; a rewrite engine is >= 0.1.0"
         )
-    return RerunSeed(today=today, engine_version=engine_version)
+    return IdentityRekeyAndRerunSeed(today=today, engine_version=engine_version)
 
 
-class RerunSeed:
+class IdentityRekeyAndRerunSeed:
     """Migration 2: see the module docstring."""
 
     number = NUMBER
@@ -101,41 +120,30 @@ class RerunSeed:
         self._engine_version = engine_version
 
     def apply(self, root: Path) -> MigrationReport:
-        """Seed the reruns into the ledger at ``root``.
+        """Re-key the ledger at ``root`` to current identities, then seed reruns.
 
-        Tolerates un-pulled repos (no ledger → nothing to seed) and lines
+        Tolerates un-pulled repos (no ledger → nothing to do) and lines
         migration 1 could not translate (skipped here too, with the same
-        repair pointer — they cannot poison the seeding of readable lines).
+        repair pointer — they cannot poison the readable lines).
         """
         actions: list[str] = []
         skipped: list[Skipped] = []
         path = root / "state" / "enrichment-ledger.jsonl"
         if not path.exists():
             return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
-        latest = _latest_per_hash(path, skipped)
-        tracked = set(latest)
+        entries = _rekey_identities(path, actions, skipped)
+        latest: dict[str, LedgerEntry] = {}
+        for entry in entries:
+            latest[entry.hash] = entry
         counts = {Kind.X: 0, Kind.WEB: 0}
         for entry in latest.values():
             if not _qualifies(entry, skipped):
                 continue
-            url, unit_hash = entry.url, entry.hash
-            canonical = canonical_url(entry.url, DRIVERS)
-            if canonical != entry.url:
-                # Canonicalization moved since this line was written: the
-                # seed must carry the CURRENT identity, or the next run
-                # would raise the same work fresh under the new key while
-                # also draining this rerun — every such URL fetched twice.
-                url, unit_hash = canonical, work_hash(canonical)
-                if unit_hash in tracked:
-                    # The re-keyed identity is already tracked (a prior
-                    # apply, a corpus seed, or another old spelling of the
-                    # same unit) — seeding over it would stomp its status.
-                    continue
             append(
                 path,
                 LedgerEntry(
-                    hash=unit_hash,
-                    url=url,
+                    hash=entry.hash,
+                    url=entry.url,
                     item=entry.item,
                     kind=entry.kind,
                     status=Status.QUEUED,
@@ -145,7 +153,6 @@ class RerunSeed:
                     rerun=True,
                 ),
             )
-            tracked.add(unit_hash)
             counts[entry.kind] += 1
         seeded = counts[Kind.X] + counts[Kind.WEB]
         if seeded:
@@ -156,18 +163,25 @@ class RerunSeed:
         return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
 
 
-def _latest_per_hash(path: Path, skipped: list[Skipped]) -> dict[str, LedgerEntry]:
-    """Last-per-hash over readable lines; unreadable lines are skipped-with-why.
+def _rekey_identities(
+    path: Path, actions: list[str], skipped: list[Skipped]
+) -> list[LedgerEntry]:
+    """Rewrite every entry whose identity moved; return readable entries in file order.
 
     Not ``ledger.load``: a hand-tampered line would abort the whole load,
-    and this migration must still seed everything readable. Known wrinkle:
-    when a hash's *latest* line is the unreadable one, an earlier superseded
-    line gets promoted to "latest" here and may seed. Harmless — the seed is
-    a real URL through the front door, and the pipeline re-classifies it
-    with current code; worst case is one redundant fetch.
+    and this migration must still handle everything readable — unreadable
+    lines are skipped-with-why and kept verbatim in the file. Lines whose
+    identity is unchanged also keep their original bytes, so a second apply
+    leaves the file untouched. Where re-keying makes two old identities
+    share one hash, both keep their file positions: last-per-hash decides,
+    exactly as it does for any superseded line.
     """
-    latest: dict[str, LedgerEntry] = {}
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
+    original = path.read_text(encoding="utf-8")
+    out_lines: list[str] = []
+    entries: list[LedgerEntry] = []
+    identity: dict[str, str] = {}
+    rekeyed = False
+    for lineno, line in enumerate(original.split("\n"), start=1):
         if not line.strip():
             continue
         try:
@@ -177,12 +191,39 @@ def _latest_per_hash(path: Path, skipped: list[Skipped]) -> dict[str, LedgerEntr
                 Skipped(
                     what=f"ledger line {lineno}",
                     why=f"unreadable under the current schema ({e}) — repair it per "
-                    "migration 1's report; not considered for seeding",
+                    "migration 1's report; not re-keyed or considered for seeding",
                 )
             )
+            out_lines.append(line)
             continue
-        latest[entry.hash] = entry
-    return latest
+        canonical = canonical_url(entry.url, DRIVERS)
+        unit_hash = work_hash(canonical)
+        identity[entry.hash] = unit_hash
+        if unit_hash != entry.hash:
+            entry = replace(entry, hash=unit_hash, url=canonical)
+            out_lines.append(to_line(entry))
+            rekeyed = True
+        else:
+            out_lines.append(line)
+        entries.append(entry)
+    if rekeyed:
+        atomic.write_text(path, "".join(out_line + "\n" for out_line in out_lines))
+        moved = sum(1 for old, new in identity.items() if old != new)
+        landings: dict[str, set[str]] = {}
+        for old, new in identity.items():
+            landings.setdefault(new, set()).add(old)
+        collapsed = sum(len(olds) - 1 for olds in landings.values() if len(olds) > 1)
+        action = (
+            f"re-keyed {moved} entr{'y' if moved == 1 else 'ies'} to current "
+            "identities (x id-keying, youtube shape collapse)"
+        )
+        if collapsed:
+            action += (
+                f"; {collapsed} collapsed duplicate(s) — old spellings of one unit, "
+                "settled by last-per-hash"
+            )
+        actions.append(action)
+    return entries
 
 
 def _qualifies(entry: LedgerEntry, skipped: list[Skipped]) -> bool:

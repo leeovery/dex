@@ -760,7 +760,23 @@ Shipping migrations for this rewrite:
    migration 1 **ports those values into `reason`**, never destroys them.
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
-2. **Rerun seed** — two known-deficient cohorts get their existing
+2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
+   this order. First, identities: the rewrite moved canonical identity
+   for two kinds (x posts are keyed by status id; youtube's single-video
+   shapes collapse to `watch?v=<id>`), so **every** ledger entry is
+   re-keyed to the identity the current driver registry computes —
+   recompute `work_hash(canonical_url(url))` and, where it differs from
+   the stored hash, rewrite the line in place under the new hash +
+   canonical URL with every other field preserved. Statuses are sacred: a
+   `manual` verdict stays `manual` under its new identity, a `done` stays
+   `done` — without this pass, the first run's corpus seeding would mint
+   fresh queued units under the new hashes and re-fetch work already done
+   or deliberately parked. Where two old spellings collapse to one new
+   hash (the x.com and twitter.com forms of one post), file order is kept
+   and the ledger's own last-per-hash rule decides — the later line wins;
+   the report names the collapse. The rewrite is atomic and idempotent —
+   a second apply finds every identity already current.
+   Then, reruns: two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed
    pseudo-entries:
@@ -772,14 +788,9 @@ Shipping migrations for this rewrite:
      a child and gets transcribed).
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment.
-   Each seed carries the **current** engine's identity: the stored URL is
-   re-canonicalized through the driver registry (the same seam run-layer
-   seeding uses), and a changed canonical re-keys the seed under the
-   recomputed url + hash — so corpus seeding dedupes against the seed
-   instead of raising the same work fresh under the new key, and the drain
-   fetches once. Where identity has changed (x is id-keyed), the
-   superseded `done` line stays under its old hash as inert history; a
-   re-keyed identity already present in the ledger is never seeded over.
+   The re-key pass already ran, so a qualifying entry's hash and URL are
+   the current identity: the seed appends under them directly, corpus
+   seeding dedupes against it, and the drain fetches once.
    The draining session re-fetches with current code (stored text is the
    fallback for URLs now dead) and completes the cognitive steps from the
    run report, same as any capture. Legacy items whose `urls:` lists carry

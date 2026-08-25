@@ -71,12 +71,14 @@ class TestIdentity:
 
 
 # Real YouTube video ids are 11 chars of this alphabet; 8+ keeps generated
-# ids clear of the live/shorts/embed path prefixes.
+# ids clear of the live/shorts/embed path prefixes, and "videoseries" is
+# excluded because /embed/videoseries is the playlist-embed shape, not a
+# video that could carry the name.
 _ids = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
     min_size=8,
     max_size=11,
-)
+).filter(lambda video_id: video_id != "videoseries")
 
 
 def _video_shapes(video_id: str) -> list[str]:
@@ -139,6 +141,42 @@ class TestPlaylists:
         result = driver.fetch(make_unit("https://youtube.com/playlist?list=PLabc", Kind.YOUTUBE))
         assert result.status is Status.MANUAL
         assert "playlist" in reason_of(result)
+
+    def test_playlist_embed_identity_is_the_list_id(self):
+        driver = driver_for({})
+        assert driver.canonical(
+            "https://www.youtube.com/embed/videoseries?list=PLabc&si=share123"
+        ) == driver.canonical("https://youtube.com/playlist?list=PLabc")
+
+    def test_two_playlist_embeds_stay_distinct_park_manual_and_never_probe(self):
+        driver = driver_for(AssertionError("the probe must not run for a playlist embed"))
+        canonicals = {
+            driver.canonical(f"https://youtube.com/embed/videoseries?list={list_id}")
+            for list_id in ("PLfirst", "PLsecond")
+        }
+        assert canonicals == {
+            "https://youtube.com/playlist?list=PLfirst",
+            "https://youtube.com/playlist?list=PLsecond",
+        }
+        for canonical in canonicals:
+            result = driver.fetch(make_unit(canonical, Kind.YOUTUBE))
+            assert result.status is Status.MANUAL
+            assert "playlist" in reason_of(result)
+
+    def test_an_embedded_single_video_is_still_its_video(self):
+        driver = driver_for({})
+        assert driver.canonical("https://youtube.com/embed/dQw4w9WgXcA") == (
+            "https://youtube.com/watch?v=dQw4w9WgXcA"
+        )
+
+    def test_the_youtu_be_videoseries_shape_is_neither_video_nor_playlist(self):
+        # No such shape exists in the wild; prove it by not matching:
+        # "videoseries" never leaks as a video id, and the playlist form
+        # is youtube.com-only, so the URL keeps its base identity.
+        driver = driver_for({})
+        assert driver.canonical("https://youtu.be/embed/videoseries?list=PLabc") == (
+            "https://youtu.be/embed/videoseries?list=PLabc"
+        )
 
 
 class TestCaptions:

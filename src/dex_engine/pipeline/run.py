@@ -287,10 +287,11 @@ class _Drain:
         for path in sorted(self.ctx.instance.corpus_dir.glob("*/*.md")):
             try:
                 item = corpus.read_item(path)
-            except corpus.CorpusSchemaError as e:
-                # A nonconforming item (hand-healed file, unfinished
-                # migration repair) is judgment work: named on the report,
-                # skipped this run, never fatal to seeding.
+            except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError) as e:
+                # An unreadable item — nonconforming frontmatter, non-UTF-8
+                # bytes, a directory or broken symlink the glob matched — is
+                # judgment work: named on the report, skipped this run,
+                # never fatal to seeding.
                 rel = path.relative_to(self.ctx.instance.root)
                 detail = " ".join(str(e).removeprefix(f"{path}: ").split())
                 self.notes.append(
@@ -1107,7 +1108,13 @@ class _Drain:
         write-only-on-change rule keeps untouched items untouched.
         """
         for item_id, path in self.item_paths.items():
-            _refresh_item_frontmatter(self.ctx.instance, item_id, path)
+            detail = _refresh_item_frontmatter(self.ctx.instance, item_id, path)
+            if detail is not None:
+                self.notes.append(
+                    f"item {item_id}: an enrichment file cannot be listed in "
+                    f"frontmatter ({detail}) — rename it, then any verb refreshes "
+                    "the listing"
+                )
 
     # -- report ----------------------------------------------------------
 
@@ -1170,23 +1177,36 @@ class _Drain:
         ]
 
 
-def _refresh_item_frontmatter(instance: Instance, item_id: str, path: Path | None = None) -> None:
+def _refresh_item_frontmatter(
+    instance: Instance, item_id: str, path: Path | None = None
+) -> str | None:
     """Derive one item's ``status``/``enrichment:`` from disk; write only on change.
 
     Silent when the corpus file is gone or unreadable: a heal may outlive
     its item (excluded after capture), an unreadable item is seeding's to
-    name — and the ledger write this follows must stand either way.
+    name — and the ledger write this follows must stand either way. A
+    refresh the derived listing itself refuses — an on-disk enrichment
+    filename the corpus schema cannot hold (a hand-written name with a
+    comma, bracket, or edge whitespace) — comes back as the failure detail
+    for callers with a report to surface; quiet callers (the mark and pass
+    verbs) ignore it, and no caller ever dies on it.
     """
     if path is None:
         path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     try:
         item = corpus.read_item(path)
     except (OSError, corpus.CorpusSchemaError):
-        return
+        return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
-    updated = dataclasses.replace(item, status="enriched" if files else "raw", enrichment=files)
-    if updated != item:
-        corpus.write_item(path, updated)
+    try:
+        updated = dataclasses.replace(
+            item, status="enriched" if files else "raw", enrichment=files
+        )
+        if updated != item:
+            corpus.write_item(path, updated)
+    except (OSError, corpus.CorpusSchemaError) as e:
+        return str(e)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1679,6 +1699,7 @@ def _yaml_value(value: str | int) -> str:
     needs_quoting = (
         value != value.strip()
         or "\n" in value
+        or "\t" in value  # a tab in a plain scalar invalidates the whole block
         or value[:1] in ("-", "?", ",")
         or any(ch in value for ch in _YAML_UNSAFE)
         or value.lower() in _YAML_KEYWORDS

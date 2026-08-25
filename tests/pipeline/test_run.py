@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -213,6 +214,23 @@ class TestSeedAndDone:
         transcribe_report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
         assert "is unreadable" in " ".join(transcribe_report.split())
 
+    def test_non_utf8_corpus_file_is_skipped_and_reported_never_fatal(self, instance):
+        write_item(instance)
+        bad = instance.corpus_dir / "2026" / "2026-08-19-binary-eeeeee.md"
+        bad.write_bytes(b"---\nid: x\n---\n\xff\xfe not text")
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)  # completes — no abort
+        assert entry_for(ctx).status is Status.DONE  # the readable item enriched
+        flat = " ".join(report.split())
+        assert "corpus item corpus/2026/2026-08-19-binary-eeeeee.md is unreadable" in flat
+
+    def test_directory_matching_the_corpus_glob_is_skipped_never_fatal(self, instance):
+        write_item(instance)
+        (instance.corpus_dir / "2026" / "notes.md").mkdir()
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert "corpus item corpus/2026/notes.md is unreadable" in flat
+
     def test_escaping_media_path_parks_manual_at_seed_never_read(self, instance):
         # `media:` frontmatter is owner-editable data: an absolute path or a
         # ../ climb must park as a bad seed, not have its bytes read into
@@ -229,6 +247,18 @@ class TestSeedAndDone:
             assert entry.kind is Kind.FILE
             assert "outside the instance root" in (entry.reason or "")
         assert "outside the instance root" in report  # parked rows are printed
+
+    def test_media_path_with_nul_byte_parks_manual_and_the_run_completes(self, instance):
+        # A NUL byte cannot resolve to any path; the poisoned entry must
+        # park as a bad seed while the rest of the corpus still runs.
+        write_item(instance, media=["media/bad\x00name.pdf"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)  # completes — no abort
+        entries = ledger.load(instance.ledger_path)
+        poisoned = entries[work_hash("file:media/bad\x00name.pdf")]
+        assert poisoned.status is Status.MANUAL
+        assert poisoned.kind is Kind.FILE
+        assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
 
     def test_enrichment_frontmatter_quotes_unsafe_values(self, instance):
         write_item(instance)
@@ -292,6 +322,35 @@ class TestFrontmatterRefresh:
         before = untouched.stat().st_mtime_ns
         run_mod.run(make_ctx(instance, FakeDriver()))
         assert untouched.stat().st_mtime_ns == before
+
+    def test_unlistable_enrichment_filename_never_kills_the_run(self, instance):
+        # A session may hand-write an enrichment file whose NAME the corpus
+        # schema cannot hold; the full-corpus sweep must note it — not die
+        # corpus-wide on every verb until someone renames the file.
+        write_item(instance)
+        other = write_item(instance, "2026-08-19-other-bbb222", urls=["https://example.test/o"])
+        bad_dir = instance.enrichment_dir / ITEM
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "Notes, part 2.md").write_text("hand-written\n", encoding="utf-8")
+        report = run_mod.run(make_ctx(instance, FakeDriver()))  # completes — no abort
+        flat = " ".join(report.split())
+        assert f"item {ITEM}: an enrichment file cannot be listed" in flat
+        assert "Notes, part 2.md" in flat
+        assert "rename it" in flat
+        assert corpus.read_item(other).status == "enriched"  # the sweep went on
+
+    def test_mark_still_heals_when_the_listing_cannot_refresh(self, instance):
+        write_item(instance)
+        fetch = lambda _unit: Result(status=Status.MANUAL, meta={}, reason="paywalled")  # noqa: E731
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "web-healed.md").write_text("hand-fetched content\n", encoding="utf-8")
+        (item_dir / "[draft].md").write_text("also hand-written\n", encoding="utf-8")
+        confirmation = run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-healed.md")
+        assert confirmation.endswith("done")  # the heal landed, quietly
+        assert entry_for(ctx).status is Status.DONE
 
     def test_mark_for_an_excluded_items_unit_still_heals(self, instance):
         path = write_item(instance)
@@ -1629,9 +1688,11 @@ class TestRedetection:
 class TestYamlValue:
     # Values a YAML 1.1 reader would retype (booleans, nulls, numbers in
     # every 1.1 spelling, dates/timestamps) or that break/restructure the
-    # line (leading indicators, padding): each must survive the
-    # frontmatter round trip as the intended string.
+    # line (leading indicators, padding, interior tabs — a tab in a plain
+    # scalar invalidates the whole frontmatter block): each must survive
+    # the frontmatter round trip as the intended string.
     RETYPED = (
+        "col1\tcol2",
         "- 10 lessons",
         "? maybe",
         ", and more",
@@ -1691,6 +1752,16 @@ class TestYamlValue:
 
     def test_ints_are_emitted_bare(self):
         assert _yaml_value(42) == "42"
+
+    def test_tabbed_value_leaves_the_block_parseable_by_a_real_yaml_reader(self, tmp_path):
+        value = "col1\tcol2"
+        text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
+        record = tmp_path / "web-abc123.md"
+        record.write_text(text)
+        fields, _ = read_enrichment(record)
+        assert fields["title"] == value
+        head = text[4:].partition("\n---\n")[0]
+        assert yaml.safe_load(head)["title"] == value
 
 
 class TestMediaSniff:

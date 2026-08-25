@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.urls import base_canonical, host_of, work_hash
+from dex_engine.pipeline.urls import base_canonical, host_of, resolve_repo_path, work_hash
 
 
 class TestHostOf:
@@ -113,3 +113,17 @@ class TestWorkHash:
 
     def test_file_keys_hash_too(self):
         assert len(work_hash("file:media/2026-08-19-x-55ad7b/doc.pdf")) == 10
+
+
+class TestResolveRepoPath:
+    def test_contained_path_resolves(self, tmp_path):
+        (tmp_path / "media").mkdir()
+        assert resolve_repo_path(tmp_path, "media/doc.pdf") == tmp_path / "media" / "doc.pdf"
+
+    def test_escaping_path_is_none(self, tmp_path):
+        assert resolve_repo_path(tmp_path, "../outside.pdf") is None
+
+    def test_embedded_nul_byte_is_none_never_a_raise(self, tmp_path):
+        # Repo paths are owner-editable data; a NUL byte cannot be a path
+        # and must park like any other bad seed, not abort the caller.
+        assert resolve_repo_path(tmp_path, "media/bad\x00name.pdf") is None
