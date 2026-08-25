@@ -1063,6 +1063,37 @@ class TestMediaStage:
         run_mod.run(ctx)
         assert work_hash(self.IMG1) not in ledger.load(instance.ledger_path)
 
+    def test_media_config_none_gates_the_redrain_too(self, instance):
+        # Run 1 under `lead`: the download 503s and the media unit parks
+        # blocked, an ordinary ledgered unit now.
+        write_item(instance)
+        outage = HttpResponse(status=503, content_type="text/html", body=b"")
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=FakeTransport({self.IMG1: outage})))
+        parked = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert parked.status is Status.BLOCKED
+
+        # The owner sets `none`; the redrain must not download it — none
+        # means none on every path, and the unit rests exactly where it
+        # parked: same status, no attempts burned, nothing on disk.
+        healed = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        report = run_mod.run(
+            make_ctx(instance, driver, config=Config(media_fetch=MediaFetch.NONE), transport=healed)
+        )
+        resting = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert resting.status is Status.BLOCKED
+        assert resting.attempts == 1
+        assert ("GET", self.IMG1) not in healed.calls
+        assert not (instance.root / f"enrichment/{ITEM}/media-0.png").exists()
+        assert "media_fetch" in report
+
+        # Turned back on, the unit resumes cleanly through the redrain.
+        run_mod.run(make_ctx(instance, driver, transport=healed))
+        assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.DONE
+        assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
+
     def test_oversize_media_is_skipped_with_reason(self, instance):
         write_item(instance)
         huge = HttpResponse(

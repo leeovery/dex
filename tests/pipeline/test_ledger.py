@@ -130,9 +130,9 @@ class TestFromLine:
         assert ledger.from_line(ledger.to_line(retry)) == retry
 
     def test_the_typed_cap_round_trips_and_is_absent_without_a_fire(self):
-        marker = entry(status=Status.SKIPPED, cap=Cap.URL, reason="url cap reached")
+        marker = entry(status=Status.SKIPPED, cap=Cap.URL_REQUESTED, reason="url cap reached")
         assert "cap" not in json.loads(ledger.to_line(entry()))
-        assert json.loads(ledger.to_line(marker))["cap"] == "url"
+        assert json.loads(ledger.to_line(marker))["cap"] == "url-requested"
         assert ledger.from_line(ledger.to_line(marker)) == marker
 
     def test_parked_reason_round_trips(self):
@@ -175,6 +175,15 @@ class TestFromLine:
     def test_unknown_enum_value_is_a_schema_error(self):
         line = ledger.to_line(entry()).replace('"web"', '"gopher"')
         with pytest.raises(LedgerSchemaError, match="gopher"):
+            ledger.from_line(line)
+
+    def test_the_deleted_url_cap_spelling_is_refused_loudly(self):
+        # `cap: "url"` was written by no engine, ever — its one writer was
+        # the never-taken promotion path, deleted before anything shipped.
+        # A hand-written line carrying it must fail loudly, never parse.
+        marker = entry(status=Status.SKIPPED, cap=Cap.URL_REQUESTED, reason="url cap reached")
+        line = ledger.to_line(marker).replace('"url-requested"', '"url"')
+        with pytest.raises(LedgerSchemaError, match="'url'"):
             ledger.from_line(line)
 
     def test_invariant_violation_is_a_schema_error_not_a_valueerror_later(self):

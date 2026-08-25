@@ -300,7 +300,9 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     ``bin/dex`` (kept executable), and ``.gitattributes`` — and REMOVES any
     ``dex-*`` skill directory the template no longer ships (the ``dex-``
     namespace under ``.claude/skills`` is engine-owned; a retired skill left
-    in place would keep loading its stale procedure in sessions).
+    in place would keep loading its stale procedure in sessions). Also
+    ensures the gitignored ``cache/`` directory exists — every render
+    receipt goes through it, and a pre-existing instance never scaffolded.
     Instance-owned files (CLAUDE.md, README, content, ``.dex-engine-pin``,
     non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
     to seed a fresh instance.
@@ -314,15 +316,28 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     Returns:
         Change descriptions: paths (relative to ``root``) that were written
         because they differed, plus ``removed <path>`` entries for retired
-        skills.
+        skills and for files a synced ``dex-*`` skill no longer carries.
     """
     tpl = template if template is not None else _bundled_template()
+    # Ensured here, not only at scaffold: a migrated pre-existing instance
+    # never went through dex-new, and the per-item procedure renders every
+    # receipt through cache/receipt.json — the session's own write, which
+    # cannot create the directory for itself. Idempotent, never a reported
+    # change (gitignored ephemera, not machinery).
+    (root / "cache").mkdir(exist_ok=True)
     changed: list[str] = []
     template_skills: set[str] = set()
     for skill in (tpl / "skills").iterdir():
         if skill.is_dir():
             template_skills.add(skill.name)
-            _copy_tree(root, skill, root / ".claude" / "skills" / skill.name, changed)
+            dest = root / ".claude" / "skills" / skill.name
+            _copy_tree(root, skill, dest, changed)
+            if skill.name.startswith("dex-"):
+                # The synced skill mirrors the template exactly: a file the
+                # template dropped would otherwise keep loading its stale
+                # procedure in every session, forever. Only the dex-*
+                # directories sync owns are pruned.
+                _prune_tree(root, skill, dest, changed)
     _remove_retired_skills(root, template_skills, changed)
     _write_if_changed(
         root,
@@ -341,6 +356,28 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         changed,
     )
     return changed
+
+
+def _prune_tree(root: Path, src_dir: Traversable, dest_dir: Path, changed: list[str]) -> None:
+    """Remove whatever ``dest_dir`` holds that ``src_dir`` no longer carries.
+
+    Called only inside ``dex-*`` skill directories, which are engine-owned
+    whole — nothing instance-owned can live in one. A symlink is unlinked
+    rather than followed, so whatever it pointed at is left alone.
+    """
+    if not dest_dir.is_dir():
+        return
+    keep = {item.name for item in src_dir.iterdir()}
+    subdirs = {item.name for item in src_dir.iterdir() if item.is_dir()}
+    for existing in sorted(dest_dir.iterdir()):
+        if existing.name not in keep:
+            if existing.is_dir() and not existing.is_symlink():
+                shutil.rmtree(existing)
+            else:
+                existing.unlink()
+            changed.append(f"removed {existing.relative_to(root)} (retired skill file)")
+        elif existing.name in subdirs and existing.is_dir() and not existing.is_symlink():
+            _prune_tree(root, src_dir / existing.name, existing, changed)
 
 
 def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[str]) -> None:
@@ -465,9 +502,23 @@ def _report_payload(
         payload["pin"] = pin
         if previous is not None and previous != pin:
             payload["previous"] = previous
+            if _is_major_bump(previous, pin):
+                payload["major"] = True
     if notes:
         payload["notes"] = notes
     return payload
+
+
+def _is_major_bump(previous: str, pin: str) -> bool:
+    """Whether the pin transition crossed a major version.
+
+    ``--previous-pin`` arrives from argv, so an unparseable value reads as
+    not-major rather than failing the report the re-exec exists to render.
+    """
+    try:
+        return parse_version(pin)[0] > parse_version(previous)[0]
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------

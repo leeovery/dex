@@ -807,7 +807,7 @@ class TestLedgerTranslation:
             item="2026-05-01-item-a1b2c3",
             kind=Kind.WEB,
             status=Status.SKIPPED,
-            cap=Cap.URL,
+            cap=Cap.URL_REQUESTED,
             reason="url cap (12 per item) reached",
             engine="0.4.0",
             date=datetime.date(2026, 8, 1),
@@ -819,7 +819,28 @@ class TestLedgerTranslation:
         assert path.read_text() == original
         assert report.skipped == []
         assert not any("dropped" in action for action in report.actions)
-        assert ledger.load(path)["6666666666"].cap is Cap.URL
+        assert ledger.load(path)["6666666666"].cap is Cap.URL_REQUESTED
+
+    def test_the_deleted_url_cap_spelling_is_dropped_and_named(self, tmp_path, migration):
+        # `cap: "url"` was written by no engine, ever — its one writer was
+        # the never-taken promotion path, deleted before anything shipped —
+        # so a line carrying it can only be hand-written. It fails loudly
+        # in the report rather than silently passing a re-apply.
+        record = {
+            "hash": "8888888888",
+            "url": "https://a.test/capped",
+            "item": "2026-05-01-item-a1b2c3",
+            "kind": "web",
+            "status": "skipped",
+            "cap": "url",
+            "reason": "url cap (12 per item) reached",
+            "engine": "0.4.0",
+            "date": "2026-08-01",
+        }
+        path = write_ledger(tmp_path, [record])
+        report = migration.apply(tmp_path)
+        assert any("'url'" in a for a in report.actions if "ledger dropped" in a)
+        assert ledger.load(path) == {}
 
     def test_current_schema_write_timestamp_survives_a_re_apply(self, tmp_path, migration):
         # Same re-apply exposure as `cap`: a key missing from the

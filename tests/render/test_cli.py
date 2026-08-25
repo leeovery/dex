@@ -30,7 +30,7 @@ class TestRenderFile:
             tmp_path,
             {"surface": "ingest-receipt", "payload": {"item": "2026-08-18-note-a1b2c3"}},
         )
-        assert render_file(Path(path)) == "## Ingested 2026-08-18-note-a1b2c3\n"
+        assert render_file(Path(path)) == "## Ingested 2026-08-18-note-a1b2c3 — no units fetched\n"
 
     def test_bad_json_is_loud(self, tmp_path):
         with pytest.raises(ValueError, match="invalid JSON"):
@@ -52,7 +52,7 @@ class TestMain:
             {"surface": "ingest-receipt", "payload": {"item": "2026-08-18-note-a1b2c3"}},
         )
         main(["--file", path])
-        assert capsys.readouterr().out == "## Ingested 2026-08-18-note-a1b2c3\n"
+        assert capsys.readouterr().out == "## Ingested 2026-08-18-note-a1b2c3 — no units fetched\n"
 
     def test_nonconforming_payload_exits_cleanly(self, tmp_path):
         path = write_payload(tmp_path, {"surface": "ingest-receipt", "payload": {}})

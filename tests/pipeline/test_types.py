@@ -254,12 +254,12 @@ class TestLedgerEntryInvariants:
         assert retry.needs is Need.TRANSCRIBE
 
     def test_the_cap_marker_is_skipped_only(self):
-        marker = entry(status=Status.SKIPPED, cap=Cap.URL, reason="url cap reached")
-        assert marker.cap is Cap.URL
+        marker = entry(status=Status.SKIPPED, cap=Cap.URL_REQUESTED, reason="url cap reached")
+        assert marker.cap is Cap.URL_REQUESTED
         with pytest.raises(ValueError, match="skipped-only"):
-            entry(status=Status.QUEUED, cap=Cap.URL)
+            entry(status=Status.QUEUED, cap=Cap.URL_REQUESTED)
         with pytest.raises(ValueError, match="skipped-only"):
-            entry(status=Status.DONE, cap=Cap.URL)
+            entry(status=Status.DONE, cap=Cap.URL_REQUESTED)
 
     def test_blocked_requires_attempts_of_at_least_one(self):
         with pytest.raises(ValueError, match="attempts"):

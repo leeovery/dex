@@ -259,6 +259,16 @@ class TestSteadyStateAndEdges:
         channel, _ = make_channel(listing_for("v0.1.2"))
         report, _ = run(inst, channel, template, previous_pin="v0.1.0")
         assert "## Sync — pin bumped v0.1.0 → v0.1.2" in report
+        assert "MAJOR" not in report
+
+    def test_previous_pin_across_a_major_announces_loudly_in_the_report(self, inst, template):
+        # The pre-exec echo dies with the process that execvp'd away; the
+        # post-re-exec report is where the major reaches the owner.
+        write_pin(inst.root, "v1.0.0")
+        channel, _ = make_channel(listing_for("v1.0.0"))
+        report, _ = run(inst, channel, template, previous_pin="v0.9.3")
+        assert "## Sync — MAJOR upgrade v0.9.3 → v1.0.0" in report
+        assert "MAJOR ENGINE UPGRADE" in report
 
 
 class TestMigrationsInTheFlow:
@@ -308,6 +318,16 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert sync(inst.root, template=template) == []
 
+    def test_sync_ensures_the_cache_directory_exists(self, inst, template):
+        # A migrated pre-existing instance never went through the scaffold
+        # that creates `cache/`, and the per-item procedure renders every
+        # receipt through cache/receipt.json — sync makes §4's claim true.
+        assert not (inst.root / "cache").exists()
+        sync(inst.root, template=template)
+        assert (inst.root / "cache").is_dir()
+        # Idempotent, harmless on every run — and never a reported change.
+        assert sync(inst.root, template=template) == []
+
     def test_retired_engine_skills_are_removed(self, inst, template):
         retired = inst.root / ".claude" / "skills" / "dex-ingest"
         retired.mkdir(parents=True)
@@ -328,12 +348,46 @@ class TestTemplateSync:
         assert (target / "SKILL.md").exists()  # the link's target is untouched
         assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
 
+    def test_retired_files_inside_a_live_skill_are_removed(self, inst, template):
+        # Copy-only sync left a reference file the template dropped loading
+        # its stale procedure in every session, forever. A synced dex-*
+        # skill mirrors the template exactly.
+        sync(inst.root, template=template)
+        stale = inst.root / ".claude" / "skills" / "dex-run" / "references" / "old-procedure.md"
+        stale.write_text("stale procedure\n")
+        changed = sync(inst.root, template=template)
+        assert not stale.exists()
+        assert (
+            "removed .claude/skills/dex-run/references/old-procedure.md (retired skill file)"
+            in changed
+        )
+        # The template's own files are untouched by the pruning.
+        assert (stale.parent / "ingest-item.md").read_text() == "reference\n"
+
+    def test_a_retired_directory_inside_a_live_skill_is_removed_whole(self, inst, template):
+        sync(inst.root, template=template)
+        retired = inst.root / ".claude" / "skills" / "dex-run" / "old-references"
+        retired.mkdir()
+        (retired / "stale.md").write_text("stale\n")
+        changed = sync(inst.root, template=template)
+        assert not retired.exists()
+        assert "removed .claude/skills/dex-run/old-references (retired skill file)" in changed
+
     def test_non_engine_skills_are_never_touched(self, inst, template):
         theirs = inst.root / ".claude" / "skills" / "my-own-skill"
         theirs.mkdir(parents=True)
         (theirs / "SKILL.md").write_text("instance-owned\n")
         sync(inst.root, template=template)
         assert (theirs / "SKILL.md").read_text() == "instance-owned\n"
+
+    def test_a_non_dex_sibling_directory_is_never_pruned(self, inst, template):
+        # The mirror binds only the dex-* directories sync owns: a file the
+        # template never shipped survives inside an instance-owned skill.
+        theirs = inst.root / ".claude" / "skills" / "my-own-skill" / "notes"
+        theirs.mkdir(parents=True)
+        (theirs / "extra.md").write_text("instance-owned\n")
+        sync(inst.root, template=template)
+        assert (theirs / "extra.md").read_text() == "instance-owned\n"
 
     def test_removals_render_on_the_sync_report(self, inst, template):
         retired = inst.root / ".claude" / "skills" / "dex-ingest"

@@ -176,7 +176,7 @@ a malformed record impossible:
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `cap` marks a skip that records
   cap-refused work, not an admitted unit, and names the bound that refused
-  it (`depth`, `url`, or `url-requested` for a URL you asked for yourself
+  it (`depth`, or `url-requested` for a URL you asked for yourself
   and were refused without `--force`). Heals and manual resolutions:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every

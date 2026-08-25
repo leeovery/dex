@@ -108,7 +108,6 @@ MAX_URLS_PER_ITEM = 12
 # reader takes its wording from here, so one bound can never read as two.
 CAP_BOUNDS: dict[Cap, str] = {
     Cap.DEPTH: f"depth cap ({MAX_DEPTH})",
-    Cap.URL: f"url cap ({MAX_URLS_PER_ITEM} per item)",
     Cap.URL_REQUESTED: f"url cap ({MAX_URLS_PER_ITEM} per item)",
 }
 
@@ -393,6 +392,9 @@ class _Drain:
     transcribe_budget: int | None = TRANSCRIBE_RUN_CAP
     transcribed: int = 0
     deferred_transcriptions: int = 0
+    # Ledgered media units left resting because `media_fetch` is `none` —
+    # noted once, like the transcription deferral.
+    deferred_media: int = 0
 
     def __post_init__(self) -> None:
         self.entries = ledger.load(self.ctx.instance.ledger_path)
@@ -752,10 +754,22 @@ class _Drain:
         self.notes.append(note)
 
     def _process(self, entry: LedgerEntry) -> bool:
-        """Process one unit; False means a cap-deferred no-op (nothing spent)."""
+        """Process one unit; False means a deferred no-op (nothing spent)."""
         # The ONE via-routed dispatch: the media stage gives blocked downloads
         # normal retry rules, and via is the only mark they carry.
         media_job = entry.via == "media"
+        if media_job and self.ctx.config.media_fetch is MediaFetch.NONE:
+            # `none` means none on every path, the redrain included. The
+            # unit rests exactly where it parked — same status, no attempts
+            # burned — like a waiting unit under an absent provider, and
+            # drains again when the owner turns media back on.
+            if not self.deferred_media:
+                self.notes.append(
+                    "media_fetch is `none` — parked media downloads stay parked "
+                    "until it is turned back on"
+                )
+            self.deferred_media += 1
+            return False
         transcribe_job = not media_job and _is_transcribe_job(entry)
         if transcribe_job and not self._transcribe_slot():
             return False  # stays waiting untouched; the deferral is noted once

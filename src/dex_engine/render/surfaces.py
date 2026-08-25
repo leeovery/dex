@@ -225,7 +225,8 @@ def _agree(count: int, singular: str, plural_form: str) -> str:
 def _note_section(title: str, notes: list[str]) -> list[str]:
     if not notes:
         return []
-    return ["", kernel.heading(title, level=3), "", *(kernel.bullet(note) for note in notes)]
+    scaled = f"{title} — {kernel.plural(len(notes), 'note')}"
+    return ["", kernel.heading(scaled, level=3), "", *(kernel.bullet(note) for note in notes)]
 
 
 def _parked_rows(
@@ -764,6 +765,9 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
                                       #   unpinned pre-first-release mode)
           "previous": str,            # optional: prior pin (absent = no bump;
                                       #   requires pin)
+          "major": bool,              # optional: the bump crossed a major —
+                                      #   an owner-visible event, announced
+                                      #   distinctly (requires previous)
           "migrations": [             # applied this sync, may be empty
             {"number": int, "intent": str,
              "actions": [str],                     # optional
@@ -782,23 +786,46 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "notes"}),
+        optional=frozenset({"pin", "previous", "major", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
     if previous is not None and pin is None:
         _fail(surface, "previous requires pin — a bump lands on a pinned tag")
+    major = payload.get("major", False)
+    if not isinstance(major, bool):
+        _fail(surface, f"major must be a boolean, got {major!r}")
+    if major and previous is None:
+        _fail(surface, "major requires a pin transition — previous and pin")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
     machinery_changes = _int_at(surface, payload, "machinery_changes")
     notes = _str_list_at(surface, payload, "notes")
 
     if pin is None:
         head = "Sync — engine unpinned (no release pinned; see notes)"
+    elif major:
+        head = f"Sync — MAJOR upgrade {previous} → {pin}"
     elif previous is not None and previous != pin:
         head = f"Sync — pin bumped {previous} → {pin}"
     else:
         head = f"Sync — engine pinned at {pin}"
-    blocks = [kernel.heading(head), ""]
+    scale = kernel.inline(
+        [
+            kernel.plural(len(migrations), "migration"),
+            kernel.plural(machinery_changes, "machinery change"),
+        ]
+    )
+    blocks = [kernel.heading(f"{head} — {scale}"), ""]
+    if major:
+        # A major is an owner-visible event, not a row: the loud line sits
+        # above everything else the report has to say.
+        blocks += [
+            (
+                f"{kernel.bold('MAJOR ENGINE UPGRADE')} — {previous} → {pin} auto-applied "
+                "(the always-migratable commitment); review this report closely."
+            ),
+            "",
+        ]
     if migrations:
         blocks += [kernel.heading(f"Migrations applied — {len(migrations)}", level=3), ""]
         blocks += [
@@ -899,7 +926,15 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
     pages = _str_list_at(surface, payload, "pages")
     notes = _str_list_at(surface, payload, "notes")
 
-    blocks = [kernel.heading(f"Ingested {item}")]
+    if fetched or parked:
+        scale = f"{kernel.plural(fetched, 'unit')} fetched"
+        if parked:
+            scale += f", {parked} outstanding"
+    else:
+        # A no-source capture (note-only, image-only) has no number to
+        # give, and the heading says so out loud.
+        scale = "no units fetched"
+    blocks = [kernel.heading(f"Ingested {item} — {scale}")]
     if title:
         blocks += ["", title]
     counts = [
@@ -976,6 +1011,12 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     Payload::
 
         {
+          # EITHER the pre-taxonomy shape, travelling alone — the two
+          # states before state/taxonomy.json exists, when no other check
+          # has run and a full payload would claim checks that never did:
+          "pre_taxonomy": {"stranded": [str]},   # [] = fresh instance;
+                                                 # ids = broken mid-ingest
+          # OR the full shape:
           "summary": {"corpus_items": int, "pages": int, "cited": int},
           # wiki checks — each optional, absent = not applicable
           "broken_links": [{"page": str, "target": str}],
@@ -1013,6 +1054,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         }
     """
     surface = "health-report"
+    if "pre_taxonomy" in payload:
+        return _health_pre_taxonomy(surface, payload)
     _check_keys(surface, payload, required=frozenset({"summary"}), optional=_HEALTH_OPTIONAL)
     summary = payload["summary"]
     if not isinstance(summary, Mapping):
@@ -1025,8 +1068,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     )
     scale = kernel.inline(
         [
-            f"{_int_at(surface, summary, 'corpus_items', 'summary.')} corpus items",
-            f"{_int_at(surface, summary, 'pages', 'summary.')} pages",
+            kernel.plural(_int_at(surface, summary, "corpus_items", "summary."), "corpus item"),
+            kernel.plural(_int_at(surface, summary, "pages", "summary."), "page"),
             f"{_int_at(surface, summary, 'cited', 'summary.')} cited",
         ]
     )
@@ -1036,9 +1079,45 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     blocks += _health_digests(surface, payload)
     reconciled = _str_list_at(surface, payload, "reconciled")
     if reconciled:
-        blocks += ["", kernel.heading("Reconciled by `--write`", level=3), ""]
+        scaled = f"Reconciled by `--write` — {kernel.plural(len(reconciled), 'repair')}"
+        blocks += ["", kernel.heading(scaled, level=3), ""]
         blocks += [kernel.bullet(line) for line in reconciled]
     blocks += _note_section("Notes", _str_list_at(surface, payload, "notes"))
+    return kernel.document(blocks)
+
+
+def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
+    """The two states before a taxonomy exists: fresh instance, broken mid-ingest.
+
+    The key travels alone — no check beyond the corpus glob has run, and a
+    full payload beside it would render checks that never did. The heading
+    still names the scale it has in hand: the corpus item count.
+    """
+    _check_keys(surface, payload, required=frozenset({"pre_taxonomy"}))
+    inner = payload["pre_taxonomy"]
+    if not isinstance(inner, Mapping):
+        _fail(surface, f"pre_taxonomy must be an object, got {type(inner).__name__}")
+    _check_keys(surface, inner, required=frozenset({"stranded"}), where="pre_taxonomy.")
+    stranded = _str_list_at(surface, inner, "stranded", "pre_taxonomy.")
+    if not stranded:
+        return kernel.document(
+            [
+                kernel.heading("Health check — fresh instance, 0 corpus items"),
+                "",
+                "No `state/taxonomy.json` yet — nothing to lint.",
+            ]
+        )
+    scale = kernel.plural(len(stranded), "corpus item")
+    blocks = [
+        kernel.heading(f"Health check — broken mid-ingest, {scale}"),
+        "",
+        kernel.bullet(
+            f"{kernel.bold('BROKEN MID-INGEST')} — {scale} but no "
+            "`state/taxonomy.json`; placement never ran"
+        ),
+    ]
+    blocks += [kernel.bullet(kernel.bold(item), depth=1) for item in stranded[:_HEALTH_LIST_CAP]]
+    blocks += _health_elided(len(stranded))
     return kernel.document(blocks)
 
 
@@ -1252,15 +1331,12 @@ def _health_cap_fires(surface: str, payload: Mapping[str, object]) -> list[str]:
         ),
     ]
     offenders = sorted(per_item.items(), key=lambda pair: (-pair[1], pair[0]))
-    lines.append(
-        kernel.bullet(
-            "most often: "
-            + kernel.inline(
-                f"{kernel.bold(item)} {count}" for item, count in offenders[:_HEALTH_OFFENDERS]
-            ),
-            depth=1,
-        )
-    )
+    named = [f"{kernel.bold(item)} {count}" for item, count in offenders[:_HEALTH_OFFENDERS]]
+    if len(offenders) > _HEALTH_OFFENDERS:
+        # A capped listing says it is capped — a silently short list lies
+        # about scale.
+        named.append(f"… and {len(offenders) - _HEALTH_OFFENDERS} more items, not listed")
+    lines.append(kernel.bullet("most often: " + kernel.inline(named), depth=1))
     for row in rows[:_HEALTH_LIST_CAP]:
         lines.append(kernel.bullet(kernel.bold(str(row["item"])), depth=1))
         lines.append(kernel.detail(str(row["url"]), depth=1))

@@ -82,14 +82,25 @@ class TestPreTaxonomy:
     def test_fresh_instance_is_clean(self, instance):
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "fresh instance" in outcome.report
+        # Rendered through the health-report surface, never hand-drawn:
+        # the heading opens the report and names its scale.
+        assert outcome.report.startswith("## Health check — fresh instance, 0 corpus items\n")
+        assert "nothing to lint" in outcome.report
 
     def test_stranded_corpus_without_taxonomy_is_broken_mid_ingest(self, instance):
         write_corpus_stub(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert "broken mid-ingest" in outcome.report
-        assert ITEM in outcome.report
+        assert outcome.report.startswith("## Health check — broken mid-ingest, 1 corpus item\n")
+        assert "BROKEN MID-INGEST" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+
+    def test_a_long_stranded_listing_says_it_is_capped(self, instance):
+        for day in range(1, 26):
+            write_corpus_stub(instance, f"2026-01-{day:02d}-stranded-{day:06d}")
+        outcome = lint(instance)
+        assert "broken mid-ingest, 25 corpus items" in outcome.report
+        assert "… and 5 more, not listed" in outcome.report
 
 
 class TestMalformedTaxonomy:
@@ -139,7 +150,7 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "1 corpus items · 1 pages · 1 cited" in outcome.report
+        assert "1 corpus item · 1 page · 1 cited" in outcome.report
         assert "broken wikilinks — none" in outcome.report
 
     def test_broken_vs_reserved_wikilinks(self, instance):
@@ -759,7 +770,7 @@ def capped_entry(
 
 
 DEPTH_CAP = CAP_BOUNDS[Cap.DEPTH]
-URL_CAP = CAP_BOUNDS[Cap.URL]
+URL_CAP = CAP_BOUNDS[Cap.URL_REQUESTED]
 
 
 def _cap_fire_block(report: str) -> str:
@@ -787,7 +798,8 @@ class TestCapFires:
     def test_fires_are_counted_by_bound_and_by_item(self, instance):
         self._bare_wiki(instance)
         other = "2026-08-19-other-bbbbbb"
-        for i, (item, cap) in enumerate([(ITEM, Cap.DEPTH), (ITEM, Cap.URL), (other, Cap.URL)]):
+        fires = [(ITEM, Cap.DEPTH), (ITEM, Cap.URL_REQUESTED), (other, Cap.URL_REQUESTED)]
+        for i, (item, cap) in enumerate(fires):
             ledger.append(
                 instance.ledger_path,
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
@@ -800,15 +812,16 @@ class TestCapFires:
         assert f"most often: **{ITEM}** 2 · **{other}** 1" in outcome.report
         assert "↳ https://example.test/0" in outcome.report
 
-    def test_one_bound_reads_as_one_bound(self, instance):
-        # The engine spells the URL bound two ways — the second is what an
-        # `enrich fetch` refusal writes. One bound, one row.
+    def test_the_bound_is_read_off_its_wording_not_the_marker_spelling(self, instance):
+        # The URL bound's marker is spelled `url-requested` (what an
+        # `enrich fetch` refusal writes), but the reading aggregates on the
+        # bound's one wording — the marker spelling never leaks as a bound
+        # of its own.
         self._bare_wiki(instance)
         other = "2026-08-19-other-bbbbbb"
         fires = [
             (ITEM, Cap.DEPTH),
-            (ITEM, Cap.URL),
-            (other, Cap.URL),
+            (ITEM, Cap.URL_REQUESTED),
             (other, Cap.URL_REQUESTED),
         ]
         for i, (item, cap) in enumerate(fires):
@@ -817,8 +830,9 @@ class TestCapFires:
                 capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
             )
         flat = " ".join(lint(instance).report.split())
-        assert "re-entry cap fires (tuning signal, not an alarm) — **4** across 2 items" in flat
-        assert "by bound: `depth cap (4)` 1 · `url cap (12 per item)` 3" in flat
+        assert "re-entry cap fires (tuning signal, not an alarm) — **3** across 2 items" in flat
+        assert "by bound: `depth cap (4)` 1 · `url cap (12 per item)` 2" in flat
+        assert "url-requested" not in flat
 
     def test_a_refusal_that_stood_is_read_whoever_asked_for_the_url(self, instance):
         # Every promotion is a URL a session named, so "who typed it"
@@ -858,7 +872,9 @@ class TestCapFires:
         for i, item in enumerate((old_item, new_item)):
             ledger.append(
                 instance.ledger_path,
-                capped_entry(f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i}"),
+                capped_entry(
+                    f"{i:010x}", item=item, cap=Cap.URL_REQUESTED, url=f"https://example.test/{i}"
+                ),
             )
         # The counts above the listing are ordered their own way, and bare ids
         # also appear under the ghost-item listing, so the ordering is read
@@ -878,7 +894,10 @@ class TestCapFires:
             ledger.append(
                 instance.ledger_path,
                 capped_entry(
-                    f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i:02d}"
+                    f"{i:010x}",
+                    item=item,
+                    cap=Cap.URL_REQUESTED,
+                    url=f"https://example.test/{i:02d}",
                 ),
             )
         report = lint(instance).report
@@ -894,7 +913,7 @@ class TestCapFires:
         self._bare_wiki(instance)
         ledger.append(
             instance.ledger_path,
-            capped_entry("73bd784849", cap=Cap.URL, url="https://example.test/refused"),
+            capped_entry("73bd784849", cap=Cap.URL_REQUESTED, url="https://example.test/refused"),
         )
         assert lint(instance).exit_code == 0
 
