@@ -14,6 +14,7 @@ injected clock and engine version.
 import dataclasses
 import datetime
 import json
+import re
 import time
 import urllib.parse
 from collections import deque
@@ -179,6 +180,27 @@ def head_sniffer(transport: Transport) -> Sniff:
     return sniff
 
 
+# Leading bytes cover every signature ``sniff_format`` checks (its longest
+# magic number is 5 bytes; anydoc reads container signatures from the
+# head). The one exception is a ZIP container, whose package identity
+# lives in the central directory at the END of the file — only that magic
+# warrants reading the whole file. Everything else (images, video, audio —
+# most of media/, and LFS-scale) sniffs from the prefix alone.
+_SNIFF_PREFIX_BYTES = 4096
+_ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _sniff_bytes(path: Path) -> bytes:
+    """The bytes format detection needs from ``path`` — bounded, not the file."""
+    if not path.is_file():
+        return b""
+    with path.open("rb") as f:
+        prefix = f.read(_SNIFF_PREFIX_BYTES)
+    if prefix.startswith(_ZIP_MAGIC) and len(prefix) == _SNIFF_PREFIX_BYTES:
+        return path.read_bytes()
+    return prefix
+
+
 def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
     """Whether a run picks ``entry`` up — the drain predicate, total.
 
@@ -331,8 +353,7 @@ class _Drain:
                 count=True,
             )
             return
-        data = file_path.read_bytes() if file_path.is_file() else b""
-        fmt = sniff_format(data, name=repo_path.rsplit("/", 1)[-1])
+        fmt = sniff_format(_sniff_bytes(file_path), name=repo_path.rsplit("/", 1)[-1])
         if fmt is None:
             return
         self.record(
@@ -421,11 +442,12 @@ class _Drain:
             entry = self.entries[self.queue.popleft()]
             if not is_drainable(entry, self.ctx):
                 continue  # superseded while queued
+            if not self._process(entry):
+                continue  # cap-deferred, untouched — a no-op must not spend the limit
             processed += 1
             if only is None and entry.rerun and entry.hash not in self.rerun_counted:
                 self.rerun_counted.add(entry.hash)
                 self.rerun_drained += 1
-            self._process(entry)
         self._note_rerun_cohort()
         self._refresh_items()
 
@@ -438,15 +460,16 @@ class _Drain:
             note += f"; {remainder} queue for the next run"
         self.notes.append(note)
 
-    def _process(self, entry: LedgerEntry) -> None:
+    def _process(self, entry: LedgerEntry) -> bool:
+        """Process one unit; False means a cap-deferred no-op (nothing spent)."""
         if entry.via == "media":
             # The ONE via-routed dispatch: the media stage gives blocked downloads
             # normal retry rules, and via is the only mark they carry.
             self._download_media(entry, prior=entry)
-            return
+            return True
         transcribe_job = _is_transcribe_job(entry)
         if transcribe_job and not self._transcribe_slot():
-            return  # stays waiting untouched; the deferral is noted once
+            return False  # stays waiting untouched; the deferral is noted once
         try:
             # The try spans ALL per-unit processing:
             # fetch/transcribe, output write, media stage, children
@@ -465,6 +488,7 @@ class _Drain:
                     unit_hash=entry.hash, kind=entry.kind, unit_format=entry.format, exc=e
                 )
             )
+        return True
 
     def _drive_unit(self, entry: LedgerEntry) -> None:
         driver = driver_for(entry.kind, self.ctx.drivers)
@@ -553,11 +577,19 @@ class _Drain:
         meta = dict(acquired.meta)
         meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
-        body = (
-            youtube_body(acquired.prefix, transcript)
-            if entry.kind is Kind.YOUTUBE
-            else podcast_body(acquired.prefix, transcript)
-        )
+        # Total over the transcribable kinds, mirroring _acquire_audio — a
+        # kind added to acquisition alone must fail loudly here, never
+        # silently take the podcast body.
+        match entry.kind:
+            case Kind.YOUTUBE:
+                body = youtube_body(acquired.prefix, transcript)
+            case Kind.PODCAST:
+                body = podcast_body(acquired.prefix, transcript)
+            case _:
+                raise RuntimeError(
+                    f"no transcript body for kind '{entry.kind}' — _acquire_audio "
+                    "and the body dispatch must cover the same kinds"
+                )
         result = Result(status=Status.DONE, meta=meta, body=body)
         path = self._write_output(entry, result)
         title = meta.get("title")
@@ -1609,6 +1641,30 @@ def compact(ctx: RunContext) -> str:
 
 _YAML_UNSAFE = ":#[]{}&*!|>%@`\"'"
 
+# Values a YAML 1.1 reader (Obsidian's among them) would retype away from
+# the intended string: boolean/null words, int/float lookalikes in every
+# 1.1 spelling (sign, underscores, hex/octal/binary, exponent, .inf/.nan),
+# and date/timestamp lookalikes. Leading `-`/`?`/`,` are indicator
+# characters that make the line invalid or restructure it. All are
+# emitted JSON-quoted.
+_YAML_KEYWORDS = frozenset({"true", "false", "yes", "no", "on", "off", "null", "~"})
+_YAML_NUMBER_RE = re.compile(
+    r"[-+]?(?:\.inf|\.nan|0x[0-9a-f_]+|0b[01_]+|0o?[0-7_]+"
+    r"|[0-9][0-9_]*(?:\.[0-9_]*)?(?:e[-+]?[0-9]+)?"
+    r"|\.[0-9][0-9_]*(?:e[-+]?[0-9]+)?)",
+    re.IGNORECASE,
+)
+# The 1.1 timestamp resolver's shape, mirrored: a bare YYYY-MM-DD retypes
+# to a date and a full timestamp to a datetime — and a shape-matching but
+# calendar-invalid value (2026-08-99) makes those readers RAISE, so the
+# match is on shape alone, never calendar validity.
+_YAML_TIMESTAMP_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}"
+    r"(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?"
+    r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?"
+)
+
 
 def _render_enrichment(
     url: str, fetched: datetime.date, meta: dict[str, str | int | None], body: str
@@ -1626,7 +1682,13 @@ def _yaml_value(value: str | int) -> str:
     if isinstance(value, int):
         return str(value)
     needs_quoting = (
-        value != value.strip() or "\n" in value or any(ch in value for ch in _YAML_UNSAFE)
+        value != value.strip()
+        or "\n" in value
+        or value[:1] in ("-", "?", ",")
+        or any(ch in value for ch in _YAML_UNSAFE)
+        or value.lower() in _YAML_KEYWORDS
+        or _YAML_NUMBER_RE.fullmatch(value) is not None
+        or _YAML_TIMESTAMP_RE.fullmatch(value) is not None
     )
     return json.dumps(value, ensure_ascii=False) if needs_quoting else value
 

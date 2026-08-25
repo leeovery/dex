@@ -2,8 +2,10 @@
 
 import dataclasses
 import datetime
+import io
 import json
 import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -19,18 +21,24 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError
 from dex_engine.pipeline.run import (
+    _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
     MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     RunContext,
+    _render_enrichment,
+    _sniff_bytes,
+    _yaml_value,
     is_drainable,
     no_providers,
 )
+from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
     Child,
     Config,
+    Format,
     Instance,
     Kind,
     LedgerEntry,
@@ -1581,3 +1589,123 @@ class TestRedetection:
         # The next run drains the corrected unit.
         run_mod.run(make_ctx(instance, FakeDriver(), drivers=self._drivers(instance, transport)))
         assert entry_for(ctx, self.PDF_URL).status is Status.DONE
+
+
+class TestYamlValue:
+    # Values a YAML 1.1 reader would retype (booleans, nulls, numbers in
+    # every 1.1 spelling, dates/timestamps) or that break/restructure the
+    # line (leading indicators, padding): each must survive the
+    # frontmatter round trip as the intended string.
+    RETYPED = (
+        "- 10 lessons",
+        "? maybe",
+        ", and more",
+        "yes",
+        "No",
+        "TRUE",
+        "false",
+        "on",
+        "Off",
+        "null",
+        "~",
+        "42",
+        "-42",
+        "+42",
+        "3.14",
+        ".5",
+        "1e5",
+        "1_000",
+        "0x1A",
+        "0o17",
+        "0b101",
+        "05",
+        ".inf",
+        "-.Inf",
+        ".NaN",
+        "20260810",
+        "2026-08-21",
+        "2026-08-99",  # shape-matching but calendar-invalid: 1.1 readers RAISE on it bare
+        "2026-8-21T10:00:00",
+        "2026-08-21 10:00:00",
+        "2001-12-14 21:59:43.10 -5",
+        " padded ",
+    )
+
+    def test_retyping_and_indicator_values_round_trip(self, tmp_path):
+        for value in self.RETYPED:
+            text = _render_enrichment("https://example.test/post", TODAY, {"title": value}, "body")
+            record = tmp_path / "web-abc123.md"
+            record.write_text(text)
+            fields, _ = read_enrichment(record)
+            assert fields["title"] == value, value
+
+    def test_retyping_shapes_are_emitted_quoted(self):
+        for value in self.RETYPED:
+            assert _yaml_value(value) == json.dumps(value, ensure_ascii=False), value
+
+    def test_plain_prose_stays_unquoted(self):
+        for value in ("Ledgers at Scale", "10 lessons from prod", "a-b (c)", "v1.2 notes"):
+            assert _yaml_value(value) == value
+
+    def test_timestamp_near_misses_stay_bare(self):
+        # Colon-free shapes the 1.1 timestamp resolver rejects — these
+        # load as strings already, so they need no quotes. (Anything with
+        # a time part carries ':' and is quoted by the unsafe-char rule.)
+        for value in ("2026-8-15", "2026-08", "21-08-2026"):
+            assert _yaml_value(value) == value
+
+    def test_ints_are_emitted_bare(self):
+        assert _yaml_value(42) == "42"
+
+
+class TestMediaSniff:
+    def docx_bytes(self, padding: int = 20_000) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", "x" * padding)
+        return buf.getvalue()
+
+    def test_sniff_bytes_is_bounded_for_non_zip_files(self, tmp_path):
+        clip = tmp_path / "clip.mp4"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100_000)
+        assert len(_sniff_bytes(clip)) == _SNIFF_PREFIX_BYTES
+
+    def test_zip_containers_read_fully_for_their_package_identity(self, tmp_path):
+        # A ZIP's package identity lives in the central directory at the
+        # END of the file — a prefix would misdetect every large OOXML/ODF.
+        data = self.docx_bytes()
+        assert len(data) > _SNIFF_PREFIX_BYTES
+        doc = tmp_path / "big.docx"
+        doc.write_bytes(data)
+        assert _sniff_bytes(doc) == data
+
+    def test_small_and_missing_files_read_as_before(self, tmp_path):
+        small = tmp_path / "pointer.pdf"
+        small.write_bytes(b"%PDF-1.7 tiny")
+        assert _sniff_bytes(small) == b"%PDF-1.7 tiny"
+        assert _sniff_bytes(tmp_path / "absent.pdf") == b""
+
+    def test_seeding_outcomes_identical_for_large_files(self, instance):
+        media_dir = instance.root / "media" / "aaa111"
+        media_dir.mkdir(parents=True)
+        (media_dir / "paper.pdf").write_bytes(b"%PDF-1.7 " + b"x" * 50_000)
+        (media_dir / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 50_000)
+        (media_dir / "big.docx").write_bytes(self.docx_bytes())
+        write_item(
+            instance,
+            urls=[],
+            media=[
+                "media/aaa111/paper.pdf",
+                "media/aaa111/clip.mp4",
+                "media/aaa111/big.docx",
+            ],
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash("file:media/aaa111/paper.pdf")].format is Format.PDF
+        assert entries[work_hash("file:media/aaa111/big.docx")].format is Format.DOCX
+        # Images/video still never become file work — and no longer cost a
+        # full read every run to say so.
+        assert work_hash("file:media/aaa111/clip.mp4") not in entries

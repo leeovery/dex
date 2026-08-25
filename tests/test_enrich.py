@@ -1,10 +1,12 @@
 """Tests for enrich.py: the thin CLI — parse, build, call, print."""
 
 import json
+import os
 
 import pytest
 
-from dex_engine.enrich import build_parser, main
+from dex_engine.capabilities.transcribe.whisper_api import WhisperApi
+from dex_engine.enrich import _load_env, build_parser, main
 from dex_engine.pipeline.types import Instance
 
 
@@ -129,3 +131,48 @@ class TestMain:
         with pytest.raises(SystemExit) as excinfo:
             main(["status"])
         assert "media_fech" in str(excinfo.value)
+
+
+class TestLoadEnv:
+    """The instance ``.env`` is the local-secret slot; every verb loads it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_key(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        yield
+        os.environ.pop("OPENAI_API_KEY", None)
+
+    def test_dotenv_key_reaches_the_provider(self, instance: Instance):
+        (instance.root / ".env").write_text("# secrets\nOPENAI_API_KEY=sk-from-dotenv\n")
+        _load_env(instance.root)
+        assert os.environ["OPENAI_API_KEY"] == "sk-from-dotenv"
+        # The provider resolves its key from the environment it now holds.
+        api = WhisperApi(which=lambda _name: "/usr/bin/ffmpeg")
+        assert api.available().ok
+
+    def test_every_verb_loads_it(self, instance: Instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        (instance.root / ".env").write_text("OPENAI_API_KEY=sk-from-dotenv\n")
+        main(["status"])
+        capsys.readouterr()
+        assert os.environ["OPENAI_API_KEY"] == "sk-from-dotenv"
+
+    def test_a_real_environment_variable_wins(self, instance: Instance, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
+        (instance.root / ".env").write_text("OPENAI_API_KEY=sk-from-dotenv\n")
+        _load_env(instance.root)
+        assert os.environ["OPENAI_API_KEY"] == "sk-real"
+
+    def test_comments_and_malformed_lines_are_ignored(self, instance: Instance):
+        (instance.root / ".env").write_text(
+            "# OPENAI_API_KEY=commented-out\n"
+            "no equals sign here\n"
+            "=nameless\n"
+            "OPENAI_API_KEY = sk-spaced \n"
+        )
+        _load_env(instance.root)
+        assert os.environ["OPENAI_API_KEY"] == "sk-spaced"
+
+    def test_missing_dotenv_is_a_noop(self, instance: Instance):
+        _load_env(instance.root)
+        assert "OPENAI_API_KEY" not in os.environ

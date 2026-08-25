@@ -206,12 +206,15 @@ def _write_preserving(
     """Write the item, preserving enricher-owned fields across regeneration.
 
     ``status`` and ``enrichment`` are the two fields the enricher owns;
-    regeneration must never reset them.
+    regeneration must never reset them. An unchanged item is not rewritten
+    at all — idempotent re-runs must not churn every corpus file on disk.
     """
     path = instance.corpus_dir / f"{item.date:%Y}" / f"{item.id}.md"
+    on_disk: str | None = None
     if path.exists():
+        on_disk = path.read_text(encoding="utf-8")
         try:
-            existing = corpus.read_item(path)
+            existing = corpus.parse(on_disk)
         except corpus.CorpusSchemaError as e:
             warn(
                 f"warn: {path} does not parse ({e}); regenerating fresh — "
@@ -233,6 +236,8 @@ def _write_preserving(
                 media=item.media,
                 body=item.body,
             )
+    if corpus.serialize(item) == on_disk:
+        return
     corpus.write_item(path, item)
 
 

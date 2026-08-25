@@ -51,6 +51,7 @@ from typing import IO, TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from email.message import Message as HTTPMessage
 
+from . import atomic
 from .pipeline.capture import parse_capture
 from .pipeline.detect import sniff_format
 from .pipeline.types import Instance
@@ -221,7 +222,9 @@ def _rewrite_pointer(path: Path, frontmatter: dict[str, str], rel: str, body: st
     text = "\n".join(lines) + "\n"
     if body.strip():
         text += "\n" + body.rstrip("\n") + "\n"
-    path.write_text(text, encoding="utf-8")
+    # Atomic: the release asset is already deleted by the time this runs — a
+    # crash mid-write must never leave a truncated capture as the only copy.
+    atomic.write_text(path, text)
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,10 @@
 ``base_url`` + key come from config (``transcribe_base_url`` /
 ``transcribe_api_key``), falling back to the ``OPENAI_BASE_URL`` /
 ``OPENAI_API_KEY`` environment variables — read at availability time, never
-at import. Pointed at Groq et al for GPU-fast pennies-per-hour runs;
-an explicitly configured base_url with no key is a keyless local server.
+at import; the enrich CLI folds the instance's gitignored ``.env`` into the
+environment first, so that file is where the key normally lives. Pointed at
+Groq et al for GPU-fast pennies-per-hour runs; an explicitly configured
+base_url with no key is a keyless local server.
 
 **ffmpeg chunking** removes upload limits for any provider, including
 OpenAI's 25MB cap: the audio is always segmented (~20-minute mp3 chunks,

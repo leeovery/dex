@@ -28,20 +28,18 @@ Run from the instance root: dex-sync (or bin/dex sync).
 """
 
 import argparse
-import contextlib
 import datetime
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
-from dex_engine import migrations
+from dex_engine import atomic, migrations
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
@@ -127,16 +125,7 @@ def write_pin(root: Path, tag: str) -> None:
     Atomic (same-dir temp file, then replace), like every state write: a
     crash mid-write must never leave a truncated pin for the shim to read.
     """
-    path = root / PIN_FILE
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(tag + "\n")
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
+    atomic.write_text(root / PIN_FILE, tag + "\n")
 
 
 def _validate_pin(pin: str) -> None:

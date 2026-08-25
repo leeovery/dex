@@ -1,6 +1,10 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
+import os
 import re
+from pathlib import Path
+
+import pytest
 
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
@@ -11,11 +15,13 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
 from dex_engine.pipeline.registry import build_drivers
+from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
     YoutubeAudio,
     _cached_audio,
+    _download_enclosure,
     acquire_youtube_audio,
     read_enrichment,
 )
@@ -125,7 +131,8 @@ class TestYoutubeDrain:
         assert "via: whisper-local" in content
         assert "model: medium" in content
         assert "duration_min: 42" in content
-        assert "upload_date: 20260810" in content  # captions-path parity
+        # Captions-path parity; quoted — bare it would retype as a YAML int.
+        assert 'upload_date: "20260810"' in content
         assert "## Description" in content
         assert "## Transcript\n\nThe transcript text." in content
         # Audio lifecycle: deleted on successful transcription.
@@ -518,6 +525,47 @@ class TestRunAutoDrain:
         assert len(done) == TRANSCRIBE_RUN_CAP  # never monopolize a machine
         assert f"transcription capped at {TRANSCRIBE_RUN_CAP}" in report
 
+    def test_cap_deferrals_do_not_burn_the_run_limit(self, instance):
+        # A waiting-transcribe backlog ahead of fresh captures: units the
+        # cap defers are no-ops and must not spend `--limit`, or the fresh
+        # work behind them never gets fetched.
+        waiting = [f"https://youtube.com/watch?v=v{n:02d}" for n in range(TRANSCRIBE_RUN_CAP + 4)]
+        fresh = [f"https://example.test/post-{n}" for n in range(3)]
+        write_item(instance, urls=waiting)
+        write_item(instance, "2026-08-19-fresh-99aa00", urls=fresh)
+        for url in waiting:
+            seed_waiting(instance, url)
+        ctx = transcribe_ctx(instance)
+        run_mod.run(ctx, limit=TRANSCRIBE_RUN_CAP + 5)
+        entries = ledger.load(instance.ledger_path)
+        transcribed = [
+            e for e in entries.values() if e.kind is Kind.YOUTUBE and e.status is Status.DONE
+        ]
+        assert len(transcribed) == TRANSCRIBE_RUN_CAP
+        fetched = [e for e in entries.values() if e.kind is Kind.WEB and e.status is Status.DONE]
+        assert len(fetched) == len(fresh)  # deferrals spent none of the limit
+
+    def test_unknown_kind_body_dispatch_is_loud_never_the_podcast_body(self, instance, monkeypatch):
+        # The body pick must be total over the same kinds _acquire_audio
+        # admits — a kind added to acquisition alone fails loudly instead of
+        # silently taking the podcast body.
+        url = "https://example.test/audio-page"
+        write_item(instance, urls=[url])
+        seed_waiting(instance, url, kind=Kind.WEB)
+        audio = instance.cache_dir / "audio" / "a.mp3"
+        audio.parent.mkdir(parents=True)
+        audio.write_bytes(b"fake-audio")
+        monkeypatch.setattr(
+            _Drain,
+            "_acquire_audio",
+            lambda _self, _entry: Acquired(audio=audio, meta={}, prompt="", prefix=""),
+        )
+        ctx = transcribe_ctx(instance)
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(url)]
+        assert entry.status is Status.ERROR
+        assert "no transcript body for kind" in (entry.error or "")
+
     def test_cognitive_jobs_surface_on_the_report_never_drain(self, instance):
         # Jobs resolving to the cognitive floor are listed for the
         # session; the run never drains them. Transcribe waits silently —
@@ -608,7 +656,43 @@ class TestStatusIncludesCapabilities:
         assert "capabilities" not in report
 
 
+class TestEnclosureDownloadAtomicity:
+    ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
+
+    def test_crashed_download_leaves_nothing_under_the_final_name(self, tmp_path, monkeypatch):
+        # A truncated <hash>.mp3 has no `.part` marker — the next run would
+        # transcribe truncated audio and ledger it done. The write must be
+        # atomic: temp in the cache dir, replace only when complete.
+        real = os.fdopen
+
+        def failing(fd, *args, **kwargs):
+            real(fd, *args, **kwargs).close()
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr("dex_engine.atomic.os.fdopen", failing)
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        with pytest.raises(OSError, match="No space left"):
+            _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        assert _cached_audio(tmp_path, "abc") is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_completed_download_lands_under_the_final_name(self, tmp_path):
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        path = _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        assert isinstance(path, Path)
+        assert path == tmp_path / "abc.mp3"
+        assert b"AUDIO-BYTES" in path.read_bytes()
+        assert [p.name for p in tmp_path.iterdir()] == ["abc.mp3"]
+
+
 class TestCachedAudio:
+    def test_hard_crash_atomic_temp_is_a_partial_never_audio(self, tmp_path):
+        # A kill mid-atomic-write can orphan the temp file itself; it must
+        # be cleared like any partial, never picked up as completed audio.
+        (tmp_path / "abc.mp3.k3j2f9.tmp").write_bytes(b"TRUNCATED")
+        assert _cached_audio(tmp_path, "abc") is None
+        assert list(tmp_path.iterdir()) == []
+
     def test_partials_are_deleted_and_never_reused(self, tmp_path):
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
         (tmp_path / "abc.ytdl").write_bytes(b"state")

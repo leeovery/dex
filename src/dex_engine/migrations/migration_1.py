@@ -39,14 +39,12 @@ import dataclasses
 import datetime
 import hashlib
 import json
-import os
 import re
-import tempfile
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 
-from dex_engine import corpus
+from dex_engine import atomic, corpus
 from dex_engine.pipeline.ledger import to_line
 from dex_engine.pipeline.types import (
     Format,
@@ -129,9 +127,9 @@ class RenamesAndVocabulary:
         """
         actions: list[str] = []
         skipped: list[Skipped] = []
-        _rename_enrichment_files(root, actions, skipped)
-        _rewrite_corpus(root, actions, skipped)
-        _rewrite_ledger(root, actions, skipped)
+        collisions = _rename_enrichment_files(root, actions, skipped)
+        _rewrite_corpus(root, actions, skipped, collisions=collisions)
+        _rewrite_ledger(root, actions, skipped, collisions=collisions)
         _rename_config(root, actions, skipped)
         return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
 
@@ -141,19 +139,32 @@ class RenamesAndVocabulary:
 # ---------------------------------------------------------------------------
 
 
-def _rename_enrichment_files(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
+def _rename_enrichment_files(
+    root: Path, actions: list[str], skipped: list[Skipped]
+) -> set[tuple[str, str]]:
+    """Rename ``tweet-*``/``blog-*`` enrichment files; report collision skips.
+
+    Returns:
+        The ``(item dir, old basename)`` keys whose disk rename was refused
+        (the new name already exists) — the corpus and ledger rewrites must
+        leave references to those exact files untouched, keyed per directory
+        because the same basename may exist under two items.
+    """
     enrichment = root / "enrichment"
+    collisions: set[tuple[str, str]] = set()
     if not enrichment.is_dir():
-        return
+        return collisions
     renamed = 0
     for old_prefix, _ in _FILENAME_RENAMES:
         for path in sorted(enrichment.rglob(f"{old_prefix}*.md")):
             target = path.with_name(_rename_basename(path.name))
             if target.exists():
+                collisions.add((path.parent.name, path.name))
                 skipped.append(
                     Skipped(
                         what=str(path.relative_to(root)),
                         why=f"{target.name} already exists beside it — refusing to overwrite; "
+                        f"corpus listings and ledger paths still say {path.name} — "
                         "merge the two by hand",
                     )
                 )
@@ -162,9 +173,16 @@ def _rename_enrichment_files(root: Path, actions: list[str], skipped: list[Skipp
             renamed += 1
     if renamed:
         actions.append(f"enrichment: {renamed} file(s) renamed (tweet-*→x-*, blog-*→web-*)")
+    return collisions
 
 
-def _rewrite_corpus(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
+def _rewrite_corpus(
+    root: Path,
+    actions: list[str],
+    skipped: list[Skipped],
+    *,
+    collisions: set[tuple[str, str]],
+) -> None:
     corpus_dir = root / "corpus"
     if not corpus_dir.is_dir():
         return
@@ -181,7 +199,10 @@ def _rewrite_corpus(root: Path, actions: list[str], skipped: list[Skipped]) -> N
             )
             continue
         kinds = [_KIND_RENAMES.get(kind, kind) for kind in item.kinds]
-        enrichment = [_rename_basename(name) for name in item.enrichment]
+        enrichment = [
+            name if (item.id, name) in collisions else _rename_basename(name)
+            for name in item.enrichment
+        ]
         if kinds == item.kinds and enrichment == item.enrichment:
             continue
         corpus.write_item(path, dataclasses.replace(item, kinds=kinds, enrichment=enrichment))
@@ -277,7 +298,13 @@ def _corpus_owners(root: Path) -> dict[str, str]:
 QUARANTINE_NAME = "enrichment-ledger.unmigrated.jsonl"
 
 
-def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> None:
+def _rewrite_ledger(
+    root: Path,
+    actions: list[str],
+    skipped: list[Skipped],
+    *,
+    collisions: set[tuple[str, str]],
+) -> None:
     path = root / "state" / "enrichment-ledger.jsonl"
     if not path.exists():
         return
@@ -299,7 +326,9 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
         line_notes: list[str] = []
         try:
             new_line = to_line(
-                _translate_record(_load_record(line), owners=owners, notes=line_notes)
+                _translate_record(
+                    _load_record(line), owners=owners, notes=line_notes, collisions=collisions
+                )
             )
         except _UntranslatableError as e:
             quarantined.append(line)
@@ -327,7 +356,7 @@ def _rewrite_ledger(root: Path, actions: list[str], skipped: list[Skipped]) -> N
     _append_quarantine(path.with_name(QUARANTINE_NAME), quarantined)
     new_text = "".join(out_line + "\n" for out_line in out_lines)
     if new_text != original:
-        _atomic_write(path, new_text)
+        atomic.write_text(path, new_text)
     if translated:
         actions.append(f"ledger: {translated} line(s) translated to the current schema")
     if quarantined:
@@ -366,12 +395,18 @@ def _load_record(line: str) -> dict[str, object]:
 
 
 def _translate_record(
-    raw: dict[str, object], *, owners: dict[str, str], notes: list[str]
+    raw: dict[str, object],
+    *,
+    owners: dict[str, str],
+    notes: list[str],
+    collisions: set[tuple[str, str]],
 ) -> LedgerEntry:
     unit_hash = _expect_str(raw, "hash")
     status, needs = _translate_status(raw)
     raw_path = None if "path" not in raw else _expect_str(raw, "path")
-    path_text = _translate_path(raw_path, status=status, unit_hash=unit_hash, notes=notes)
+    path_text = _translate_path(
+        raw_path, status=status, unit_hash=unit_hash, notes=notes, collisions=collisions
+    )
     error, reason = _translate_error_and_reason(
         raw, status=status, unit_hash=unit_hash, notes=notes
     )
@@ -437,7 +472,12 @@ def _translate_date(raw: dict[str, object]) -> datetime.date:
 
 
 def _translate_path(
-    raw_path: str | None, *, status: Status, unit_hash: str, notes: list[str]
+    raw_path: str | None,
+    *,
+    status: Status,
+    unit_hash: str,
+    notes: list[str],
+    collisions: set[tuple[str, str]],
 ) -> str | None:
     if raw_path is None:
         return None
@@ -448,6 +488,11 @@ def _translate_path(
         )
         return None
     parts = raw_path.split("/")
+    # A collision-skipped file keeps its old name on disk, so its ledger
+    # path must keep pointing at it — renaming here would point the line at
+    # the OTHER file's content.
+    if len(parts) >= 3 and parts[0] == "enrichment" and (parts[1], parts[-1]) in collisions:  # noqa: PLR2004 — enrichment/<item>/<file>
+        return raw_path
     parts[-1] = _rename_basename(parts[-1])
     return "/".join(parts)
 
@@ -657,26 +702,8 @@ def _rename_config(root: Path, actions: list[str], skipped: list[Skipped]) -> No
                 )
             )
         return
-    _atomic_write(new, json.dumps(raw, indent=2) + "\n")
+    atomic.write_text(new, json.dumps(raw, indent=2) + "\n")
     old.unlink()
     actions.append("config: normalize-config.json → config.json")
     if dropped_name_map:
         actions.append(_NAME_MAP_NOTE)
-
-
-# ---------------------------------------------------------------------------
-# Atomic write — same discipline as ledger.py: a crash mid-write must never
-# lose the ledger; the original stays intact until the temp file replaces it.
-# ---------------------------------------------------------------------------
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        tmp.replace(path)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()
