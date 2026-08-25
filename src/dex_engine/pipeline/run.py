@@ -1392,16 +1392,23 @@ class _Drain:
         return seen
 
     def fetched_count(self, item_id: str) -> int:
-        """Fetched-page entries for the item — what the 12-URL cap bounds.
+        """Fetched-page entries the item owns — what the 12-URL cap bounds.
 
         Media downloads, extraction-asset byte-writes, and cap-skip marker
         lines don't count: none of them is a fetched page, and a document
         rich in embedded images must not spend the item's URL budget.
+
+        Which entries are the item's is the corpus's answer
+        (:meth:`owner_of`, off the owner map the drain already holds) —
+        counting the stored string finds nothing under a renamed item's
+        live id, ever, so its budget restarted from zero at every rename
+        and the cap never fired, which also silences the drift reading a
+        cap fire feeds the health check.
         """
         return sum(
             1
             for entry in self.entries.values()
-            if entry.item == item_id
+            if self.owner_of(entry) == item_id
             and entry.via not in ("media", "extract-asset")
             and entry.status is not Status.SKIPPED
         )
@@ -1593,12 +1600,17 @@ class _Drain:
         Listed on the report for the session — never drained by the run.
         A waiting transcribe job is NOT one of these: transcription has no
         cognitive floor, it waits for a mechanical provider.
+
+        The item named is the corpus's owner (:meth:`owner_of`), like every
+        other surface: the row is the manual-work pointer, and a renamed
+        item's stored string sends the session into ``enrichment/<dead-id>/``
+        while ``enrich status`` names the live one.
         """
         capabilities = self.ctx.capabilities
         if capabilities is None:
             return []
         return [
-            {"item": entry.item, "url": entry.url, "need": entry.needs.value}
+            {"item": self.owner_of(entry), "url": entry.url, "need": entry.needs.value}
             for entry in self.entries.values()
             if entry.status is Status.WAITING
             and entry.needs is not None
@@ -2014,13 +2026,21 @@ def fetch_urls(
 
 
 def _resolve_parent(drain: _Drain, item_id: str, parent: str | None) -> LedgerEntry:
+    """The stated parent, or the item's primary unit — the corpus's answer.
+
+    Which units are the item's is asked of the corpus (:meth:`_Drain.owner_of`),
+    never of the line's stored string: a renamed item's primary unit sits in
+    the ledger under the dead id, and scanning the string told its owner the
+    item had no primary work unit — both implied causes false — while
+    demanding a ``--parent`` hash for a unit the ledger held all along.
+    """
     if parent is not None:
         entry = drain.entries.get(parent)
         if entry is None:
             raise ValueError(f"--parent {parent!r} is not a ledger entry")
         return entry
     for entry in drain.entries.values():
-        if entry.item == item_id and (entry.depth or 0) == 0:
+        if drain.owner_of(entry) == item_id and (entry.depth or 0) == 0:
             return entry
     raise ValueError(f"item {item_id!r} has no primary work unit — pass --parent <hash> explicitly")
 
@@ -2070,12 +2090,18 @@ def _admit_fetch(
         drain.park_bad_seed(item_id, url, e, what="fetch URL")
         return None
     if admission.held is not None:
-        if admission.held.item != item_id:
+        # Whose unit the held line is is the corpus's answer
+        # (:meth:`_Drain.owner_of`), never the stored string: a renamed
+        # item's own pre-rename unit spells the dead id, and comparing the
+        # string refused it as another item's — naming an id no corpus file
+        # answers to — leaving the requeue-in-place route unreachable.
+        owner = drain.owner_of(admission.held)
+        if owner != item_id:
             # One URL enriches under one item — but refusing the BATCH would
             # abort the URLs already ledgered ahead of this one and swallow
             # the report with them. The refusal is reported; the rest fetch.
             drain.notes.append(
-                f"{admission.url} already enriches under item {admission.held.item} — one URL "
+                f"{admission.url} already enriches under item {owner} — one URL "
                 f"enriches under one item; not fetched into {item_id}"
             )
             return None

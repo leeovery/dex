@@ -118,6 +118,7 @@ def _unreadable_reason(message: object) -> str | None:
         return "message is not an object"
     return (
         _unreadable_scalar_reason(message)
+        or _unreadable_reference_reason(message.get("reference"))
         or _unreadable_list_reason(message)
         or _unreadable_author_reason(message.get("author"))
     )
@@ -128,6 +129,10 @@ def _unreadable_scalar_reason(message: dict) -> str | None:
     for field in ("id", "type", "timestamp"):
         if not message.get(field):
             return f"no {field}"
+    if not isinstance(message["id"], str):
+        # The read pass keys reply targets by it and the emit pass hashes
+        # it into the shortid — an unhashable id dies at the key lookup.
+        return "id is not text"
     try:
         datetime.fromisoformat(message["timestamp"])
     except (TypeError, ValueError):
@@ -135,8 +140,23 @@ def _unreadable_scalar_reason(message: dict) -> str | None:
     content = message.get("content")
     if content is not None and not isinstance(content, str):
         return "content is not text"
-    if not isinstance(message.get("reference") or {}, dict):
+    return None
+
+
+def _unreadable_reference_reason(reference: object) -> str | None:
+    """Why the message's reply reference cannot be read, or ``None`` when it can."""
+    if not reference:
+        # `or {}`-shaped like the read pass: a conversion writes null, and
+        # the read pass reads that as no reference.
+        return None
+    if not isinstance(reference, dict):
         return "reference is not an object"
+    target = reference.get("messageId")
+    if target is not None and not isinstance(target, str):
+        # The read pass looks the reply target up by it, so it must be the
+        # key shape the message ids are — an unhashable one dies in the
+        # lookup itself.
+        return "reference messageId is not text"
     return None
 
 
@@ -151,6 +171,20 @@ def _unreadable_list_reason(message: dict) -> str | None:
         for attachment in message.get("attachments") or []
     ):
         return "attachment has no url or fileName"
+    for embed in message.get("embeds") or []:
+        for key in ("url", "title"):
+            value = embed.get(key)
+            # The emit pass keys unfurl titles by url and slugifies title —
+            # both taken as text where present, like content above.
+            if value is not None and not isinstance(value, str):
+                return f"embed {key} is not text"
+    if any(
+        # `or 0`-shaped like the emit pass's sum, so the check and the use
+        # read the field identically.
+        not isinstance(reaction.get("count") or 0, int)
+        for reaction in message.get("reactions") or []
+    ):
+        return "reaction count is not a number"
     return None
 
 
@@ -378,6 +412,14 @@ def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config,
     names it beside the count that did land: a channel that wrote is never
     reported as skipped, and no channel's fault costs the run its report.
 
+    The shape classes (TypeError/AttributeError/KeyError) are caught as
+    the backstop for a field access :func:`_unreadable_reason` missed —
+    an engine bug, twice shipped before this catch existed, that killed
+    the whole run with a raw traceback AFTER items were on disk and took
+    every channel's summary with it. Contained it is still loud: the
+    summary line carries the fault and calls the channel incomplete, the
+    same bargain the drain's per-unit broad catch makes.
+
     Args:
         clusters: The clusters from :func:`_read_channel`.
         channel: The channel name (stamped into provenance).
@@ -399,7 +441,7 @@ def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config,
             continue
         try:
             kept = _emit_cluster(cluster, channel, instance, config, warn)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as e:
             return written, skipped, e
         if kept:
             written += 1

@@ -2308,6 +2308,28 @@ class TestOwnershipIsTheCorpusAnswer:
             instance, status=Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions"
         )
 
+    def test_a_cognitive_units_pointer_names_the_live_id_on_every_surface(self, instance):
+        # The cognitive row is the manual-work pointer. Run report and lint
+        # spelled the stored string while `enrich status` resolved the
+        # owner, so one unit carried two ids across the surfaces — and the
+        # pointer sent the session into enrichment/<dead-id>/, a directory
+        # the rename moved away.
+        self._renamed(instance, status=Status.WAITING, needs=Need.OCR, reason="scanned pages")
+        ctx = make_ctx(
+            instance, FakeDriver(), capabilities=Capabilities(transcribers=(), extractors=())
+        )
+        run_report = run_mod.run(ctx)
+        status = run_mod.status_report(ctx, item_id=NEW_ITEM)
+        (instance.state_dir / "taxonomy.json").write_text('{"topics": {}, "entities": {}}')
+        lint_report = run_lint(
+            instance, is_cognitive=lambda _need, _fmt=None: True, today=lambda: TODAY, write=False
+        ).report
+        assert f"**{NEW_ITEM}** · `ocr`" in run_report
+        assert f"**{NEW_ITEM}** · `ocr`" in lint_report
+        assert URL in status  # enrich status: the same unit, under the same id
+        for report in (run_report, lint_report):
+            assert f"{OLD_ITEM}** · `ocr`" not in report
+
     def test_a_renamed_item_owing_work_is_never_written_enriched(self, instance):
         # The whole point of deriving status from the ledger: an item
         # holding a waiting unit is raw, whatever id the line spells.
@@ -2365,6 +2387,81 @@ class TestOwnershipIsTheCorpusAnswer:
         entry = ledger.load(instance.ledger_path)[work_hash(child)]
         assert entry.item == NEW_ITEM
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
+
+    def test_fetch_into_a_renamed_item_finds_its_primary_unit(self, instance):
+        # `enrich fetch <live-id> <url>` with no --parent scans for the
+        # item's depth-0 unit, which spells the dead id. Scanned on the
+        # stored string it aborted "no primary work unit — pass --parent
+        # <hash> explicitly", both implied causes false, for every renamed
+        # item forever.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        ctx = make_ctx(instance, FakeDriver())
+        child = "https://example.test/docs"
+        run_mod.fetch_urls(ctx, NEW_ITEM, [child])
+        entry = ledger.load(instance.ledger_path)[work_hash(child)]
+        assert entry.item == NEW_ITEM
+        assert entry.parent == work_hash(URL)  # the item's own primary unit
+        assert entry.depth == 1
+        assert entry.status is Status.DONE
+
+    def test_refetching_a_renamed_items_own_url_requeues_in_place(self, instance):
+        # The held line spells the dead id, so comparing the stored string
+        # refused the item's OWN unit as another item's ("already enriches
+        # under item <dead-id>") — the requeue-in-place route unreachable
+        # for every pre-rename unit.
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.fetch_urls(ctx, NEW_ITEM, [URL])
+        assert "already enriches" not in report
+        entry = entry_for(ctx)
+        assert entry.item == NEW_ITEM
+        assert entry.status is Status.DONE
+        assert entry.rerun is True  # requeued in place, then drained
+        assert entry.parent is None  # never re-parented under itself
+
+    def _spent_budget(self, instance) -> RunContext:
+        """The item's 12-URL budget, spent entirely under the old id."""
+        self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
+        for n in range(MAX_URLS_PER_ITEM - 1):
+            url = f"https://example.test/deep{n}"
+            ledger.append(
+                instance.ledger_path,
+                LedgerEntry(
+                    hash=work_hash(url),
+                    url=url,
+                    item=OLD_ITEM,
+                    kind=Kind.WEB,
+                    status=Status.DONE,
+                    engine="0.2.0",
+                    date=datetime.date(2026, 8, 1),
+                    via="harvest",
+                    parent=work_hash(URL),
+                    depth=1,
+                ),
+            )
+        return make_ctx(instance, FakeDriver())
+
+    def test_the_url_budget_spans_a_rename(self, instance):
+        # The cap counts the entries the item OWNS. Counted on the stored
+        # string the live id owns nothing, ever, so a renamed item's budget
+        # restarted from zero — unbounded fetches, no cap fire, and the
+        # health check's drift reading silenced with it.
+        ctx = self._spent_budget(instance)
+        extra = "https://example.test/extra"
+        run_mod.fetch_urls(ctx, NEW_ITEM, [extra])
+        refused = ledger.load(instance.ledger_path)[work_hash(extra)]
+        assert refused.status is Status.SKIPPED
+        assert refused.cap is Cap.URL_REQUESTED
+        assert "url cap" in (refused.reason or "")
+
+    def test_the_url_budget_spanning_a_rename_still_honors_force(self, instance):
+        # --force is the deliberate route past the URL bound, rename or not.
+        ctx = self._spent_budget(instance)
+        extra = "https://example.test/extra"
+        run_mod.fetch_urls(ctx, NEW_ITEM, [extra], force=True)
+        entry = ledger.load(instance.ledger_path)[work_hash(extra)]
+        assert entry.status is Status.DONE
+        assert entry.item == NEW_ITEM
 
     def test_a_renamed_items_unit_reaches_its_driver_under_the_live_id(self, instance):
         # `WorkUnit.item` is what a driver has to reason about the item with
