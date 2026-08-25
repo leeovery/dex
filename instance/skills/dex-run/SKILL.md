@@ -108,7 +108,9 @@ Then do a run now, whatever the host.
 
 8. **Backstop.** `bin/dex enrich status` — any item listed under
    "enrichment newer than digest" is an interrupted previous session:
-   complete its digest → place → wiki steps now.
+   complete its digest → place → wiki steps now. Every item listed is
+   digestible; one still owing a unit is `raw` and never appears there,
+   however long it stays parked.
 
 9. **Health check.** If `wiki/log.md` shows no health check (a `| lint`
    entry) in the past 7 days, run the dex-lint skill

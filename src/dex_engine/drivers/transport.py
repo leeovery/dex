@@ -8,6 +8,12 @@ and lets connection-level failures (DNS, refused, timeout) propagate as
 ``OSError`` for ``classify_connection``. ``http.client``'s own protocol
 failures are normalized into that same ``OSError`` shape here, once, rather
 than at each of the eight call sites (:func:`normalize_httplib_errors`).
+URLs the request line cannot carry are encoded for the wire here too
+(:func:`_ascii_url`): ``http.client`` ascii-encodes the request line and
+rejects the controls, space and DEL within it, so an accented Wikipedia
+path, a CJK slug or an unencoded space in an href failed before a byte
+left the machine — these URLs are fetchable, and this is where they get
+fetched.
 
 The browser UA is deliberate: the motivating incident was Cloudflare
 challenging trafilatura's own fetch client; urllib with a browser UA avoids
@@ -16,7 +22,9 @@ the block outright more often than not.
 
 import contextlib
 import http.client
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -102,6 +110,75 @@ def _content_length(raw: str | None) -> int | None:
     return int(raw.strip())
 
 
+# What each component may legally carry unescaped, plus ``%`` itself: an
+# already-encoded URL must pass through untouched, never have its "%C3%A9"
+# doubly escaped into "%25C3%25A9".
+_PATH_SAFE = "/%:@!$&'()*+,;="
+_QUERY_SAFE = _PATH_SAFE + "?"
+
+# What ``http.client`` refuses to carry in the request line, whatever the
+# encoding: the C0 controls, space and DEL. Every one of them is ASCII, so
+# "is it ASCII already" is not the question the encoder needs answered.
+_REQUEST_LINE_FORBIDDEN = re.compile(r"[\x00-\x20\x7f]")
+
+
+def _needs_encoding(component: str) -> bool:
+    """True when ``component`` cannot go on the wire as it stands."""
+    return not component.isascii() or _REQUEST_LINE_FORBIDDEN.search(component) is not None
+
+
+def _ascii_netloc(netloc: str) -> str:
+    """Punycode the host of ``netloc``; userinfo percent-encoded, port kept."""
+    userinfo, at, hostport = netloc.rpartition("@")
+    host, colon, port = hostport.rpartition(":")
+    if not port.isdigit():  # no port, or an IPv6 literal's own colons
+        host, colon, port = hostport, "", ""
+    if not host.isascii():
+        host = host.encode("idna").decode("ascii")
+    if _needs_encoding(userinfo):
+        userinfo = urllib.parse.quote(userinfo, safe=":%")
+    return f"{userinfo}{at}{host}{colon}{port}"
+
+
+def _ascii_url(url: str) -> str:
+    """Encode ``url`` for the wire: punycoded host, percent-encoded path/query.
+
+    ``http.client`` puts the request line through ``encode("ascii")``, so a
+    URL carrying any non-ASCII character — an accented Wikipedia path, an
+    IDN host, a CJK slug — raised ``UnicodeEncodeError`` before a byte left
+    the machine, and being a ``ValueError`` it escaped every caller's
+    connection guard as a raw codec message. Nothing is wrong with these
+    URLs; what they need is the encoding a browser applies for them.
+
+    Being ASCII is not enough to skip that: ``http.client`` also rejects
+    the C0 controls, space and DEL in the request line outright
+    (:data:`_REQUEST_LINE_FORBIDDEN`), so the unencoded space that hrefs
+    carry all the time raised ``InvalidURL`` and parked the item
+    ``blocked`` — retried, and looked up in the wayback, on a condition no
+    retry can change. ``quote`` already maps it to ``%20``.
+
+    Raises:
+        ValueError: The host is not encodable for DNS (an over-long or
+            empty IDN label) — stated, never the codec's own words.
+    """
+    if not _needs_encoding(url):
+        return url  # the overwhelming majority, byte-for-byte as asked
+    parts = urllib.parse.urlsplit(url)
+    try:
+        netloc = _ascii_netloc(parts.netloc)
+    except UnicodeError as e:
+        raise ValueError(f"host of {url!r} is not encodable for DNS: {e}") from e
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme,
+            netloc,
+            urllib.parse.quote(parts.path, safe=_PATH_SAFE),
+            urllib.parse.quote(parts.query, safe=_QUERY_SAFE),
+            urllib.parse.quote(parts.fragment, safe=_QUERY_SAFE),
+        )
+    )
+
+
 def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
     """Fetch ``url`` over urllib with the browser UA.
 
@@ -113,7 +190,8 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
         The response — 4xx/5xx included, never raised.
 
     Raises:
-        ValueError: ``url`` is not http(s).
+        ValueError: ``url`` is not http(s), or its host is not encodable
+            for DNS (:func:`_ascii_url`).
         OSError: Connection-level failure (DNS, refused, reset, timeout, a
             truncated body); ``urllib.error.URLError`` is an ``OSError``
             subclass and ``http.client``'s family is normalized into one.
@@ -121,7 +199,7 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"transport fetches http(s) URLs only, got {url!r}")
     request = urllib.request.Request(  # noqa: S310 — scheme checked above
-        url, headers={"User-Agent": BROWSER_UA}, method=method
+        _ascii_url(url), headers={"User-Agent": BROWSER_UA}, method=method
     )
     with normalize_httplib_errors():
         try:

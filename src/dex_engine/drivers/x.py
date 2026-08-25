@@ -7,14 +7,16 @@ one id-keyed form, so one post is one work unit however it was shared.
 
 The chain above a captured post is context, not new first-class sources:
 one enrichment file, one ledger entry. The walk follows fxtwitter parent
-pointers bottom-to-top (cap 20 hops); storage is reading order — root
+pointers bottom-to-top (bounded at 100 hops, paced a second apart, ending
+at the first id it has already walked); storage is reading order — root
 first, captured post last, each post attributed. Quoted posts stay inline
 as blockquotes; promoting a quote is a harvest judgment. Chain media is
 pooled, the captured post's first.
 
 Incomplete chains are recorded, never silently presented as complete: a
-parent fetch failing mid-walk sets ``chain_incomplete`` in meta with how
-far the walk got. Walk-down is explicitly unsolved — backlog.
+parent fetch failing mid-walk, or a chain looping back on itself, sets
+``chain_incomplete`` in meta with how far the walk got. Walk-down is
+explicitly unsolved — backlog.
 
 Long-form articles carry their prose under ``article`` (``text`` is empty
 and ``raw_text`` holds only the shortlink), so they render from title and
@@ -25,7 +27,9 @@ on a URL.
 
 import json
 import re
+import time
 import urllib.parse
+from collections.abc import Callable
 
 from dex_engine.pipeline.classify import (
     Classification,
@@ -47,8 +51,21 @@ _HOSTS = frozenset({"x.com", "twitter.com", "mobile.twitter.com"})
 # with or without a /photo/1-style tail.
 _STATUS_PATH_RE = re.compile(r"/status(?:es)?/(\d+)")
 
-# Thread walk-up cap: 20 parent hops above the captured post.
-MAX_HOPS = 20
+# Thread walk-up bound: 100 parent hops above the captured post. A thread
+# is ONE piece of content — one work unit, one enrichment file — and the
+# walk is a linear chain of cheap calls with no fan-out, so this is a
+# sanity bound against a chain that never ends, not an editorial one:
+# 30-post threads are ordinary, and half an argument stored as though it
+# were whole is the failure worth avoiding. Cycles do NOT reach it: an id
+# already walked ends the walk where it repeats.
+MAX_HOPS = 100
+
+# Pacing between parent fetches. The driver's own 4s politeness is spent
+# between UNITS, and a walk is many requests inside one — a 30-post thread
+# went out as 30 back-to-back calls to a free community API. One second a
+# hop keeps an ordinary thread under a minute while making the walk a
+# paced sequence rather than a burst.
+HOP_SLEEP = 1.0
 
 # A body that is nothing but x's own t.co shortlink is a pointer to
 # content, never the content itself.
@@ -61,9 +78,22 @@ class XDriver:
     kind: Kind = Kind.X
     sleep: float = 4.0
 
-    def __init__(self, *, transport: Transport = urllib_transport) -> None:
-        """Wire the HTTP seam (fxtwitter is plain JSON over GET)."""
+    def __init__(
+        self,
+        *,
+        transport: Transport = urllib_transport,
+        pace: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """Wire the HTTP seam (fxtwitter is plain JSON over GET) and its pacing.
+
+        Args:
+            transport: The HTTP seam; injected so tests are hermetic.
+            pace: The walk's own pacing seam — ``sleep`` names the driver's
+                per-unit politeness, which the run layer spends. Injected
+                so tests are hermetic.
+        """
         self._transport = transport
+        self._pace = pace
 
     def matches(self, url: str) -> bool:
         """True for x.com, twitter.com, and mobile.twitter.com hosts."""
@@ -116,17 +146,34 @@ class XDriver:
         return tweet
 
     def _walk_up(self, captured: dict) -> tuple[list[dict], dict[str, str | int | None]]:
-        """Follow parent pointers up the chain; record gaps and cap hits in meta."""
+        """Follow parent pointers up the chain; record gaps and cap hits in meta.
+
+        The ids already walked are remembered because fxtwitter will
+        happily point a post at itself: without that, one such post spent
+        the whole hop bound on 100 back-to-back requests.
+        """
         posts = [captured]
         walk_meta: dict[str, str | int | None] = {}
         current = captured
+        seen = {str(captured["id"])} if captured.get("id") is not None else set()
         while (parent_id := current.get("replying_to_status")) is not None:
+            if str(parent_id) in seen:
+                # A post naming itself (or an ancestor) as its parent: the
+                # chain above is a loop, not more thread. Recorded like any
+                # short walk — never presented as a complete chain.
+                walk_meta["chain_incomplete"] = "true"
+                walk_meta["chain_note"] = (
+                    f"parent chain loops back to post {parent_id} after {len(posts)} post(s)"
+                )
+                break
             if len(posts) - 1 >= MAX_HOPS:
                 # Cap hit: recorded in meta (and thereby the enrichment
                 # frontmatter), never on user-facing surfaces.
                 walk_meta["thread_cap_hit"] = "true"
                 break
+            seen.add(str(parent_id))
             screen = current.get("replying_to") or "i"
+            self._pace(HOP_SLEEP)
             parent = self._fetch_post(f"{screen}/status/{parent_id}")
             if isinstance(parent, Classification):
                 # Mid-walk fetch failure is mechanical: record the gap, keep

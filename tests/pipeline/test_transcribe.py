@@ -1,6 +1,7 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
 import dataclasses
+import json
 import os
 import re
 from pathlib import Path
@@ -11,7 +12,8 @@ from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
-from dex_engine.drivers.youtube import ProbeError, _video_meta
+from dex_engine.drivers.web import WebDriver
+from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import (
@@ -41,6 +43,7 @@ from dex_engine.pipeline.types import (
     Instance,
     Kind,
     LedgerEntry,
+    MediaFetch,
     Need,
     Status,
 )
@@ -61,8 +64,14 @@ VIDEO_URL = "https://youtube.com/watch?v=abc123"
 class FakeDownload:
     """A scriptable yt-dlp seam: writes fake audio into the cache."""
 
-    def __init__(self, *, raise_: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        raise_: Exception | None = None,
+        description: str = "A talk about anydoc, JSONL and dex.",
+    ) -> None:
         self.raise_ = raise_
+        self.description = description
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, url, cache_dir, stem) -> YoutubeAudio:
@@ -76,7 +85,7 @@ class FakeDownload:
             path=path,
             title="Ledgers at Scale",
             channel="Engineering Distilled",
-            description="A talk about anydoc, JSONL and dex.",
+            description=self.description,
             duration_min=42,
             upload_date="20260810",
         )
@@ -153,12 +162,138 @@ class TestYoutubeDrain:
         assert audio_files(instance) == []
         assert ITEM in report  # the item lands on the cognitive work list
 
+    def _park_through_the_driver(self, instance) -> Path:
+        """Park the video the way the real driver does, and return its file."""
+        write_item(instance, urls=[VIDEO_URL])
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        return instance.enrichment_dir / ITEM / f"youtube-{work_hash(VIDEO_URL)[:6]}.md"
+
+    def test_the_transcript_joins_the_parks_description_in_one_file(self, instance):
+        # The driver's park wrote the description; the drain must append to
+        # it, never write over it — and the two modules must agree on the
+        # section headings they compose around.
+        park = self._park_through_the_driver(instance)
+        assert "Recorded on a phone" in park.read_text()
+        transcriber = FakeTranscriber("whisper-local", text="The transcript text.", model="medium")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=transcriber))
+        content = park.read_text()
+        assert "Recorded on a phone" in content  # the park's own description stands
+        assert "anydoc" not in content  # not the re-probe's, which differs
+        assert "## Transcript\n\nThe transcript text." in content
+
+    def test_a_re_drain_never_duplicates_the_transcript(self, instance):
+        park = self._park_through_the_driver(instance)
+        first = FakeTranscriber("whisper-local", text="First pass words.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=first))
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)],
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                path=None,
+                title=None,
+            ),
+        )
+        second = FakeTranscriber("whisper-local", text="Second pass words.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=second))
+        content = park.read_text()
+        assert content.count("## Transcript") == 1
+        assert content.count("## Description") == 1
+        assert "Recorded on a phone" in content
+        assert "Second pass words." in content
+        assert "First pass words." not in content  # superseded, not stacked
+
+    def _park_naming_the_transcript_heading(self, instance) -> Path:
+        """Park a video whose own description contains a ``## Transcript`` line."""
+        write_item(instance, urls=[VIDEO_URL])
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        info["description"] = (
+            "Chapters below.\n\n## Transcript\n\nauto-generated, see the pinned "
+            "comment\n\nNotes: https://example.test/ep-notes"
+        )
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        park = instance.enrichment_dir / ITEM / f"youtube-{work_hash(VIDEO_URL)[:6]}.md"
+        assert "https://example.test/ep-notes" in park.read_text()  # the park wrote it whole
+        return park
+
+    def _requeue_for_a_re_drain(self, instance) -> None:
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)],
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                path=None,
+                title=None,
+            ),
+        )
+
+    def test_a_description_naming_the_transcript_heading_survives_the_drain(self, instance):
+        # A description is arbitrary author text, headings included. Reading
+        # the park's description back by splitting on the heading truncated
+        # it at the author's own line, and the drain then wrote the
+        # truncation back — the tail gone from disk, unrecoverable.
+        park = self._park_naming_the_transcript_heading(instance)
+        transcriber = FakeTranscriber("whisper-local", text="The transcript text.")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=transcriber))
+        content = park.read_text()
+        assert "https://example.test/ep-notes" in content  # and the drain kept it whole
+        assert "auto-generated, see the pinned comment" in content
+        assert "## Transcript\n\nThe transcript text." in content
+
+    def test_such_a_description_survives_a_re_drain_too(self, instance):
+        # Once the file HAS a transcript section, the heading is the split
+        # again — and the section the drain appended is the last one.
+        park = self._park_naming_the_transcript_heading(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(instance, transcriber=FakeTranscriber("whisper-local", text="First."))
+        )
+        self._requeue_for_a_re_drain(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(instance, transcriber=FakeTranscriber("whisper-local", text="Second."))
+        )
+        content = park.read_text()
+        assert "https://example.test/ep-notes" in content
+        assert content.endswith("## Transcript\n\nSecond.\n")
+        assert "First." not in content
+        assert content.count("## Description") == 1
+
+    def test_a_transcript_with_no_description_is_still_its_own_section(self, instance):
+        # No description on either side — park or probe. The transcript
+        # keeps its heading anyway: without it a re-drain reads the stored
+        # transcript back as "description" and stacks itself under it.
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        ctx = transcribe_ctx(
+            instance,
+            transcriber=FakeTranscriber("whisper-local", text="First pass words."),
+            download=FakeDownload(description=""),
+        )
+        run_mod.run_transcribe(ctx)
+        park = instance.root / str(entry_for(ctx, VIDEO_URL).path)
+        _, body = read_enrichment(park)
+        assert body == "## Transcript\n\nFirst pass words."
+        self._requeue_for_a_re_drain(instance)
+        run_mod.run_transcribe(
+            transcribe_ctx(
+                instance,
+                transcriber=FakeTranscriber("whisper-local", text="Second pass words."),
+                download=FakeDownload(description=""),
+            )
+        )
+        _, body = read_enrichment(park)
+        assert body == "## Transcript\n\nSecond pass words."
+
     def test_drained_meta_shape_matches_the_captions_path(self, instance, tmp_path):
         # One frontmatter shape per kind, whichever route produced the
         # transcript: the drain's meta keys are exactly
         # the captions path's.
         entry = seed_waiting(instance)
-        acquired = acquire_youtube_audio(entry, tmp_path, FakeDownload())
+        acquired = acquire_youtube_audio(entry, tmp_path / "park.md", tmp_path, FakeDownload())
         assert isinstance(acquired, Acquired)
         assert set(acquired.meta) == set(_video_meta({}))
 
@@ -485,6 +620,26 @@ class TestPodcastDrain:
         assert body.count("## Transcript") == 1
         assert body.count("Episode words.") == 1
 
+    def test_show_notes_naming_the_transcript_heading_survive_the_drain(self, instance):
+        # Show notes are the publisher's prose, and one that publishes its
+        # own transcript writes exactly this heading.
+        feed = fixture_text("podcast", "feed.xml").replace(
+            "<p>We discuss append-only ledgers with "
+            '<a href="https://example.test/guest">Ada Guest</a>.</p>',
+            "<p>We discuss append-only ledgers.</p><p>## Transcript</p>"
+            "<p>Full text at https://engineering-distilled.test/ep42</p>",
+        )
+        self.park_via_driver(instance, feed=feed)
+        entry = self.entry(instance)
+        record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        assert "https://engineering-distilled.test/ep42" in record.read_text()
+        self.drain(instance)
+        _, body = read_enrichment(
+            instance.root / str(ledger.load(instance.ledger_path)[entry.hash].path)
+        )
+        assert "https://engineering-distilled.test/ep42" in body
+        assert body.endswith("## Transcript\n\nEpisode words.")
+
     def test_partial_download_is_deleted_and_refetched_never_reused(self, instance):
         # A crash mid-download leaves yt-dlp-style partials in the cache;
         # transcribing one would ledger truncated audio as done.
@@ -609,6 +764,81 @@ class TestPodcastDrain:
         entry = ledger.load(instance.ledger_path)[work_hash("https://feeds.pods.test/x.rss")]
         assert entry.status is Status.MANUAL
         assert "no enrichment record" in (entry.reason or "")
+
+
+class TestCorrectedUnitLandsItsTranscript:
+    """A web → podcast correction whose transcript lands drops the web view."""
+
+    EPISODE_URL = "https://engineering-distilled.test/episodes/ledgers-as-work-queues"
+    FEED_URL = "https://feeds.pods.test/engineering-distilled.rss"
+    ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
+
+    def _requeue(self, ctx, url):
+        entry = entry_for(ctx, url)
+        ledger.append(
+            ctx.instance.ledger_path,
+            dataclasses.replace(
+                entry, status=Status.QUEUED, path=None, title=None, via="migration-2", rerun=True
+            ),
+        )
+
+    def test_three_runs_leave_one_enrichment_file(self, instance):
+        # Run 1 extracts the episode page as an ordinary article; the world
+        # then serves the page's audio and a rerun corrects the kind, which
+        # parks waiting (the web output rightly stands through a park). The
+        # transcript lands through run_transcribe — the OTHER landing site —
+        # and the stale web view of the same unit must leave with it, or the
+        # item lists two files for one work unit forever.
+        responses = {
+            self.EPISODE_URL: html_response(fixture_text("web", "article.html")),
+            self.FEED_URL: html_response(fixture_text("podcast", "feed.xml")),
+        }
+        transport = FakeTransport(responses)
+        item_path = write_item(instance, urls=[self.EPISODE_URL])
+        quiet = Config(media_fetch=MediaFetch.NONE)  # the article's og:image is not under test
+
+        def fetch_ctx():
+            return make_ctx(
+                instance,
+                FakeDriver(),
+                drivers=[PodcastDriver(transport=transport), WebDriver(transport=transport)],
+                transport=transport,
+                config=quiet,
+            )
+
+        ctx = fetch_ctx()
+        run_mod.run(ctx)
+        first = entry_for(ctx, self.EPISODE_URL)
+        assert first.kind is Kind.WEB
+        assert first.status is Status.DONE
+        web_out = instance.enrichment_dir / ITEM / f"web-{first.hash[:6]}.md"
+        assert corpus.read_item(item_path).enrichment == [web_out.name]
+
+        responses[self.EPISODE_URL] = html_response(
+            fixture_text("podcast", "indie-episode-page.html")
+        )
+        self._requeue(ctx, self.EPISODE_URL)
+        run_mod.run(fetch_ctx())
+        parked = entry_for(ctx, self.EPISODE_URL)
+        assert parked.kind is Kind.PODCAST
+        assert parked.status is Status.WAITING
+        podcast_out = instance.enrichment_dir / ITEM / f"podcast-{parked.hash[:6]}.md"
+        assert web_out.exists()  # the park leaves the item as enriched as it found it
+        assert corpus.read_item(item_path).enrichment == [podcast_out.name, web_out.name]
+
+        transcriber = FakeTranscriber("whisper-local", text="Episode words.", model="medium")
+        drained_ctx = transcribe_ctx(
+            instance,
+            transcriber=transcriber,
+            transport=FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")}),
+        )
+        run_mod.run_transcribe(drained_ctx)
+        done = entry_for(ctx, self.EPISODE_URL)
+        assert done.status is Status.DONE
+        assert done.path == f"enrichment/{ITEM}/{podcast_out.name}"
+        assert "Episode words." in podcast_out.read_text()
+        assert not web_out.exists()  # the transcript superseded the pre-correction view
+        assert corpus.read_item(item_path).enrichment == [podcast_out.name]
 
 
 class TestMalformedModelName:
@@ -1005,7 +1235,7 @@ class TestPromptBudget:
                 description="sponsors and links " * 200,
             )
 
-        acquired = acquire_youtube_audio(entry, tmp_path, download)
+        acquired = acquire_youtube_audio(entry, tmp_path / "park.md", tmp_path, download)
         assert isinstance(acquired, Acquired)
         assert acquired.prompt.endswith("Ledgers at Scale — Engineering Distilled")
         assert estimated_tokens(acquired.prompt) <= WHISPER_WINDOW_TOKENS

@@ -20,7 +20,10 @@ paths, which are named explicitly so ``/watch``, ``/playlist``,
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
-capability, not given up on.
+capability, not given up on — and the park carries the description it
+already fetched, so the run layer writes that content now rather than
+holding it hostage to a transcription backlog the video may not survive.
+The drain appends the transcript to that same file.
 
 Probe failures are mapped honestly: an HTTP code buried in yt-dlp's message
 routes through the central classifier; private/sign-in walls are ``manual``;
@@ -126,6 +129,13 @@ _GEO_MARKERS = ("in your country", "in your region", "geo restricted", "geo-rest
 # defaults to `blocked`: the motivating-incident class, again.
 _GONE_MARKERS = ("video unavailable", "removed", "terminated")
 
+# The youtube body's two sections. The transcribe drain splits a stored
+# body on these same headings to append a transcript to a park's
+# description (pipeline/transcribe.py); drivers cannot import that module
+# (it imports this one), so the pairing is pinned by test instead.
+_DESCRIPTION_HEADING = "## Description"
+_TRANSCRIPT_HEADING = "## Transcript"
+
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -219,6 +229,7 @@ class YouTubeDriver:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
+                body=_description_section(info) or None,
                 needs=Need.TRANSCRIBE,
                 reason="no captions available",
             )
@@ -248,6 +259,7 @@ class YouTubeDriver:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
+                body=_description_section(info) or None,
                 needs=Need.TRANSCRIBE,
                 reason="captions track too thin to be a transcript",
             )
@@ -379,12 +391,29 @@ def _caption_track_url(info: dict) -> str | None:
     return None
 
 
-def _body(info: dict, transcript: str) -> str:
-    """Description + transcript sections, as today; transcript alone otherwise."""
+def _description_section(info: dict) -> str:
+    """The description as its own body section, or "" when there is none.
+
+    A park writes this on its own: the description is content already
+    fetched, and a video that goes private during a transcription backlog
+    would otherwise take it with it. The transcript is appended to this
+    same section later, never written over it.
+    """
     description = (info.get("description") or "").strip()
-    if description:
-        return f"## Description\n\n{description}\n\n## Transcript\n\n{transcript}"
-    return transcript
+    return f"{_DESCRIPTION_HEADING}\n\n{description}" if description else ""
+
+
+def _body(info: dict, transcript: str) -> str:
+    """Description section + transcript section — one body shape per kind.
+
+    The transcript is always its own labelled section, description or not:
+    the drain splits a stored body on that heading to append a transcript
+    to what the park already wrote (``pipeline/transcribe.py``).
+    """
+    section = _description_section(info)
+    if section:
+        return f"{section}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
+    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
 
 
 def clean_vtt(vtt: str) -> str:

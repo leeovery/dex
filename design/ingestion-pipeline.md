@@ -95,7 +95,11 @@ reruns, newly-drained waiting cohorts — and **the same session immediately
 completes the cognitive steps** (harvest → digest → wiki) for all of them,
 exactly as for a fresh capture. The enrichment-newer-than-digest comparison
 in `enrich status` is purely an **interrupted-session backstop** (a session
-died between fetch and digest), never the handoff mechanism.
+died between fetch and digest), never the handoff mechanism. It lists only
+items that **owe no further work**: an item holding a `manual`, `error`,
+`blocked` or `waiting` unit derives `raw`, and a raw item is one the ingest
+procedure forbids digesting — listing it would name the same permanently
+parked item as work to do on every run, forever.
 
 **Session-end invariant**: everything processable is processed — items are
 digested whole, after their children land. The only entries that survive a
@@ -129,15 +133,23 @@ digits, so two units under one item do collide (a real `web-6968e3.md` /
 `file-6968e3.md` pair was found by hand), and a name-pattern unlink deleted
 the neighbour's enrichment while its ledger line still read `done`. Nothing
 is dropped for a replacement that is not itself on disk. Works in both
-directions (web→file,
-file→web). Loop guard is per-run state: one correction per hash per run,
-then `manual` "re-detection loop"; across runs a unit may redetect again —
-the world changes.
+directions (web→file, file→web), and carries two further discoveries that
+only a fetched body can make: a page whose audio is its subject, fetched
+by the catch-all → `podcast` (§9), and a GitHub blob whose bytes are a
+document → `file` (§3). Loop guard is per-run state: one correction per
+hash per run, then `manual` "re-detection loop"; across runs a unit may
+redetect again — the world changes.
 
 The run report also derives a listing for **no-source items** (text-only
 and image-only captures — no URLs, no work units): they surface as
 cognitive work ("awaiting description + digest") so a capture with nothing
 to fetch is never invisible to the session.
+
+**An incomplete item says so on the report.** Every item the run touched
+that still owes work gets a line stating the shape of it — "3 of 4 units
+landed — 1 waiting on transcription" — so completeness is read, never
+inferred from a list of units. Items the run did not touch are the standing
+view's job (`enrich status`), not the run report's.
 
 ## 2. Interfaces
 
@@ -265,11 +277,11 @@ vocabulary only and never become work units:
 |---|---|---|
 | `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment. Channel addresses (`/@handle` and its tabs, percent-encoded `/%40handle` included, `/user/…`, `/c/…`, `/channel/…`, and the legacy bare vanity name `/veritasium`), hashtag feeds and search-result pages park `manual` the same way and **before the probe**: yt-dlp answers those URLs by enumerating every video the channel holds, and the transcribe drain would then pull every one of those audio files over a single filename. The vanity form has no marker at all — youtube.com's root namespace belongs to channels — so the driver names youtube.com's own **functional first segments** (`/watch`, `/playlist`, `/results`, `/feed`, `/embed`, `/live`, `/shorts`, `/v`, plus the product and account surfaces) and reads every other bare root segment as a channel. The list errs one way on purpose: a functional segment missing from it parks `manual`, one recoverable ledger line, while a channel mistaken for a functional path reaches the probe and enumerates thousands of videos. A channel's `/live` path is one video and still fetches |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
-| `github` | ✓ | repos / profiles / gists / issues / blobs. Every route goes through the authenticated `gh` CLI, blobs included — `raw.githubusercontent.com` is unauthenticated, so it 404s every private-repo blob however the machine is signed in, and that 404 classified live content `dead`. Losing raw.githubusercontent.com costs the **ref/path boundary**, which that host resolved server-side and the contents API cannot: branch names hold slashes (`blob/automation/bors/auto/README.md`), and the `blob/refs/heads/<branch>/` permalink form spends two segments before the name even begins, so splitting at the first segment sent a wrong `?ref=` with a wrong path and 404'd live files into `dead`. The driver guesses the shortest ref the URL's shape allows — free, and right for nearly every link — and only when that 404s asks `git/matching-refs/<heads|tags>/<first segment>` which of the repo's own refs the path starts with, matching segment-wise (`automation/bors` must not claim a URL whose branch is `automation/bors-next`) and taking the longest. A repo with thousands of branches costs the same one page as a repo with three. When no ref re-splits the URL, or the lookup itself fails, the original classification stands: a genuinely missing path is still `dead`, never unclassifiable. A blob too large for the contents API to serve inline parks `manual`, never `dead`. github.com's **reserved first segments** (`/features`, `/topics`, `/sponsors`, `/orgs`, `/collections`, `/marketplace`, `/trending`, `/about`, `/pricing`, `/settings`, `/explore`, …) can be neither user nor repo, so the driver declines them and registry order hands them to `web`, which extracts them like any page — driving them as repo work 404'd pages that render fine in a browser into `dead`. Only the first segment is screened: `acme/topics` is an ordinary repo. **Blob bytes are sniffed — by filename — before they are fenced**: a PDF or any other binary committed to a repo parks `manual` naming what it is, never a code fence full of replacement characters ledgered `done`. The name is what catches the two extractable shapes that carry no byte signature: a CSV, and an unsmudged **Git-LFS pointer**, whose 130 bytes of `oid sha256:…` decode as clean UTF-8 and fenced `done` as though they were the document they stand for (the contents API serves the pointer, never the object). A committed CSV parks the same way, deliberately — allowing text-shaped documents to fence is exactly what let the LFS pointer for a `.csv` through, and a captured CSV reaches `csv-builtin` as a real table instead of a fence truncated at 40k characters. It does not re-detect to `file` work, because a GitHub blob URL serves an HTML viewer rather than the bytes — the file driver would fetch that page, find HTML, and re-detect straight back (a loop park on a public repo, `dead` on a private one). The rescue route is capturing the file itself, which is already `file` work |
+| `github` | ✓ | repos / profiles / gists / issues / blobs. Every route goes through the authenticated `gh` CLI, blobs included — `raw.githubusercontent.com` is unauthenticated, so it 404s every private-repo blob however the machine is signed in, and that 404 classified live content `dead`. That route is a **shared seam** (`drivers/gh.py`), not this driver's property: the file driver reads blob bytes through the same module, so neither driver imports the other and the ref boundary below is resolved one way for both. Losing raw.githubusercontent.com costs the **ref/path boundary**, which that host resolved server-side and the contents API cannot: branch names hold slashes (`blob/automation/bors/auto/README.md`), and the `blob/refs/heads/<branch>/` permalink form spends two segments before the name even begins, so splitting at the first segment sent a wrong `?ref=` with a wrong path and 404'd live files into `dead`. The seam guesses the shortest ref the URL's shape allows — free, and right for nearly every link — and only when that 404s asks `git/matching-refs/<heads|tags>/<first segment>` which of the repo's own refs the path starts with, matching segment-wise (`automation/bors` must not claim a URL whose branch is `automation/bors-next`) and taking the longest. A repo with thousands of branches costs the same one page as a repo with three. When no ref re-splits the URL, or the lookup itself fails, the original classification stands: a genuinely missing path is still `dead`, never unclassifiable. A blob too large for the contents API to serve inline parks `manual`, never `dead`. github.com's **reserved first segments** (`/features`, `/topics`, `/sponsors`, `/orgs`, `/collections`, `/marketplace`, `/trending`, `/about`, `/pricing`, `/settings`, `/explore`, …) can be neither user nor repo, so the driver declines them and registry order hands them to `web`, which extracts them like any page — driving them as repo work 404'd pages that render fine in a browser into `dead`. Only the first segment is screened: `acme/topics` is an ordinary repo. **Blob bytes are sniffed — by filename — before they are fenced**: a document committed to a repo re-detects to `file` work rather than being fenced as source (a code fence full of replacement characters, ledgered `done`, was the incident), and any other binary parks `manual` naming what it is. The re-detection is only safe because the file driver shares the seam: fetching the blob URL over plain HTTP would find the HTML viewer page and re-detect straight back (a loop park on a public repo, `dead` on a private one), while HTML arriving from the contents API is a committed HTML file and never bounces. The **name** is what catches the two extractable shapes that carry no byte signature: a CSV, and an unsmudged **Git-LFS pointer**, whose 130 bytes of `oid sha256:…` decode as clean UTF-8 and fenced `done` as though they were the document they stand for (the contents API serves the pointer, never the object). Both re-detect to `file` like every other document — a committed CSV reaches an extractor as a real table instead of a fence truncated at 40k characters, and a pointer meets the file driver's LFS guard, which parks it `manual` before any extractor is handed 130 bytes of stand-in text |
 | `paper` | ✓ | arxiv / openreview / hf-papers |
 | `podcast` | ✓ | new — Apple/Spotify/RSS episode links (§9) |
 | `web` | ✓ | renamed from `blog`; registry catch-all, always last |
-| `file` | ✓ | URL-served or captured binaries; routes by Format |
+| `file` | ✓ | URL-served, repo-committed (github blobs, through the shared `drivers/gh.py` seam) or captured binaries; routes by Format |
 | `image` | — | corpus-only: described cognitively at ingest |
 | `text` | — | corpus-only: note-only capture, nothing to fetch |
 
@@ -282,10 +294,16 @@ vocabulary only and never become work units:
 **Need** — `transcribe, extract, ocr`. Needs are mechanical and
 resource-keyed only. Cognitive obligations on *items* (re-judge under new
 harvest rules, refresh a stale digest) are never queued — they are **derived
-state**, computed on demand from files already on disk (`passes.jsonl` rules
-version vs the current constant; digest date vs the ledger's last `done` for
-the item). Mechanical obligations are queued because they're work to be
-done; staleness is derived because it's a fact that shows.
+state**, computed on demand from state already committed (`passes.jsonl`
+rules version vs the current constant; the item's digest pass date in
+`passes.jsonl` vs the ledger's last `done` for the item). Mechanical
+obligations are queued because they're work to be done; staleness is
+derived because it's a fact that shows. **Both comparands are dates in
+committed state, never file mtimes**: git stamps every file at checkout, so
+on a second machine the whole tree shares one mtime and staleness becomes
+undetectable. Day granularity is the intent — enriching and digesting in
+one session is not stale. The digest file's own `date:` is the item's
+*share* date, so it can never serve here.
 
 **`via`** (provenance) stays a documented string, not an enum —
 `harvest, thread, media, sniff, extract-asset, migration-<n>` — because
@@ -599,6 +617,22 @@ waiting-transcribe park
 that carries an enclosure pointer **always writes its park file** — §9's
 round-trip depends on the frontmatter pointer existing, show notes or not.
 
+**A park never discards content it already fetched.** Both transcribable
+kinds write what they have at park time — a podcast's show notes, a
+video's description — and the drain **appends** the transcript to that
+file rather than replacing it: a source that goes private during a
+transcription backlog would otherwise take the fetched content with it.
+One body shape per kind, whichever route produced it — the transcript is
+always its own `## Transcript` section, so the drain can split a stored
+body on that heading and compose onto what is already there. **The
+frontmatter, not the heading, says whether a body holds a transcript at
+all**: the transcriber stamps `via`, neither park does, so a park's body is
+notes end to end — a description or show notes that name `## Transcript`
+themselves were otherwise truncated at the author's own line and the
+truncation written back to disk. Once a body does hold a transcript, the
+split takes the LAST such section, because that is the one the drain
+appended.
+
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
 `transcribe: whisper-local (active) · whisper-api available — set OPENAI_API_KEY`.
@@ -665,8 +699,23 @@ a download beyond the cap and beside a description of something else.
   post — the terminal-mislabel class this design exists to kill.
 - **Thread walk-up inside the driver**, not via children: the chain is
   context for the captured post, not new first-class sources. One enrichment
-  file, one ledger entry. fxtwitter parent pointers, **cap 20 hops**, all
-  authors included, cap-hit noted in the ledger only.
+  file, one ledger entry. fxtwitter parent pointers, all authors
+  included, cap-hit noted in enrichment frontmatter (below). The walk is
+  **bounded at 100 hops** — a sanity bound against a chain that never ends,
+  not an editorial one: the chain is one piece of content and the
+  walk is linear with no fan-out, unlike the 12-URL harvest cap, which
+  bounds how much one item drags in. A thread that exceeds even 100 is
+  still recorded honestly rather than silently truncated.
+- **Cycles end the walk where they repeat, and hops are paced.** A post
+  naming itself (or an ancestor) as its parent is not a long thread: the
+  ids already walked are remembered, so the repeat stops the walk at once
+  and is recorded like any short chain (`chain_incomplete` + a note saying
+  where it looped). Without that, one self-referencing parent spent the
+  whole 100-hop bound as 100 back-to-back requests to a free community API
+  for a single unit. The walk also **sleeps 1s between parent fetches**:
+  the driver's 4s politeness is spent between units, and a 30-post thread
+  is 30 requests inside one — a second a hop keeps an ordinary thread
+  under a minute while making the walk a paced sequence, not a burst.
 - Fetch order is bottom-to-top (parent pointers); **storage is reading
   order** — root first, captured post last, each post attributed
   (`@who — date`); frontmatter records which post was captured. A
@@ -718,7 +767,35 @@ underneath; the audio lives in the feed's `<enclosure>`:
   mapping for this one case).
   Spotify exclusives fail honestly → `manual` (Claude may rescue via the
   show's own site).
-- **Direct RSS / indie episode page** → enclosure or `<link rel>` in head.
+- **Direct RSS / indie episode page** → the feed the page's `<link rel>`
+  names (its notes are richer than the page's markup), falling back to the
+  enclosure the page carries itself when that feed is unreachable or does
+  not hold the episode. Either way the unit resolves — it must, because the
+  route it arrives by is a re-detection and bouncing back would park as a
+  loop.
+
+  **The route is content-driven, never URL-guessing.** `matches()` stays
+  narrow (Apple, Spotify, explicit `.rss`) because bare `/feed` and `/rss`
+  suffixes are blog vocabulary and an RSS `<link rel>` in a head says only
+  "this site has a feed". Registry order does the work instead: nothing
+  claims an indie episode page, so the catch-all fetches it, and a page
+  whose **audio is its subject** re-detects to `podcast` (§1's mid-fetch
+  discovery, `web → podcast`). Two markups say that, and only two: an
+  `og:audio` pointer — the publisher naming the audio as the page's own
+  object — or an `<audio>` element **on a page with no substantial body**,
+  where the player is all there is. An `<audio>` element beside a real
+  article is not the signal: mainstream publishers ship read-aloud
+  text-to-speech widgets and encyclopedias embed media samples, and the
+  catch-all rule handed those articles to `podcast`, which resolved the
+  widget as the enclosure and parked `waiting: transcribe` with an **empty
+  body** — the article never extracted, its links never harvested (~1 in
+  145 real web URLs). The asymmetry decides every tie: a false positive
+  costs the whole article, a false negative costs a podcast page keeping
+  its show notes instead of a transcript. A bare link to an mp3 is not the
+  signal either: a post linking one is still a post. The signal itself is
+  `drivers/audio.py`, a shared seam beside `transport.py` and `gh.py` —
+  both drivers read it (web to route, podcast to resolve) and neither
+  imports the other.
 
 Then: audio → `cache/audio/<hash>` → `needs: transcribe` → whisper drains
 (primed with title + show notes). Show notes from the **feed** (richer than
@@ -1167,10 +1244,16 @@ Skill changes shipping with this:
   interpretive context (what a linked video is, how a thread relates)
   belongs in the digest, not the item body; thread context itself lives in
   the enrichment via walk-up. After creation, exactly two frontmatter
-  fields ever change (`status`, `enrichment:` listing), both derived from
-  disk, both written by corpus.py. The derivation rule: `status:
-  enriched` iff `enrichment/<id>/` holds markdown files, and the listing
-  is those filenames, sorted. Every run reconciles **every** item against
+  fields ever change (`status`, `enrichment:` listing), both derived, both
+  written by corpus.py. The derivation rule: the listing is the markdown
+  filenames in `enrichment/<id>/`, sorted; `status: enriched` iff the item
+  holds enrichment **and no unit it owns is still outstanding** — queued,
+  waiting, blocked, error, or manual. An item is one unit of knowledge (the
+  post, the thread parents above it, the links harvest promoted, the media,
+  the video awaiting its transcript) and nothing about it advances to
+  digest or wiki until every part has landed, so one pending transcript
+  holds the whole item at `raw`; a `dead` or `skipped` unit owes nothing and
+  holds nothing hostage. Every run reconciles **every** item against
   disk — not just the units it drained — writing only on change, so
   enrichment written outside the drain (media descriptions, cognitive
   heals) converges at the next run; `enrich mark` and `enrich pass`

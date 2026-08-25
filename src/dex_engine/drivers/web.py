@@ -16,6 +16,18 @@ content type maps to an extractable format) is neither thin nor web work at
 all: detection's HEAD lied or was inconclusive. The driver signals a
 redetection to ``file`` work and the run layer re-routes the unit — never
 ``manual`` for content the file driver can read.
+
+The same mid-fetch discovery carries indie podcast episode pages to the
+``podcast`` driver, and being the catch-all is what lets that be decided on
+content rather than on URL patterns that cannot tell ``/feed`` the blog
+from ``/feed`` the show. What counts as evidence is narrow, because the two
+mistakes cost differently: handing an article to the podcast driver parks
+it ``waiting: transcribe`` with an EMPTY body — the article is never
+extracted and its links are never harvested — while handing an episode
+page to ``web`` merely stores its show notes. So an episode is a page whose
+``og:audio`` names the audio as the page's own object, or one carrying a
+player and no body worth extracting. An ``<audio>`` element beside a real
+article is a read-aloud widget or a media sample, and the article wins.
 """
 
 import html as html_lib
@@ -36,6 +48,7 @@ from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
 from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
+from .audio import audio_enclosure
 from .transport import Transport, urllib_transport
 
 __all__ = ["HtmlExtract", "WebDriver", "trafilatura_extract"]
@@ -127,7 +140,18 @@ class WebDriver:
                     meta={},
                     redetect=Redetection(kind=Kind.FILE, format=fmt),
                 )
-            return self._extracted(page.html, base_url=unit.url, allow_media=True) or Result(
+            enclosure = audio_enclosure(page.html, unit.url)
+            if enclosure is not None and enclosure.declared:
+                return _podcast_redetection()
+            extracted = self._extracted(page.html, base_url=unit.url, allow_media=True)
+            if extracted is not None:
+                return extracted
+            if enclosure is not None:
+                # A player and nothing worth extracting: the audio is what
+                # the page is. Ordering is the whole rule — an article's
+                # read-aloud widget was reached above, by its own body.
+                return _podcast_redetection()
+            return Result(
                 status=Status.MANUAL,
                 meta=_title_meta(page.html),
                 reason=THIN_EXTRACTION_REASON,
@@ -192,6 +216,11 @@ class WebDriver:
         if not isinstance(closest, dict) or not closest.get("available") or not closest.get("url"):
             return None, "no wayback snapshot"
         return closest["url"], None
+
+
+def _podcast_redetection() -> Result:
+    """Hand the unit to the podcast driver — identity only, no outputs."""
+    return Result(status=Status.QUEUED, meta={}, redetect=Redetection(kind=Kind.PODCAST))
 
 
 def _document_format(page: _Page) -> Format | None:

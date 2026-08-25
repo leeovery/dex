@@ -7,8 +7,11 @@ Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
   Spotify exclusives fail honestly → ``manual`` (Claude may rescue via the
   show's own site).
-- **Direct RSS / indie episode page** → enclosure, or the ``<link rel>``
-  feed pointer in the page head.
+- **Direct RSS / indie episode page** → the ``<link rel>`` feed pointer in
+  the page head (its notes are richer), falling back to the enclosure the
+  page carries itself. Such a page arrives here by re-detection from the
+  web driver, on that same content signal — URL shape cannot tell an
+  episode page from a post.
 
 The driver only ever RESOLVES: the enclosure URL and the show notes (from
 the feed — richer than the page) ride the waiting Result's meta/body, the
@@ -22,12 +25,13 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 from dex_engine.pipeline.classify import Classification, classify_connection, classify_http
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .audio import audio_enclosure
 from .transport import Transport, urllib_transport
 
 __all__ = ["PodcastDriver"]
@@ -96,9 +100,11 @@ class PodcastDriver:
 
         Deliberately narrow: bare ``/feed`` / ``/rss`` path suffixes and
         ``feeds.*`` / ``feed.*`` hosts are blog vocabulary too — the web
-        driver keeps those. The long-term answer for a
-        feed-shaped URL whose resolution finds no audio is corrected-kind
-        re-entry — out of scope this phase.
+        driver keeps those. Indie episode pages reach this driver by
+        content, not by URL shape: the web driver fetches them (registry
+        order, catch-all last), finds the page carrying its own audio, and
+        re-detects the unit to ``podcast`` — so no pattern here has to
+        guess which ``/episodes/…`` path is a podcast and which is a blog.
         """
         host = host_of(url)
         if host == "podcasts.apple.com":
@@ -219,7 +225,30 @@ class PodcastDriver:
         return self._resolve_episode_page(url, body)
 
     def _resolve_episode_page(self, url: str, page: str) -> "_Episode | Result":
-        feed_url = _feed_link(page)
+        """Resolve an indie episode page: its feed first, its own audio second.
+
+        The feed is preferred because the feed's show notes are richer than
+        the page's markup — but a page that carries its audio is resolvable
+        with or without one, and it must be: the web driver routed this
+        unit here on that signal, and bouncing it back would be a
+        re-detection loop park.
+        """
+        episode = self._episode_from_page_feed(url, page)
+        if isinstance(episode, _Episode):
+            return episode
+        enclosure = audio_enclosure(page, url)
+        if enclosure is None:
+            return episode  # the feed route's own failure stands
+        return _Episode(
+            title=_og_title(page),
+            show=None,
+            enclosure=enclosure.url,
+            published=None,
+            notes="",
+        )
+
+    def _episode_from_page_feed(self, url: str, page: str) -> "_Episode | Result":
+        feed_url = _feed_link(page, url)
         if feed_url is None:
             return _manual("page exposes no RSS feed link — rescue by hand")
         feed = self._feed(feed_url)
@@ -457,11 +486,13 @@ def _og_title(page: str) -> str | None:
     return None
 
 
-def _feed_link(page: str) -> str | None:
+def _feed_link(page: str, base_url: str) -> str | None:
     for tag in _FEED_LINK_RE.finditer(page):
         href = _HREF_RE.search(tag.group(0))
         if href:
-            return html_lib.unescape(href.group(1))
+            # Feed pointers are routinely relative ("/feed.xml"); the
+            # driver fetches what it is handed, so it is absolutized here.
+            return urljoin(base_url, html_lib.unescape(href.group(1)).strip())
     return None
 
 

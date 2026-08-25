@@ -10,12 +10,14 @@ import json
 
 import pytest
 
+from dex_engine.drivers.gh import Blob, blob_ref, fetch_blob, run_gh
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import urllib_transport
+from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
-from dex_engine.pipeline.types import Kind, Need, Status
+from dex_engine.pipeline.types import Format, Kind, Need, Status
 from tests.drivers.conftest import body_of, make_unit
 
 pytestmark = pytest.mark.live
@@ -80,14 +82,25 @@ class TestGitHubContentsShape:
 
     def test_an_lfs_tracked_blob_still_arrives_as_its_pointer(self):
         # The contents API serves Git-LFS pointer text, never the object it
-        # names. The blob route depends on that staying true: the pointer is
-        # clean UTF-8 with no signature, so only the filename keeps its 130
-        # bytes of `oid sha256:…` from being fenced as the document.
+        # names. Asserted on the seam's bytes, because no status downstream
+        # can show it: a pointer and the real document both re-detect to
+        # pdf work, and only the bytes say which one arrived.
+        url = "https://github.com/sarabander/sicp-pdf/blob/master/sicp.pdf"
+        ref = blob_ref(url)
+        assert ref is not None
+        blob = fetch_blob(run_gh, ref)
+        assert isinstance(blob, Blob)
+        assert blob.data.startswith(b"version https://git-lfs.github.com/spec/v1")
+
+    def test_an_lfs_pointer_is_never_fenced_as_the_document(self):
+        # The floor the pointer must not fall through: whatever the driver
+        # decides, it must not present 130 bytes of `oid sha256:…` as the
+        # document they stand for.
         url = "https://github.com/sarabander/sicp-pdf/blob/master/sicp.pdf"
         result = GitHubDriver().fetch(make_unit(url, Kind.GITHUB))
-        assert result.status is Status.MANUAL
-        assert "is a pdf document" in str(result.reason)
         assert result.body is None
+        assert result.redetect is not None
+        assert result.redetect.format is Format.PDF
 
     def test_a_slashed_branch_resolves_through_matching_refs(self):
         # rust-lang/rust's bors branches are the routine slashed-name shape.
@@ -112,6 +125,18 @@ class TestYouTubeRootNamespace:
 
     def test_an_unclaimed_bare_name_is_a_404_not_a_product_page(self):
         assert not urllib_transport("https://www.youtube.com/zzqqxxnotachannel1234").ok
+
+
+class TestPageAudioIsNotAnEpisode:
+    def test_an_encyclopedia_article_with_embedded_audio_still_extracts(self):
+        # en.wikipedia.org/wiki/Podcast embeds media samples in a 60k-char
+        # article — the live shape the over-broad <audio> signal discarded.
+        # Real markup, because this is exactly what a fixture cannot pin.
+        driver = WebDriver(transport=urllib_transport)
+        result = driver.fetch(make_unit("https://en.wikipedia.org/wiki/Podcast", Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+        assert len(body_of(result)) > 10_000
 
 
 class TestWaybackShape:

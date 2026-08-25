@@ -29,6 +29,11 @@ def feed() -> HttpResponse:
     return xml_response(fixture_text("podcast", "feed.xml"))
 
 
+def indie_page() -> HttpResponse:
+    """A realistic indie episode page: a player, a feed link, real notes."""
+    return html_response(fixture_text("podcast", "indie-episode-page.html"))
+
+
 class TestDetection:
     def test_matches_apple_spotify_and_explicit_rss(self):
         d = PodcastDriver()
@@ -253,6 +258,54 @@ class TestRssIshResolution:
         result = d.fetch(make_unit(page_url, Kind.PODCAST))
         assert result.status is Status.WAITING
         assert result.meta["enclosure"] == ENCLOSURE
+
+    def test_a_redetected_indie_page_prefers_the_feeds_episode(self):
+        # The page carries its own audio, but the FEED's notes are richer —
+        # so a resolvable feed link wins, and the enclosure is the feed's.
+        d = driver({PAGE_URL: indie_page(), FEED_URL: feed()})
+        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert result.needs is Need.TRANSCRIBE
+        assert result.meta["enclosure"] == ENCLOSURE
+        assert "Ada Guest" in (result.body or "")  # the feed's show notes
+
+    def test_a_page_whose_feed_is_unreachable_falls_back_to_its_own_audio(self):
+        # The web driver routed this unit here on the page's audio; the
+        # driver must resolve from that same signal rather than bounce it
+        # back, which the run layer would park as a re-detection loop.
+        d = driver({PAGE_URL: indie_page(), FEED_URL: OSError("connection reset")})
+        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert result.meta["enclosure"] == "https://engineering-distilled.test/audio/ep42.mp3"
+        assert result.meta["title"] == "Ledgers as Work Queues"
+
+    def test_a_page_with_no_feed_link_still_resolves_from_its_player(self):
+        page = indie_page().text().replace(
+            '<link rel="alternate" type="application/rss+xml" title="Engineering Distilled"\n'
+            '        href="https://feeds.pods.test/engineering-distilled.rss" />',
+            "",
+        )
+        d = driver({PAGE_URL: html_response(page)})
+        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert result.meta["enclosure"] == "https://engineering-distilled.test/audio/ep42.mp3"
+
+    def test_an_og_audio_pointer_counts_as_an_enclosure(self):
+        page = (
+            '<html><head><meta property="og:title" content="Solo Episode"/>'
+            '<meta property="og:audio" content="https://cdn.pods.test/solo.mp3"/>'
+            "</head><body>notes</body></html>"
+        )
+        d = driver({PAGE_URL: html_response(page)})
+        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
+        assert result.status is Status.WAITING
+        assert result.meta["enclosure"] == "https://cdn.pods.test/solo.mp3"
+
+    def test_a_page_with_neither_feed_nor_audio_is_manual(self):
+        d = driver({PAGE_URL: html_response("<html><body>just a post</body></html>")})
+        result = d.fetch(make_unit(PAGE_URL, Kind.PODCAST))
+        assert result.status is Status.MANUAL
+        assert "no RSS feed link" in reason_of(result)
 
     def test_enclosureless_episode_is_manual(self):
         page_url = "https://engineering-distilled.test/episodes/no-audio.rss"

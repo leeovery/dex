@@ -85,6 +85,71 @@ class TestRedetection:
         assert result.redetect is not None
         assert result.redetect.format is Format.CSV
 
+    def test_an_episode_page_whose_audio_is_its_substance_signals_podcast(self):
+        # A player and a paragraph of notes: extraction has nothing to keep,
+        # so the audio IS the page. Real extraction, because the threshold
+        # is half the decision.
+        page = fixture_text("podcast", "indie-episode-page.html")
+        driver = driver_for({URL: html_response(page)}, extract=trafilatura_extract)
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.PODCAST
+        assert result.status is Status.QUEUED
+
+    def test_an_og_audio_declaration_signals_podcast_over_any_body(self):
+        # og:audio is the publisher naming the audio as this page's object —
+        # an episode page with full show notes is still an episode page.
+        declared = ARTICLE.replace(
+            "</head>",
+            '<meta property="og:audio" content="https://cdn.pods.test/ep42.mp3"></head>',
+        )
+        result = driver_for({URL: html_response(declared)}).fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is not None
+        assert result.redetect.kind is Kind.PODCAST
+
+    def test_a_listen_to_this_article_widget_never_steals_the_article(self):
+        # The incident: mainstream publishers ship text-to-speech players
+        # and encyclopedias embed media samples. An <audio> element beside
+        # a real article is an accessory — parking that article as an
+        # episode loses the whole body AND its links.
+        narrated = ARTICLE.replace(
+            "</body>",
+            '<audio class="tts-player" preload="none" controls '
+            'src="https://cdn.example.test/polly/article.mp3"></audio></body>',
+        )
+        driver = driver_for({URL: html_response(narrated)}, extract=trafilatura_extract)
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+        assert "https://example.test/ledger-driven-design" in body_of(result)  # links harvested
+
+    def test_a_player_on_a_page_with_a_substantial_body_is_an_accessory(self):
+        # The rule at the seam, independent of any one publisher's markup.
+        narrated = ARTICLE.replace("</body>", '<audio src="/media/read-aloud.mp3"></audio></body>')
+        result = driver_for({URL: html_response(narrated)}).fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+
+    def test_a_blog_advertising_an_rss_feed_is_never_stolen(self):
+        # THE boundary: "/feed", "/rss" and an RSS <link rel> are blog
+        # vocabulary. Only audio the page carries makes it an episode.
+        blogish = ARTICLE.replace(
+            "</head>",
+            '<link rel="alternate" type="application/rss+xml" '
+            'href="https://example.test/feed.xml"></head>',
+        )
+        driver = driver_for({URL: html_response(blogish)})
+        result = driver.fetch(make_unit(URL, Kind.WEB))
+        assert result.redetect is None
+        assert result.status is Status.DONE
+
+    def test_a_post_merely_linking_an_mp3_is_never_stolen(self):
+        linked = ARTICLE.replace(
+            "</body>", '<p><a href="/files/talk.mp3">Download the talk</a></p></body>'
+        )
+        driver = driver_for({URL: html_response(linked)})
+        assert driver.fetch(make_unit(URL, Kind.WEB)).redetect is None
+
     def test_ordinary_thin_html_stays_manual_never_redetects(self):
         driver = driver_for({URL: html_response(THIN)}, extract=lambda _html: None)
         result = driver.fetch(make_unit(URL, Kind.WEB))

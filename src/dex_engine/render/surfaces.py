@@ -205,6 +205,13 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
                                                      #   fresh / rerun / waiting-drained
           "parked": [{"item": str, "url": str,
                       "status": str, "reason": str}],  # survives the session
+          "incomplete": [{"item": str,               # optional: touched items
+                          "landed": int,             #   still owed work — the
+                          "total": int,              #   ledger units that have
+                          "outstanding": [           #   landed, of all it owns
+                            {"status": str,          #   an outstanding status
+                             "needs": str,           #   optional
+                             "count": int}]}],
           "cognitive": [{"item": str, "url": str,
                          "need": str}],              # optional: jobs for the session
           "issues_filed": int,                       # optional, default 0
@@ -216,10 +223,11 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"counts", "items", "parked"}),
-        optional=frozenset({"cognitive", "issues_filed", "notes"}),
+        optional=frozenset({"incomplete", "cognitive", "issues_filed", "notes"}),
     )
     counts = _counts_at(surface, payload, "counts")
     item_rows = _enrich_item_rows(surface, payload)
+    incomplete_rows = _enrich_incomplete_rows(surface, payload)
     parked_rows = _enrich_parked_rows(surface, payload)
     cognitive_rows = _enrich_cognitive_rows(surface, payload)
     issues_filed = _int_at(surface, payload, "issues_filed", default=0)
@@ -237,6 +245,13 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         lines.append(kernel.table(item_rows, indent=2).rstrip("\n"))
     else:
         lines.append("cognitive work — none (nothing new or changed)")
+    if incomplete_rows:
+        lines.append("")
+        lines.append(
+            f"incomplete — {_plural(len(incomplete_rows), 'item')} still raw "
+            "until every unit lands:"
+        )
+        lines.append(kernel.table(incomplete_rows, indent=2).rstrip("\n"))
     lines.append("")
     if parked_rows:
         verb = "survives" if len(parked_rows) == 1 else "survive"
@@ -270,6 +285,70 @@ def _enrich_item_rows(surface: str, payload: Mapping[str, object]) -> list[list[
             [_str_at(surface, entry, "id", where), _str_at(surface, entry, "reason", where)]
         )
     return rows
+
+
+# What an outstanding unit is waiting for, as prose. Statuses that are not
+# outstanding never reach this surface — the payload validation refuses them.
+_OUTSTANDING_STATUSES = frozenset(_PARKED_STATUSES | {Status.QUEUED})
+_NEED_NOUNS = {Need.TRANSCRIBE: "transcription", Need.EXTRACT: "extraction", Need.OCR: "OCR"}
+_STATUS_PHRASES = {
+    Status.QUEUED: "queued",
+    Status.WAITING: "waiting",
+    Status.BLOCKED: "blocked",
+    Status.ERROR: "in error",
+    Status.MANUAL: "needing a decision",
+}
+
+
+def _enrich_incomplete_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
+    rows = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "incomplete", required=False)):
+        where = f"incomplete[{i}]."
+        _check_keys(
+            surface,
+            entry,
+            required=frozenset({"item", "landed", "total", "outstanding"}),
+            where=where,
+        )
+        landed = _int_at(surface, entry, "landed", where)
+        total = _int_at(surface, entry, "total", where)
+        if landed > total:
+            _fail(surface, f"{where}landed ({landed}) exceeds total ({total})")
+        shape = f"{landed} of {_plural(total, 'unit')} landed"
+        outstanding = _enrich_outstanding(surface, entry, where)
+        rows.append([_str_at(surface, entry, "item", where), f"{shape} — {outstanding}"])
+    return rows
+
+
+def _enrich_outstanding(surface: str, entry: Mapping[str, object], where: str) -> str:
+    parts = []
+    for j, group in enumerate(_obj_list_at(surface, entry, "outstanding", required=True)):
+        gwhere = f"{where}outstanding[{j}]."
+        _check_keys(
+            surface,
+            group,
+            required=frozenset({"status", "count"}),
+            optional=frozenset({"needs"}),
+            where=gwhere,
+        )
+        status = _status_at(surface, group, "status", gwhere)
+        if status not in _OUTSTANDING_STATUSES:
+            allowed = ", ".join(sorted(s.value for s in _OUTSTANDING_STATUSES))
+            _fail(
+                surface,
+                f"{gwhere}status must be an outstanding status ({allowed}), got {status.value!r}",
+            )
+        phrase = _STATUS_PHRASES[status]
+        if "needs" in group:
+            need = _str_at(surface, group, "needs", gwhere)
+            if need not in {n.value for n in Need}:
+                options = ", ".join(n.value for n in Need)
+                _fail(surface, f"{gwhere}needs must be one of {options}, got {need!r}")
+            phrase += f" on {_NEED_NOUNS[Need(need)]}"
+        parts.append(f"{_int_at(surface, group, 'count', gwhere)} {phrase}")
+    if not parts:
+        _fail(surface, f"{where}outstanding must name at least one outstanding unit")
+    return ", ".join(parts)
 
 
 def _enrich_parked_rows(surface: str, payload: Mapping[str, object]) -> list[list[str]]:
