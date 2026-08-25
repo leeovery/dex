@@ -6,8 +6,8 @@ ingestion machinery and describes what IS. It is also the one design surface
 for this release: work that is agreed and not yet built lives here too,
 marked as such where it belongs — the driver-outcome contract (§2), the
 cleanup round (§16), and the open questions their own sections state. The
-roadmap holds no design; it indexes this file and notes what comes after the
-release.
+backlog (`backlog/index.md`) holds no design; it lists what comes after the
+release, one file per idea.
 
 This document was verified line-by-line against the full design-session
 transcript, which is held locally by the owner and is not part of the repo;

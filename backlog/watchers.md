@@ -1,4 +1,19 @@
-# Watchers — preliminary discussion (NOT a design)
+# Watchers — feeding sources as a first-class layer
+
+The next thing to
+be designed. The preliminary discussion (2026-08-20,
+folded in below) sketched the shape: every feeder (shortcut,
+Discord, RSS, bookmark folders, Dropbox) becomes a watcher writing
+standard inbox captures through one shared inserter; cursor position
+controls history-vs-forward scope; raw/ likely dies into namespaced
+watcher scratch; staleness/availability become per-watcher facts the
+report states. Supersedes the "backfill-source freshness" idea (the
+2026-08-20 overnight analysis found Discord blind for two days,
+discoverable only by deep analysis). Design it AFTER the
+ingestion-pipeline work lands — it sits entirely upstream of that design
+and requires no changes to it.
+
+## Preliminary discussion (2026-08-20)
 
 Status: **discussion log, 2026-08-20**. This is not an agreed design — it
 captures a conversation so nothing is lost. Positions below may contradict

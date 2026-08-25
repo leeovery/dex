@@ -251,7 +251,7 @@ Three things sit on top of that, and they are where the real work happens:
 - **Hosted transcription**: any OpenAI-compatible provider already works, but a
   benchmarked recommended config is still to come.
 
-Tracked in [`design/roadmap.md`](design/roadmap.md).
+Tracked in [`backlog/index.md`](backlog/index.md), one file per idea.
 
 ---
 

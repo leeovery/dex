@@ -51,10 +51,16 @@ the engine stays unaware of which ones exist.
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
   capture protocol any client implements).
-- `design/ingestion-pipeline.md` — the one design surface for this release:
-  the in-force design for the ingestion machinery and the rendered
-  surfaces, plus the work agreed and not yet built. `design/roadmap.md` —
-  an index over the design files, post-release backlog, operational facts.
+- `design/` — one markdown file per fleshed-out design, kept for reference
+  after it ships. `ingestion-pipeline.md` is this release's: the in-force
+  design for the ingestion machinery and the rendered surfaces.
+- `backlog/` — one file per idea not yet in hand (features and bug fixes
+  alike), indexed in `backlog/index.md`, which also states the convention.
+  An idea graduates by getting its `design/<name>.md`.
+- `field-notes.md` — hard-earned, device-verified facts about the platforms
+  dex builds on (Shortcuts, GitHub tokens, scheduled-task hosts, cowork).
+  Agent-facing, never owner-facing. Check it before building on any of
+  those surfaces; append what you verify the hard way.
 - `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
   `live.yml` (the daily third-party drift watch). See Development below.
 - `example/` — a toy instance showing the shapes.
@@ -206,7 +212,7 @@ that as two executors. Neither weakens an ordinary run.
   this release — everything discussed and not yet shipped goes in it,
   marked as agreed-not-built. Check changes against it; when a decision
   genuinely changes, record the new decision there rather than silently
-  diverging from the document. The roadmap is neither a design surface nor
+  diverging from the document. The backlog is neither a design surface nor
   a work log.
 - **Comments earn their place — and never reference the design doc.** A
   comment or docstring exists only for what the code cannot say: a
@@ -215,7 +221,7 @@ that as two executors. Neither weakens an ordinary run.
   ("§14", "phase-3 review", "per the design"). When a constraint from the
   design matters at a call site, inline it in full, self-contained — the
   design doc never ships to instances, so a pointer to it is broken on
-  arrival, and even in-repo it rots. This file and the roadmap are the only
+  arrival, and even in-repo it rots. This file and the backlog are the only
   places that may name the design doc.
 - **Commands** (add / rename / change behavior): update the `pyproject.toml`
   entry points, the `instance/dex` usage line, and the README command table
@@ -242,8 +248,9 @@ that as two executors. Neither weakens an ordinary run.
 - **Adding a dependency**: re-lock in the same commit (`uv lock`) — CI syncs
   with `--locked` and the release gate does too, so a stale lock fails both.
 - **Decisions**: record in the design file the work belongs to —
-  `design/ingestion-pipeline.md` for anything in this release. The roadmap
-  takes only what comes after it, in a line or two. Present tense, current
+  `design/ingestion-pipeline.md` for anything in this release. The backlog
+  takes what comes after it: one file per idea, indexed in
+  `backlog/index.md`. Present tense, current
   design only; this file and the docs describe what IS, not what was.
 - **README**: its under-the-hood section mirrors the structure and design
   above — keep it true whenever any of this changes.
@@ -262,8 +269,9 @@ that as two executors. Neither weakens an ordinary run.
   LLM-authored input file, a malformed file, a weird URL. It is not an issue
   when it needs a hand-edit of a file the contract forbids hand-editing, or a
   writer that does not exist — drop it, and don't record it. There is no
-  backlog tier for known defects; the roadmap's backlog holds unbuilt features
-  only.
+  backlog tier for review findings: a finding is fixed now or dropped, and
+  `backlog/` holds only work not yet picked up — future features and
+  standalone fixes, never a deferred finding.
 - **Stop when a cycle returns nothing above that bar.** Early cycles on new
   work legitimately surface majors, and they get fixed. Later cycles surface a
   long tail that costs more to chase than to ship. Say the surface is done and
