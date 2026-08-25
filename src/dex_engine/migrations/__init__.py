@@ -3,8 +3,9 @@
 One module per migration — ``migration_<n>.py``, plain integers, discovered
 and run in numeric order (padding buys nothing; single author +
 release-serialized numbering means no collisions). Each module exposes
-``build(*, today, engine_version) -> Migration``; the clock and the running
-engine version are injected, never read ambiently.
+``build(*, today, now, engine_version) -> Migration``; the two clocks (the
+date and the UTC write instant a seeded ledger line carries) and the
+running engine version are injected, never read ambiently.
 
 The applied log is ``state/migrations.jsonl`` — one ``{number, engine,
 date}`` record per applied migration, append-only, ``merge=union`` like all
@@ -83,15 +84,17 @@ def log_path(root: Path) -> Path:
 def discover(
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
 ) -> list[Migration]:
-    """Discover shipped migrations, built with the injected clock and version.
+    """Discover shipped migrations, built with the injected clocks and version.
 
     Modules named ``migration_<n>.py`` in this package are the registry;
     the runner sorts numerically.
 
     Args:
-        today: Injected clock.
+        today: Injected date clock.
+        now: Injected UTC write-instant clock.
         engine_version: The running engine's version string.
 
     Returns:
@@ -119,9 +122,9 @@ def discover(
         build = getattr(module, "build", None)
         if build is None:
             raise MigrationError(
-                f"{module.__name__} does not expose build(*, today, engine_version)"
+                f"{module.__name__} does not expose build(*, today, now, engine_version)"
             )
-        migration: Migration = build(today=today, engine_version=engine_version)
+        migration: Migration = build(today=today, now=now, engine_version=engine_version)
         if migration.number != number:
             raise MigrationError(
                 f"{module.__name__} builds migration number {migration.number}, "
@@ -186,9 +189,9 @@ def append_applied(
 
     The append is not atomic: a crash mid-write can tear the record. That
     window is accepted — a torn line fails :func:`read_applied` loudly with
-    the file and line named, and the repair is the same session-judgment
-    path as quarantined ledger lines: fix or delete the torn line,
-    re-run sync; idempotent migrations make a lost record harmless.
+    the file and line named, and the repair is one line of session judgment:
+    fix or delete the torn line, re-run sync; idempotent migrations make a
+    lost record harmless.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"number": number, "engine": engine, "date": date.isoformat()}
@@ -200,6 +203,7 @@ def run_pending(
     root: Path,
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
     migrations: Sequence[Migration] | None = None,
 ) -> list[AppliedMigration]:
@@ -211,7 +215,8 @@ def run_pending(
 
     Args:
         root: The instance root.
-        today: Injected clock.
+        today: Injected date clock.
+        now: Injected UTC write-instant clock.
         engine_version: The running engine's version — stamped into each
             log record.
         migrations: Override for tests; ``None`` discovers the shipped set.
@@ -220,7 +225,7 @@ def run_pending(
         The migrations applied this run, with their reports, in order.
     """
     if migrations is None:
-        migrations = discover(today=today, engine_version=engine_version)
+        migrations = discover(today=today, now=now, engine_version=engine_version)
     path = log_path(root)
     applied_numbers = read_applied(path)
     applied: list[AppliedMigration] = []

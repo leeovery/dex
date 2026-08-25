@@ -127,9 +127,14 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, capped?, engine, date, via?, parent?, depth?, rerun?, path?,
-  title?, error?, reason?}`. Last line per hash wins; `bin/dex enrich
-  compact` settles it. Statuses: queued · done · dead · skipped · manual ·
+  attempts?, capped?, engine, date, at?, via?, parent?, depth?, rerun?,
+  path?, title?, error?, reason?}`. The latest line per hash wins, and
+  latest means the newest `at` — the UTC write instant every line carries —
+  not the last line in the file, because a union merge between two machines
+  concatenates their lines in git's order, not in write order. Lines
+  written before `at` shipped carry none and count as oldest. `bin/dex
+  enrich compact` settles the file down to the winners.
+  Statuses: queued · done · dead · skipped · manual ·
   waiting · blocked · error. `reason` is the stated parking reason
   (required on manual/skipped); `error` entries carry a scrubbed message
   and retry once per newer engine; `capped` marks a skip that records
@@ -138,17 +143,6 @@ a malformed record impossible:
   the exact stored key for units recorded verbatim (bad seeds and every
   `via: media` line), so pass the URL as the ledger shows it and the heal
   lands on that entry.
-- `state/enrichment-ledger.unmigrated.jsonl` — the migration quarantine
-  (normally ABSENT/empty): ledger lines a migration could not provably
-  translate. Lint flags it non-empty. **The quarantine review procedure**
-  (the one home — the skills point here):
-  1. Cross-check each orphaned line against `state/exclusions.tsv` first —
-     a line referencing an excluded item is a confirmed loss: close it
-     out, never re-add it.
-  2. Review what remains with judgment; re-add what should live via
-     `bin/dex enrich mark <url> <status> --reason ...` (the sanctioned
-     correction verb — never hand-append JSONL).
-  3. Accept the rest as losses, then empty the file.
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never
   ran"; `rules` versions the harvest rules). Written by
@@ -159,7 +153,9 @@ a malformed record impossible:
   upstream `{fingerprint, action, engine, date, issue?}`. Written by the
   issue filer; the owner's visible record.
 - `state/exclusions.tsv` — written by `bin/dex exclude`; excluded items
-  stay excluded across re-normalization.
+  stay excluded across re-normalization. The verb purges the item
+  completely — corpus file, `enrichment/<id>/`, and the item's ledger
+  entries — and states the entry count it dropped; git history keeps them.
 
 ## `cache/` — ephemeral, gitignored
 

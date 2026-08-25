@@ -59,6 +59,7 @@ from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
 from tests.pipeline.test_issues import FakeGh
 
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
 ITEM = "2026-08-19-example-55ad7b"
 URL = "https://example.test/post"
 
@@ -103,6 +104,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     config: Config | None = None,
     drivers=None,
     today=None,
+    now=None,
     engine_version: str = "0.2.0",
     transport=None,
     provider_available=no_providers,
@@ -116,6 +118,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
         config=config if config is not None else Config(),
         drivers=drivers if drivers is not None else [driver],
         today=today if today is not None else (lambda: TODAY),
+        now=now if now is not None else (lambda: NOW),
         engine_version=engine_version,
         transport=transport if transport is not None else FakeTransport({}),
         provider_available=provider_available,

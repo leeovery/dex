@@ -1,18 +1,33 @@
 """Ledger persistence: the single serialization boundary for LedgerEntry.
 
 ``state/enrichment-ledger.jsonl`` is append-only, full-record lines,
-last-per-hash wins. Superseded lines are the audit trail until
-``compact`` rewrites the file keeping only the latest line per hash (which
-also settles git union merges).
+latest-per-hash wins. Superseded lines are the audit trail until
+``compact`` rewrites the file keeping only the latest line per hash.
 
-This layer never reads the ambient clock: today's date and the engine
-version are injected so date-stamping and retry-on-new-engine are
-testable.
+"Latest" is decided by the ``at`` write timestamp, not by file position:
+git's union merge driver concatenates ours-then-theirs, so after two
+machines merge, the last line of a hash is whichever side git appended, not
+whichever machine wrote later. A line without ``at`` sorts oldest — every
+writer stamps one, so an unstamped line necessarily predates every stamped
+one — and lines that tie (both unstamped, or the same instant) fall back to
+file position.
+
+``at`` is the writing machine's wall clock, and a wall clock can be wrong.
+Two guards bound what a wrong one costs: it is set by the writer alone
+(:func:`stamp`, from an injected clock) and never carried in from a caller,
+and a stored value further ahead than :data:`FUTURE_SKEW_ALLOWANCE` is read
+as no timestamp at all (:func:`resolution_key`).
+
+Stamping never reads the ambient clock: today's date, the write instant,
+and the engine version are injected so stamping and retry-on-new-engine are
+testable. Resolution has to compare a stored ``at`` against the present, so
+it does read a clock — injectable, defaulting to the wall clock, because
+every reader resolves and not every reader has a clock to hand.
 """
 
 import datetime
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,11 +36,14 @@ from dex_engine import atomic
 from .types import Format, Kind, LedgerEntry, Need, Status
 
 __all__ = [
+    "FUTURE_SKEW_ALLOWANCE",
     "LedgerSchemaError",
     "append",
     "compact",
+    "drop_items",
     "from_line",
     "load",
+    "resolution_key",
     "stamp",
     "to_line",
 ]
@@ -56,6 +74,7 @@ _ALL_KEYS = frozenset(
         "needs",
         "attempts",
         "capped",
+        "at",
         "via",
         "parent",
         "depth",
@@ -126,6 +145,7 @@ def from_line(line: str) -> LedgerEntry:
             capped=_expect_bool(raw, "capped") if "capped" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
+            at=None if "at" not in raw else _expect_datetime(raw, "at"),
             via=None if "via" not in raw else _expect_str(raw, "via"),
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
@@ -151,6 +171,14 @@ def _expect_int(raw: dict[str, object], key: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise LedgerSchemaError(f"field {key!r} must be an integer, got {type(value).__name__}")
     return value
+
+
+def _expect_datetime(raw: dict[str, object], key: str) -> datetime.datetime:
+    text = _expect_str(raw, key)
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError as e:
+        raise LedgerSchemaError(f"field {key!r} must be an ISO 8601 timestamp, got {text!r}") from e
 
 
 def _expect_bool(raw: dict[str, object], key: str) -> bool:
@@ -179,6 +207,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("capped", entry.capped or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
+        ("at", entry.at.isoformat() if entry.at is not None else None),
         ("via", entry.via),
         ("parent", entry.parent),
         ("depth", entry.depth),
@@ -192,11 +221,65 @@ def to_line(entry: LedgerEntry) -> str:
     return json.dumps(record, ensure_ascii=False)
 
 
-def load(path: Path) -> dict[str, LedgerEntry]:
-    """Load the ledger; the last line per hash wins.
+# An unstamped line predates every stamped one: every writer from the
+# release that added `at` stamps it, so a line without one was written
+# before that release shipped.
+_UNSTAMPED = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+
+# How far ahead of the reader's clock a write timestamp may sit and still be
+# read as one. `at` decides which line of a hash is live and it comes from
+# another machine's wall clock: a machine whose clock has jumped stamps a
+# line years ahead, that line wins its hash against every later real write,
+# and `compact` then deletes the real ones — the unit stuck until the wall
+# clock catches up, with no working repair verb. Past this much skew a value
+# is not a write instant, so it is read as unstamped: it sorts oldest and
+# loses to every real write, costing that one line its ordering and never
+# the hash. Five minutes is wide enough for the ordinary spread between two
+# machines whose lines merge; a clock stepping BACKWARDS inside the window
+# still mis-orders two of its own writes, and that is accepted.
+FUTURE_SKEW_ALLOWANCE = datetime.timedelta(minutes=5)
+
+
+def _utc_now() -> datetime.datetime:
+    """The reader's clock: the default for resolution, never for stamping."""
+    return datetime.datetime.now(datetime.UTC)
+
+
+def resolution_key(
+    entry: LedgerEntry, position: int, *, now: datetime.datetime
+) -> tuple[datetime.datetime, int]:
+    """The ordering key that decides which line of a hash is the latest.
+
+    Public so a migration reading the file tolerantly resolves hashes by the
+    same rule ``load`` does, rather than reimplementing it and drifting.
+
+    Args:
+        entry: The parsed entry.
+        position: Its position in the file (line number, or any monotonic
+            counter over the lines read).
+        now: The instant the ledger is being read at, UTC-aware. An ``at``
+            further ahead than :data:`FUTURE_SKEW_ALLOWANCE` is read as
+            unstamped — no clock is trusted past the present.
+
+    Returns:
+        A sort key; the greatest key for a hash names its live line.
+    """
+    at = entry.at
+    if at is None or at > now + FUTURE_SKEW_ALLOWANCE:
+        at = _UNSTAMPED
+    return (at, position)
+
+
+def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict[str, LedgerEntry]:
+    """Load the ledger; the latest line per hash wins.
+
+    Latest is by write timestamp, then by file position — see the module
+    docstring for why position alone is not enough.
 
     Args:
         path: The ledger file; a missing file is an empty ledger.
+        now: The reader's clock, defaulting to the wall clock — what a
+            future-dated ``at`` is judged against (:func:`resolution_key`).
 
     Returns:
         Entries keyed by hash, in first-seen-hash order, each holding the
@@ -209,6 +292,8 @@ def load(path: Path) -> dict[str, LedgerEntry]:
     entries: dict[str, LedgerEntry] = {}
     if not path.exists():
         return entries
+    moment = now()
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
     # JSONL records are delimited by "\n" alone: str.splitlines() would also
     # split on unicode line separators (U+0085, U+2028, ...) INSIDE a JSON
     # string field and shear records apart (caught by the round-trip property).
@@ -219,25 +304,41 @@ def load(path: Path) -> dict[str, LedgerEntry]:
             entry = from_line(line)
         except LedgerSchemaError as e:
             raise LedgerSchemaError(f"{path}:{lineno}: {e}") from e
+        key = resolution_key(entry, lineno, now=moment)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        # Reassigning an existing key keeps its insertion position, so a
+        # loser landing after its winner does not reorder the ledger.
         entries[entry.hash] = entry
+        winning[entry.hash] = key
     return entries
 
 
 def append(path: Path, entry: LedgerEntry) -> None:
-    """Append one entry as a full-record line, creating the file if needed."""
+    """Append one entry as a full-record line, creating the file if needed.
+
+    ``entry`` arrives already stamped: :func:`stamp` is the only place a
+    written line's ``at`` is set, so the timestamp that orders a line is
+    always the writing machine's own clock and never a value a caller chose.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(to_line(entry) + "\n")
 
 
-def compact(path: Path) -> int:
+def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:
     """Rewrite the ledger keeping only the latest line per hash.
 
-    Also settles git union merges. Superseded lines — the audit trail —
-    are dropped.
+    Also settles git union merges — it keeps the line ``load`` resolves to,
+    so a merge whose newer line landed first is settled in the newer line's
+    favor rather than against it. Superseded lines — the audit trail — are
+    dropped. Because it keeps exactly ``load``'s line, a future-dated ``at``
+    cannot make it delete a real write: such a line is read as unstamped and
+    loses, and it is the line that goes.
 
     Args:
         path: The ledger file; a missing file is a no-op.
+        now: The reader's clock, passed through to :func:`load`.
 
     Returns:
         The number of superseded lines removed.
@@ -245,29 +346,142 @@ def compact(path: Path) -> int:
     if not path.exists():
         return 0
     lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
-    entries = load(path)
+    entries = load(path, now=now)
     # Atomic: a crash mid-write must never lose the ledger.
     atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
     return len(lines) - len(entries)
+
+
+def drop_items(
+    path: Path,
+    items: Collection[str],
+    *,
+    claimed: Collection[str],
+    now: Callable[[], datetime.datetime] = _utc_now,
+) -> tuple[int, int]:
+    """Purge the work units ``items`` leave behind; return (lines removed, units kept).
+
+    For purges only. ``bin/dex exclude`` deletes a corpus item and its
+    enrichment permanently and on the record, so the item's ledger lines
+    name work that seeding can never raise again — they would linger
+    forever, and a ledger entry naming a nonexistent item is an anomaly,
+    not a designed steady state. Git history keeps what this removes.
+
+    **The unit is the hash, and a claimed hash is never purged.** A work
+    unit is keyed by URL, not by item: where two corpus items list one URL
+    they share one entry, and that entry names only one of them. Purging on
+    the stored name alone deletes a history the other item still claims —
+    on real state 80 hashes are claimed by more than one live item. So the
+    hash is judged on the line ``load`` resolves to, and ``claimed`` — the
+    work every surviving corpus item still lists — vetoes the removal. What
+    goes is a hash whose live line names a purged item and which no live
+    item claims; its superseded lines, the audit trail, go with it.
+
+    Unparseable lines are kept, not purged: a line this layer cannot read
+    is not provably one of these items', and a purge must never become
+    incidental data loss. (:func:`load` is deliberately not used — one
+    hand-tampered line would abort the whole purge, and the next command's
+    ``load`` names that line loudly anyway.)
+
+    Args:
+        path: The ledger file; a missing file is a no-op.
+        items: The purged corpus item ids.
+        claimed: The work hashes live corpus items still list — computed
+            after the purge deletes their files, so a purged item cannot
+            claim its own work.
+        now: The reader's clock — the hash is judged on the line ``load``
+            resolves to, so it resolves against the same present.
+
+    Returns:
+        The number of lines removed, and the number of work units kept
+        because a live corpus item still claims them.
+    """
+    if not items or not path.exists():
+        return 0, 0
+    text = path.read_text(encoding="utf-8")
+    purged = [
+        unit_hash
+        for unit_hash, entry in _latest_readable(text, now=now()).items()
+        if entry.item in items
+    ]
+    orphaned = {unit_hash for unit_hash in purged if unit_hash not in claimed}
+    kept_units = len(purged) - len(orphaned)
+    if not orphaned:
+        return 0, kept_units
+    kept: list[str] = []
+    removed = 0
+    for line in text.split("\n"):
+        if not line.strip():
+            continue
+        if _names_hash(line, orphaned):
+            removed += 1
+            continue
+        kept.append(line)
+    # Atomic: a crash mid-write must never lose the ledger.
+    atomic.write_text(path, "".join(line + "\n" for line in kept))
+    return removed, kept_units
+
+
+def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEntry]:
+    """The latest entry per hash over the lines that parse, as ``load`` resolves them.
+
+    Not ``load`` itself: one hand-tampered line would abort the purge, and a
+    line this code cannot read names no item it can judge.
+    """
+    latest: dict[str, LedgerEntry] = {}
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        if not line.strip():
+            continue
+        try:
+            entry = from_line(line)
+        except LedgerSchemaError:
+            continue
+        key = resolution_key(entry, lineno, now=now)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        latest[entry.hash] = entry
+        winning[entry.hash] = key
+    return latest
+
+
+def _names_hash(line: str, hashes: Collection[str]) -> bool:
+    """True when this line belongs to one of ``hashes``.
+
+    Read raw rather than through ``from_line``: the lines going include the
+    hash's older audit lines, which need no validation to identify, and an
+    unreadable line must survive (it names no hash this code trusts).
+    """
+    try:
+        raw = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(raw, dict) and raw.get("hash") in hashes
 
 
 def stamp(
     entry: LedgerEntry,
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
 ) -> LedgerEntry:
-    """Return ``entry`` re-stamped with the injected clock and engine version.
+    """Return ``entry`` re-stamped with the injected clocks and engine version.
 
     Every entry the pipeline writes goes through this — it is the one place
-    ``date`` and ``engine`` are set, and neither comes from an ambient global.
+    ``date``, ``at`` and ``engine`` are set, and none comes from an ambient
+    global. Whatever ``at`` the caller built the entry with is overwritten:
+    the write timestamp is what orders this line against another machine's,
+    so it is the writer's own clock or nothing.
 
     Args:
         entry: The entry to stamp.
-        today: Injected clock — never ``datetime.date.today`` inline.
+        today: Injected date clock — never ``datetime.date.today`` inline.
+        now: Injected instant clock, UTC-aware — the write timestamp that
+            orders this line against another machine's after a union merge.
         engine_version: The running engine's version string.
 
     Returns:
-        A copy of the entry with ``date`` and ``engine`` set.
+        A copy of the entry with ``date``, ``at`` and ``engine`` set.
     """
-    return replace(entry, date=today(), engine=engine_version)
+    return replace(entry, date=today(), at=now(), engine=engine_version)

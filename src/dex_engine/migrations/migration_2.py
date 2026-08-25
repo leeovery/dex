@@ -20,8 +20,17 @@ spellings of one post), file order is kept, so the ledger's own
 last-per-hash rule decides — the later line wins — and the report names
 the collapse. A moved hash takes its pointers with it: a child's ``parent``
 naming an old hash is rewritten to the new one in the same pass, so no
-chain is left dangling. The rewrite is atomic; a second apply finds every
-hash already current and re-keys nothing.
+chain is left dangling. **The unit's output file is one of those
+pointers.** It is named ``<kind>-<hash6>.md``, so a re-key that moved only
+the ledger stranded it under an identity nothing computes any more: the
+rerun seeded below landed BESIDE it and the item carried two views of one
+unit, both listed in engine-owned ``enrichment:`` frontmatter, and a
+re-keyed youtube park lost the stored description the transcribe drain
+reads back out of that file. So the file moves with the hash
+(:func:`_rekey_outputs`) — as migration 1 moves the outputs its own
+rewrite renamed — and the entry's stored ``path`` follows the file. The
+rewrite is atomic; a second apply finds every hash already current and
+re-keys nothing.
 
 Not every entry is canonically keyed, and the ones that aren't are left
 exactly as they are — re-keying them would move them AWAY from the
@@ -90,9 +99,17 @@ from pathlib import Path
 from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
-from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, to_line
+from dex_engine.pipeline.ledger import (
+    LedgerSchemaError,
+    append,
+    from_line,
+    resolution_key,
+    stamp,
+    to_line,
+)
 from dex_engine.pipeline.ownership import corpus_owners
 from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Kind,
     LedgerEntry,
@@ -124,9 +141,10 @@ _ABSOLUTE_HTTP = ("http://", "https://")
 def build(
     *,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     engine_version: str,
 ) -> "IdentityRekeyAndRerunSeed":
-    """Build migration 2 with the injected clock and running engine version.
+    """Build migration 2 with the injected clocks and running engine version.
 
     Raises:
         MigrationError: The running engine identifies as 0.0.1 — the
@@ -141,7 +159,7 @@ def build(
             "the pre-rewrite marker (migration 1's stamp) — seeds stamped with it "
             "would corrupt their own membership test; a rewrite engine is >= 0.1.0"
         )
-    return IdentityRekeyAndRerunSeed(today=today, engine_version=engine_version)
+    return IdentityRekeyAndRerunSeed(today=today, now=now, engine_version=engine_version)
 
 
 class IdentityRekeyAndRerunSeed:
@@ -150,9 +168,16 @@ class IdentityRekeyAndRerunSeed:
     number = NUMBER
     intent = INTENT
 
-    def __init__(self, *, today: Callable[[], datetime.date], engine_version: str) -> None:
-        """Seeds are stamped with the injected clock and running engine."""
+    def __init__(
+        self,
+        *,
+        today: Callable[[], datetime.date],
+        now: Callable[[], datetime.datetime],
+        engine_version: str,
+    ) -> None:
+        """Seeds are stamped with the injected clocks and running engine."""
         self._today = today
+        self._now = now
         self._engine_version = engine_version
 
     def apply(self, root: Path) -> MigrationReport:
@@ -167,10 +192,8 @@ class IdentityRekeyAndRerunSeed:
         path = root / "state" / "enrichment-ledger.jsonl"
         if not path.exists():
             return MigrationReport(actions=actions, skipped=skipped, anomalies=[])
-        entries = _rekey_identities(path, actions, skipped)
-        latest: dict[str, LedgerEntry] = {}
-        for entry in entries:
-            latest[entry.hash] = entry
+        entries = _rekey_identities(root, path, actions, skipped)
+        latest = _latest_per_hash(entries, now=self._now())
         exclusions = _exclusions(root)
         cohort = [entry for entry in latest.values() if _in_cohort(entry, skipped=skipped)]
         # The corpus scan answers one question — which live item claims this
@@ -191,16 +214,24 @@ class IdentityRekeyAndRerunSeed:
                 continue
             append(
                 path,
-                LedgerEntry(
-                    hash=entry.hash,
-                    url=entry.url,
-                    item=item,
-                    kind=entry.kind,
-                    status=Status.QUEUED,
-                    engine=self._engine_version,
-                    date=self._today(),
-                    via="migration-2",
-                    rerun=True,
+                # Stamped, never hand-dated: `at` is the writer's own clock
+                # everywhere in the engine, and a seed is a write like any
+                # other (ledger.stamp sets date/at/engine together).
+                stamp(
+                    LedgerEntry(
+                        hash=entry.hash,
+                        url=entry.url,
+                        item=item,
+                        kind=entry.kind,
+                        status=Status.QUEUED,
+                        engine="seed",  # stamped below
+                        date=datetime.date.min,
+                        via="migration-2",
+                        rerun=True,
+                    ),
+                    today=self._today,
+                    now=self._now,
+                    engine_version=self._engine_version,
                 ),
             )
             counts[entry.kind] += 1
@@ -233,7 +264,7 @@ class _Line:
 
 
 def _rekey_identities(
-    path: Path, actions: list[str], skipped: list[Skipped]
+    root: Path, path: Path, actions: list[str], skipped: list[Skipped]
 ) -> list[LedgerEntry]:
     """Rewrite every entry whose identity moved; return readable entries in file order.
 
@@ -247,7 +278,10 @@ def _rekey_identities(
 
     Two reads, one write: the whole file is keyed first, because a child's
     ``parent`` may name a hash whose line comes later, and every pointer to
-    a moved hash moves with it.
+    a moved hash moves with it. The unit's output file on disk is a pointer
+    too and moves in the same pass (:func:`_rekey_outputs`), before the
+    lines are written, so a stored ``path`` is rewritten only where the
+    file it names actually moved.
     """
     original = path.read_text(encoding="utf-8")
     records: list[_Line] = []
@@ -274,6 +308,7 @@ def _rekey_identities(
         for record in records
         if record.entry is not None and record.key is not None
     }
+    renames = _rekey_outputs(root, records, actions, skipped)
     out_lines: list[str] = []
     entries: list[LedgerEntry] = []
     reparented = 0
@@ -285,10 +320,11 @@ def _rekey_identities(
             continue
         unit_hash, url = record.key if record.key is not None else (entry.hash, entry.url)
         parent = entry.parent if entry.parent is None else identity.get(entry.parent, entry.parent)
-        if unit_hash != entry.hash or parent != entry.parent:
+        output = renames.get(entry.path, entry.path) if entry.path is not None else None
+        if unit_hash != entry.hash or parent != entry.parent or output != entry.path:
             if parent != entry.parent:
                 reparented += 1
-            entry = replace(entry, hash=unit_hash, url=url, parent=parent)
+            entry = replace(entry, hash=unit_hash, url=url, parent=parent, path=output)
             out_lines.append(to_line(entry))
             rekeyed = True
         else:
@@ -298,6 +334,95 @@ def _rekey_identities(
         atomic.write_text(path, "".join(out_line + "\n" for out_line in out_lines))
         actions.append(_rekey_action(identity, reparented))
     return entries
+
+
+def _rekey_outputs(
+    root: Path, records: list[_Line], actions: list[str], skipped: list[Skipped]
+) -> dict[str, str]:
+    """Move each re-keyed unit's enrichment file onto its new identity.
+
+    An output is named ``<kind>-<hash6>.md``, so a re-key that touches only
+    the ledger leaves the file named for an identity the unit no longer
+    has, and nothing in the engine can reach it again: the drain's
+    superseded-output drop builds its candidate names from the NEW hash, so
+    the rerun this migration seeds lands beside the stale file and the item
+    carries two views of one unit — both listed in engine-owned
+    ``enrichment:`` frontmatter, which is derived from the directory. Worse
+    for a park: the transcribe drain reads a youtube park's stored
+    description back out of ``<kind>-<hash6>.md``, so a re-keyed park loses
+    the description the park wrote, silently. Migration 1 renames its
+    outputs for exactly this reason — its rewrite moved the kind half of
+    the name; this moves the hash half.
+
+    Every kind prefix is tried, not only the entry's: a unit redetected
+    since it was written has its output under the older kind. Each
+    candidate must PROVE it belongs to this unit by the URL it records —
+    ``hash6`` is six hex digits, and two units under one item sharing one
+    is common enough that the drain's own drop guards against it. A target
+    that already exists is refused and reported, never overwritten: that is
+    the two old spellings of one x post landing on one identity, and each
+    file is a view someone may still want.
+
+    Args:
+        root: The instance root.
+        records: Every line as read, in file order.
+        actions: Appended to when files moved.
+        skipped: Appended to for a refused move.
+
+    Returns:
+        Ledger ``path`` values that moved, old -> new. Keyed by the whole
+        stored path so a superseded line naming the same file follows it,
+        and a refused move leaves every reference where it was.
+    """
+    renames: dict[str, str] = {}
+    for record in records:
+        entry, key = record.entry, record.key
+        if entry is None or key is None or key[0] == entry.hash:
+            continue
+        item_dir = root / "enrichment" / entry.item
+        for kind in Kind:
+            stale = item_dir / f"{kind.value}-{entry.hash[:6]}.md"
+            # A file the first line of this hash already moved is gone;
+            # its stored path follows through `renames`.
+            if not stale.is_file():
+                continue
+            try:
+                fields, _body = read_enrichment(stale)
+            except (OSError, UnicodeDecodeError):
+                # One unreadable file must never abort the chain part-way
+                # through: it simply cannot prove whose output it is.
+                skipped.append(
+                    Skipped(
+                        what=f"enrichment/{entry.item}/{stale.name}",
+                        why="could not be read, so it cannot prove which unit it belongs "
+                        "to — left on the old identity; repair it and rename it by hand",
+                    )
+                )
+                continue
+            if fields.get("url") != entry.url:
+                continue  # a hash6 neighbour's output, not this unit's
+            target = stale.with_name(f"{kind.value}-{key[0][:6]}.md")
+            if target.exists():
+                skipped.append(
+                    Skipped(
+                        what=f"enrichment/{entry.item}/{stale.name}",
+                        why=f"{target.name} already exists beside it — refusing to "
+                        f"overwrite; {stale.name} is an older identity's view of the same "
+                        "unit and is left in place, no longer named by the ledger — merge "
+                        "the two by hand",
+                    )
+                )
+                continue
+            stale.rename(target)
+            renames[f"enrichment/{entry.item}/{stale.name}"] = (
+                f"enrichment/{entry.item}/{target.name}"
+            )
+    if renames:
+        actions.append(
+            f"enrichment: {len(renames)} output file(s) renamed onto the new hash "
+            "(<kind>-<hash6>.md follows the identity, or the rerun lands beside it)"
+        )
+    return renames
 
 
 def _current_key(
@@ -345,6 +470,28 @@ def _rekey_action(identity: dict[str, str], reparented: int) -> str:
     if reparented:
         action += f"; {reparented} parent pointer(s) followed to the new hash"
     return action
+
+
+def _latest_per_hash(
+    entries: list[LedgerEntry], *, now: datetime.datetime
+) -> dict[str, LedgerEntry]:
+    """The live line per hash, resolved exactly as ``ledger.load`` resolves it.
+
+    Through ``resolution_key``, never by file position alone: membership is
+    read off the live line, and a re-application runs against state the
+    engine has since written — where a hash's newest line is one another
+    machine's union merge left mid-file, position would name a superseded
+    line and reseed work already settled.
+    """
+    latest: dict[str, LedgerEntry] = {}
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for position, entry in enumerate(entries):
+        key = resolution_key(entry, position, now=now)
+        if entry.hash in winning and key < winning[entry.hash]:
+            continue
+        latest[entry.hash] = entry
+        winning[entry.hash] = key
+    return latest
 
 
 def _exclusions(root: Path) -> dict[str, str]:

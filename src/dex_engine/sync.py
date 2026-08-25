@@ -371,11 +371,12 @@ def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[
 # ---------------------------------------------------------------------------
 
 
-def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, channel, echo, template
+def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version, channel, echo, template
     instance: Instance,
     *,
     running_version: str,
     today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
     channel: ReleaseChannel,
     echo: Callable[[str], None],
     template: Traversable | None = None,
@@ -387,7 +388,9 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     Args:
         instance: The instance.
         running_version: The running engine's version (injected).
-        today: Injected clock.
+        today: Injected date clock.
+        now: Injected UTC write-instant clock — migrations that seed ledger
+            lines stamp it, so their writes order against another machine's.
         channel: Release-check and re-exec seams.
         echo: Where progress and the loud major announcement go (print in
             production) — distinct from the returned report.
@@ -425,7 +428,9 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clock, version, 
     if migrate is not None:
         applied = migrate(root)
     else:
-        applied = migrations.run_pending(root, today=today, engine_version=running_version)
+        applied = migrations.run_pending(
+            root, today=today, now=now, engine_version=running_version
+        )
     changed = sync(root, template=template)
     notes.extend(
         rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed
@@ -502,6 +507,7 @@ def main(argv: list[str] | None = None) -> None:
             instance,
             running_version=engine_version(),
             today=datetime.date.today,
+            now=lambda: datetime.datetime.now(datetime.UTC),
             channel=default_channel(),
             echo=print,
             previous_pin=args.previous_pin,

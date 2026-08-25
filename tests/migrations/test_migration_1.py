@@ -26,9 +26,13 @@ def fixed_today() -> datetime.date:
     return datetime.date(2026, 8, 20)
 
 
+def fixed_now() -> datetime.datetime:
+    return datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
+
+
 @pytest.fixture
 def migration():
-    return build(today=fixed_today, engine_version=ENGINE)
+    return build(today=fixed_today, now=fixed_now, engine_version=ENGINE)
 
 
 def corpus_text(item_id, *, urls=(), kinds=("web",), enrichment=(), body="**alex**: note\n"):
@@ -54,6 +58,13 @@ def write_ledger(root, records):
     path = root / "state" / "enrichment-ledger.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    return path
+
+
+def write_corpus(root, item_id, **kwargs):
+    path = root / "corpus" / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(corpus_text(item_id, **kwargs))
     return path
 
 
@@ -197,6 +208,7 @@ class TestEnrichmentRenames:
 
 class TestLedgerTranslation:
     def test_done_line_gets_kind_path_item_engine(self, tmp_path, migration):
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -326,6 +338,7 @@ class TestLedgerTranslation:
     def test_done_error_text_preserved_in_report_not_line(self, tmp_path, migration):
         # The schema forbids reason on done: the choice is stated in the report and
         # the text lives there, never silently dropped.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -373,6 +386,7 @@ class TestLedgerTranslation:
         assert entry.engine == "0.0.1"
 
     def test_via_whisper_dropped_with_note(self, tmp_path, migration):
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
         path = write_ledger(
             tmp_path,
             [
@@ -394,10 +408,11 @@ class TestLedgerTranslation:
             for action in report.actions
         )
 
-    def test_via_fxtwitter_dropped_not_quarantined(self, tmp_path, migration):
+    def test_via_fxtwitter_drops_the_field_not_the_line(self, tmp_path, migration):
         # The old x fetcher stamped its transport ('fxtwitter') as via — 15
         # wild lines on the flagship instance. Any non-current via drops with
-        # a note; quarantining these would forfeit their migration-2 reseed.
+        # a note; dropping the whole line would forfeit its migration-2 reseed.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3", kinds=("x",))
         path = write_ledger(
             tmp_path,
             [
@@ -462,10 +477,10 @@ class TestLedgerTranslation:
         assert any("(x8)" in action and "'a paper'" in action for action in stray)
         assert any("(x" not in action and "'another'" in action for action in stray)
 
-    def test_unattributable_line_quarantined_verbatim(self, tmp_path, migration):
-        # No item, no path, no corpus URL hashing to it: not provably safe.
-        # F3 ruling: quarantine, not in-place refusal — the main ledger must
-        # load clean so every verb (including the repair verb) keeps working.
+    def test_unattributable_line_is_dropped_and_named(self, tmp_path, migration):
+        # No item, no path, no enrichment file on disk, no corpus URL hashing
+        # to it. Nothing can own it, so it goes — the corpus re-raises
+        # anything that still matters, and git history holds the old ledger.
         record = {
             "hash": "3333333333",
             "url": "https://a.test/orphan",
@@ -483,16 +498,51 @@ class TestLedgerTranslation:
         }
         path = write_ledger(tmp_path, [record, good])
         report = migration.apply(tmp_path)
-        quarantine = path.with_name("enrichment-ledger.unmigrated.jsonl")
-        assert json.loads(quarantine.read_text().split("\n")[0]) == record
-        skip = next(s for s in report.skipped if "no item attribution" in s.why)
-        assert "enrichment-ledger.unmigrated.jsonl" in skip.why
-        assert "enrich mark" in skip.why  # the repair procedure is named
-        # The main ledger loads clean, without the quarantined hash.
+        assert report.skipped == []  # nothing is left for a human
+        summary = next(a for a in report.actions if "untranslatable line(s) dropped" in a)
+        assert "1 untranslatable" in summary
+        assert "git history" in summary
+        named = next(a for a in report.actions if a.startswith("ledger dropped "))
+        assert "3333333333" in named
+        assert "https://a.test/orphan" in named
+        assert "no item attribution" in named
         entries = ledger.load(path)
         assert set(entries) == {"aaaaaaaaaa"}
 
-    def test_unknown_field_quarantined_hand_healed_shape(self, tmp_path, migration):
+    def test_no_residue_file_is_created(self, tmp_path, migration):
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "3333333333",
+                    "url": "https://a.test/orphan",
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                }
+            ],
+        )
+        migration.apply(tmp_path)
+        assert [p.name for p in path.parent.iterdir()] == ["enrichment-ledger.jsonl"]
+
+    def test_the_dropped_list_is_capped_with_the_remainder_counted(self, tmp_path, migration):
+        records = [
+            {
+                "hash": f"{index:010d}",
+                "url": f"https://a.test/orphan-{index}",
+                "kind": "blog",
+                "status": "dead",
+                "date": "2026-05-01",
+            }
+            for index in range(9)
+        ]
+        write_ledger(tmp_path, records)
+        report = migration.apply(tmp_path)
+        named = [a for a in report.actions if a.startswith("ledger dropped ")]
+        assert len(named) == 5
+        assert any("and 4 further dropped line(s)" in a for a in report.actions)
+
+    def test_unknown_field_is_dropped_hand_healed_shape(self, tmp_path, migration):
         record = {
             "hash": "4444444444",
             "url": "https://a.test/h",
@@ -503,31 +553,56 @@ class TestLedgerTranslation:
         }
         path = write_ledger(tmp_path, [record])
         report = migration.apply(tmp_path)
-        quarantine = path.with_name("enrichment-ledger.unmigrated.jsonl")
-        assert json.loads(quarantine.read_text().split("\n")[0]) == record
-        assert any("unknown field(s)" in s.why for s in report.skipped)
+        assert any("unknown field(s)" in a for a in report.actions if "ledger dropped" in a)
         assert ledger.load(path) == {}
 
-    def test_interrupted_quarantine_dedupes_on_rerun(self, tmp_path, migration):
-        # Quarantine is written before the main rewrite; an interruption
-        # between the two leaves the line in both files. The re-run must
-        # settle that without duplicating the quarantined line.
-        record = {
-            "hash": "3333333333",
-            "url": "https://a.test/orphan",
-            "kind": "blog",
-            "status": "dead",
-            "date": "2026-05-01",
-        }
-        path = write_ledger(tmp_path, [record])
-        quarantine = path.with_name("enrichment-ledger.unmigrated.jsonl")
-        quarantine.write_text(json.dumps(record) + "\n")  # as the interrupted run left it
-        migration.apply(tmp_path)
-        lines = [line for line in quarantine.read_text().split("\n") if line.strip()]
-        assert len(lines) == 1
+    def test_an_output_on_disk_attributes_a_line_that_names_none(self, tmp_path, migration):
+        # The line records no item and no path, but the file it produced sits
+        # under enrichment/<item>/ named for its own hash — that IS the owner.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
+        enrich_dir = tmp_path / "enrichment" / "2026-05-01-item-a1b2c3"
+        enrich_dir.mkdir(parents=True)
+        (enrich_dir / "blog-555555.md").write_text("content\n")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "5555550000",
+                    "url": "https://a.test/attributable",
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert not any("dropped" in a and "untranslatable" in a for a in report.actions)
+        assert ledger.load(path)["5555550000"].item == "2026-05-01-item-a1b2c3"
+
+    def test_a_hash_prefix_under_two_items_is_never_guessed(self, tmp_path, migration):
+        # Six hex digits collide eventually; attributing to the wrong item
+        # would write the next rerun's output into the wrong tree.
+        for item in ("2026-05-01-item-a1b2c3", "2026-05-02-item-d4e5f6"):
+            enrich_dir = tmp_path / "enrichment" / item
+            enrich_dir.mkdir(parents=True)
+            (enrich_dir / "blog-555555.md").write_text("content\n")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "5555550000",
+                    "url": "https://a.test/ambiguous",
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert any("untranslatable line(s) dropped" in a for a in report.actions)
         assert ledger.load(path) == {}
 
-    def test_no_phantom_notes_from_quarantined_lines(self, tmp_path, migration):
+    def test_no_phantom_notes_from_dropped_lines(self, tmp_path, migration):
         # A line that buffers a note (here: the done error-as-reason port,
         # which runs before item attribution) but then fails translation must
         # contribute nothing to actions — notes flush only on success.
@@ -541,14 +616,144 @@ class TestLedgerTranslation:
                     "status": "done",
                     "date": "2026-05-01",
                     "error": "flaky, hand-checked",
-                    # no item, no path, no corpus owner -> untranslatable
+                    # no item, no path, no disk output, no corpus owner
                 }
             ],
         )
         report = migration.apply(tmp_path)
         assert not any("preserved here" in action for action in report.actions)
-        assert any("no item attribution" in s.why for s in report.skipped)
-        assert path.read_text() == ""  # sole line quarantined; ledger empty but clean
+        assert any("untranslatable line(s) dropped" in action for action in report.actions)
+        assert path.read_text() == ""  # sole line dropped; ledger empty but clean
+
+    def test_the_enrichment_tree_outranks_a_stale_recorded_path(self, tmp_path, migration):
+        # The item was renamed after the line was written — same shortid, new
+        # slug — so the recorded path names a directory that is gone while the
+        # output it produced sits under the new id. Attributing to the string
+        # would name an id no corpus file answers to.
+        live_id = "2026-05-01-renamed-a1b2c3"
+        write_corpus(tmp_path, live_id, kinds=("youtube",))
+        enrich_dir = tmp_path / "enrichment" / live_id
+        enrich_dir.mkdir(parents=True)
+        (enrich_dir / "youtube-555555.md").write_text("transcript\n")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "5555550000",
+                    "url": "https://a.test/renamed",
+                    "kind": "youtube",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-a1b2c3/youtube-555555.md",
+                }
+            ],
+        )
+        migration.apply(tmp_path)
+        entry = ledger.load(path)["5555550000"]
+        assert entry.item == live_id
+        assert entry.path == f"enrichment/{live_id}/youtube-555555.md"
+
+    def test_a_recorded_path_survives_where_its_item_is_still_live(self, tmp_path, migration):
+        # Nothing on disk carries the hash, so the recorded path is the only
+        # provenance there is — and the item it names is still in the corpus,
+        # so the work is still owned. Repointing the path would be a guess.
+        write_corpus(tmp_path, "2026-05-01-old-slug-a1b2c3", kinds=("youtube",))
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "6666660000",
+                    "url": "https://a.test/gone",
+                    "kind": "youtube",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-a1b2c3/youtube-666666.md",
+                }
+            ],
+        )
+        migration.apply(tmp_path)
+        entry = ledger.load(path)["6666660000"]
+        assert entry.item == "2026-05-01-old-slug-a1b2c3"
+        assert entry.path == "enrichment/2026-05-01-old-slug-a1b2c3/youtube-666666.md"
+
+    def test_a_line_attributable_only_to_a_dead_item_is_dropped(self, tmp_path, migration):
+        # The owner excluded the item: the corpus file and enrichment/<id>/
+        # went, and only the recorded path string is left saying the name.
+        # Reading the id back out of it attributes finished work to something
+        # that no longer exists, and every later stage then has to reason
+        # about a line nothing can own.
+        write_corpus(tmp_path, "2026-05-01-live-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "7777770000",
+                    "url": "https://a.test/excluded",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-excluded-999999/blog-777777.md",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert report.skipped == []
+        named = next(a for a in report.actions if a.startswith("ledger dropped "))
+        assert "7777770000" in named
+        assert "2026-05-01-excluded-999999" in named
+        assert ledger.load(path) == {}
+
+    def test_a_dead_recorded_path_yields_to_the_live_item_listing_the_url(
+        self, tmp_path, migration
+    ):
+        # The rescue is for live items only, but it is a real rescue: the
+        # recorded path names an id with no corpus file while a live item
+        # still lists the URL, so the work is that item's and stays.
+        url = "https://a.test/still-listed"
+        write_corpus(tmp_path, "2026-05-01-claimant-a1b2c3", urls=(url,))
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": _legacy_uhash(url),
+                    "url": url,
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                    "path": "enrichment/2026-05-01-old-slug-999999/blog-abcdef.md",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert not any("untranslatable line(s) dropped" in a for a in report.actions)
+        assert ledger.load(path)[_legacy_uhash(url)].item == "2026-05-01-claimant-a1b2c3"
+
+    def test_an_orphaned_enrichment_directory_never_attributes_a_line(
+        self, tmp_path, migration
+    ):
+        # The tree is asked first, but it answers with a directory, not with
+        # an item: a corpus file deleted while enrichment/<id>/ was left
+        # behind is residue, and residue must not own work.
+        enrich_dir = tmp_path / "enrichment" / "2026-05-01-orphan-999999"
+        enrich_dir.mkdir(parents=True)
+        (enrich_dir / "blog-888888.md").write_text("content\n")
+        write_corpus(tmp_path, "2026-05-01-live-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "8888880000",
+                    "url": "https://a.test/orphaned-tree",
+                    "kind": "blog",
+                    "status": "dead",
+                    "date": "2026-05-01",
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        named = next(a for a in report.actions if a.startswith("ledger dropped "))
+        assert "2026-05-01-orphan-999999" in named
+        assert ledger.load(path) == {}
 
     def test_malformed_corpus_url_never_aborts_the_migration(self, tmp_path, migration):
         # urlsplit raises ValueError on an invalid IPv6 literal; one
@@ -598,8 +803,8 @@ class TestLedgerTranslation:
     def test_current_schema_capped_skip_survives_a_re_apply(self, tmp_path, migration):
         # The applied-migrations log can be lost (union-merge race, un-pulled
         # repo), so migration 1 re-runs over lines the rewritten engine wrote.
-        # A cap-refused skip is one of those lines: quarantining it would
-        # brick the ledger it came from.
+        # A cap-refused skip is one of those lines: dropping it would erase
+        # a live marker from the ledger it came from.
         entry = LedgerEntry(
             hash="6666666666",
             url="https://a.test/capped",
@@ -617,8 +822,80 @@ class TestLedgerTranslation:
         report = migration.apply(tmp_path)
         assert path.read_text() == original
         assert report.skipped == []
-        assert not path.with_name("enrichment-ledger.unmigrated.jsonl").exists()
+        assert not any("dropped" in action for action in report.actions)
         assert ledger.load(path)["6666666666"].capped is True
+
+    def test_current_schema_write_timestamp_survives_a_re_apply(self, tmp_path, migration):
+        # Same re-apply exposure as `capped`: a key missing from the
+        # tolerated list drops every line the running engine wrote.
+        at = datetime.datetime(2026, 8, 20, 9, 0, 0, 125000, tzinfo=datetime.UTC)
+        entry = LedgerEntry(
+            hash="7777777777",
+            url="https://a.test/stamped",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.QUEUED,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            at=at,
+        )
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        ledger.append(path, entry)
+        original = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == original
+        assert report.skipped == []
+        assert ledger.load(path)["7777777777"].at == at
+
+    @pytest.mark.parametrize(
+        "junk",
+        [
+            "yesterday",
+            "2026-08-20T09:00:00",
+            # Every other JSON type is as unreadable as an unparseable
+            # string, and every one of them used to cost the whole line.
+            1755772800,
+            None,
+            True,
+            ["2026-08-20T09:00:00+00:00"],
+            {"at": "2026-08-20T09:00:00+00:00"},
+        ],
+    )
+    def test_a_junk_write_timestamp_costs_the_value_not_the_line(self, tmp_path, migration, junk):
+        # `at` breaks ties between concurrent writes; it is not load-bearing
+        # like date/status/kind/item. Dropping a line's whole work history
+        # over a malformed tie-breaker (unparseable, or naive and so
+        # uncomparable) would protect nothing.
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "8888888888",
+                    "url": "https://a.test/junk-at",
+                    "item": "2026-05-01-item-a1b2c3",
+                    "kind": "web",
+                    "status": "manual",
+                    "reason": "owner ruled",
+                    "engine": "0.4.0",
+                    "date": "2026-08-20",
+                    "at": junk,
+                }
+            ],
+        )
+        report = migration.apply(tmp_path)
+        assert not any("dropped" in a and "untranslatable" in a for a in report.actions)
+        assert any(
+            f"unusable write timestamp {junk!r} dropped" in action for action in report.actions
+        )
+        entry = ledger.load(path)["8888888888"]
+        assert entry.at is None
+        assert (entry.status, entry.reason, entry.item, entry.engine) == (
+            Status.MANUAL,
+            "owner ruled",
+            "2026-05-01-item-a1b2c3",
+            "0.4.0",
+        )
+        assert entry.date == datetime.date(2026, 8, 20)
 
     def test_missing_ledger_is_tolerated(self, tmp_path, migration):
         # Un-pulled repos are a supported input.
@@ -714,9 +991,9 @@ class TestIdempotency:
                     "date": "2026-05-01",
                     "path": "enrichment/2026-05-01-item-a1b2c3/tweet-73bd78.md",
                 },
-                # A skip-carrying line: quarantined on the first apply, and
-                # the second apply must report NOTHING for it (no phantom
-                # skips, no phantom actions) — the quarantine settled it.
+                # An unattributable line: dropped on the first apply, and the
+                # second apply must report NOTHING for it (no phantom drops,
+                # no phantom actions) — it is gone from the file.
                 {
                     "hash": "3333333333",
                     "url": "https://a.test/orphan",
@@ -729,12 +1006,11 @@ class TestIdempotency:
         (tmp_path / "state" / "normalize-config.json").write_text('{"name_map": {}}\n')
 
         first = migration.apply(tmp_path)
-        assert len(first.skipped) == 1
-        quarantine = ledger_path.with_name("enrichment-ledger.unmigrated.jsonl")
+        assert first.skipped == []
+        assert sum("untranslatable line(s) dropped" in a for a in first.actions) == 1
         snapshot = {
             "item": item_path.read_bytes(),
             "ledger": ledger_path.read_bytes(),
-            "quarantine": quarantine.read_bytes(),
             "config": (tmp_path / "state" / "config.json").read_bytes(),
             "enrichment": sorted(p.name for p in enrich_dir.iterdir()),
         }
@@ -743,6 +1019,10 @@ class TestIdempotency:
         assert second.skipped == []
         assert item_path.read_bytes() == snapshot["item"]
         assert ledger_path.read_bytes() == snapshot["ledger"]
-        assert quarantine.read_bytes() == snapshot["quarantine"]
         assert (tmp_path / "state" / "config.json").read_bytes() == snapshot["config"]
         assert sorted(p.name for p in enrich_dir.iterdir()) == snapshot["enrichment"]
+        # No residue: the migration leaves state/ holding only what it owns.
+        assert sorted(p.name for p in ledger_path.parent.iterdir()) == [
+            "config.json",
+            "enrichment-ledger.jsonl",
+        ]

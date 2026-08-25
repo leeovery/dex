@@ -350,9 +350,61 @@ Files:
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, `noise_prefixes`, and provider order as `providers: {<capability>: [<name>, …]}`; unknown keys rejected loudly |
 | `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. |
 
-Ledger mechanics: append-only, full-record lines, **last-per-hash wins**.
+Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
 union merges). Superseded lines until then are the audit trail.
+
+**Latest is by write time, not by file position.** Git's union driver
+concatenates ours-then-theirs, so after two machines merge, the last line of a
+hash is whichever side git appended — not whichever machine wrote later. So
+every ledger line carries `at`, the UTC write instant with sub-second
+precision, stamped by the one writer seam (`ledger.stamp`) from an injected
+clock; `load` resolves each hash by `(at, file position)` and `compact` keeps
+the line `load` resolves to. Lines predating the field carry no `at` and sort
+oldest — every writer since stamps one, so an unstamped line necessarily
+predates every stamped one, and no backfill is needed (stamping old lines with
+a migration's own run time would be a lie, and they would all tie anyway).
+Without this, a scheduled run's 09:00 `blocked` could land after the owner's
+10:00 `manual` in the merged file, re-drain against the owner's decision, and
+`compact` would then delete the newer line permanently.
+
+**`at` is stamped by the writer, and never trusted past the present.** A
+write timestamp is the writing machine's wall clock, and a wall clock can be
+wrong, so two rules bound what a wrong one costs. On write: `at` is set by
+`ledger.stamp` from the injected clock and is never carried in from a caller
+— every write path goes through that seam, a migration's seeds included. On
+read: a stored `at` more than five minutes
+(`ledger.FUTURE_SKEW_ALLOWANCE`) ahead of the reader's clock — the wall
+clock, injectable so resolution is testable — is not read as a write instant
+at all. It is treated as unstamped, so it sorts oldest and loses to every
+real write, and `compact`, which keeps exactly the line `load` resolves to,
+drops it rather than the real writes behind it. A jumped clock therefore
+costs one line its ordering and never the hash, and `mark` still heals,
+because a heal is the newest real write. Without the ceiling, one line
+stamped 2099 owns its hash until the wall clock catches up: `mark` reports
+success, the item's frontmatter is rewritten from the in-memory drain and
+reads healed, `load` goes on resolving the stale line, and `compact` deletes
+every correct write behind it. The allowance is the ordinary spread between
+two machines whose lines merge; a clock stepping backwards inside that
+window can still mis-order two writes of one hash, and that is accepted.
+
+**The ceiling bounds the future only, so a write is read back before it is
+reported.** Nothing bounds a clock set BACKWARDS — a dead RTC, a container
+with no NTP, a restored snapshot — because there is no reference point for
+"too old", and in that direction the correction is stamped in the past,
+where it loses to the very line it was written to supersede and `compact`
+then deletes it as superseded with no audit trail. Strictly worse than the
+forward case, which at least keeps the correction, and the verb reported
+success throughout. So `mark` re-reads the ledger after appending and,
+unless the hash now resolves to the line it just wrote, raises — naming the
+URL, what the ledger resolves that unit to instead, and this machine's
+clock as the likely cause. It fails BEFORE the superseded outputs are
+dropped and the item's frontmatter refreshed, so nothing acts on a
+correction the ledger did not take; the appended line stays as the audit
+trail of the attempt. The drain's exit path makes the same check for `run`
+/ `fetch` / `transcribe` and reports it as a note rather than raising,
+because a run does real work and the rest of what it reports is true. The
+resolution rule itself is untouched.
 
 ## 5. Ledger entry schema and status lifecycle
 
@@ -375,6 +427,11 @@ union merges). Superseded lines until then are the audit trail.
                                // admitted unit
   "engine": "0.2.1",           // engine version that wrote this line
   "date": "2026-08-19",
+  "at": "2026-08-19T09:00:00.123456+00:00",
+                               // UTC write instant, sub-second — what
+                               // resolves latest-per-hash across a union
+                               // merge (§4). Absent on lines written before
+                               // the field shipped; absent sorts oldest
   // provenance — children and reruns only
   "via": "harvest",
   "parent": "a1b2c3d4e5",
@@ -931,18 +988,52 @@ Authoring rules:
   are repaired with judgment — code declines what it can't do safely
   (hand-healed files with nonconforming names, frontmatter that doesn't
   parse) and says so, rather than guessing.
-- **Untranslatable ledger lines are QUARANTINED, never left in place**
-  (amended at phase-4 review): a line a migration cannot provably
-  translate moves verbatim to `state/enrichment-ledger.unmigrated.jsonl`,
-  named in the report with the concrete repair procedure: cross-check each
-  line against `state/exclusions.tsv` FIRST — a line referencing an
-  excluded item is a confirmed loss, closed out and never re-added; only
-  then review the remainder (re-add via
-  `enrich mark <url> <status> --reason …`, or accept the loss). The
-  main ledger must load clean after every migration — a skipped line that
+- **Untranslatable ledger lines are DROPPED, never left in place and never
+  parked for a human** (owner ruling): a migration is fully automated and
+  leaves no residue. A line a migration cannot translate is first attributed
+  as hard as the state allows — its own `item`, the enrichment tree on disk
+  (outputs are `enrichment/<item>/<kind>-<hash[:6]>.md`, so the file a unit
+  produced names its owner), its recorded output path, then the corpus URLs
+  — and only what survives all four is dropped, with a count and a short
+  capped list in the report naming what went and why. **The tree is asked
+  before the recorded path** (amended at phase-4 review, on real state): an
+  item RENAMED since the line was written leaves that path naming a
+  directory that is gone while the output sits under the new id, so trusting
+  the string attributes a live item's finished work to an id no corpus file
+  answers to. Where the tree answers and the recorded path
+  disagrees, the path moves onto the attributed item too — but only where
+  the file is demonstrably there, never as a guess.
+  **Attribution resolves to a LIVE corpus item or it does not resolve**
+  (owner ruling at phase-4 review, on real state): if an item is dead, its
+  stuff goes; nobody gets clever rescuing it. An excluded item loses its
+  corpus file and its `enrichment/<id>/` directory, but a done line's
+  recorded `path` still spells the id — and every derived attribution is
+  therefore checked against `corpus/<id[:4]>/<id>.md` before it is accepted.
+  An id with no corpus file is skipped over, the next attribution is tried,
+  and a line left with none is dropped and named like any other. Rescue
+  effort is reserved for items that are still there: a renamed item — same
+  shortid, new slug — resolves through the enrichment tree or the corpus
+  URLs and keeps its work, path repoint included, because that is a live
+  item's transcription. The corpus URL map needs no check, being built from
+  the corpus files themselves. Nothing will ever seed such a line again, so
+  this is the only place the residue can be dealt with. That is safe
+  because of what the ledger IS: the corpus is the source of truth and the
+  ledger is derived work state, so seeding re-raises anything that still
+  matters through the front door on the next run; and the pre-migration
+  ledger is committed in git history, so nothing is ever truly destroyed.
+  The main ledger must load clean after every migration — a line that
   poisons `ledger.load` also bricks `enrich mark`, the sanctioned repair
-  verb, leaving judgment with no working tool. Lint flags a non-empty
-  quarantine file at every health check.
+  verb, leaving judgment with no working tool. And parking these lines for
+  a human was never a real repair: `enrich mark` heals a unit, and a line
+  with no attributable item is exactly the unit it cannot create.
+  **A malformed tie-breaker is never grounds for dropping a line**: where a
+  migration cannot read `at`, it drops the value, names it in the report,
+  and keeps the line — which then orders by file position, exactly as every
+  line did before the field existed. Load-bearing fields (`item`, `kind`,
+  `status`, `date`) keep their strictness, and `ledger.load` keeps its own:
+  a malformed field in a live ledger still refuses to load. This applies
+  only to a migration's disposal path, where the cost of strictness is a
+  deleted work history rather than a loud error.
 
 Shipping migrations for this rewrite:
 1. **Renames + status vocabulary** — `tweet→x`, `blog→web` in corpus
@@ -987,6 +1078,20 @@ Shipping migrations for this rewrite:
    and keeps its stored hash, never aborting the chain part-way through.
    The rewrite is atomic and idempotent — a second apply finds every
    identity already current.
+   **The unit's output file moves with the hash** — migration 1's hazard,
+   one half of the name along: an output is named `<kind>-<hash6>.md`, so
+   a re-key touching only the ledger leaves the file under an identity
+   nothing computes any more, the rerun seeded below lands beside it (two
+   views of one unit, both listed in engine-owned `enrichment:`
+   frontmatter), and a re-keyed youtube park loses the description the
+   transcribe drain reads back out of that file. So the file is renamed
+   under the new hash and the entry's `path` repointed to it. Every kind
+   prefix is tried, since a unit redetected since its line was written has
+   its output under the older kind, and each candidate proves it belongs to
+   this unit by the `url:` it records — six hex digits collide, and moving
+   a neighbour's file would strand THAT unit. A target that already exists
+   — both old spellings of one post landing on one identity — is refused
+   and reported, never clobbered.
    Then, reruns: two known-deficient cohorts get their existing
    **URL-keyed work units requeued** (`status: queued, rerun: true,
    via: migration-2`) — real URLs through the front door, never item-keyed
@@ -1000,9 +1105,29 @@ Shipping migrations for this rewrite:
    Only `done` entries are seeded — old `error` entries already retry under
    the new-engine rule, and `manual` entries stay parked for judgment. And
    only entries whose work a **live corpus item still claims**:
-   `dex exclude` deletes the item and its enrichment while its ledger
-   history stays on file, so a seed keyed to a purged item would re-fetch
-   content ruled out of scope and put an owner ruling back in the queue.
+   `dex exclude` deletes the item, its enrichment **and the ledger entries
+   for work no surviving item claims**, so a seed keyed to a purged item
+   would re-fetch content ruled out of scope and put an owner ruling back in
+   the queue. (Purges made before `exclude` swept the ledger left their
+   entries on file — but migration 1 runs first and drops a line it can
+   attribute only to a dead item, so by the time this migration reads the
+   ledger every entry names a live item.)
+   **`exclude` purges work units, not item names** (amended at phase-4
+   review, on real state): a unit is keyed by URL, so two corpus items
+   listing one URL share one entry that names only one of them — 80 hashes
+   in dex-engineering are claimed by more than one live item. The hash is
+   judged on the line `load` resolves to, and a hash any surviving corpus
+   item still claims is kept whole; the corpus is scanned after the
+   deletions, so a purged item cannot claim its own work. The summary line
+   states both counts — dropped and kept — because `exclude` runs in bulk
+   from the scope-filter pass and that line is the owner's only signal. One
+   id twice in a batch is not a refusal, for the reason a re-run is not:
+   excluding an item is idempotent by construction, so the second copy asks
+   for what the first already did. The copies collapse to one and the
+   summary says how many — `excluded N (M duplicate id(s) collapsed)` —
+   because applied twice they wrote the permanent `state/exclusions.tsv`
+   record twice and reported the second pass as an item already gone, on
+   that same only signal.
    The claim is asked of the corpus, never of the entry's stored `item`
    string alone (amended at phase-4 review, on real state): an item RENAMED
    since its line was written — same shortid, new slug — has a live file
@@ -1037,6 +1162,23 @@ Shipping migrations for this rewrite:
    the instance `.gitignore` when absent (append-only, idempotent, reported
    as an action on an instance-owned file). Without it, in-flight audio
    shows as dirt to the dirty-tree guard.
+
+That is the whole shipping set: 1, 2, 3.
+
+**A ghost-item sweep was drafted as migration 4 and deleted** (owner ruling
+at phase-4 review): permanent machinery, shipped to every instance forever,
+to tidy a handful of lines in one instance. Its predicate — infer "purged"
+from "the corpus file is missing" — is ambiguous by construction: a rename,
+a partial checkout and a hand deletion look identical to it, and every guard
+bolted on afterwards was a patch over that first guess. It cost a real
+17-minute transcription before it was caught. The residue it existed to
+clean is created by migration 1 attributing a line to a dead item, so the
+fix belongs there and nowhere else: migration 1 attributes to a **live**
+corpus item or drops the line, per the attribution rule above.
+
+**No new migration without explicit approval** — the same ruling. A
+migration is code every instance carries forever; a one-off tidy is a
+one-off tidy.
 
 Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
 every user surface; an owner-requested `enrich fetch` refusal IS surfaced
@@ -1095,7 +1237,8 @@ src/dex_engine/
                  (its urls:/media: hashed exactly as seeding does), the one
                  answer to "is this entry's item still there?"; lint and
                  migration 2 share it so a renamed item cannot read as a
-                 purge in one place and a rename in the other
+                 purge in one place and a rename in the other; `exclude`
+                 asks it before deleting work history, for the same reason
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py

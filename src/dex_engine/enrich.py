@@ -220,6 +220,7 @@ def main(argv: list[str] | None = None) -> None:
             config=config,
             drivers=build_drivers(capabilities=capabilities, root=instance.root),
             today=datetime.date.today,
+            now=lambda: datetime.datetime.now(datetime.UTC),
             engine_version=engine_version(),
             provider_available=capabilities.available,
             capabilities=capabilities,

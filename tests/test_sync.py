@@ -22,10 +22,15 @@ from dex_engine.sync import (
 
 RUNNING = "0.1.0"
 TODAY = datetime.date(2026, 8, 20)
+NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 
 
 def fixed_today() -> datetime.date:
     return TODAY
+
+
+def fixed_now() -> datetime.datetime:
+    return NOW
 
 
 def listing_for(*tags: str) -> str:
@@ -83,6 +88,7 @@ def run(inst, channel, template, **kwargs):
         inst,
         running_version=kwargs.pop("running_version", RUNNING),
         today=fixed_today,
+        now=fixed_now,
         channel=channel,
         echo=echoes.append,
         template=template,
