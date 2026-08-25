@@ -39,6 +39,22 @@ directory).
    procedure exactly as on the run report, and act on nothing under
    **Waiting on the engine**.
 
+4. **Reconcile.** Before writing the session report, check the run's
+   books against what you actually handled. This is a checklist, not
+   vigilance: two questions, answered from work you already did.
+   - Every item the run report named as having new material: its
+     enrichment files were really there when you read them for the
+     digest. A promised file that was missing is an engine defect —
+     file it.
+   - Every capture you ingested this session appears somewhere in the
+     final accounting: named on the report, parked with a stated
+     reason, or excluded on record. One that simply vanished is an
+     engine defect — file it.
+   The engine cannot see these from inside; you are the only party who
+   held both sides. Anything mechanical (ledger lines, field shapes,
+   counts the engine computes) is lint's job, not yours — never audit
+   state files by eye.
+
 ## Engine defects, whenever you notice one
 
 This applies at every step above, and to dex-lint's repairs: the engine
