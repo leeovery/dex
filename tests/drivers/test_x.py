@@ -93,10 +93,11 @@ class TestThreadWalkUp:
         assert "the ledger, not the corpus, is the work queue" in body
 
     def test_one_entry_one_file_thread_meta(self):
+        # The chain is context for the captured post, not new first-class
+        # sources: it lands in this one file, and its length is meta.
         result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
         assert result.meta["thread_length"] == 3
         assert result.meta["author"] == "Carol Chen (@carol)"
-        assert result.children == []  # the chain is context, never children
 
     def test_chain_media_pooled_captured_posts_first(self):
         result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
@@ -225,13 +226,14 @@ class TestShareShapeFetches:
 
 class TestQuotes:
     def test_quote_stays_inline_as_a_blockquote(self):
+        # Promoting a quote is harvest judgment, so the driver keeps it
+        # inline rather than pointing at it.
         url = "https://x.com/dana/status/400"
         responses = {API + "status/400": api_fixture("quoted-400.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         body = body_of(result)
         assert "> Quoting @erik: A 403 is not a 404." in body
         assert "> Record the difference." in body
-        assert result.children == []  # promoting a quote is harvest judgment
 
 
 class TestArticles:

@@ -74,36 +74,45 @@ provenance.
        │                            never duplicate)
        ├─▶ media urls ──▶ MEDIA    shared stage — see §7
        │
-       ├─▶ children ─────────────────────────────┐
-       │   (harvest promotions, corrected kind)  │  re-enter queue with
-       │                                         ▼  provenance + caps
-       │                                 back to WORK QUEUE
-       │
        └─▶ needs ──▶ WAITING       status: waiting + needs: <capability>
                                    drained when a provider is available (§6)
+
+ Promotion re-enters the queue from OUTSIDE this loop: which links are
+ primary artifacts of the item's subject is judgment (§10), so the session
+ reads the enrichment and names them — `enrich fetch <item> <url>…` — and
+ the engine admits them with provenance, under the caps.
 ```
 
 Caps on re-entry (mechanical backstops, not targets): **max depth 4** (the
-shared URL is depth 0), **max 12 fetched URLs per item**. A fired cap is
-recorded in the ledger (`cap` on the skipped line, naming the bound that
-refused the work) and internal
-logs. Who the fire answers to decides where it shows (§12): a
-**harvest-time** fire — the walk promoting a link past a bound — is a
-judgment-drift signal for the health check and stays off the run report; an
-**owner-requested** refusal, `enrich
-fetch` naming a URL past the URL cap, is answered where it was asked, on
-that run report, with the `--force` route it needs to be actionable. The
-health check is where the drift reading belongs and where it is read: lint
-reports the harvest-time fires as a tuning
-signal — how many, spread over how many items, under which bound, worst
-offenders first — so the owner can tell a corpus the bounds are too tight
-for from harvest judgment promoting links the subject rule would not. The
-bound is counted off the typed `cap`, never off the prose that worded it:
-one bound said two ways would otherwise read as two bounds. An
-owner-requested refusal is not in that reading at all — the owner named
-that URL, so it says nothing about the bounds or about harvest — and
-stands as a note on the report instead. Counts and a listing, never an
-alarm: a fire is a reading, not a fault, so it never fails the check.
+shared URL is depth 0), **max 12 fetched URLs per item**. They bound
+re-entry and only re-entry: a captured URL comes in at depth 0 through the
+front door, and what the owner shared is not a promotion for a bound to
+turn away. The two differ in what may be done about them — the 12 is a
+budget on how much of the web one item drags in, so `--force` exceeds it
+deliberately (§10); depth is a hard bound on how far the queue may walk
+from a shared URL and has no override, so a refusal at depth names no route
+rather than offering one that does nothing.
+
+A fired cap is recorded in the ledger (`cap` on the skipped line, naming
+the bound that refused the work) and internal logs, and both surfaces read
+it. **The run report answers whoever asked**: every promotion is a URL a
+session named with `enrich fetch`, so every refusal comes back on that run
+report, with the `--force` route where the bound has one. **The health
+check reads the same fires as a tuning signal** — how many, spread over how
+many items, under which bound, worst offenders first — so the owner can
+tell a corpus the bounds are too tight for from harvest judgment promoting
+links the subject rule would not. The bound is counted off the typed `cap`,
+never off the prose that worded it: one bound said two ways would otherwise
+read as two bounds.
+
+What splits the drift reading is the **override, not who asked**. A
+refusal that stood is drift to read, whether the session promoted the link
+on the subject rule or the owner named it by hand — the bounds hear the
+same thing either way. A refusal the owner then waived with `--force` is a
+decision already taken, so it leaves the reading; it is read off the typed
+`forced` for the same reason the bound is read off `cap`. Counts and a
+listing, never an alarm: a fire is a reading, not a fault, so it never
+fails the check.
 
 **What the 12 counts is fetched pages, and only those.** The count is over
 the item's ledger entries, excluding `via: media` (downloads, not pages),
@@ -260,7 +269,6 @@ class Result:
     meta: dict                         # passthrough → enrichment frontmatter
     body: str | None
     media: list[str]                   # URLs for the media stage
-    children: list[Child]              # (url, via) — re-enter the queue
     needs: Need | None                 # capability job
     reason: str | None                 # mirrors the ledger reason contract:
                                        # required when a driver returns
@@ -285,9 +293,10 @@ class WorkUnit:                        # what the pipeline hands a driver
     depth: int                         # 0 = the shared URL
     parent: str | None                 # spawning work unit's hash
 
-Child = (url, via)                     # the PIPELINE assigns depth = parent
-                                       # depth + 1, parent = spawner's hash,
-                                       # item inherited — drivers never do
+# A driver returns content, media, assets and metadata — never
+# links-to-promote. Promotion is judgment, and it enters through
+# `enrich fetch` (§10), where the PIPELINE assigns depth = parent depth
+# + 1, parent = the named unit's hash, and the item from the command.
 
 @dataclass(frozen=True)
 class Availability:                    # never tuple[bool, str] — weak-type trap
@@ -322,7 +331,7 @@ its m.youtube.com divergence).
 
 Typing discipline (binding for the implementation):
 - All §2 types are `@dataclass(frozen=True, slots=True, kw_only=True)`.
-  `Result` gets defaults (`media`/`children` via `field(default_factory=
+  `Result` gets defaults (`media`/`assets` via `field(default_factory=
   list)`, `needs`/`body` None) so a simple driver returns
   `Result(status=Status.DONE, meta=…, body=…)`. `meta` is
   `dict[str, str | int | None]` (it becomes YAML frontmatter), never bare
@@ -392,7 +401,7 @@ to audit which statuses a driver may produce.
 A driver is a black box over one source shape. It is passed a work unit,
 does its job, and returns an outcome describing what it found:
 
-    Content(body, meta, media, links)   fetched something
+    Content(body, meta, media)          fetched something
     Missing(evidence)                   confirmed gone
     Refused(evidence)                   blocked, paywalled, rate limited
     Unusable(evidence)                  wrong shape, nothing to extract
@@ -429,21 +438,19 @@ and extraction hoist into a lib and the exception goes.
 
 **What this replaces.** `Result` becomes the union above rather than a flat
 dataclass whose fields are only meaningful for some statuses. Today a
-`Result` may carry `media` or `children` on a non-done result: `assets` is
-validated done-only while those two are not, so the type admits outputs on
-a result that produced none, and nothing but convention keeps them off.
-Making the wrong
+`Result` may carry `media` on a non-done result: `assets` is validated
+done-only while `media` is not, so the type admits outputs on a result that
+produced none, and nothing but convention keeps them off. Making the wrong
 states unrepresentable is the point, not a side effect. (The sketch above
 does not say where `assets` and the driver-stated `reason` ride on the
 union; settle that when it is built.)
 
-**Open question — `links` or `children`.** The sketch says a driver reports
-`links`; today a driver returns `children` and the run layer assigns item,
-parent and depth. The change of noun may be the point, drivers reporting
-what a page pointed at while the pipeline decides what to promote, but
-nothing here states that, so it is a decision rather than a rename.
+**Settled — `links` vs `children` on the outcome union.** Neither: the
+outcome union carries no link-promotion field, because the deletion of the
+never-emitted `children` path settled it — promotion is judgment (§10) and
+enters through `enrich fetch`.
 
-Two related shapes settle with it:
+Two related shapes stand on their own:
 
 - `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so a
   whole class of legal ledger states cannot convert: an entry pairs
@@ -506,7 +513,7 @@ one session is not stale. The digest file's own `date:` is the item's
 *share* date, so it can never serve here.
 
 **`via`** (provenance) stays a documented string, not an enum —
-`harvest, thread, media, sniff, extract-asset, migration-<n>` — because
+`harvest, media, sniff, extract-asset, migration-<n>` — because
 `migration-<n>` is parameterized and provenance is descriptive, never
 dispatched on. **One blessed exception**: the run loop routes
 `via == "media"` entries to the media redrain — §7 mandates media entries
@@ -519,10 +526,12 @@ display text: reports render it, nothing matches on it, and rewording one
 can never change routing. The two signals that once looked reason-shaped
 are §5 fields instead: a blocked audio-acquisition retry carries
 `needs: transcribe` (routing it back through the transcribe drain, not the
-driver), and a cap-fire marker line carries `cap: depth|url|url-requested`.
-The bound is typed for the same reason: the health check counts fires by
-bound, and counting them off `reason` split one bound across every wording
-of it. This keeps the
+driver), and a cap-fire marker line carries `cap: depth|url|url-requested`
+plus `forced` when `--force` waived the bound. Both are typed for the same
+reason: the health check counts the fires nobody overrode, by bound, and
+counting either off `reason` split one bound across every wording of it —
+and would have put a routing signal in the free-text namespace. This keeps
+the
 `reason` namespace safe for session-authored free text
 (`enrich mark --reason …`), which must never be able to collide with a
 routing signal.
@@ -661,8 +670,13 @@ files is judgment work, not the drain's.
   "cap": "url",                // skipped only: a cap-fire marker — refused
                                // work, not an admitted unit — naming the
                                // bound (depth | url | url-requested, the
-                               // last being an owner `fetch` refused
-                               // without --force)
+                               // last being what an `enrich fetch` refusal
+                               // at the URL bound writes)
+  "forced": true,              // cap-fire markers only: `--force` waived
+                               // that bound, so the unit entered anyway and
+                               // this line is the audit trail behind the
+                               // queued one. A waived fire leaves the
+                               // health check's drift reading (§1)
   "engine": "0.2.1",           // engine version that wrote this line
   "date": "2026-08-19",
   "at": "2026-08-19T09:00:00.123456+00:00",
@@ -815,7 +829,8 @@ issues about itself.
 **LedgerEntry is a frozen, validated dataclass, not a dict**: the schema
 comments above are runtime invariants enforced in `__post_init__`
 (`waiting` ⇒ `needs` present; `needs` on `waiting`/`blocked` only;
-`blocked` ⇒ `attempts ≥ 1`; `cap` on `skipped` only; `error` ⇒
+`blocked` ⇒ `attempts ≥ 1`; `cap` on `skipped` only and `forced` on a
+line carrying a `cap` only; `error` ⇒
 `error` + `engine` present; `done` with output ⇒ `path` present; `via`
 validated against the known prefixes). Serialization happens in exactly one
 place (`ledger.py`: `from_line`/`to_line`, dropping None fields); a
@@ -1056,9 +1071,10 @@ a download beyond the cap and beside a description of something else.
   the one shape it serves for all of them: the API ignores a username
   segment but 404s on `/i/web/…`, and that 404 would misread as a dead
   post — the terminal-mislabel class this design exists to kill.
-- **Thread walk-up inside the driver**, not via children: the chain is
+- **Thread walk-up inside the driver**: the chain is
   context for the captured post, not new first-class sources. One enrichment
-  file, one ledger entry. fxtwitter parent pointers, all authors
+  file, one ledger entry — the chain is never ledgered as units of its own,
+  which is why there is no `via: thread`. fxtwitter parent pointers, all authors
   included, cap-hit noted in enrichment frontmatter (below). The walk is
   **bounded at 100 hops** — a sanity bound against a chain that never ends,
   not an editorial one: the chain is one piece of content and the
@@ -1172,22 +1188,29 @@ enclosure URL in frontmatter is the re-fetch pointer.
 At each fetched page, Claude may promote links that are **primary artifacts
 of the item's subject** (the project's repo, homepage, docs, the paper);
 links that leave the subject (similar-projects, blogrolls, footers) are never
-promoted, at any depth. Judgment is cognitive (harvest is already Claude's
-step); the engine bounds it mechanically: promoted children re-enter with
-`{parent, via: harvest, depth}`, caps depth 4 / 12 URLs per item.
+promoted, at any depth. **The judgment is the whole mechanism.** No driver
+reports links to promote and none ever did: the subject rule is a reading
+of what the item is about, which is not a question a fetcher can answer, so
+a session reads the enrichment and names the URLs. The engine bounds what
+it is handed: promoted children re-enter with `{parent, via: harvest,
+depth}`, caps depth 4 / 12 URLs per item.
 
 Engine primitive: `dex enrich fetch <item-id> <url>…` — fetch specific extra
-URLs into an existing item, ledgered as child entries. Semantics: `parent`
+URLs into an existing item, ledgered as child entries. It is the ONE road
+into the queue besides a capture. Semantics: `parent`
 defaults to the item's primary work unit (override with `--parent <hash>`),
-`depth` = parent's depth + 1, and fetches count against the item's 12-URL
-cap; `--force` may exceed the cap for an owner-requested deepen (the cap
-fire is still recorded). **One bad URL never aborts the batch**: an
+`depth` = parent's depth + 1, and both caps bind the admission — fetches
+count against the item's 12-URL cap, and a fetch past depth 4 is refused
+too. `--force` may exceed the URL cap for an owner-requested deepen (the
+cap fire is still recorded); it does **not** reach past depth, which is a
+hard bound, so a depth refusal offers no route it does not have.
+**One bad URL never aborts the batch**: an
 uncanonicalizable URL parks as a bad seed, a URL already enriching under
 another item is reported (one URL enriches under one item — the batch
-continues without it), and a capped refusal is reported with the `--force`
-route it names — the owner asked, so every refusal comes back as an answer
-on the report, and the rest of the batch still fetches. This is also how
-Claude deepens any item on
+continues without it), and a capped refusal is reported naming the bound
+and whatever route it has — the session asked, so every refusal comes back
+as an answer on the report, and the rest of the batch still fetches. This
+is also how Claude deepens any item on
 request, and it absorbs the former "site driver" idea: a thin landing page
 whose substance is on /pricing and /docs is the subject rule applied to the
 site's own pages.
@@ -1228,9 +1251,9 @@ acted) and cognitive (Claude writes a JSON payload — including free-prose
 fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
 Standing skill rule: **never hand-draw a report; there is a surface for it
-— call it.** Harvest-time cap fires stay off the run report and are read on
-the health check as a tuning signal; an owner-requested `enrich fetch`
-refusal is answered on the report of the run the owner asked for (§1).
+— call it.** A cap refusal is answered on the report of the run that asked
+for it, and every cap fire nobody waived is read on the health check as a
+tuning signal — two surfaces, two jobs, both done (§1).
 
 ### Who reads a report
 
@@ -1666,10 +1689,10 @@ corpus item or drops the line, per the attribution rule above.
 migration is code every instance carries forever; a one-off tidy is a
 one-off tidy.
 
-Cap-event surfacing, blessed precisely: harvest-time cap fires stay off the
-run report and are read on the health check as a tuning signal (§1); an
-owner-requested `enrich fetch` refusal IS surfaced
-(the owner asked and deserves the answer); media-cap and oversize skips
+Cap-event surfacing, blessed precisely: an `enrich fetch` refusal IS
+surfaced on that run's report (whoever asked deserves the answer), and the
+same fire is read on the health check as a tuning signal unless `--force`
+waived it (§1); media-cap and oversize skips
 surface as ordinary unit outcomes per the media-stage rules.
 
 Resurrected transcription backlogs are bounded: the transcribe drain takes a
@@ -2006,8 +2029,9 @@ old monolith had no seams.
 - **Hermetic driver tests** against `tests/fixtures/` (fxtwitter JSON, GitHub
   payloads, VTT, tiny real docx/pdf/csv). Regression pin on the motivating
   incident: a 403 fixture must produce `blocked`, never `dead`.
-- **Pipeline tests with fake drivers**: children/reruns born `queued` and
-  drained, re-entry + provenance, caps fire and record, waiting ignores runs
+- **Pipeline tests with fake drivers**: seeds/children/reruns born `queued`
+  and drained, promotion + provenance through `enrich fetch`, both caps
+  fire and record over a real chain, waiting ignores runs
   until a fake provider flips `available()`, blocked→manual escalation,
   error retry-on-new-engine, rerun overwrites (never duplicates) output.
 - **Corpus round-trip property** (hypothesis): parse∘serialize over
@@ -2061,11 +2085,9 @@ and the outcome union settles several of these on its way past.
 - **Streaming transport reads.** An unbounded `response.read()` buffers a
   whole enclosure in memory; enforce the §7 media cap in-stream instead, so
   an oversize download is refused while it arrives rather than after.
-- **A per-item fetched-count cache.** `_cap_fired` recounts the item's
+- **A per-item fetched-count cache.** The cap check recounts the item's
   entries per admission, which is quadratic in the item's ledger.
 - **One long-lived append handle for the ledger.**
-- **A cheap guard in `run._admit_children`.** Unreachable until a driver
-  emits children.
 
 Two seams of this round already landed as part of fixes and are **done**:
 `drivers/gh.py`, the authenticated GitHub route the github and file drivers

@@ -73,6 +73,7 @@ _ALL_KEYS = frozenset(
         "needs",
         "attempts",
         "cap",
+        "forced",
         "at",
         "via",
         "parent",
@@ -142,6 +143,7 @@ def from_line(line: str) -> LedgerEntry:
             needs=None if "needs" not in raw else Need(_expect_str(raw, "needs")),
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
             cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
+            forced=_expect_bool(raw, "forced") if "forced" in raw else False,
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             at=None if "at" not in raw else _expect_datetime(raw, "at"),
@@ -190,8 +192,9 @@ def _expect_bool(raw: dict[str, object], key: str) -> bool:
 def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
-    ``None`` fields are dropped; ``rerun`` appears only when true — the
-    written line carries exactly the ledger schema, in schema order.
+    ``None`` fields are dropped; ``rerun`` and ``forced`` appear only when
+    true — the written line carries exactly the ledger schema, in schema
+    order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -203,6 +206,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("needs", entry.needs.value if entry.needs is not None else None),
         ("attempts", entry.attempts),
         ("cap", entry.cap.value if entry.cap is not None else None),
+        ("forced", entry.forced or None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("at", entry.at.isoformat() if entry.at is not None else None),

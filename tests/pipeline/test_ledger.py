@@ -571,6 +571,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         needs = draw(st.none() | st.sampled_from(list(Need)))
     else:
         needs = None
+    cap = draw(st.none() | st.sampled_from(list(Cap))) if status is Status.SKIPPED else None
     return LedgerEntry(
         hash=draw(st.sampled_from(_HASHES)),
         url=draw(single_line),
@@ -580,11 +581,12 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         status=status,
         needs=needs,
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
-        cap=draw(st.none() | st.sampled_from(list(Cap))) if status is Status.SKIPPED else None,
+        cap=cap,
+        forced=cap is not None and draw(st.booleans()),
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),
-        via=draw(st.sampled_from([None, "harvest", "thread", "media", "sniff", "migration-1"])),
+        via=draw(st.sampled_from([None, "harvest", "media", "sniff", "migration-1"])),
         parent=parent,
         depth=depth,
         rerun=draw(st.booleans()),

@@ -3,8 +3,10 @@
 The ledger is the work queue. A run seeds queued entries for new corpus
 URLs, drains everything :func:`is_drainable`, hands units to drivers, writes
 deterministically named outputs (reruns overwrite, never duplicate),
-downloads media, re-enters children with provenance and caps, and
-renders its report through the ``enrich-report`` surface.
+downloads media, and renders its report through the ``enrich-report``
+surface. Everything enters the queue through one door
+(:meth:`_Drain.admit`) — a capture at depth 0, or a promotion the session
+named with ``enrich fetch``, bounded there by the re-entry caps.
 
 TWO ``except Exception`` exist in the whole pipeline, and both are named
 where they sit: the per-unit loop here, and the canonicalization seam in
@@ -56,7 +58,6 @@ from .transcribe import (
 from .types import (
     Availability,
     Cap,
-    Child,
     Config,
     Format,
     Instance,
@@ -97,8 +98,9 @@ __all__ = [
 ]
 
 # Re-entry caps: mechanical backstops, not targets. Fires are recorded in
-# the ledger — a skipped entry naming the bound in `cap` — and a harvest-time
-# fire is never user-surfaced.
+# the ledger — a skipped entry naming the bound in `cap` — answered on the
+# run report to the session that asked, and read as a tuning signal by the
+# health check unless `--force` waived them.
 MAX_DEPTH = 4
 MAX_URLS_PER_ITEM = 12
 
@@ -286,6 +288,45 @@ def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CapRefusal:
+    """A re-entry bound turning a unit away: which bound, and what it says.
+
+    It carries the re-entry it refused (``parent``, ``depth``) because only
+    a re-entry can have one — the caps do not read a capture at all (§1) —
+    and because the marker line records exactly that provenance.
+
+    ``waived`` is ``enrich fetch --force`` on a bound that HAS an override:
+    the fire is recorded either way and the unit still enters, so the
+    refusal survives as the audit trail behind the line that supersedes it.
+    """
+
+    cap: Cap
+    reason: str
+    waived: bool
+    parent: str
+    depth: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Admission:
+    """What admitting one URL settled — its identity, and what became of it.
+
+    ``hash``/``url`` are the unit's canonical identity either way, because
+    both refusals answer about a named unit. Exactly one of the rest holds:
+    ``entry`` is the queued line when the URL was admitted, ``held`` is the
+    unit the ledger already had under that hash, and ``cap``/``reason`` name
+    the bound that turned it away.
+    """
+
+    hash: str
+    url: str
+    entry: LedgerEntry | None = None
+    held: LedgerEntry | None = None
+    cap: Cap | None = None
+    reason: str | None = None
+
+
 @dataclass(slots=True)
 class _ItemOutcome:
     """What a run did for one item — feeds the report's cognitive work list."""
@@ -380,7 +421,7 @@ class _Drain:
             self.item_status[item.id] = item.status
             for url in item.urls:
                 try:
-                    self._seed_url(item.id, url)
+                    self.admit(item.id, url)
                 except ValueError as e:
                     # One malformed capture URL parks THAT URL; it never
                     # aborts the run (frontmatter is immutable provenance —
@@ -496,12 +537,69 @@ class _Drain:
             count=True,
         )
 
-    def _seed_url(self, item_id: str, url: str) -> None:
+    def identify(self, url: str) -> tuple[str, str]:
+        """Canonical form and work hash — delegation lives in detect."""
+        canonical = canonical_url(url, self.ctx.drivers)
+        return canonical, work_hash(canonical)
+
+    # -- admission -------------------------------------------------------
+
+    def admit(
+        self,
+        item_id: str,
+        url: str,
+        *,
+        via: str | None = None,
+        parent: LedgerEntry | None = None,
+        force: bool = False,
+    ) -> _Admission:
+        """The one road into the queue — every unit this engine works enters here.
+
+        Canonical form keys the ledger; a hash the ledger already holds as a
+        unit is never re-admitted; provenance is assigned from the spawning
+        entry, never by a caller; the re-entry caps bound anything spawned;
+        and what survives is recorded ``queued``, which is what puts it in
+        front of the drain — every admission happens before :meth:`drain`
+        builds its queue, and the queue is built from the entries.
+
+        What a refusal MEANS is the caller's, because the two callers answer
+        to different people: a corpus batch has nobody to answer and seeds
+        around it, while ``enrich fetch`` answers the owner who asked, with
+        the ``--force`` route where the bound has one.
+
+        Args:
+            item_id: The owning corpus item id.
+            url: The URL as captured or as named on the command line.
+            via: Provenance for a spawned unit; None for a capture.
+            parent: The spawning entry — what makes this a re-entry.
+            force: Waive a bound that has an override.
+
+        Returns:
+            The identity, and what became of it (:class:`_Admission`).
+
+        Raises:
+            ValueError: The URL canonicalizes or detects to nothing — the
+                bad-seed class both callers park (§5).
+        """
         canonical, unit_hash = self.identify(url)
-        if unit_hash in self.entries:
-            return  # includes the two-items dedupe edge: first item won
+        held = self.entries.get(unit_hash)
+        if held is not None and not _is_cap_refusal(held):
+            # One URL is one unit: a hash the ledger already holds is never
+            # re-admitted (which is also the two-items dedupe edge — the
+            # first item won). A cap-fire marker holds no unit, though — it
+            # records refused work — so it stands in the way of nothing.
+            return _Admission(hash=unit_hash, url=canonical, held=held)
+        refusal = self._cap_refusal(item_id, parent, force=force)
+        if refusal is not None:
+            self._record_cap_fire(
+                refusal, unit_hash=unit_hash, url=canonical, item_id=item_id, via=via, held=held
+            )
+            if not refusal.waived:
+                return _Admission(
+                    hash=unit_hash, url=canonical, cap=refusal.cap, reason=refusal.reason
+                )
         detection = detect(url, self.ctx.drivers, sniff=self.sniff)
-        self.record(
+        entry = self.record(
             LedgerEntry(
                 hash=unit_hash,
                 url=canonical,
@@ -509,15 +607,102 @@ class _Drain:
                 kind=detection.kind,
                 format=detection.format,
                 status=Status.QUEUED,
-                engine="seed",  # stamped below
+                engine="seed",  # stamped in record
                 date=datetime.date.min,
+                via=via,
+                parent=None if parent is None else parent.hash,
+                depth=None if parent is None else (parent.depth or 0) + 1,
             )
         )
+        return _Admission(hash=unit_hash, url=canonical, entry=entry)
 
-    def identify(self, url: str) -> tuple[str, str]:
-        """Canonical form and work hash — delegation lives in detect."""
-        canonical = canonical_url(url, self.ctx.drivers)
-        return canonical, work_hash(canonical)
+    def _cap_refusal(
+        self, item_id: str, parent: LedgerEntry | None, *, force: bool
+    ) -> _CapRefusal | None:
+        """Which re-entry bound refuses a unit spawned here, and what it says.
+
+        **The caps bound re-entry and nothing else** (§1), so a capture is
+        never asked: it has no parent, comes in at depth 0 through the
+        queue's own front door, and what the owner shared is not a
+        promotion for a bound to turn away. Making that the first question
+        is what keeps an owner's twelve-URL capture out of the health
+        check's harvest-drift reading.
+
+        Depth is asked before the budget: a unit past the depth bound is
+        out of the queue's reach whatever the item's URL count looks like.
+
+        The two bounds differ in what may be done about them, so their
+        refusals do too. The URL bound is a budget on how much of the web
+        one item drags in and answers whoever asked, so ``--force`` exceeds
+        it deliberately (§10). Depth is a hard bound on how far the queue
+        may walk from a shared URL; the design gives it no override, so the
+        refusal names no route rather than offering one that does nothing.
+        """
+        if parent is None:
+            return None
+        depth = (parent.depth or 0) + 1
+        if depth > MAX_DEPTH:
+            return _CapRefusal(
+                cap=Cap.DEPTH,
+                reason=f"{CAP_BOUNDS[Cap.DEPTH]} reached — a hard bound, with no --force route",
+                waived=False,
+                parent=parent.hash,
+                depth=depth,
+            )
+        if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
+            bound = CAP_BOUNDS[Cap.URL_REQUESTED]
+            return _CapRefusal(
+                cap=Cap.URL_REQUESTED,
+                reason=(
+                    f"{bound} exceeded by --force"
+                    if force
+                    else f"{bound} reached — rerun with --force to exceed"
+                ),
+                waived=force,
+                parent=parent.hash,
+                depth=depth,
+            )
+        return None
+
+    def _record_cap_fire(  # noqa: PLR0913 — the refused unit's identity, entire
+        self,
+        refusal: _CapRefusal,
+        *,
+        unit_hash: str,
+        url: str,
+        item_id: str,
+        via: str | None,
+        held: LedgerEntry | None,
+    ) -> None:
+        """Record the marker line: refused work, named by the bound (§5).
+
+        The kind is pattern-detected — refused work never spends a request
+        on the network it was refused from.
+        """
+        if held is not None and held.reason == refusal.reason:
+            # A refusal that says byte-for-byte what the last one said adds
+            # nothing to the audit trail.
+            return
+        self.record(
+            LedgerEntry(
+                hash=unit_hash,
+                url=url,
+                item=item_id,
+                kind=detect_kind(url, self.ctx.drivers),
+                status=Status.SKIPPED,
+                cap=refusal.cap,
+                forced=refusal.waived,
+                engine="seed",  # stamped in record
+                date=datetime.date.min,
+                via=via,
+                parent=refusal.parent,
+                depth=refusal.depth,
+                reason=refusal.reason,
+            ),
+            # A waived fire is the audit trail behind the queued line that
+            # supersedes it in the same breath, never an outcome to count.
+            count=not refusal.waived,
+        )
 
     # -- the loop --------------------------------------------------------
 
@@ -576,8 +761,8 @@ class _Drain:
             return False  # stays waiting untouched; the deferral is noted once
         try:
             # The try spans ALL per-unit processing:
-            # fetch/transcribe/download, output write, media stage, children
-            # admission. An engine bug anywhere in it ledgers `error` — the
+            # fetch/transcribe/download, output write, media stage, asset
+            # writes. An engine bug anywhere in it ledgers `error` — the
             # outcome line supersedes any partial one — never aborts the run.
             if media_job:
                 self._download_media(entry)
@@ -821,7 +1006,6 @@ class _Drain:
             self._write_assets(self.entries[entry.hash], result.assets)
         if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
             self._media_stage(self.entries[entry.hash], result.media)
-        self._admit_children(self.entries[entry.hash], result.children)
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
@@ -1192,43 +1376,6 @@ class _Drain:
                 seen += 1
         return seen
 
-    # -- children -----------------------------------------------
-
-    def _admit_children(self, parent: LedgerEntry, children: list[Child]) -> None:
-        for child in children:
-            canonical, unit_hash = self.identify(child.url)
-            if unit_hash in self.entries:
-                continue  # dedupe by hash — a URL under two items enriches under the first
-            depth = (parent.depth or 0) + 1
-            cap = self._cap_fired(parent.item, depth)
-            detection = None if cap else detect(child.url, self.ctx.drivers, sniff=self.sniff)
-            entry = LedgerEntry(
-                hash=unit_hash,
-                url=canonical,
-                item=parent.item,
-                kind=detection.kind if detection else detect_kind(child.url, self.ctx.drivers),
-                format=detection.format if detection else None,
-                status=Status.SKIPPED if cap else Status.QUEUED,
-                cap=cap,
-                engine="seed",
-                date=datetime.date.min,
-                via=child.via,
-                parent=parent.hash,
-                depth=depth,
-                reason=None if cap is None else f"{CAP_BOUNDS[cap]} reached",
-            )
-            self.record(entry)
-            if cap is None:
-                self.queue.append(unit_hash)
-
-    def _cap_fired(self, item_id: str, depth: int) -> Cap | None:
-        """The re-entry cap check: recorded in the ledger, never user-surfaced."""
-        if depth > MAX_DEPTH:
-            return Cap.DEPTH
-        if self.fetched_count(item_id) >= MAX_URLS_PER_ITEM:
-            return Cap.URL
-        return None
-
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries for the item — what the 12-URL cap bounds.
 
@@ -1385,9 +1532,9 @@ class _Drain:
         per item so a session never has to infer completeness by reading a
         list of units.
 
-        Cap-fire markers are not units: a harvest that overran the URL cap
-        recorded refused work, which no user surface reports (§12). Counted
-        as landed they inflate both halves of the shape — "15 of 16 units
+        Cap-fire markers are not units: a fetch batch that overran a bound
+        recorded refused work, and refused work never landed. Counted as
+        landed they inflate both halves of the shape — "15 of 16 units
         landed" for an item that admitted twelve.
 
         Which units are the item's is the corpus's answer, not the stored
@@ -1790,10 +1937,14 @@ def fetch_urls(
 ) -> str:
     """Fetch specific extra URLs into an existing item, ledgered as children.
 
-    ``parent`` defaults to the item's primary work unit; depth is the
-    parent's + 1; fetches count against the item's 12-URL cap. ``--force``
-    may exceed the cap for an owner-requested deepen — the cap fire is still
-    recorded (a superseded skipped line in the audit trail).
+    This is the ONE way a link is promoted: which links are primary
+    artifacts of the item's subject is judgment (§10), so a session names
+    them and the engine bounds what it is handed. ``parent`` defaults to the
+    item's primary work unit; depth is the parent's + 1; both re-entry caps
+    bound the admission. ``--force`` may exceed the URL cap for an
+    owner-requested deepen — the cap fire is still recorded (a superseded
+    skipped line in the audit trail) — and reaches no further: the depth
+    bound has no override.
 
     Args:
         ctx: The run context.
@@ -1864,93 +2015,37 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
 def _admit_fetch(
     drain: _Drain, item_id: str, url: str, parent: LedgerEntry, *, force: bool
 ) -> str | None:
+    """Admit one URL of an ``enrich fetch`` batch, answering the owner who asked.
+
+    :meth:`_Drain.admit` owns the invariants; this owns the policy §10 sets
+    for a batch the owner typed — **one bad URL never aborts it**, and every
+    refusal comes back as an answer on the report rather than as a raise.
+    """
     try:
-        canonical, unit_hash = drain.identify(url)
+        admission = drain.admit(item_id, url, via="harvest", parent=parent, force=force)
     except ValueError as e:
-        # An uncanonicalizable URL is the same bad-seed class the corpus
-        # seeding path parks — one bad URL never aborts the batch.
+        # A URL that cannot be canonicalized — or that the sniff HEAD
+        # refuses, the same bad-seed class — parks alone; the URLs already
+        # ledgered ahead of it keep their report.
         drain.park_bad_seed(item_id, url, e, what="fetch URL")
         return None
-    existing = drain.entries.get(unit_hash)
-    if existing is not None:
-        if existing.item != item_id:
+    if admission.held is not None:
+        if admission.held.item != item_id:
             # One URL enriches under one item — but refusing the BATCH would
             # abort the URLs already ledgered ahead of this one and swallow
             # the report with them. The refusal is reported; the rest fetch.
             drain.notes.append(
-                f"{canonical} already enriches under item {existing.item} — one URL "
+                f"{admission.url} already enriches under item {admission.held.item} — one URL "
                 f"enriches under one item; not fetched into {item_id}"
             )
             return None
-        if _is_cap_refusal(existing):
-            # A cap-refusal marker is not an admitted unit: it falls through
-            # to the cap logic below, so a repeat fetch without --force is
-            # refused AGAIN rather than sneaking in as a "rerun".
-            pass
-        else:
-            return _requeue_in_place(drain, existing)
-    capped = drain.fetched_count(item_id) >= MAX_URLS_PER_ITEM
-    depth = (parent.depth or 0) + 1
-    if capped:
-        # The cap fire is recorded either way; --force supersedes it with a
-        # queued line (the skipped line stays in the audit trail).
-        bound = CAP_BOUNDS[Cap.URL_REQUESTED]
-        reason = (
-            f"{bound} exceeded by --force"
-            if force
-            else f"{bound} reached — rerun with --force to exceed"
-        )
-        repeat = existing is not None and _is_cap_refusal(existing) and existing.reason == reason
-        if not repeat:
-            # A refusal that says byte-for-byte what the last one said adds
-            # nothing to the audit trail.
-            drain.record(
-                LedgerEntry(
-                    hash=unit_hash,
-                    url=canonical,
-                    item=item_id,
-                    kind=detect_kind(url, drain.ctx.drivers),
-                    status=Status.SKIPPED,
-                    # The owner asked for this URL: the bound is the same
-                    # one harvest hits, the reading is not.
-                    cap=Cap.URL_REQUESTED,
-                    engine="seed",
-                    date=datetime.date.min,
-                    via="harvest",
-                    parent=parent.hash,
-                    depth=depth,
-                    reason=reason,
-                ),
-                count=not force,
-            )
-        if not force:
-            # An owner-requested refusal IS surfaced: the owner asked, and a
-            # bare "skipped 1" leaves the --force route unreachable.
-            drain.notes.append(f"not fetched — {canonical}: {reason}")
-            return None
-    try:
-        detection = detect(url, drain.ctx.drivers, sniff=drain.sniff)
-    except ValueError as e:
-        # The sniff HEAD refuses non-http(s) URLs; park the URL rather
-        # than abort a batch whose earlier URLs are already ledgered.
-        drain.park_bad_seed(item_id, url, e, what="fetch URL")
+        return _requeue_in_place(drain, admission.held)
+    if admission.entry is None:
+        # An owner-requested refusal IS surfaced: the owner asked, and a
+        # bare "skipped 1" leaves the stated route unreachable.
+        drain.notes.append(f"not fetched — {admission.url}: {admission.reason}")
         return None
-    drain.record(
-        LedgerEntry(
-            hash=unit_hash,
-            url=canonical,
-            item=item_id,
-            kind=detection.kind,
-            format=detection.format,
-            status=Status.QUEUED,
-            engine="seed",
-            date=datetime.date.min,
-            via="harvest",
-            parent=parent.hash,
-            depth=depth,
-        )
-    )
-    return unit_hash
+    return admission.hash
 
 
 def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
