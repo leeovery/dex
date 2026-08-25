@@ -314,7 +314,7 @@ class _CapRefusal:
     """A re-entry bound turning a unit away: which bound, and what it says.
 
     It carries the re-entry it refused (``parent``, ``depth``) because only
-    a re-entry can have one — the caps do not read a capture at all (§1) —
+    a re-entry can have one — the caps do not read a capture at all —
     and because the marker line records exactly that provenance.
 
     ``waived`` is ``enrich fetch --force`` on a bound that HAS an override:
@@ -656,7 +656,7 @@ class _Drain:
 
         Raises:
             ValueError: The URL canonicalizes or detects to nothing — the
-                bad-seed class both callers park (§5).
+                bad-seed class both callers park.
         """
         canonical, unit_hash = self.identify(url)
         held = self.entries.get(unit_hash)
@@ -705,7 +705,7 @@ class _Drain:
     ) -> _CapRefusal | None:
         """Which re-entry bound refuses a unit spawned here, and what it says.
 
-        **The caps bound re-entry and nothing else** (§1), so a capture is
+        **The caps bound re-entry and nothing else**, so a capture is
         never asked: it has no parent, comes in at depth 0 through the
         queue's own front door, and what the owner shared is not a
         promotion for a bound to turn away. Making that the first question
@@ -718,7 +718,7 @@ class _Drain:
         The two bounds differ in what may be done about them, so their
         refusals do too. The URL bound is a budget on how much of the web
         one item drags in and answers whoever asked, so ``--force`` exceeds
-        it deliberately (§10). Depth is a hard bound on how far the queue
+        it deliberately. Depth is a hard bound on how far the queue
         may walk from a shared URL; the design gives it no override, so the
         refusal names no route rather than offering one that does nothing.
         """
@@ -758,7 +758,7 @@ class _Drain:
         via: str | None,
         held: LedgerEntry | None,
     ) -> None:
-        """Record the marker line: refused work, named by the bound (§5).
+        """Record the marker line: refused work, named by the bound.
 
         The kind is pattern-detected — refused work never spends a request
         on the network it was refused from.
@@ -2160,7 +2160,7 @@ def fetch_urls(
     """Fetch specific extra URLs into an existing item, ledgered as children.
 
     This is the ONE way a link is promoted: which links are primary
-    artifacts of the item's subject is judgment (§10), so a session names
+    artifacts of the item's subject is judgment, so a session names
     them and the engine bounds what it is handed. ``parent`` defaults to the
     item's primary work unit; depth is the parent's + 1; both re-entry caps
     bound the admission. ``--force`` may exceed the URL cap for an
@@ -2258,8 +2258,8 @@ def _admit_fetch(
 ) -> str | None:
     """Admit one URL of an ``enrich fetch`` batch, answering the owner who asked.
 
-    :meth:`_Drain.admit` owns the invariants; this owns the policy §10 sets
-    for a batch the owner typed — **one bad URL never aborts it**, and every
+    :meth:`_Drain.admit` owns the invariants; this owns the batch policy
+    for URLs the owner typed — **one bad URL never aborts it**, and every
     refusal comes back as an answer on the report rather than as a raise.
     """
     try:
@@ -2330,7 +2330,7 @@ def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
 def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict[str, object]]:
     """Every unit parked right now — what outlived the run that parked it.
 
-    The session-end invariant (§1) is that the only entries surviving a
+    The session-end invariant is that the only entries surviving a
     session are ``waiting`` / ``blocked`` / ``error`` / ``manual``, each
     parked for a stated reason and each printed. The run report prints what
     ITS run parked; a unit that outlives that run is untouched standing

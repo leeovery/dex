@@ -1,4 +1,4 @@
-"""Session-observed bug reports: the ``dex issue`` verb (§13's second producer).
+"""Session-observed bug reports: the ``dex issue`` verb, the second producer.
 
 The exception filer catches what RAISES; this verb files what a session
 SAW misbehave with nothing raised: a report contradicting state on disk, a

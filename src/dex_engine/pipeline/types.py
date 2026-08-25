@@ -554,7 +554,7 @@ class LedgerEntry:
     # admitted unit, and names the bound that refused it
     cap: Cap | None = None
     # whether `--force` waived that bound. Typed rather than read out of
-    # `reason`, per §3: the health check's drift reading counts the fires
+    # `reason`: the health check's drift reading counts the fires
     # nobody overrode, and counting them off the prose that worded the
     # override would put a routing signal in the free-text namespace.
     forced: bool = False

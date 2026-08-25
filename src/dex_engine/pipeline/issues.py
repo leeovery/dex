@@ -128,7 +128,8 @@ class ErrorEvent:
 class Filable:
     """One producer-shaped report, ready for the shared filing mechanism.
 
-    Both producers (§13) reduce to this: :func:`report_errors` wraps each
+    Both producers — the exception filer and the observed verb — reduce to
+    this: :func:`report_errors` wraps each
     :class:`ErrorEvent`, and the observed verb wraps its validated
     payload. ``body`` takes the regression reference as its argument
     because only the mechanism knows, at file time, whether the filing is

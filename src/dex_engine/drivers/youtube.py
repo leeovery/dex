@@ -135,7 +135,7 @@ _MIN_TRANSCRIPT_CHARS = 200
 
 # The transcript-provenance stamp the CAPTIONS route writes into meta, and
 # thereby into the enrichment frontmatter. **The frontmatter, not the
-# heading, says whether a body holds a transcript** (design §6): the drain
+# heading, says whether a body holds a transcript**: the drain
 # reads `via` back to find where the notes end, so a captions transcript
 # that carried no `via` was read as description end to end and a later
 # whisper drain appended a SECOND transcript under the first — old caption

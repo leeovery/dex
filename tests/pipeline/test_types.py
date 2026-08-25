@@ -290,7 +290,7 @@ class TestLedgerEntryInvariants:
     )
     def test_via_outside_the_vocabulary_is_rejected(self, via):
         # `thread` among them: the walk-up writes its chain into ONE
-        # enrichment file (§8), so nothing was ever ledgered under it.
+        # enrichment file, so nothing was ever ledgered under it.
         # `media` and `extract-asset` too: routing left `via` for the typed
         # `job` field, and the old spellings must not quietly come back.
         with pytest.raises(ValueError, match="via"):
