@@ -57,6 +57,10 @@ the engine stays unaware of which ones exist.
 - `backlog/` — one file per idea not yet in hand (features and bug fixes
   alike), indexed in `backlog/index.md`, which also states the convention.
   An idea graduates by getting its `design/<name>.md`.
+- `field-notes.md` — hard-earned, device-verified facts about the platforms
+  dex builds on (Shortcuts, GitHub tokens, scheduled-task hosts, cowork).
+  Agent-facing, never owner-facing. Check it before building on any of
+  those surfaces; append what you verify the hard way.
 - `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
   `live.yml` (the daily third-party drift watch). See Development below.
 - `example/` — a toy instance showing the shapes.

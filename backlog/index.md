@@ -33,6 +33,6 @@ The convention:
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
 - [Pre-rewrite dead ledger entries need healing](dead-entry-healing.md) — per-instance content work during each post-merge sync review
 
-## Reference
-
-- [Operational facts](operational-facts.md) — device-verified environment facts the ideas above lean on (shortcut mechanics, scheduled-task hosts, cowork limits)
+Hard-earned platform facts several of these ideas lean on (shortcut
+mechanics, scheduled-task hosts, cowork limits) live in the repo root's
+`field-notes.md`.
