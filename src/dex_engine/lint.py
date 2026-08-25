@@ -4,7 +4,9 @@ Checks:
 
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
-  citation everywhere, index included), coverage orphans, index consistency,
+  citation everywhere, index included), coverage orphans and their cited
+  complement (items pages cite that no taxonomy topic records), index
+  consistency,
   stale pages, page item-count drift (frontmatter ``items:`` vs the page's
   MEMBER count — its taxonomy topic's items, or its entity-members list;
   never its citation count), and difflib sentence similarity ("possible restated
@@ -18,7 +20,8 @@ Checks:
   enrichment directory, where the item that owns it cannot list it —
   both asked of the item the corpus says owns the unit),
   waiting cohorts and cognitive-job
-  summary, harvest passes recorded under old rules, and the
+  summary, items whose fetched pages landed but whose harvest pass was
+  never recorded, harvest passes recorded under old rules, and the
   enrichment-newer-than-digest orphan listing (the interrupted-session
   backstop, shared with ``enrich status``).
 
@@ -63,7 +66,7 @@ from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
-from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans
+from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
 from .pipeline.transcribe import read_enrichment_fields
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
@@ -154,6 +157,12 @@ def run_lint(
 
     ledgered = _uncategorized_items(taxonomy)
     orphans = sorted(corpus_ids - scan.cited - ledgered)
+    # The coverage invariant's other face: a citation is not a placement,
+    # so a cited item can still be in no topic's items and off the
+    # uncategorized ledger — invisible to the orphan check, which only
+    # asks about the uncited. The cited set is the wiki scan's; the
+    # placed set is the taxonomy's own listing.
+    unplaced = sorted(scan.cited - _placed_items(taxonomy))
     unindexed, ghost_index = _index_consistency(instance, pages, taxonomy)
     # Shortid-shaped citations flag everywhere — index included: latent
     # shortids in an index never tripped the old citation check because no
@@ -176,6 +185,7 @@ def run_lint(
         "bad_citations": scan.bad_citations,
         "shortid_citations": scan.shortid_citations,
         "orphans": orphans,
+        "unplaced": unplaced,
         "unindexed": unindexed,
         "ghost_index": ghost_index,
         "stale_pages": scan.stale_pages,
@@ -227,6 +237,24 @@ def _uncategorized_items(taxonomy: dict[str, object]) -> set[str]:
     if not isinstance(items, list):
         return set()
     return {item for item in items if isinstance(item, str)}
+
+
+def _placed_items(taxonomy: dict[str, object]) -> set[str]:
+    """Every item id some topic's ``items`` records — uncategorized-shares included.
+
+    The coverage invariant's whole placed set, read with the same
+    tolerance for hand-mangled shapes :func:`_uncategorized_items` shows:
+    a malformed topic contributes nothing rather than a crash.
+    """
+    topics = taxonomy.get("topics", {})
+    if not isinstance(topics, dict):
+        return set()
+    placed: set[str] = set()
+    for topic in topics.values():
+        items = topic.get("items", []) if isinstance(topic, dict) else []
+        if isinstance(items, list):
+            placed |= {item for item in items if isinstance(item, str)}
+    return placed
 
 
 def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
@@ -551,6 +579,7 @@ def _state_checks(
         payload["missing_outputs"] = integrity.missing
         payload["misfiled_outputs"] = integrity.misfiled
         payload["capped"] = _cap_fires(entries)
+    payload["never_harvested"] = never_harvested(instance)
     payload["stale_passes"] = _stale_passes(instance)
     threads = _incomplete_threads(instance)
     payload["incomplete_threads"] = threads.rows

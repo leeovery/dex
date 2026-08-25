@@ -556,7 +556,7 @@ Files:
 | file | holds |
 |---|---|
 | `state/enrichment-ledger.jsonl` | work units (§5) |
-| `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
+| `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10). The digest pass is recorded by `enrich item digest` itself, in the same call as the file (§10); `enrich pass` records the harvest and wiki stages, and remains the manual re-record for any stage |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
@@ -1245,6 +1245,44 @@ Harvest-rule changes bump a version constant in the engine; passes are
 recorded in `state/passes.jsonl`; re-assessment of old items is
 migration-seeded (§12), not scan-inferred.
 
+**The pass record has a reader on both sides of its distinction.** The
+health check flags harvest passes recorded under an older rules version
+(re-judge), and it flags harvest that **never ran**: a live item that owes
+no further work, has at least one fetched page on record — a `done` unit
+that is not a media download or an extracted asset, the URL cap's own
+reading of "page" — and has no harvest pass under any rules version.
+Without that reader, a session that skipped harvest left an item digested
+and cited on the strength of the shared link alone, on no surface. The
+predicate follows the ingest procedure's own bounds: an item still owing a
+unit derives `raw` and has not reached the harvest step, so it is never
+listed; a no-source capture, and an item whose every unit died unfetched,
+has no page to read the subject rule over and owes no pass — its owed work
+is description and digest, which the run report already names. A recorded
+pass covers its item by trailing shortid, the same match exclusions use
+across renames, so a renamed item's standing record never reads as a
+skipped judgment; an item re-seeded by migration keeps its original pass
+and answers to the rules-version check, not this one. The finding fires
+beside the enrichment-newer-than-digest backstop rather than deferring to
+it — the backstop's repair is digest → place → wiki, which never runs
+harvest, so deferring would carry the skipped judgment straight through
+the repair. Like the stale-pass row it is a finding, never exit 1: no
+later mechanical stage breaks on a missing harvest pass the way the wiki
+layer breaks on a malformed digest, and the repair — run the judgment now,
+then `enrich pass --stage harvest` — is judgment, the report's business.
+
+**The digest pass is recorded by the digest verb, not by a second
+command.** `enrich item digest` records the pass itself, through the same
+`record_pass` path `enrich pass` uses — a separate recording command was a
+step a session could forget, and a forgotten one silently cost the
+staleness backstop its comparand: a digest with no pass record is dated by
+nothing, so no later enrichment could ever read as newer than it. The
+verb records after validation and before the file write, so both failure
+shapes stay honest: a refused payload records nothing, and a crash
+between the record and the write leaves a pass with no digest file —
+which the backstop's no-digest branch lists loudly — never the unreadable
+opposite. `enrich pass --stage digest` remains the manual re-record, and
+the harvest and wiki stages still record through `enrich pass`.
+
 ## 11. Rendering: judgment decides, code renders
 
 Composition that is fully determined by data is computed in code and emitted
@@ -1354,7 +1392,12 @@ retry without being asked. So `manual` (the engine has given up) becomes
 **Needs you**, while `blocked`, `waiting` and `error` (the engine retries by
 itself) become **Waiting on the engine**, with the retry state visible on
 the entry. The same rule renames every other engine-internal label to what
-the reader must do about it.
+the reader must do about it. One exception rides the row, not the status:
+a parked media unit under `media_fetch: none` is deferred by the drain,
+never retried, so it waits on the owner flipping the config — the payload
+builder, the one place the config is in hand (payloads stay
+self-contained), marks the row `resting`, and it renders under **Needs
+you** with a reason naming what unblocks it and no retry framing.
 
 **Open question — where `error` entries belong.** They sit under **Waiting
 on the engine** today, on the rule above: `error` retries by itself, once
@@ -1384,8 +1427,8 @@ silently short list is a lie about scale.
 |---|---|
 | **Needs writing up** | items with new enrichment for the session to digest |
 | **Read these yourself** | jobs resolving to the cognitive floor (OCR, extraction Claude must do with eyes) |
-| **Needs you** | entries the engine has given up on: ledger status `manual` |
-| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` |
+| **Needs you** | entries the engine has given up on (ledger status `manual`), plus media units resting under `media_fetch: none` — the owner's config change is what moves them |
+| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` — minus media units resting under `media_fetch: none`, which it will not retry |
 | **Not finished** | items still `raw` because a unit they own has not landed |
 | **Digest these** | items whose enrichment is newer than their digest |
 | **Waiting on a capability** | the `waiting` cohort, counted by the capability it needs |
@@ -1433,7 +1476,12 @@ believes it. (`dex-ingest`, split into `dex-capture` + `dex-run`, is the
 case this exists for.) The same holds INSIDE a live skill: a synced `dex-*`
 directory mirrors the template exactly, so a reference file the template
 dropped is removed too, reported the same way — copy-only sync left it
-loading its stale procedure in every instance forever. A symlinked skill
+loading its stale procedure in every instance forever. The mirror binds
+shape as well as content: where a release replaces a synced file with a
+same-named directory, or folds a directory down to a file, the conflicting
+entry is removed — reported as a machinery change — and the template's
+shape is written; copy-only sync crashed on the standing entry instead and
+took the whole sync with it. A symlinked skill
 directory is unlinked rather than recursed into, so whatever it pointed at
 is left alone. Nothing outside the `dex-` prefix is ever touched — an
 owner's own skills are instance-owned.
@@ -1838,7 +1886,9 @@ src/dex_engine/
                  total validation — a missing, unknown or mistyped key, a
                  `signal` outside the vocabulary, empty `topics` or
                  `facts`, an id naming no corpus item — and nothing is
-                 written on a refusal. Rewriting is allowed and carries
+                 written on a refusal, no pass record included. Records
+                 the digest pass itself, before the file write (§10).
+                 Rewriting is allowed and carries
                  nothing over: every field is the payload's judgment or
                  the corpus item's fact)
   normalize.py imports shared detect/types (private kind_of copy deleted)

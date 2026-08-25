@@ -87,6 +87,11 @@ step 4.
      digest: cite it on
      the best existing page, or ledger it into `uncategorized-shares` in
      `state/taxonomy.json` if genuinely low-signal.
+   - **Items a page cites but no taxonomy topic records** — the other face
+     of the coverage invariant: a citation is not a placement. Read the
+     digest and append the id to each matching topic's `items` in
+     `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
+     genuinely low-signal.
    - **Index drift** — regenerate the affected `wiki/index.md` entries.
    - **Stale pages** (members newer than the page) — fold the newer items
      in via rewrite-not-append; if the new material supersedes old claims,
@@ -95,6 +100,13 @@ step 4.
    - **Possible restated facts** — read each flagged pair: same fact →
      merge into one sentence carrying both citations; genuinely distinct →
      leave them (the flag is a question, not a verdict).
+   - **Harvest these (no pass on record)** — the item's pages were fetched
+     but no harvest pass was ever recorded: "never ran" is the standing
+     state, not "ran and promoted nothing". Run the harvest judgment now
+     under the current subject rule (dex-run's `references/ingest-item.md`),
+     then `bin/dex enrich pass <item> --stage harvest` — the pass is
+     recorded even when nothing was promoted, and recording it is what
+     keeps this row empty.
    - **Harvest passes under old rules** — re-run the harvest judgment for
      those items under the current subject rule (dex-run's
      `references/ingest-item.md`), then `bin/dex enrich pass ... --stage

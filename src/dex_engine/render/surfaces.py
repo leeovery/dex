@@ -245,7 +245,7 @@ def _parked_rows(
             surface,
             entry,
             required=frozenset({"item", "url", "status", "reason"}),
-            optional=frozenset({"attempts", "attempt_cap"}),
+            optional=frozenset({"attempts", "attempt_cap", "resting"}),
             where=where,
         )
         status = _status_at(surface, entry, "status", where)
@@ -267,6 +267,10 @@ def _parked_rows(
             if "attempts" not in entry:
                 _fail(surface, f"{where}attempt_cap without attempts says nothing")
             row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
+        if "resting" in entry:
+            if entry["resting"] is not True:
+                _fail(surface, f"{where}resting can only be true — omit the key otherwise")
+            row["resting"] = True
         rows.append(row)
     return rows
 
@@ -280,9 +284,20 @@ _RETRY_NOTE = {
 }
 
 
+def _owner_is_you(row: dict[str, object]) -> bool:
+    """Whether the row's next action belongs to the reader, not the engine.
+
+    ``manual`` always does; a ``resting`` row does too, whatever its
+    status — the builder marked it because the engine will not touch it
+    (a media unit deferred under ``media_fetch: none``), so only the
+    owner's own change of config moves it.
+    """
+    return row["status"] in _OWNER_IS_YOU or bool(row.get("resting"))
+
+
 def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
     """One parked section: the entries whose next action belongs to one owner."""
-    rows = [row for row in parked if (row["status"] in _OWNER_IS_YOU) == mine]
+    rows = [row for row in parked if _owner_is_you(row) == mine]
     if not rows:
         return ""
     if mine:
@@ -309,6 +324,10 @@ def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
 def _parked_tags(row: dict[str, object]) -> list[str]:
     status = Status(str(row["status"]))
     tags = [kernel.code(status.value)]
+    if row.get("resting"):
+        # No retry note and no attempt framing: nothing here retries, and
+        # the row's reason names what unblocks it.
+        return tags
     attempts = row.get("attempts")
     if isinstance(attempts, int):
         cap = row.get("attempt_cap")
@@ -336,7 +355,9 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
           "parked": [{"item": str, "url": str,       # survives the session
                       "status": str, "reason": str,
                       "attempts": int,               # optional: retry state
-                      "attempt_cap": int}],          #   (blocked entries)
+                      "attempt_cap": int,            #   (blocked entries)
+                      "resting": true}],             # optional: the engine will
+                                                     #   not act; the owner will
           "incomplete": [{"item": str,               # optional: touched items
                           "landed": int,             #   still owed work — the
                           "total": int,              #   ledger units that have
@@ -352,7 +373,9 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
 
     ``parked`` arrives as one list and renders as two sections, split on who
     owns the next action: ``manual`` is the engine giving up, everything
-    else re-enters the queue by itself.
+    else re-enters the queue by itself — except a row marked ``resting``,
+    which the builder classified as the owner's because the engine will
+    not act on it.
     """
     surface = "enrich-report"
     _check_keys(
@@ -556,7 +579,9 @@ def _render_status(payload: Mapping[str, object]) -> str:
           "parked": [{"item": str, "url": str,  # optional: every unit parked
                       "status": str, "reason": str,   # now, whichever run
                       "attempts": int,               #   parked it
-                      "attempt_cap": int}],
+                      "attempt_cap": int,
+                      "resting": true}],        # optional: the engine will not
+                                                #   act on it; the owner will
           "orphans": [str],                   # optional: item ids whose
                                               #   enrichment is newer than their
                                               #   digest (interrupted-session
@@ -969,6 +994,7 @@ _HEALTH_OPTIONAL = frozenset(
         "bad_citations",
         "shortid_citations",
         "orphans",
+        "unplaced",
         "unindexed",
         "ghost_index",
         "stale_pages",
@@ -982,6 +1008,7 @@ _HEALTH_OPTIONAL = frozenset(
         "misfiled_outputs",
         "waiting",
         "cognitive",
+        "never_harvested",
         "stale_passes",
         "capped",
         "incomplete_threads",
@@ -1024,6 +1051,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "bad_citations": [{"page": str, "id": str}],
           "shortid_citations": [{"page": str, "token": str}],
           "orphans": [str],
+          "unplaced": [str],   # cited, but in no topic's items and unledgered
           "unindexed": [str],
           "ghost_index": [str],
           "stale_pages": [{"page": str, "newer": int}],
@@ -1040,6 +1068,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "misfiled_outputs": [{"item": str, "path": str}],
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
+          "never_harvested": [str],   # fetched pages landed, no pass on record
           "stale_passes": [{"item": str, "rules": int}],
           # judgment drift — recorded for this surface, shown on no other
           "capped": [{"item": str, "url": str, "reason": str}],   # re-entry cap fires
@@ -1160,6 +1189,9 @@ def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> lis
     blocks += _health_names(
         surface, payload, "orphans", "items no page cites and the taxonomy does not record"
     )
+    blocks += _health_names(
+        surface, payload, "unplaced", "items a page cites but no taxonomy topic records"
+    )
     blocks += _health_names(surface, payload, "unindexed", "pages missing from index")
     blocks += _health_names(surface, payload, "ghost_index", "ghost index entries")
     stale = _health_rows(surface, payload, "stale_pages", ("page",), int_keys=("newer",))
@@ -1266,6 +1298,12 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
         blocks.append(kernel.bullet(kernel.inline([kernel.bold(item), kernel.code(need)]), depth=1))
         blocks.append(kernel.detail(url, depth=1))
     blocks += _health_elided(len(cognitive))
+    blocks += _health_names(
+        surface,
+        payload,
+        "never_harvested",
+        "harvest these (enrichment landed, no harvest pass on record)",
+    )
     stale_passes = _health_rows(surface, payload, "stale_passes", ("item",), int_keys=("rules",))
     blocks += _health_listing(
         "harvest passes under old rules (re-judge)",

@@ -197,6 +197,45 @@ class TestWikiChecks:
         assert orphaned in outcome.report
         assert "items no page cites and the taxonomy does not record — **1**" in outcome.report
 
+    def test_cited_but_unplaced_items_are_flagged(self, instance):
+        # A citation is not a placement: the coverage invariant wants every
+        # item in some topic's `items` or the uncategorized ledger, and the
+        # orphan check only ever asks about the uncited.
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(instance, "brewing", page_text(items=None, body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+        assert outcome.exit_code == 0  # a finding to repair, like the orphan row
+
+    def test_a_placed_and_cited_item_is_not_unplaced(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+
+    def test_an_uncited_unplaced_item_is_the_orphan_finding_not_this_one(self, instance):
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_index(instance, "")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+        assert "items no page cites and the taxonomy does not record — **1**" in outcome.report
+
+    def test_an_uncategorized_ledgered_citation_is_placed(self, instance):
+        # uncategorized-shares is a topic like any other to the placed set:
+        # a cited item resting on the ledger satisfies the invariant.
+        write_corpus_stub(instance)
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": [ITEM]}})
+        write_page(instance, "brewing", page_text(items=None, body=f"A fact `{ITEM}`.\n"))
+        write_index(instance, "[[brewing]]\n")
+        outcome = lint(instance)
+        assert "items a page cites but no taxonomy topic records — none" in outcome.report
+
     def test_index_consistency(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}})
         write_page(instance, "brewing", page_text(items=None, body="text\n"))
@@ -745,6 +784,118 @@ class TestReferentialIntegrity:
         ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
         outcome = lint(instance)
         assert "done entries whose output file is gone from disk — none" in outcome.report
+
+
+NEVER_HARVESTED = "harvest these (enrichment landed, no harvest pass on record)"
+
+
+class TestNeverHarvested:
+    """Never-ran must be told apart from ran-and-promoted-nothing — and read."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def _record_pass(self, instance, item_id: str = ITEM, rules: int = 1) -> None:
+        record = {"stage": "harvest", "item": item_id, "rules": rules, "date": "2026-08-19"}
+        instance.passes_path.write_text(json.dumps(record) + "\n")
+
+    def test_a_never_run_harvest_is_a_finding_not_a_failure(self, instance):
+        # The repair — run the judgment now, then record the pass — is the
+        # report's business, so the finding never exits 1.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+        assert outcome.exit_code == 0
+
+    def test_ran_and_promoted_nothing_never_fires(self, instance):
+        # The pass record IS the distinction: one on file means harvest ran,
+        # however little it promoted.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        self._record_pass(instance)
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+
+    def test_a_pass_under_old_rules_ran_and_is_the_other_finding(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        self._record_pass(instance, rules=0)
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+        assert "harvest passes under old rules (re-judge) — **1**" in outcome.report
+
+    def test_an_item_still_owing_a_unit_is_not_yet_owing_harvest(self, instance):
+        # One outstanding unit derives `raw`, and a raw item has not reached
+        # the harvest step — however long it stays parked.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE, "aaaaaaaaaa")))
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+
+    def test_a_no_source_item_owes_no_pass(self, instance):
+        # A text/image-only capture seeds no units: nothing was fetched, so
+        # there are no pages to read the subject rule over — its owed work
+        # is description and digest, and the run report lists exactly that.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+
+    def test_a_media_only_landing_is_not_a_fetched_page(self, instance):
+        # Media downloads and extracted assets are bytes, not pages — the
+        # same reading the URL cap counts by — so they alone never put an
+        # item on the hook.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        entry = LedgerEntry(
+            hash="73bd784849",
+            url="https://example.test/photo.jpg",
+            item=ITEM,
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.1.0",
+            date=TODAY,
+            via="media",
+            parent="aaaaaaaaaa",
+            depth=1,
+        )
+        ledger.append(instance.ledger_path, entry)
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+
+    def test_a_renamed_items_pass_still_covers_it(self, instance):
+        # Same shortid, new slug: the pass stands in the file under the old
+        # id, and a full-id match would call the judgment never-run.
+        self._bare_wiki(instance)
+        renamed = "2026-08-19-example-renamed-55ad7b"
+        url = "https://example.test/moved"
+        write_corpus_item(instance, renamed, urls=[url])
+        ledger.append(instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url))
+        self._record_pass(instance, item_id=ITEM)  # the pre-rename id, same 55ad7b
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — none" in outcome.report
+
+    def test_fires_beside_the_digest_backstop_not_behind_it(self, instance):
+        # An interrupted session shows on "digest these", whose repair is
+        # digest → place → wiki — harvest is not in that path, so deferring
+        # here would carry the skipped judgment straight through the repair.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "web-73bd78.md").write_text("landed, session died")
+        outcome = lint(instance)
+        assert f"{NEVER_HARVESTED} — **1**" in outcome.report
+        assert "digest these (enrichment newer than digest) — **1**" in outcome.report
 
 
 def capped_entry(

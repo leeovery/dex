@@ -1094,6 +1094,63 @@ class TestMediaStage:
         assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
 
+    def _park_blocked_media(self, instance) -> FakeDriver:
+        """One media unit parked ``blocked`` by a 503 under an active config."""
+        write_item(instance)
+        outage = HttpResponse(status=503, content_type="text/html", body=b"")
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=FakeTransport({self.IMG1: outage})))
+        assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.BLOCKED
+        return driver
+
+    def test_a_resting_media_unit_waits_on_the_owner_not_the_engine(self, instance):
+        # Under `none` the drain defers every media job, so the standing
+        # view's "Waiting on the engine — it retries by itself" was false:
+        # the unit waits on the owner turning media_fetch back on, and the
+        # row must say so.
+        driver = self._park_blocked_media(instance)
+        report = run_mod.status_report(
+            make_ctx(instance, driver, config=Config(media_fetch=MediaFetch.NONE))
+        )
+        assert "Waiting on the engine" not in report
+        yours = report.split("### Needs you", 1)[1]
+        assert self.IMG1 in yours
+        assert "media_fetch is `none` — stays parked until it is turned back on" in yours
+        assert "attempt 1 of 5" not in report  # retry framing, and nothing retries
+
+    def test_a_parked_media_unit_under_an_active_config_still_waits_on_the_engine(self, instance):
+        driver = self._park_blocked_media(instance)
+        report = run_mod.status_report(make_ctx(instance, driver))
+        assert "### Waiting on the engine — 1 entry it retries by itself" in report
+        assert "attempt 1 of 5" in report
+
+    def test_a_manual_media_unit_keeps_its_own_reason_under_none(self, instance):
+        # `manual` media rows already wait on the owner, and flipping the
+        # config resumes nothing for them — their stated reason stands.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(self.IMG1),
+                url=self.IMG1,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.MANUAL,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 19),
+                via="media",
+                parent=work_hash(URL),
+                depth=1,
+                reason="download failed 5 times — inspect by hand",
+            ),
+        )
+        report = run_mod.status_report(
+            make_ctx(instance, FakeDriver(), config=Config(media_fetch=MediaFetch.NONE))
+        )
+        yours = report.split("### Needs you", 1)[1]
+        assert "download failed 5 times — inspect by hand" in yours
+        assert "media_fetch is `none`" not in yours
+
     def test_oversize_media_is_skipped_with_reason(self, instance):
         write_item(instance)
         huge = HttpResponse(

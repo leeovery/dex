@@ -131,7 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="provenance display name (default: owner)",
     )
     digest_parser = item_commands.add_parser(
-        "digest", help="write an item's digest from a JSON payload (judgment in, shape decided)"
+        "digest",
+        help="write an item's digest from a JSON payload (judgment in, shape decided) "
+        "and record the digest pass",
     )
     digest_parser.add_argument(
         "--file",
@@ -168,7 +170,7 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
         case "pass":
             return record_pass(ctx, args.item, args.stage)
         case "item" if args.item_command == "digest":
-            return item_digest(args.file, instance=ctx.instance)
+            return item_digest(args.file, ctx=ctx)
         case "item":
             return item_new(
                 args.capture,

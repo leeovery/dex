@@ -7,6 +7,9 @@ import pytest
 
 from dex_engine import corpus
 from dex_engine.pipeline.digest import DigestPayloadError, item_digest
+from dex_engine.pipeline.run import digest_orphans
+from tests.conftest import FakeDriver
+from tests.pipeline.test_run import make_ctx
 from tests.test_lint import lint, write_index, write_taxonomy
 
 ITEM = "2026-08-19-example-55ad7b"
@@ -45,7 +48,7 @@ def digest(instance, payload=None, **overrides) -> str:
     path = instance.cache_dir / "digest.json"
     body = {**PAYLOAD, **overrides} if payload is None else payload
     path.write_text(json.dumps(body) if not isinstance(body, str) else body)
-    return item_digest(path, instance=instance)
+    return item_digest(path, ctx=make_ctx(instance, FakeDriver()))
 
 
 def digest_text(instance, item_id: str = ITEM) -> str:
@@ -55,7 +58,7 @@ def digest_text(instance, item_id: str = ITEM) -> str:
 class TestWrite:
     def test_writes_the_canonical_digest(self, instance):
         write_item(instance)
-        assert digest(instance) == f"wrote state/digests/{ITEM}.md"
+        assert digest(instance) == f"wrote state/digests/{ITEM}.md · digest pass recorded"
         assert digest_text(instance) == (
             f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: high\n"
             "topics: [agentic-engineering, claude]\n---\n"
@@ -114,7 +117,7 @@ class TestRewrite:
         # Nothing carries over: each field is the payload's judgment or the
         # corpus item's fact, so the second write is a full re-derivation.
         assert digest(instance, signal="low", topics=["brewing"], facts=["one fact."]) == (
-            f"rewrote state/digests/{ITEM}.md"
+            f"rewrote state/digests/{ITEM}.md · digest pass recorded"
         )
         assert digest_text(instance) == (
             f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: low\ntopics: [brewing]\n---\n- one fact.\n"
@@ -127,6 +130,60 @@ class TestRewrite:
         with pytest.raises(DigestPayloadError):
             digest(instance, signal="urgent")
         assert digest_text(instance) == before
+
+
+class TestPassRecording:
+    """The verb records the digest pass itself — no separate command to forget."""
+
+    def _pass_records(self, instance) -> list[dict]:
+        if not instance.passes_path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in instance.passes_path.read_text().split("\n")
+            if line.strip()
+        ]
+
+    def test_the_write_records_the_digest_pass(self, instance):
+        # The pass record is the staleness backstop's comparand; a digest
+        # that landed without one was invisible to it forever.
+        write_item(instance)
+        digest(instance)
+        assert self._pass_records(instance) == [
+            {"stage": "digest", "item": ITEM, "date": "2026-08-20"}
+        ]
+
+    def test_a_rewrite_records_a_fresh_pass(self, instance):
+        write_item(instance)
+        digest(instance)
+        digest(instance, signal="low")
+        assert [r["stage"] for r in self._pass_records(instance)] == ["digest", "digest"]
+
+    def test_a_refused_payload_records_nothing(self, instance):
+        write_item(instance)
+        with pytest.raises(DigestPayloadError):
+            digest(instance, signal="urgent")
+        assert self._pass_records(instance) == []
+
+    def test_the_record_lands_before_the_file_so_a_crash_reads_loud(self, instance, monkeypatch):
+        # A crash between the two writes must leave the state a reader
+        # flags: a pass with no digest file is the backstop's no-digest
+        # orphan, while a digest with no pass is dated by nothing and
+        # silent forever — so the record goes first.
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "web-abc123.md").write_text("enrichment on disk\n")
+
+        def refuse(_path, _text):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr("dex_engine.atomic.write_text", refuse)
+        with pytest.raises(OSError, match="No space left"):
+            digest(instance)
+        assert [r["stage"] for r in self._pass_records(instance)] == ["digest"]
+        assert not (instance.digests_dir / f"{ITEM}.md").exists()
+        assert digest_orphans(instance) == [ITEM]  # the residue is a loud state
 
 
 class TestPayloadValidation:

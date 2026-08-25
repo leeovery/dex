@@ -90,6 +90,7 @@ __all__ = [
     "head_sniffer",
     "is_drainable",
     "mark",
+    "never_harvested",
     "no_providers",
     "record_pass",
     "run",
@@ -1421,7 +1422,9 @@ class _Drain:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
-            self.parked.append(_parked_row(stamped, stamped.item))
+            self.parked.append(
+                _parked_row(stamped, stamped.item, media_fetch=self.ctx.config.media_fetch)
+            )
         return stamped
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
@@ -1603,13 +1606,36 @@ class _Drain:
         ]
 
 
-def _parked_row(entry: LedgerEntry, item_id: str) -> dict[str, object]:
+def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) -> dict[str, object]:
     """One parked entry as both report surfaces read it.
 
     The run report says what THIS run parked and the standing view says
     what is parked now; they are the same shape read at two moments, so
     they are built here once.
+
+    Built here, with the config in hand, is also where a resting media
+    unit is told apart: under ``media_fetch: none`` the drain defers every
+    media job, so a parked one waits on the owner flipping the config, not
+    on any retry the engine will make. The renderer cannot ask the config
+    (payloads are self-contained), so the row itself carries the
+    classification — marked ``resting``, reason naming what unblocks it,
+    and no attempt count, because "attempt n of m" is retry framing for
+    retries that are switched off. ``manual`` media rows keep their own
+    stated reason: they wait on the owner either way, and turning media
+    back on resumes nothing for them.
     """
+    if (
+        entry.via == "media"
+        and media_fetch is MediaFetch.NONE
+        and entry.status is not Status.MANUAL
+    ):
+        return {
+            "item": item_id,
+            "url": entry.url,
+            "status": entry.status.value,
+            "reason": "media_fetch is `none` — stays parked until it is turned back on",
+            "resting": True,
+        }
     row: dict[str, object] = {
         "item": item_id,
         "url": entry.url,
@@ -2119,7 +2145,11 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
     """
     owners = _unit_owners(ctx.instance, entries, ctx.drivers)
     rows = [
-        _parked_row(entry, owners.get(entry.hash, (entry.item,))[0])
+        _parked_row(
+            entry,
+            owners.get(entry.hash, (entry.item,))[0],
+            media_fetch=ctx.config.media_fetch,
+        )
         for entry in entries.values()
         if entry.status in _PARKED
     ]
@@ -2296,6 +2326,87 @@ def _last_digested(instance: Instance) -> dict[str, datetime.date]:
             continue
         newest[item] = max(newest.get(item, date), date)
     return newest
+
+
+def never_harvested(instance: Instance) -> list[str]:
+    """Items whose fetched pages landed with no harvest pass ever recorded.
+
+    A recorded pass is what makes "ran and promoted nothing" distinguishable
+    from "never ran", and this is the reader of the distinction: the
+    stale-pass check reads only the records that exist, so an item whose
+    session skipped harvest outright was digested and cited on the strength
+    of the shared link alone, on no surface at all.
+
+    Who owes a pass is bounded the way the ingest procedure bounds the
+    step. An item still owing a unit derives ``raw`` and has not reached
+    harvest, so it is never listed, however long it stays parked — the same
+    rule :func:`digest_orphans` applies. An item with no fetched page at
+    all — a no-source capture, or one whose every unit died unfetched — has
+    no pages to read the subject rule over; its work is description and
+    digest, and it owes no pass. A fetched page is a ``done`` unit that is
+    not a media download or an extracted asset, the same reading the URL
+    cap counts (:meth:`_Drain.fetched_count`).
+
+    A recorded pass covers an item by the id's trailing shortid, the
+    trailing-id match exclusions already use across renames: a rename keeps
+    the shortid and rewrites the slug, so a full-id match would report
+    every renamed item's harvest as never run while the record stands in
+    the file under the old name.
+
+    An item on the digest backstop is listed here too when both hold: the
+    two findings are different facts with different repairs — the
+    backstop's repair is digest → place → wiki, which never runs harvest —
+    so each check answers for itself, as the referential-integrity rows do.
+
+    Args:
+        instance: The instance.
+
+    Returns:
+        Item ids owing a harvest pass that no record covers, sorted.
+    """
+    entries = _ledger_or_none(instance)
+    if not entries:
+        return []
+    owners = _unit_owners(instance, entries)
+    owing = _items_owing_work(entries, owners)
+    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    fetched = {
+        item_id
+        for entry in entries.values()
+        if entry.status is Status.DONE and entry.via not in ("media", "extract-asset")
+        for item_id in owners.get(entry.hash, (entry.item,))
+    }
+    recorded = _harvested_shortids(instance)
+    return sorted(
+        item_id
+        for item_id in fetched & live
+        if item_id not in owing and item_id.rsplit("-", 1)[-1] not in recorded
+    )
+
+
+def _harvested_shortids(instance: Instance) -> set[str]:
+    """The trailing shortid of every item a harvest pass was recorded for.
+
+    Any rules version counts: a pass under old rules RAN, which is the
+    stale-pass finding, never this one's.
+    """
+    path = instance.passes_path
+    if not path.exists():
+        return set()
+    recorded: set[str] = set()
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # lint parses this file loudly; this reader skips the line
+        if not isinstance(record, dict) or record.get("stage") != "harvest":
+            continue
+        item = record.get("item")
+        if isinstance(item, str):
+            recorded.add(item.rsplit("-", 1)[-1])
+    return recorded
 
 
 def _writes_that_did_not_land(

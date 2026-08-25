@@ -327,6 +327,45 @@ class TestStatusSurface:
         assert "Needs you" not in out
         assert "Waiting on the engine" not in out
 
+    def test_a_resting_row_is_yours_not_the_engines(self):
+        # The builder marks a row resting when the engine will not act on
+        # it (a media unit under `media_fetch: none`); "Waiting on the
+        # engine — it retries by itself" would be false for it.
+        parked = [
+            {
+                "item": "2026-08-19-example-55ad7b",
+                "url": "https://cdn.example.test/a.png",
+                "status": "blocked",
+                "reason": "media_fetch is `none` — stays parked until it is turned back on",
+                "resting": True,
+            }
+        ]
+        out = render("status", {"counts": {"blocked": 1}, "parked": parked})
+        assert "### Needs you — 1 entry the engine has given up on" in out
+        assert "Waiting on the engine" not in out
+        assert "  ↳ media_fetch is `none` — stays parked until it is turned back on" in out
+
+    def test_a_resting_row_carries_no_retry_note(self):
+        # "retries when a provider appears" is the waiting status's note,
+        # and it is exactly what a resting unit will not do.
+        parked = [
+            {
+                "item": "2026-08-19-example-55ad7b",
+                "url": "https://cdn.example.test/a.png",
+                "status": "waiting",
+                "reason": "media_fetch is `none` — stays parked until it is turned back on",
+                "resting": True,
+            }
+        ]
+        out = render("status", {"counts": {"waiting": 1}, "parked": parked})
+        assert "- **2026-08-19-example-55ad7b** · `waiting`" in out
+        assert "retries when a provider appears" not in out
+
+    def test_a_resting_value_other_than_true_is_loud(self):
+        parked = [{"item": "i", "url": "u", "status": "blocked", "reason": "r", "resting": False}]
+        with pytest.raises(PayloadError, match="resting"):
+            render("status", {"counts": {}, "parked": parked})
+
     def test_unparked_status_in_parked_is_loud(self):
         parked = [{"item": "i", "url": "u", "status": "done", "reason": "r"}]
         with pytest.raises(PayloadError, match="parked"):

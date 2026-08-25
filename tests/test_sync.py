@@ -373,6 +373,51 @@ class TestTemplateSync:
         assert not retired.exists()
         assert "removed .claude/skills/dex-run/old-references (retired skill file)" in changed
 
+    def test_a_file_grown_into_a_directory_converges_to_the_template(self, inst, template):
+        # A release replaced a synced file with a same-named directory; the
+        # instance still holds the file. The template is authoritative
+        # inside dex-* — without the convergence, mkdir over the standing
+        # file killed the whole sync with FileExistsError.
+        skill = inst.root / ".claude" / "skills" / "dex-run"
+        skill.mkdir(parents=True)
+        (skill / "references").write_text("used to be one file\n")
+        changed = sync(inst.root, template=template)
+        assert (skill / "references").is_dir()
+        assert (skill / "references" / "ingest-item.md").read_text() == "reference\n"
+        assert (
+            "removed .claude/skills/dex-run/references (template ships a directory here now)"
+            in changed
+        )
+
+    def test_a_directory_folded_into_a_file_converges_to_the_template(self, inst, template):
+        # The mirror case: the template ships SKILL.md as a file where the
+        # instance holds a directory of that name — read_text over it
+        # killed the sync just as dead.
+        skill = inst.root / ".claude" / "skills" / "dex-run"
+        stale = skill / "SKILL.md"
+        stale.mkdir(parents=True)
+        (stale / "part-one.md").write_text("was split up\n")
+        changed = sync(inst.root, template=template)
+        assert (skill / "SKILL.md").is_file()
+        assert (skill / "SKILL.md").read_text() == "run skill\n"
+        assert "removed .claude/skills/dex-run/SKILL.md (template ships a file here now)" in changed
+
+    def test_a_shape_change_over_a_symlink_unlinks_without_following(self, inst, template):
+        # The template ships SKILL.md as a file; the instance holds a
+        # symlink to a directory there. The link is dropped, its target
+        # untouched — pruning's own symlink rule.
+        target = inst.root / "elsewhere"
+        target.mkdir()
+        (target / "kept.md").write_text("linked content\n")
+        skill = inst.root / ".claude" / "skills" / "dex-run"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").symlink_to(target)
+        changed = sync(inst.root, template=template)
+        assert (skill / "SKILL.md").is_file()
+        assert not (skill / "SKILL.md").is_symlink()
+        assert (target / "kept.md").exists()  # the link's target is untouched
+        assert "removed .claude/skills/dex-run/SKILL.md (template ships a file here now)" in changed
+
     def test_non_engine_skills_are_never_touched(self, inst, template):
         theirs = inst.root / ".claude" / "skills" / "my-own-skill"
         theirs.mkdir(parents=True)

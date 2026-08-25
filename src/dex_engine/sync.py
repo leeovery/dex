@@ -285,12 +285,49 @@ def _write_if_changed(root: Path, dest: Path, content: str, changed: list[str]) 
     changed.append(str(dest.relative_to(root)))
 
 
-def _copy_tree(root: Path, src_dir: Traversable, dest_dir: Path, changed: list[str]) -> None:
+def _copy_tree(
+    root: Path, src_dir: Traversable, dest_dir: Path, changed: list[str], *, owned: bool = False
+) -> None:
     for item in src_dir.iterdir():
+        dest = dest_dir / item.name
         if item.is_dir():
-            _copy_tree(root, item, dest_dir / item.name, changed)
+            if owned:
+                _converge_shape(root, dest, changed, to_dir=True)
+            _copy_tree(root, item, dest, changed, owned=owned)
         elif item.is_file():
-            _write_if_changed(root, dest_dir / item.name, item.read_text(encoding="utf-8"), changed)
+            if owned:
+                _converge_shape(root, dest, changed, to_dir=False)
+            _write_if_changed(root, dest, item.read_text(encoding="utf-8"), changed)
+
+
+def _converge_shape(root: Path, dest: Path, changed: list[str], *, to_dir: bool) -> None:
+    """Clear what stands at ``dest`` when its shape contradicts the template's.
+
+    A release may replace a synced file with a same-named directory, or
+    fold a directory down to one file. Inside a ``dex-*`` skill the
+    template is authoritative — the rule pruning already applies — so the
+    conflicting entry is removed, reported as a machinery change, and the
+    copy that follows writes the template's shape. Without this the sync
+    itself died: ``mkdir`` over the standing file raised
+    ``FileExistsError``, and ``read_text`` over the standing directory its
+    own ``OSError``. A symlink is unlinked rather than followed, so
+    whatever it pointed at is left alone — pruning's rule here too.
+    """
+    if to_dir:
+        # A symlink resolving to a real directory keeps its shape; a file,
+        # a symlink to one, or a dangling symlink does not.
+        conflict = (dest.is_symlink() or dest.exists()) and not dest.is_dir()
+        noun = "directory"
+    else:
+        conflict = dest.is_dir()
+        noun = "file"
+    if not conflict:
+        return
+    if dest.is_dir() and not dest.is_symlink():
+        shutil.rmtree(dest)
+    else:
+        dest.unlink()
+    changed.append(f"removed {dest.relative_to(root)} (template ships a {noun} here now)")
 
 
 def sync(root: Path, template: Traversable | None = None) -> list[str]:
@@ -316,7 +353,9 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     Returns:
         Change descriptions: paths (relative to ``root``) that were written
         because they differed, plus ``removed <path>`` entries for retired
-        skills and for files a synced ``dex-*`` skill no longer carries.
+        skills, for files a synced ``dex-*`` skill no longer carries, and
+        for entries cleared because the template's shape changed (a file
+        where it now ships a directory, or the reverse).
     """
     tpl = template if template is not None else _bundled_template()
     # Ensured here, not only at scaffold: a migrated pre-existing instance
@@ -331,12 +370,15 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         if skill.is_dir():
             template_skills.add(skill.name)
             dest = root / ".claude" / "skills" / skill.name
-            _copy_tree(root, skill, dest, changed)
-            if skill.name.startswith("dex-"):
-                # The synced skill mirrors the template exactly: a file the
-                # template dropped would otherwise keep loading its stale
-                # procedure in every session, forever. Only the dex-*
-                # directories sync owns are pruned.
+            engine_owned = skill.name.startswith("dex-")
+            # The synced dex-* skill mirrors the template exactly — shape
+            # included: a same-named file where the template now ships a
+            # directory (or the reverse) is converged, not crashed on. A
+            # file the template dropped would otherwise keep loading its
+            # stale procedure in every session, forever. Only the dex-*
+            # directories sync owns are converged and pruned.
+            _copy_tree(root, skill, dest, changed, owned=engine_owned)
+            if engine_owned:
                 _prune_tree(root, skill, dest, changed)
     _remove_retired_skills(root, template_skills, changed)
     _write_if_changed(

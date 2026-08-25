@@ -109,8 +109,12 @@ Then do a run now, whatever the host.
    act on nothing.
 
 8. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
-   these** is an interrupted previous session: complete its digest →
-   place → wiki steps now. Every item listed is digestible; one still owing
+   these** is an interrupted previous session: complete its remaining
+   per-item steps now, harvest → digest → place → wiki
+   (`references/ingest-item.md`). The listing says a digest is owed, not
+   that harvest ran — the interruption can predate either step, and no
+   surface here would catch a skipped harvest before the next health
+   check. Every item listed is digestible; one still owing
    a unit is `raw` and never appears there, however long it stays parked.
    **Needs you** and **Waiting on the engine** here are the standing view of
    everything parked in the instance, not just this session's: judge the
@@ -145,8 +149,9 @@ Then do a run now, whatever the host.
 
 Where a state file has a verb, the verb writes it and you never do:
 corpus items come from `enrich item new`, digests from `enrich item digest
---file cache/digest.json`, ledger lines from `enrich mark` and the run
-itself, stage records from `enrich pass`. You supply the judgment as JSON
+--file cache/digest.json` (which records the digest pass itself), ledger
+lines from `enrich mark` and the run itself, harvest and wiki stage
+records from `enrich pass`. You supply the judgment as JSON
 or arguments; the engine decides the shape, so a malformed file cannot be
 written. Same motion as rendering, below. `state/taxonomy.json` is the one
 you still write directly.
