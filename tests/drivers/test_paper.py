@@ -1,14 +1,13 @@
-"""Tests for drivers/paper.py: arxiv API + full text, web delegation."""
+"""Tests for drivers/paper.py: arxiv API + full text, the article route."""
 
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.web import WebDriver
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Content, Kind, Missing, Refused
 from dex_engine.pipeline.urls import work_hash
-from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
+from tests.drivers.conftest import FakeTransport, body_of, content_of, fixture_text, make_unit
 
 ABS_URL = "https://arxiv.org/abs/2408.12345"
 API_URL = "https://export.arxiv.org/api/query?id_list=2408.12345"
@@ -36,16 +35,6 @@ def thin_extract(_html: str) -> str:
 
 def driver_for(responses: dict, extract=long_extract) -> PaperDriver:
     return PaperDriver(transport=FakeTransport(responses), extract=extract)
-
-
-class _RefusingWeb(WebDriver):
-    """A delegate that must never be reached — an arxiv paper is not an article."""
-
-    def __init__(self) -> None:
-        super().__init__(transport=FakeTransport({}), extract=long_extract)
-
-    def fetch(self, unit):
-        raise AssertionError(f"the web delegate must not see the arxiv URL {unit.url!r}")
 
 
 class TestIdentity:
@@ -220,20 +209,20 @@ class TestIdentityProperties:
 class TestArxiv:
     def test_the_canonical_key_is_what_fetch_reads(self):
         # Identity and content must not diverge: the form canonical emits
-        # has to route through the arxiv API, never the web delegate.
+        # has to route through the arxiv API, never the article route — an
+        # article-route GET of the abs URL would hit FakeTransport's loud
+        # unknown-URL failure.
         driver = PaperDriver(
             transport=FakeTransport(
                 {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
             ),
             extract=long_extract,
-            web=_RefusingWeb(),
         )
         canonical = driver.canonical("https://arxiv.org/pdf/2408.12345v2.pdf")
-        result = driver.fetch(make_unit(canonical, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver.fetch(make_unit(canonical, Kind.PAPER)))
         assert result.meta["arxiv_id"] == "2408.12345"
 
-    def test_an_old_style_id_fetches_through_the_api_not_the_web_delegate(self):
+    def test_an_old_style_id_fetches_through_the_api_not_the_article_route(self):
         # An old-style abs page read as an article was the bug: the id has
         # to reach the export API, in the bare form the API resolves.
         api_url = "https://export.arxiv.org/api/query?id_list=math/0309285"
@@ -243,17 +232,14 @@ class TestArxiv:
                 {api_url: xml_response(FEED), html_url: html_page("<html>paper</html>")}
             ),
             extract=long_extract,
-            web=_RefusingWeb(),
         )
         canonical = driver.canonical("https://arxiv.org/abs/math.NA/0309285v2")
-        result = driver.fetch(make_unit(canonical, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver.fetch(make_unit(canonical, Kind.PAPER)))
         assert result.meta["arxiv_id"] == "math/0309285"
 
     def test_abstract_and_full_text_sections(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("<html>paper</html>")}
-        result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER)))
         body = body_of(result)
         assert body.startswith("## Abstract")
         assert "the work queue rather than a receipt log" in body
@@ -262,7 +248,7 @@ class TestArxiv:
 
     def test_meta_title_collapsed_published_date_and_id(self):
         responses = {API_URL: xml_response(FEED), HTML_URL: html_page("x")}
-        meta = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER)).meta
+        meta = content_of(driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))).meta
         assert meta["title"] == (
             "Ledger-Driven Ingestion: Honest Failure Classification for Long-Lived Corpora"
         )
@@ -276,7 +262,7 @@ class TestArxiv:
             AR5IV_URL: html_page("<html>rendered</html>"),
         }
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "## Full text" in body_of(result)
 
     def test_thin_full_text_degrades_to_abstract_only_with_note(self):
@@ -285,43 +271,37 @@ class TestArxiv:
             HTML_URL: html_page("<html>chrome</html>"),
             AR5IV_URL: html_page("<html>chrome</html>"),
         }
-        result = driver_for(responses, extract=thin_extract).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DONE
+        result = content_of(
+            driver_for(responses, extract=thin_extract).fetch(make_unit(ABS_URL, Kind.PAPER))
+        )
         assert result.meta["note"] == "abstract only"
         assert "## Full text" not in body_of(result)
 
     def test_unknown_id_is_dead(self):
         responses = {API_URL: xml_response(EMPTY_FEED)}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.DEAD
-        assert "no such id" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "no such id" in result.evidence
 
     def test_api_failures_are_classified(self):
         responses = {API_URL: xml_response("busy", status=503)}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
 
     def test_unparseable_feed_is_blocked(self):
         responses = {API_URL: xml_response("<feed><unclosed")}
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
-        assert result.status is Status.BLOCKED
-        assert "unparseable XML" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert "unparseable XML" in result.evidence
 
 
-class TestDelegation:
-    def test_non_arxiv_papers_read_as_articles_via_the_web_driver(self):
-        calls: list[str] = []
-
-        class RecordingWeb(WebDriver):
-            def fetch(self, unit):
-                calls.append(unit.url)
-                return super().fetch(unit)
-
+class TestArticleRoute:
+    def test_non_arxiv_papers_read_as_articles(self):
+        # The shared article seam does the fetching: the page URL itself is
+        # GET, extracted, and lands done — the ledger kind stays paper.
         url = "https://openreview.net/forum?id=abc"
-        web = RecordingWeb(
-            transport=FakeTransport({url: html_page("<html>rev</html>")}), extract=long_extract
-        )
-        driver = PaperDriver(transport=FakeTransport({}), extract=long_extract, web=web)
+        transport = FakeTransport({url: html_page("<html>rev</html>")})
+        driver = PaperDriver(transport=transport, extract=long_extract)
         result = driver.fetch(make_unit(url, Kind.PAPER))
-        assert calls == [url]
-        assert result.status is Status.DONE
+        assert ("GET", url) in transport.calls
+        assert isinstance(result, Content)

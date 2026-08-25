@@ -1,23 +1,18 @@
-"""The isolation rule: a driver never imports another driver.
+"""The isolation rule: a driver never imports another driver, no exceptions.
 
 Drivers are dumb and isolated — anything two of them share is a lib beside
 ``transport.py`` and ``gh.py``, not one driver reaching into the other's
 module. The rule is checked over the source rather than trusted to review:
-it was broken once by a helper that looked too small to move.
-
-``paper`` → ``web`` is the one blessed exception: openreview and
-huggingface pages read as articles, so the paper driver composes the whole
-web driver as its fetch strategy (design/ingestion-pipeline.md §2). That is
-delegation of a driver, not a shared helper, and it is named here so that
-any NEW pairing fails.
+it was broken once by a helper that looked too small to move, and once more
+by a whole-driver delegation (``paper`` → ``web``) that stood as a blessed
+exception until the article-fetch seam was hoisted into
+``drivers/article.py`` and the exception went.
 """
 
 import ast
 from pathlib import Path
 
 DRIVERS_DIR = Path(__file__).parent.parent.parent / "src" / "dex_engine" / "drivers"
-
-DELEGATIONS = frozenset({("paper", "web")})
 
 
 def driver_modules() -> dict[str, ast.Module]:
@@ -64,6 +59,6 @@ class TestDriversAreIsolated:
             (name, sibling)
             for name, tree in drivers.items()
             for sibling in imported_siblings(tree)
-            if sibling in drivers and (name, sibling) not in DELEGATIONS
+            if sibling in drivers
         )
         assert offences == []

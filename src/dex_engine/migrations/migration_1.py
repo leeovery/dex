@@ -72,6 +72,7 @@ from dex_engine.pipeline.ledger import RENAMED_KINDS, RETIRED_STATUSES, to_line
 from dex_engine.pipeline.types import (
     Cap,
     Format,
+    Job,
     Kind,
     LedgerEntry,
     MigrationReport,
@@ -119,6 +120,7 @@ _TOLERATED_KEYS = frozenset(
         "engine",
         "date",
         "at",
+        "job",
         "via",
         "parent",
         "depth",
@@ -503,6 +505,7 @@ def _translate_record(
     title = _translate_title(
         raw, status=status, path_text=path_text, unit_hash=unit_hash, notes=notes
     )
+    via, job = _translate_provenance(raw, unit_hash=unit_hash, notes=notes)
     try:
         return LedgerEntry(
             hash=unit_hash,
@@ -521,7 +524,8 @@ def _translate_record(
             # line was written now, and an unstamped line is already ordered
             # correctly (oldest) by the loader.
             at=_translate_at(raw, unit_hash=unit_hash, notes=notes),
-            via=_translate_via(raw, unit_hash=unit_hash, notes=notes),
+            job=job,
+            via=via,
             parent=None if "parent" not in raw else _expect_str(raw, "parent"),
             depth=None if "depth" not in raw else _expect_int(raw, "depth"),
             rerun=_expect_bool(raw, "rerun") if "rerun" in raw else False,
@@ -744,23 +748,42 @@ def _translate_title(
 # The current provenance vocabulary — frozen here like the legacy
 # canonicalization above: this migration's contract is "translate to the
 # schema shipping WITH it", so the copy cannot drift out from under it.
-# It tracks a RETIREMENT from that vocabulary, though, and must: a value
-# this list passes through but `LedgerEntry` no longer accepts costs the
-# whole line (untranslatable → dropped), where dropping the value alone
-# costs a note. `thread` left when the walk-up's dead child path was
-# deleted — the pre-rewrite engine had no walk-up at all, so no line this
-# migration reads can carry it, and one that somehow did keeps everything
-# but the word.
-_CURRENT_VIA = frozenset({"harvest", "media", "sniff", "extract-asset"})
+# It tracks RETIREMENTS from that vocabulary, and must: a value this list
+# passed through but `LedgerEntry` no longer accepts costs the whole line
+# (untranslatable → dropped), where translating the value costs nothing.
+# `thread` left when the walk-up's dead child path was deleted — the
+# pre-rewrite engine had no walk-up at all, so no line this migration
+# reads can carry it, and one that somehow did keeps everything but the
+# word. `media` and `extract-asset` left `via` when routing split onto the
+# typed `job` field: an old line spelling either is the same fact in the
+# old spelling, so it translates to the field that now carries it.
+_CURRENT_VIA = frozenset({"harvest", "sniff"})
 _CURRENT_VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
+_JOB_VIA = {"media": Job.MEDIA, "extract-asset": Job.ASSET}
 
 
-def _translate_via(raw: dict[str, object], *, unit_hash: str, notes: list[str]) -> str | None:
+def _translate_provenance(
+    raw: dict[str, object], *, unit_hash: str, notes: list[str]
+) -> tuple[str | None, Job | None]:
+    # A current-schema `job` is carried, not re-derived: a re-apply reads
+    # lines the running engine wrote, and dropping the field would strip
+    # the routing off every media download and asset write it re-reads.
+    job = None
+    if "job" in raw:
+        text = _expect_str(raw, "job")
+        try:
+            job = Job(text)
+        except ValueError as e:
+            raise _UntranslatableError(f"unknown job {text!r}") from e
     if "via" not in raw:
-        return None
+        return None, job
     text = _expect_str(raw, "via")
     if text in _CURRENT_VIA or _CURRENT_VIA_MIGRATION.match(text):
-        return text
+        return text, job
+    if text in _JOB_VIA:
+        # The typed field wins where a line somehow carries both spellings
+        # — no writer produces that shape, and the field is the newer word.
+        return None, job if job is not None else _JOB_VIA[text]
     # The old engine stamped fetcher names here ('whisper', 'fxtwitter', …).
     # Any value outside the current vocabulary is pre-migration provenance:
     # dropped, never skipped-over — the enrichment file frontmatter records
@@ -769,7 +792,7 @@ def _translate_via(raw: dict[str, object], *, unit_hash: str, notes: list[str]) 
         f"ledger {unit_hash}: via {text!r} dropped — pre-migration provenance "
         "vocabulary; the enrichment file frontmatter still records it"
     )
-    return None
+    return None, job
 
 
 # ---------------------------------------------------------------------------

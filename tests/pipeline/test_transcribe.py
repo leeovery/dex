@@ -40,6 +40,7 @@ from dex_engine.pipeline.types import (
     Config,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
@@ -1029,7 +1030,7 @@ class TestMediaFileSeeding:
         content = (instance.root / str(entry.path)).read_text()
         assert "Intro text before the figure." in content
         # The embedded image landed as an extract-asset under the media caps.
-        assets = [e for e in ledger.load(instance.ledger_path).values() if e.via == "extract-asset"]
+        assets = [e for e in ledger.load(instance.ledger_path).values() if e.job is Job.ASSET]
         assert len(assets) == 1
         assert assets[0].status is Status.DONE
         assert (instance.root / str(assets[0].path)).read_bytes().startswith(b"\x89PNG")

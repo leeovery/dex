@@ -62,17 +62,23 @@ from .types import (
     Availability,
     Cap,
     Config,
+    Content,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
+    Missing,
     Need,
-    Redetection,
-    Result,
+    NeedsCapability,
+    Outcome,
+    Redetected,
+    Refused,
     SourceDriver,
     Status,
     Transcriber,
+    Unusable,
     WorkUnit,
     version_newer,
 )
@@ -189,10 +195,10 @@ def _spends_url_budget(entry: LedgerEntry) -> bool:
     """Whether this line spends its item's 12-URL budget.
 
     Fetched pages only: media downloads and extraction-asset byte-writes
-    are not pages, and a skipped line — the cap's own markers included —
-    holds no unit.
+    (the ``job`` field) are not pages, and a skipped line — the cap's own
+    markers included — holds no unit.
     """
-    return entry.via not in ("media", "extract-asset") and entry.status is not Status.SKIPPED
+    return entry.job is None and entry.status is not Status.SKIPPED
 
 
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
@@ -790,9 +796,9 @@ class _Drain:
 
     def _process(self, entry: LedgerEntry) -> bool:
         """Process one unit; False means a deferred no-op (nothing spent)."""
-        # The ONE via-routed dispatch: the media stage gives blocked downloads
-        # normal retry rules, and via is the only mark they carry.
-        media_job = entry.via == "media"
+        # The media stage gives blocked downloads normal retry rules, and
+        # the typed job field is what routes them back to the redrain.
+        media_job = entry.job is Job.MEDIA
         if media_job and self.ctx.config.media_fetch is MediaFetch.NONE:
             # `none` means none on every path, the redrain included. The
             # unit rests exactly where it parked — same status, no attempts
@@ -930,8 +936,7 @@ class _Drain:
                     f"no transcript body for kind '{entry.kind}' — _acquire_audio "
                     "and the body dispatch must cover the same kinds"
                 )
-        result = Result(status=Status.DONE, meta=meta, body=body)
-        path = self._write_output(entry, result)
+        path = self._write_output(entry, meta, body)
         # A unit corrected to a transcribable kind (web → podcast) lands its
         # own output HERE, never through _apply_done — the pre-correction
         # kind's file leaves on the same rule, or the item carries two views
@@ -1004,59 +1009,71 @@ class _Drain:
             case _:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
-    def _apply(self, entry: LedgerEntry, result: Result) -> None:
-        if result.redetect is not None:
-            self._apply_redetection(entry, result.redetect)
-            return
-        match result.status:
-            case Status.DONE:
-                self._apply_done(entry, result)
-            case Status.WAITING:
-                if result.body is not None or result.meta.get("enclosure") is not None:
-                    # A parking driver may still have real content (a
-                    # podcast's show notes, the enclosure pointer in meta) —
-                    # written now, completed by the drain; the item is not
-                    # yet cognitive work, so the write is not an outcome.
-                    # A waiting-transcribe park carrying an enclosure ALWAYS
-                    # writes its park file: the drain re-fetches the
-                    # audio from that frontmatter pointer, show notes or
-                    # not — a no-notes episode without it would loop manual.
-                    self._write_output(entry, result, count=False)
-                self.record_outcome(
-                    entry, status=Status.WAITING, needs=result.needs, reason=result.reason
-                )
-            case Status.BLOCKED:
-                self._apply_blocked(entry, result.reason)
-            case Status.DEAD | Status.SKIPPED | Status.MANUAL:
-                self.record_outcome(entry, status=result.status, reason=result.reason)
-            case Status.QUEUED | Status.ERROR:
-                # Result.__post_init__ forbids both here: queued travels
-                # only with a redetection (routed above); errors are
-                # raised, never returned.
-                raise RuntimeError(
-                    f"unreachable: Result validation rejects {result.status.value!r}"
-                )
-            case _:
-                assert_never(result.status)
+    def _apply(self, entry: LedgerEntry, fetched: Outcome) -> None:
+        """Map what the driver FOUND onto the unit's lifecycle — the one total match.
 
-    def _apply_done(self, entry: LedgerEntry, result: Result) -> None:
+        The driver states its finding as a typed outcome; what that means
+        for the unit's status is decided here and nowhere else. ``Missing``
+        is the only road to ``dead``. The match is total over the union —
+        a new outcome variant is a type error at this site until an arm
+        says what it means.
+        """
+        match fetched:
+            case Content():
+                self._apply_content(entry, fetched)
+            case Missing(evidence=evidence):
+                self.record_outcome(entry, status=Status.DEAD, reason=evidence)
+            case Refused(evidence=evidence, permanent=True):
+                # Retrying can never change the answer, so the blocked
+                # lifecycle's attempts would teach nothing: the engine
+                # gives the unit up for judgment now.
+                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+            case Refused(evidence=evidence):
+                self._apply_blocked(entry, evidence)
+            case Unusable(evidence=evidence, rescuable=True):
+                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+            case Unusable(evidence=evidence):
+                # Nothing there for judgment either: closed out, owing
+                # nothing, holding nothing hostage.
+                self.record_outcome(entry, status=Status.SKIPPED, reason=evidence)
+            case NeedsCapability():
+                self._apply_needs(entry, fetched)
+            case Redetected():
+                self._apply_redetection(entry, fetched)
+            case _:
+                assert_never(fetched)
+
+    def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
         path = None
-        if result.body is not None:
-            path = self._write_output(entry, result)
+        if content.body is not None:
+            path = self._write_output(entry, content.meta, content.body)
             _drop_superseded_outputs(self.ctx.instance, entry, path)
-        title = result.meta.get("title")
+        title = content.meta.get("title")
         self.record_outcome(
             entry,
             status=Status.DONE,
             path=path,
             title=title if isinstance(title, str) and path is not None else None,
         )
-        if result.assets:
-            self._write_assets(self.entries[entry.hash], result.assets)
-        if result.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
-            self._media_stage(self.entries[entry.hash], result.media)
+        if content.assets:
+            self._write_assets(self.entries[entry.hash], content.assets)
+        if content.media and self.ctx.config.media_fetch is not MediaFetch.NONE:
+            self._media_stage(self.entries[entry.hash], content.media)
 
-    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetection) -> None:
+    def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
+        if needs.body is not None or needs.meta.get("enclosure") is not None:
+            # A parking driver may still have real content (a podcast's
+            # show notes, the enclosure pointer in meta) — written now,
+            # completed by the drain; the item is not yet cognitive work,
+            # so the write is not an outcome. A waiting-transcribe park
+            # carrying an enclosure ALWAYS writes its park file: the drain
+            # re-fetches the audio from that frontmatter pointer, show
+            # notes or not — a no-notes episode without it would loop
+            # manual.
+            self._write_output(entry, needs.meta, needs.body, count=False)
+        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+
+    def _apply_redetection(self, entry: LedgerEntry, redetect: Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
 
         The corrected unit has the SAME URL and therefore the same hash — a
@@ -1107,18 +1124,15 @@ class _Drain:
         corrected = redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
-    def _apply_blocked(
-        self, entry: LedgerEntry, reason: str | None, *, needs: Need | None = None
-    ) -> None:
+    def _apply_blocked(self, entry: LedgerEntry, reason: str, *, needs: Need | None = None) -> None:
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
-            # Escalation appends attempt context to what the driver knew —
+            # Escalation appends attempt context to what was found —
             # it never invents a reason.
-            detail = reason or "no reason recorded"
             self.record_outcome(
                 entry,
                 status=Status.MANUAL,
-                reason=f"still blocked after {attempts} attempts — {detail}",
+                reason=f"still blocked after {attempts} attempts — {reason}",
             )
             return
         self.record_outcome(
@@ -1127,7 +1141,14 @@ class _Drain:
 
     # -- outputs ---------------------------------------------------------
 
-    def _write_output(self, entry: LedgerEntry, result: Result, *, count: bool = True) -> str:
+    def _write_output(
+        self,
+        entry: LedgerEntry,
+        meta: dict[str, str | int | None],
+        body: str | None,
+        *,
+        count: bool = True,
+    ) -> str:
         """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns.
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
@@ -1151,8 +1172,7 @@ class _Drain:
         owner = self.owner_of(entry)
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / owner / name
-        body = result.body or ""
-        content = render_enrichment(entry.url, self.ctx.today(), result.meta, body)
+        content = render_enrichment(entry.url, self.ctx.today(), meta, body or "")
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))
@@ -1169,7 +1189,7 @@ class _Drain:
     # -- extraction assets ----------------------------------------
 
     def _write_assets(self, entry: LedgerEntry, assets: list) -> None:
-        """Write embedded assets under the media caps, ledgered via: extract-asset.
+        """Write embedded assets under the media caps, ledgered ``job: asset``.
 
         Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
         overwrite, never duplicate; the caps (4 files per item, 10MB per
@@ -1226,7 +1246,7 @@ class _Drain:
                 status=status,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
-                via="extract-asset",
+                job=Job.ASSET,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
                 path=path,
@@ -1263,12 +1283,12 @@ class _Drain:
                 status=Status.QUEUED,
                 engine="seed",
                 date=datetime.date.min,
-                via="media",
+                job=Job.MEDIA,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
             )
             # The birth line lands BEFORE the download (entries exist from
-            # birth) — a crash mid-download leaves a queued via:media entry
+            # birth) — a crash mid-download leaves a queued media entry
             # the next run's redrain path picks up. The download itself goes
             # through _process, so a failure of any class is charged to the
             # media unit rather than to the page that pointed at it.
@@ -1303,7 +1323,7 @@ class _Drain:
                 status=Status.MANUAL,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
-                via="media",
+                job=Job.MEDIA,
                 parent=parent.hash,
                 depth=(parent.depth or 0) + 1,
                 reason=f"unfetchable media URL — {why}",
@@ -1423,7 +1443,7 @@ class _Drain:
         for unit_hash, other in self.entries.items():
             if unit_hash == entry.hash:
                 break
-            if self.owner_of(other) == owner and other.via == "media":
+            if self.owner_of(other) == owner and other.job is Job.MEDIA:
                 seen += 1
         return seen
 
@@ -1528,6 +1548,7 @@ class _Drain:
                 attempts=attempts,
                 engine="seed",  # stamped in _record
                 date=datetime.date.min,
+                job=entry.job,
                 via=entry.via,
                 parent=entry.parent,
                 depth=entry.depth,
@@ -1700,7 +1721,7 @@ def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) ->
     back on resumes nothing for them.
     """
     if (
-        entry.via == "media"
+        entry.job is Job.MEDIA
         and media_fetch is MediaFetch.NONE
         and entry.status is not Status.MANUAL
     ):
@@ -2267,6 +2288,8 @@ def _item_status(ctx: RunContext, entries: dict[str, LedgerEntry], item_id: str)
         if item_id not in owners.get(entry.hash, ()):
             continue
         unit: dict[str, object] = {"url": entry.url, "status": entry.status.value}
+        if entry.job is not None:
+            unit["job"] = entry.job.value
         if entry.via is not None:
             unit["via"] = entry.via
         if entry.depth is not None:
@@ -2469,7 +2492,7 @@ def never_harvested(instance: Instance) -> list[str]:
     fetched = {
         item_id
         for entry in entries.values()
-        if entry.status is Status.DONE and entry.via not in ("media", "extract-asset")
+        if entry.status is Status.DONE and entry.job is None
         for item_id in owners.get(entry.hash, (entry.item,))
     }
     recorded = _harvested_shortids(instance)
@@ -2555,7 +2578,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     a hand-written enrichment file is listed the moment its heal lands.
 
     A unit is found by its canonical identity, or — failing that — by the
-    exact key it was stored under: bad seeds and every ``via: media`` line
+    exact key it was stored under: bad seeds and every media line
     are keyed on the URL verbatim (canonicalization failed, or never ran),
     so a canonical-only lookup could never reach them, and the contract
     forbids healing them by hand.
@@ -2616,6 +2639,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         attempts=max(prior.attempts or 0, 1) if status is Status.BLOCKED else None,
         engine="seed",  # stamped in record
         date=datetime.date.min,
+        job=prior.job,
         via=prior.via,
         parent=prior.parent,
         depth=prior.depth,

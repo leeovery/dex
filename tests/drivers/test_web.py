@@ -1,21 +1,36 @@
-"""Tests for drivers/web.py: classified fetches, links kept, wayback fallback."""
+"""Tests for the web driver over the shared article seam (drivers/article.py).
+
+The catch-all's whole fetch behaviour — classified fetches, links kept,
+thin parking, re-detection, wayback fallback — lives in the article lib,
+and this file pins it through the driver that reads every page that way.
+"""
 
 import socket
 import urllib.parse
 
+from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.web import WebDriver, trafilatura_extract
+from dex_engine.drivers.web import WebDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.types import Format, Kind, Status
+from dex_engine.pipeline.types import (
+    Content,
+    Format,
+    Kind,
+    Missing,
+    Redetected,
+    Refused,
+    Unusable,
+)
 from tests.capabilities.conftest import fixture_bytes
 from tests.drivers.conftest import (
     FakeTransport,
     body_of,
+    content_of,
+    evidence_of,
     fixture_text,
     html_response,
     json_response,
     make_unit,
-    reason_of,
 )
 
 URL = "https://example.test/post"
@@ -63,27 +78,22 @@ class TestRedetection:
         )
         driver = driver_for({URL: response})
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.QUEUED
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.FILE
-        assert result.redetect.format is Format.PDF
-        assert result.body is None  # identity only; the file driver owns outputs
+        # Identity only; the file driver owns outputs — Redetected has no body.
+        assert result == Redetected(kind=Kind.FILE, format=Format.PDF)
 
     def test_docx_body_signals_its_format(self):
         response = HttpResponse(
             status=200, content_type="text/html", body=fixture_bytes("report.docx")
         )
         result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is not None
-        assert result.redetect.format is Format.DOCX
+        assert result == Redetected(kind=Kind.FILE, format=Format.DOCX)
 
     def test_declared_content_type_catches_signature_less_formats(self):
         response = HttpResponse(
             status=200, content_type="text/csv", body=fixture_bytes("stars.csv")
         )
         result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is not None
-        assert result.redetect.format is Format.CSV
+        assert result == Redetected(kind=Kind.FILE, format=Format.CSV)
 
     def test_an_episode_page_whose_audio_is_its_substance_signals_podcast(self):
         # A player and a paragraph of notes: extraction has nothing to keep,
@@ -92,9 +102,7 @@ class TestRedetection:
         page = fixture_text("podcast", "indie-episode-page.html")
         driver = driver_for({URL: html_response(page)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.PODCAST
-        assert result.status is Status.QUEUED
+        assert result == Redetected(kind=Kind.PODCAST)
 
     def test_an_og_audio_declaration_signals_podcast_over_any_body(self):
         # og:audio is the publisher naming the audio as this page's object —
@@ -104,8 +112,7 @@ class TestRedetection:
             '<meta property="og:audio" content="https://cdn.pods.test/ep42.mp3"></head>',
         )
         result = driver_for({URL: html_response(declared)}).fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.PODCAST
+        assert result == Redetected(kind=Kind.PODCAST)
 
     def test_a_listen_to_this_article_widget_never_steals_the_article(self):
         # The incident: mainstream publishers ship text-to-speech players
@@ -119,16 +126,14 @@ class TestRedetection:
         )
         driver = driver_for({URL: html_response(narrated)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)  # the article wins; never Redetected
         assert "https://example.test/ledger-driven-design" in body_of(result)  # links harvested
 
     def test_a_player_on_a_page_with_a_substantial_body_is_an_accessory(self):
         # The rule at the seam, independent of any one publisher's markup.
         narrated = ARTICLE.replace("</body>", '<audio src="/media/read-aloud.mp3"></audio></body>')
         result = driver_for({URL: html_response(narrated)}).fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
 
     def test_a_blog_advertising_an_rss_feed_is_never_stolen(self):
         # THE boundary: "/feed", "/rss" and an RSS <link rel> are blog
@@ -140,22 +145,19 @@ class TestRedetection:
         )
         driver = driver_for({URL: html_response(blogish)})
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is None
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
 
     def test_a_post_merely_linking_an_mp3_is_never_stolen(self):
         linked = ARTICLE.replace(
             "</body>", '<p><a href="/files/talk.mp3">Download the talk</a></p></body>'
         )
         driver = driver_for({URL: html_response(linked)})
-        assert driver.fetch(make_unit(URL, Kind.WEB)).redetect is None
+        assert not isinstance(driver.fetch(make_unit(URL, Kind.WEB)), Redetected)
 
     def test_ordinary_thin_html_stays_manual_never_redetects(self):
         driver = driver_for({URL: html_response(THIN)}, extract=lambda _html: None)
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.redetect is None
-        assert result.status is Status.MANUAL
-        assert reason_of(result) == "thin-extraction"
+        assert result == Unusable(evidence="thin-extraction")  # never a Redetected bounce
 
 
 class TestSuccessfulFetch:
@@ -163,12 +165,12 @@ class TestSuccessfulFetch:
         # The harvest prerequisite fix: include_links=True — harvest reads these.
         driver = driver_for({URL: html_response(ARTICLE)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "https://example.test/ledger-driven-design" in body_of(result)
 
     def test_meta_title_and_og_image_media(self):
         driver = driver_for({URL: html_response(ARTICLE)})
-        result = driver.fetch(make_unit(URL, Kind.WEB))
+        result = content_of(driver.fetch(make_unit(URL, Kind.WEB)))
         assert result.meta["title"] == "Designing Resilient Ingestion Pipelines & Ledgers"
         assert result.media == ["https://cdn.example.test/img/pipeline-hero.png"]
 
@@ -177,8 +179,8 @@ class TestSuccessfulFetch:
             f'<html><head><meta property="og:image" content="{content}">'
             "</head><body>body</body></html>"
         )
-        result = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
-        return result.media
+        outcome = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
+        return content_of(outcome).media
 
     def test_relative_og_image_resolves_against_the_page(self):
         # The media stage fetches verbatim: a relative value that reached it
@@ -207,17 +209,15 @@ class TestSuccessfulFetch:
             '<html><head><meta property="og:image" content="https://cdn.example.test/\n'
             'hero.png"></head><body>body</body></html>'
         )
-        result = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DONE  # the page still enriches
-        assert result.media == []
+        result = content_of(driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB)))
+        assert result.media == []  # the page still enriches, just without media
 
     def test_200_but_thin_is_manual_never_dead(self):
         # Learned from the 2026-08-20 overnight runs: JS shells were ledgered
         # dead and their items stranded at raw.
         driver = driver_for({URL: html_response(THIN)}, extract=trafilatura_extract)
         result = driver.fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.MANUAL
-        assert result.reason == "thin-extraction"
+        assert result == Unusable(evidence="thin-extraction")
 
 
 class TestClassifiedFailures:
@@ -227,9 +227,10 @@ class TestClassifiedFailures:
             wayback_lookup_url(URL): json_response({"archived_snapshots": {}}),
         }
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.BLOCKED
-        assert "HTTP 403" in reason_of(result)
-        assert "no wayback snapshot" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert "HTTP 403" in result.evidence
+        assert "no wayback snapshot" in result.evidence
 
     def test_402_paywall_is_manual(self):
         responses = {
@@ -237,8 +238,9 @@ class TestClassifiedFailures:
             wayback_lookup_url(URL): json_response({"archived_snapshots": {}}),
         }
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.MANUAL
-        assert PAYWALL_REASON in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent
+        assert PAYWALL_REASON in result.evidence
 
     def test_nxdomain_is_dead(self):
         gone = "https://gone.example.test/x"
@@ -247,8 +249,8 @@ class TestClassifiedFailures:
             wayback_lookup_url(gone): json_response({"archived_snapshots": {}}),
         }
         result = driver_for(responses).fetch(make_unit(gone, Kind.WEB))
-        assert result.status is Status.DEAD
-        assert "NXDOMAIN" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "NXDOMAIN" in result.evidence
 
 
 class TestWaybackFallback:
@@ -262,8 +264,7 @@ class TestWaybackFallback:
             ),
             self.SNAPSHOT: html_response(ARTICLE),
         }
-        result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DONE
+        result = content_of(driver_for(responses).fetch(make_unit(URL, Kind.WEB)))
         assert result.meta["via"] == "wayback"
         assert result.meta["snapshot"] == self.SNAPSHOT
         assert result.media == []  # snapshot og:images point at web.archive.org
@@ -277,9 +278,9 @@ class TestWaybackFallback:
             self.SNAPSHOT: html_response("oops", status=503),
         }
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DEAD  # the direct truth stands
-        assert "HTTP 404" in reason_of(result)
-        assert "wayback fetch failed: HTTP 503" in reason_of(result)
+        assert isinstance(result, Missing)  # the direct truth stands
+        assert "HTTP 404" in result.evidence
+        assert "wayback fetch failed: HTTP 503" in result.evidence
 
     def test_lookup_connection_failure_is_classified_never_swallowed(self):
         responses = {
@@ -287,8 +288,8 @@ class TestWaybackFallback:
             wayback_lookup_url(URL): TimeoutError("timed out"),
         }
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DEAD
-        assert "wayback lookup failed" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "wayback lookup failed" in evidence_of(result)
 
     def test_thin_snapshot_keeps_the_direct_classification(self):
         responses = {
@@ -299,8 +300,8 @@ class TestWaybackFallback:
             self.SNAPSHOT: html_response(THIN),
         }
         result = driver_for(responses, extract=lambda _html: None).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DEAD
-        assert "wayback snapshot extraction was thin" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "wayback snapshot extraction was thin" in result.evidence
 
     def test_unparseable_lookup_json_is_noted(self):
         responses = {
@@ -308,5 +309,5 @@ class TestWaybackFallback:
             wayback_lookup_url(URL): html_response("<html>not json</html>"),
         }
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
-        assert result.status is Status.DEAD
-        assert "unparseable JSON" in reason_of(result)
+        assert isinstance(result, Missing)
+        assert "unparseable JSON" in result.evidence

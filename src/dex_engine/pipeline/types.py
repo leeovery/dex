@@ -13,26 +13,31 @@ from pathlib import Path
 from typing import Protocol
 
 __all__ = [
-    "DRIVER_STATUSES",
     "Asset",
     "Availability",
     "Cap",
     "Config",
+    "Content",
     "Extraction",
     "Extractor",
     "Format",
     "Instance",
+    "Job",
     "Kind",
     "LedgerEntry",
     "MediaFetch",
     "MigrationReport",
+    "Missing",
     "Need",
-    "Redetection",
-    "Result",
+    "NeedsCapability",
+    "Outcome",
+    "Redetected",
+    "Refused",
     "Skipped",
     "SourceDriver",
     "Status",
     "Transcriber",
+    "Unusable",
     "WorkUnit",
     "parse_version",
     "version_newer",
@@ -123,22 +128,30 @@ class MediaFetch(StrEnum):
     LEAD = "lead"
 
 
-# `queued` is a birth state, not a driver outcome, and `error` is RAISED,
-# never returned — a Result has no error channel, so a returned `error`
-# could only carry a fabricated message; the run loop's single broad except
-# is the one place errors are made. ONE exception: a Result carrying a
-# `redetect` returns `queued`, because a mid-fetch kind correction IS a
-# re-birth — the unit re-enters the queue under its corrected identity.
-DRIVER_STATUSES: frozenset[Status] = frozenset(Status) - {Status.QUEUED, Status.ERROR}
+class Job(StrEnum):
+    """Which engine stage owns a unit's work, when it is not page work.
+
+    The routing field: the run loop routes ``MEDIA`` entries to the media
+    redrain instead of a driver, and the fetched-page readers (the 12-URL
+    budget, the harvest obligation) ask "is this a fetched page" of this
+    field — a media download and an extraction-asset byte-write are not
+    pages. Typed and dispatched on, which is exactly what ``via`` is not:
+    provenance is descriptive prose-space, and rewording it must never be
+    able to change routing.
+    """
+
+    MEDIA = "media"
+    ASSET = "asset"
 
 
 # ---------------------------------------------------------------------------
 # Provenance vocabulary. `via` stays a documented string, not an enum:
 # `migration-<n>` is parameterized and provenance is descriptive, never
-# dispatched on. It is still validated against the known shapes.
+# dispatched on — routing lives on the typed `job` field. It is still
+# validated against the known shapes.
 # ---------------------------------------------------------------------------
 
-_VIA_EXACT = frozenset({"harvest", "media", "sniff", "extract-asset"})
+_VIA_EXACT = frozenset({"harvest", "sniff"})
 _VIA_MIGRATION = re.compile(r"^migration-[1-9][0-9]*$")
 
 
@@ -154,18 +167,16 @@ def _validate_via(via: str) -> None:
 # LedgerEntry alike.
 # ---------------------------------------------------------------------------
 
-# The stated-reason contract, shared by Result and LedgerEntry:
-# manual and skipped exist only by deliberate decision, so the decision must
-# be recorded; waiting/blocked/dead may carry one; done/queued need none, and
-# error carries the scrubbed `error` field instead (ledger) or no reason at
-# all (results) — reason and error never coexist.
+# The ledger's stated-reason contract: manual and skipped exist only by
+# deliberate decision, so the decision must be recorded; waiting/blocked/
+# dead may carry one; done/queued need none, and error carries the scrubbed
+# `error` field instead — reason and error never coexist.
 _REASON_REQUIRED = frozenset({Status.MANUAL, Status.SKIPPED})
 _REASON_FORBIDDEN = frozenset({Status.DONE, Status.QUEUED, Status.ERROR})
 
-# Where `needs` may ride (LedgerEntry only — a driver Result stays
-# waiting-only): a waiting park names the missing capability; a blocked
-# acquisition retry keeps `needs` so the run loop routes it back through
-# the capability drain, never the driver.
+# Where `needs` may ride: a waiting park names the missing capability; a
+# blocked acquisition retry keeps `needs` so the run loop routes it back
+# through the capability drain, never the driver.
 _NEEDS_STATUSES = frozenset({Status.WAITING, Status.BLOCKED})
 
 # sha1(work key)[:10] — the ledger key format.
@@ -202,6 +213,35 @@ def _validate_depth(depth: int) -> None:
         raise ValueError("depth must be an integer, not a boolean")
     if depth < 0:
         raise ValueError(f"depth must be >= 0, got {depth}")
+
+
+class LineageError(ValueError):
+    """A parent/depth pairing violation — the one schema refusal no migration owns.
+
+    Its own class so the ledger loader can report it as what it is: no
+    engine, old or new, ever wrote a line this shape and no migration
+    produces or repairs one, so the loader's usual run-the-migration hint
+    would misattribute it.
+    """
+
+
+def _validate_lineage(parent: str | None, spawn_depth: int | None) -> None:
+    """The one parent/depth pairing rule, shared by WorkUnit and LedgerEntry.
+
+    A spawned unit carries a parent and a depth of at least 1 together; an
+    original carries neither. The two shapes spell "original" differently —
+    a WorkUnit's depth 0, a LedgerEntry's absent depth — and both normalize
+    to None before this check, so a state one type accepts and the other
+    refuses cannot exist: every legal ledger entry converts to a legal work
+    unit.
+    """
+    if (parent is None) != (spawn_depth is None):
+        raise LineageError(
+            "parent and depth travel together: an original has neither (depth 0 is the "
+            "shared URL); spawned units carry both"
+        )
+    if spawn_depth is not None and spawn_depth < 1:
+        raise LineageError("a spawned unit's depth starts at 1 — depth 0 is the shared URL")
 
 
 # ---------------------------------------------------------------------------
@@ -242,97 +282,7 @@ class WorkUnit:
             unit_format=self.format,
         )
         _validate_depth(self.depth)
-        if (self.parent is None) != (self.depth == 0):
-            raise ValueError(
-                "parent and depth travel together: depth 0 is the shared URL (no "
-                "parent); spawned units carry both"
-            )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Redetection:
-    """A mid-fetch kind correction: the content is not what detection said.
-
-    The canonical case: detection said web (a HEAD lied or was
-    inconclusive), the GET returned a PDF. The unit re-enters the queue
-    under the corrected identity — same URL, same hash — with
-    ``via: "sniff"`` provenance; the run layer enforces once-only.
-    """
-
-    kind: Kind
-    format: Format | None = None
-
-    def __post_init__(self) -> None:
-        if self.kind in _NON_WORK_KINDS:
-            raise ValueError(
-                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
-                "never becomes a work unit"
-            )
-        if self.format is not None and self.kind is not Kind.FILE:
-            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Result:
-    """What a driver's ``fetch`` returns.
-
-    ``reason`` mirrors the ledger's stated-reason contract: required
-    when a driver returns ``manual``/``skipped`` (the driver knows why),
-    optional on ``waiting``/``blocked``/``dead``, forbidden otherwise. The
-    run layer may append classifier context to it but never invents what the
-    driver knew.
-
-    ``redetect`` is the mid-fetch kind-correction signal: the fetched bytes
-    are a different kind of content than detection assigned. It travels
-    with ``status: queued`` and nothing else — a redetection carries the
-    corrected identity only; outputs belong to the driver that owns the
-    corrected kind.
-    """
-
-    status: Status
-    meta: dict[str, str | int | None]
-    body: str | None = None
-    media: list[str] = field(default_factory=list)
-    # Extraction assets: embedded images have no URL, so bytes are the
-    # only possible form — and drivers never touch the disk, so the
-    # Result is the one channel through which they can reach the run layer's
-    # asset-writing step.
-    assets: list["Asset"] = field(default_factory=list)
-    needs: Need | None = None
-    reason: str | None = None
-    redetect: Redetection | None = None
-
-    def __post_init__(self) -> None:
-        if self.redetect is not None:
-            if self.status is not Status.QUEUED:
-                raise ValueError(
-                    f"a redetection travels with status 'queued' (a re-birth under the "
-                    f"corrected kind), got {self.status!r}"
-                )
-            if self.meta or self.body or self.media or self.assets or self.needs or self.reason:
-                raise ValueError(
-                    "a redetection carries the corrected identity only — outputs belong "
-                    "to the driver that owns the corrected kind"
-                )
-            return
-        if self.status not in DRIVER_STATUSES:
-            raise ValueError(
-                f"drivers may not return status {self.status!r} — 'queued' is a birth "
-                "state (returnable only as a redetection) and 'error' is raised, never "
-                "returned"
-            )
-        if self.status is Status.WAITING and self.needs is None:
-            raise ValueError("status 'waiting' requires needs")
-        if self.needs is not None and self.status is not Status.WAITING:
-            raise ValueError(
-                f"needs={self.needs!r} only accompanies status 'waiting', got {self.status!r}"
-            )
-        if self.status in _REASON_REQUIRED and not self.reason:
-            raise ValueError(f"a driver returning status {self.status!r} must state its reason")
-        if self.status in _REASON_FORBIDDEN and self.reason is not None:
-            raise ValueError(f"reason is forbidden on a {self.status!r} result")
-        if self.assets and self.status is not Status.DONE:
-            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r}")
+        _validate_lineage(self.parent, self.depth or None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -352,6 +302,136 @@ class Extraction:
 
     markdown: str
     assets: list[Asset] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Driver outcomes: what a fetch FOUND, stated by the driver as a typed
+# union. Lifecycle status is the run layer's decision, made in one total
+# match — no outcome carries a Status, so a driver cannot condemn or bless
+# a unit by accident. The per-source knowledge only the driver has (that a
+# yt-dlp message means confirmed gone, that a 402 means paywalled, that a
+# thin extraction is not content) rides as evidence on the outcome.
+# Outputs exist only on Content: a result that produced nothing has no
+# field to carry outputs on.
+# ---------------------------------------------------------------------------
+
+
+def _validate_evidence(evidence: str) -> None:
+    # An outcome whose whole content is evidence must state it: these
+    # variants park or close a unit, and an unexplained park is exactly
+    # the stated-reason contract's forbidden state. Whitespace-only is the
+    # same absence with padding.
+    if not evidence.strip():
+        raise ValueError("a failure outcome must state its evidence")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Content:
+    """Fetched something: the unit's outputs, complete.
+
+    ``body`` and ``meta`` become the enrichment file, ``media`` feeds the
+    media stage, and ``assets`` are the embedded bytes the run layer writes
+    under the media caps — drivers never touch the disk, so this outcome is
+    the one channel through which any of it reaches the run layer.
+    """
+
+    meta: dict[str, str | int | None]
+    body: str | None = None
+    media: list[str] = field(default_factory=list)
+    assets: list[Asset] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Missing:
+    """Confirmed gone: a 404/410, NXDOMAIN, or the source's own tombstone.
+
+    The only outcome that can reach ``dead`` — condemning content is a
+    claim about the world, and this is the one shape a driver may make it
+    in, evidence attached.
+    """
+
+    evidence: str
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Refused:
+    """The source turned us away: blocked, rate limited, paywalled.
+
+    ``permanent`` is the driver-known fact that retrying can never change
+    the answer (payment/login walls, geo-blocks); a transient refusal is
+    the world misbehaving, and the run layer owns the retry lifecycle.
+    """
+
+    evidence: str
+    permanent: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Unusable:
+    """Fetched, but not content this pipeline can use: wrong shape, nothing to extract.
+
+    ``rescuable`` says whether anything is there for judgment to act on: a
+    JS shell our tooling cannot read or a collection page whose members
+    want picking is rescuable and parks for a decision; a URL that
+    addresses no content unit at all (a site root, an index of indexes)
+    carries nothing to rescue and is closed out.
+    """
+
+    evidence: str
+    rescuable: bool = True
+
+    def __post_init__(self) -> None:
+        _validate_evidence(self.evidence)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NeedsCapability:
+    """Resolved, and the rest of the work belongs to a capability drain.
+
+    ``meta``/``body`` are the partial content already in hand — a video's
+    description, an episode's show notes and enclosure pointer — which the
+    run layer writes now rather than holding hostage to a capability
+    backlog; the drain completes the same file. ``reason`` states the park
+    for the report.
+    """
+
+    need: Need
+    meta: dict[str, str | int | None] = field(default_factory=dict)
+    body: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Redetected:
+    """This is not what we thought it was: a mid-fetch kind correction.
+
+    The canonical case: detection said web (a HEAD lied or was
+    inconclusive), the GET returned a PDF. The unit re-enters the queue
+    under the corrected identity — same URL, same hash — and the corrected
+    kind's driver owns the outputs, so this outcome carries the identity
+    and nothing else; the run layer enforces once-only per run.
+    """
+
+    kind: Kind
+    format: Format | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind in _NON_WORK_KINDS:
+            raise ValueError(
+                f"cannot re-detect to {self.kind!r} — corpus-frontmatter vocabulary "
+                "never becomes a work unit"
+            )
+        if self.format is not None and self.kind is not Kind.FILE:
+            raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
+
+
+Outcome = Content | Missing | Refused | Unusable | NeedsCapability | Redetected
 
 
 # ---------------------------------------------------------------------------
@@ -436,8 +516,12 @@ class SourceDriver(Protocol):
         """The canonical form of ``url`` — it keys the ledger hash."""
         ...
 
-    def fetch(self, unit: WorkUnit) -> Result:
-        """Fetch one unit of work; never touches the ledger or the disk."""
+    def fetch(self, unit: WorkUnit) -> Outcome:
+        """Fetch one unit of work; never touches the ledger or the disk.
+
+        Returns what the fetch FOUND (:data:`Outcome`); the run layer
+        decides what that means for the unit's lifecycle.
+        """
         ...
 
 
@@ -474,6 +558,10 @@ class LedgerEntry:
     # git's union merge interleaves two machines' lines. Absent only on
     # lines written before the field shipped.
     at: datetime.datetime | None = None
+    # which stage owns the unit's work — media downloads and asset writes
+    # only; None is driver-fetched page work. The routing field: dispatch
+    # and the fetched-page readers ask this, never `via`
+    job: Job | None = None
     # provenance — children and reruns only
     via: str | None = None
     parent: str | None = None
@@ -556,8 +644,7 @@ def _validate_entry_provenance(entry: LedgerEntry) -> None:
         _validate_via(entry.via)
     if entry.depth is not None:
         _validate_depth(entry.depth)
-    if (entry.parent is None) != (entry.depth is None):
-        raise ValueError("parent and depth are paired provenance — both or neither")
+    _validate_lineage(entry.parent, entry.depth)
 
 
 # ---------------------------------------------------------------------------

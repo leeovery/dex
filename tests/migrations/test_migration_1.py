@@ -18,7 +18,7 @@ from dex_engine.corpus import read_item
 from dex_engine.migrations import migration_1
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Cap, Config, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Config, Job, Kind, LedgerEntry, Need, Status
 
 ENGINE = "0.5.0"
 
@@ -432,6 +432,48 @@ class TestLedgerTranslation:
         assert entry.status is Status.DONE
         assert entry.via is None
         assert any("via 'fxtwitter' dropped" in action for action in report.actions)
+        assert report.skipped == []
+
+    def test_old_via_media_translates_to_the_job_field(self, tmp_path, migration):
+        # `media` and `extract-asset` left the via vocabulary when routing
+        # split onto the typed job field: an old line spelling either is the
+        # same fact in the old spelling, translated — never dropped, and
+        # never costing the whole line.
+        write_corpus(tmp_path, "2026-05-01-item-a1b2c3")
+        path = write_ledger(
+            tmp_path,
+            [
+                {
+                    "hash": "7777777777",
+                    "url": "https://cdn.a.test/img.png?sig=abc",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "via": "media",
+                    "parent": "1111111111",
+                    "depth": 1,
+                    "path": "enrichment/2026-05-01-item-a1b2c3/web-777777.png",
+                },
+                {
+                    "hash": "8888888888",
+                    "url": "enrichment/2026-05-01-item-a1b2c3/777777-asset-0.png",
+                    "kind": "blog",
+                    "status": "done",
+                    "date": "2026-05-01",
+                    "via": "extract-asset",
+                    "parent": "1111111111",
+                    "depth": 1,
+                    "path": "enrichment/2026-05-01-item-a1b2c3/777777-asset-0.png",
+                },
+            ],
+        )
+        report = migration.apply(tmp_path)
+        entries = ledger.load(path)
+        assert entries["7777777777"].job is Job.MEDIA
+        assert entries["7777777777"].via is None
+        assert entries["8888888888"].job is Job.ASSET
+        assert entries["8888888888"].via is None
+        assert not any("dropped" in action for action in report.actions)
         assert report.skipped == []
 
     def test_stray_title_on_non_done_dropped_with_note(self, tmp_path, migration):
@@ -864,6 +906,61 @@ class TestLedgerTranslation:
         assert path.read_text() == original
         assert report.skipped == []
         assert ledger.load(path)["7777777777"].at == at
+
+    def test_current_schema_job_lines_survive_a_re_apply_byte_identically(
+        self, tmp_path, migration
+    ):
+        # The same exposure again, both halves: `job` missing from the
+        # tolerated list dropped every media/asset line the running engine
+        # wrote (an EMPTY ledger after the second apply), and tolerating it
+        # without carrying it through translation would silently strip the
+        # routing instead — a media child re-driven as page work.
+        parent = LedgerEntry(
+            hash="2222222222",
+            url="https://a.test/page",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            path="enrichment/2026-05-01-item-a1b2c3/web-222222.md",
+        )
+        media = LedgerEntry(
+            hash="3333333333",
+            url="https://cdn.a.test/img.png?sig=abc",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            job=Job.MEDIA,
+            parent="2222222222",
+            depth=1,
+            path="enrichment/2026-05-01-item-a1b2c3/media-0.png",
+        )
+        asset = LedgerEntry(
+            hash="4444444444",
+            url="enrichment/2026-05-01-item-a1b2c3/222222-asset-0.png",
+            item="2026-05-01-item-a1b2c3",
+            kind=Kind.WEB,
+            status=Status.DONE,
+            engine="0.4.0",
+            date=datetime.date(2026, 8, 20),
+            job=Job.ASSET,
+            parent="2222222222",
+            depth=1,
+            path="enrichment/2026-05-01-item-a1b2c3/222222-asset-0.png",
+        )
+        path = tmp_path / "state" / "enrichment-ledger.jsonl"
+        for entry in (parent, media, asset):
+            ledger.append(path, entry)
+        original = path.read_text()
+        report = migration.apply(tmp_path)
+        assert path.read_text() == original
+        assert report.skipped == []
+        loaded = ledger.load(path)
+        assert loaded["3333333333"].job is Job.MEDIA
+        assert loaded["4444444444"].job is Job.ASSET
 
     @pytest.mark.parametrize(
         "junk",

@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ledger import LedgerSchemaError
-from dex_engine.pipeline.types import Cap, Format, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Format, Instance, Job, Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import ITEM, URL, make_ctx, write_item
@@ -197,6 +197,18 @@ class TestFromLine:
         record["attempts"] = "three"
         with pytest.raises(LedgerSchemaError, match="attempts"):
             ledger.from_line(json.dumps(record))
+
+    def test_a_lineage_violation_states_the_rule_without_the_migration_hint(self):
+        # No engine ever wrote a spawned line at depth 0 and no migration
+        # produces or repairs one — the usual "migration 1 has likely not
+        # been applied" hint would misattribute the fault, so this one
+        # refusal carries the rule alone.
+        record = json.loads(ledger.to_line(entry()))
+        record["parent"] = "a1b2c3d4e5"
+        record["depth"] = 0
+        with pytest.raises(LedgerSchemaError, match="depth starts at 1") as exc:
+            ledger.from_line(json.dumps(record))
+        assert "migration" not in str(exc.value)
 
 
 class TestWriteTimestampResolution:
@@ -651,7 +663,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     status = draw(st.sampled_from(list(Status)))
     kind = draw(st.sampled_from(_WORK_KINDS))
     provenance = draw(
-        st.none() | st.tuples(st.sampled_from(_HASHES), st.integers(min_value=0, max_value=4))
+        st.none() | st.tuples(st.sampled_from(_HASHES), st.integers(min_value=1, max_value=4))
     )
     parent, depth = provenance if provenance is not None else (None, None)
     path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
@@ -684,7 +696,8 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),
-        via=draw(st.sampled_from([None, "harvest", "media", "sniff", "migration-1"])),
+        job=draw(st.none() | st.sampled_from(list(Job))),
+        via=draw(st.sampled_from([None, "harvest", "sniff", "migration-1"])),
         parent=parent,
         depth=depth,
         rerun=draw(st.booleans()),

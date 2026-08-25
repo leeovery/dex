@@ -217,7 +217,7 @@ def _requeue_stranded_landings(
     deletion is a fact this command knows, rather than being inferred later
     from a path that is missing for innocent reasons too (a rename moves
     the enrichment directory as well, and re-fetching on that would put a
-    ``via: extract-asset`` unit's repo path into the fetch queue, where no
+    ``job: asset`` unit's repo path into the fetch queue, where no
     transport can take it).
 
     The line names the item that claims the work, not the purged one it was

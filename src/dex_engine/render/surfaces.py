@@ -653,6 +653,7 @@ def _render_item_status(payload: Mapping[str, object]) -> str:
           "item": str,
           "units": [
             {"url": str, "status": str,        # required per unit
+             "job": str,                       # optional: media/asset work
              "via": str, "depth": int,         # optional provenance
              "needs": str,                     # optional: waiting capability
              "reason": str,                    # optional: parking reason
@@ -687,7 +688,7 @@ def _item_status_unit(surface: str, unit: Mapping[str, object], *, where: str) -
         surface,
         unit,
         required=frozenset({"url", "status"}),
-        optional=frozenset({"via", "depth", "needs", "reason", "path"}),
+        optional=frozenset({"job", "via", "depth", "needs", "reason", "path"}),
         where=where,
     )
     status = _status_at(surface, unit, "status", where)
@@ -695,6 +696,8 @@ def _item_status_unit(surface: str, unit: Mapping[str, object], *, where: str) -
     if "needs" in unit:
         tags.append(f"needs {kernel.code(_need_at(surface, unit, 'needs', where))}")
     provenance = []
+    if "job" in unit:
+        provenance.append(f"job {_str_at(surface, unit, 'job', where)}")
     if "via" in unit:
         provenance.append(f"via {_str_at(surface, unit, 'via', where)}")
     if "depth" in unit:

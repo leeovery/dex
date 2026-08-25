@@ -4,16 +4,17 @@ import json
 
 from dex_engine.drivers.x import HOP_SLEEP, MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.types import Kind, Status
+from dex_engine.pipeline.types import Content, Kind, Missing, Refused, Unusable
 from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import (
     FakeTransport,
     body_of,
+    content_of,
+    evidence_of,
     fixture_text,
     html_response,
     json_response,
     make_unit,
-    reason_of,
 )
 
 API = "https://api.fxtwitter.com/"
@@ -86,7 +87,7 @@ class TestIdentity:
 class TestThreadWalkUp:
     def test_reading_order_is_root_to_captured_all_authors_attributed(self):
         result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         body = body_of(result)
         assert body.index("@alice") < body.index("@bob") < body.index("@carol")
         assert "Two things every ingestion pipeline gets wrong" in body
@@ -95,12 +96,12 @@ class TestThreadWalkUp:
     def test_one_entry_one_file_thread_meta(self):
         # The chain is context for the captured post, not new first-class
         # sources: it lands in this one file, and its length is meta.
-        result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
+        result = content_of(driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X)))
         assert result.meta["thread_length"] == 3
         assert result.meta["author"] == "Carol Chen (@carol)"
 
     def test_chain_media_pooled_captured_posts_first(self):
-        result = driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X))
+        result = content_of(driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X)))
         assert result.media == [
             "https://pbs.example.test/media/p300.jpg",
             "https://pbs.example.test/media/p200.jpg",
@@ -112,7 +113,7 @@ class TestThreadWalkUp:
         responses = full_chain()
         responses[API + "alice/status/100"] = json_response({}, status=404)
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["chain_incomplete"] == "true"
         assert "after 2 post(s)" in str(result.meta["chain_note"])
         assert "HTTP 404" in str(result.meta["chain_note"])
@@ -137,7 +138,7 @@ class TestThreadWalkUp:
         responses[API + f"status/{captured}"] = responses[API + f"user{captured}/status/{captured}"]
         url = f"https://x.com/user{captured}/status/{captured}"
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["thread_cap_hit"] == "true"
         assert result.meta["thread_length"] == MAX_HOPS + 1  # the captured post + the bound
 
@@ -161,7 +162,7 @@ class TestThreadWalkUp:
         result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
             make_unit("https://x.com/loop/status/500", Kind.X)
         )
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert transport.calls == [("GET", API + "status/500")]  # the captured post, and stop
         assert "thread_cap_hit" not in result.meta
         assert result.meta["chain_incomplete"] == "true"
@@ -180,7 +181,7 @@ class TestThreadWalkUp:
         result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
             make_unit("https://x.com/user700/status/700", Kind.X)
         )
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert result.meta["thread_length"] == 2  # both real posts kept
         assert len(transport.calls) == 2  # and no third request
         assert result.meta["chain_incomplete"] == "true"
@@ -211,7 +212,7 @@ class TestShareShapeFetches:
         transport = FakeTransport(full_chain())
         driver = XDriver(transport=transport, pace=lambda _seconds: None)
         result = driver.fetch(make_unit("https://x.com/i/web/status/300", Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert ("GET", API + "status/300") in transport.calls
         assert all("i/web" not in url for _method, url in transport.calls)
 
@@ -220,7 +221,7 @@ class TestShareShapeFetches:
         result = XDriver(transport=transport, pace=lambda _seconds: None).fetch(
             make_unit(CAPTURED_URL, Kind.X)
         )
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert transport.calls[0] == ("GET", API + "status/300")
 
 
@@ -249,7 +250,7 @@ class TestArticles:
         # `text` is empty on these and raw_text holds only the shortlink —
         # falling back to raw_text ledgered them done on a ~74-char URL.
         result = self.article_result()
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         body = body_of(result)
         assert "Blocked is not dead: a field guide to failure classification" in body
         assert "retry-forever bucket" in body
@@ -271,8 +272,8 @@ class TestArticles:
         }
         responses = {API + "status/701": json_response({"tweet": tweet})}
         result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/701", Kind.X))
-        assert result.status is Status.MANUAL
-        assert "no text or media" in reason_of(result)
+        assert "no text or media" in evidence_of(result)
+        assert isinstance(result, Unusable)
 
     def test_prose_that_merely_contains_a_shortlink_is_still_content(self):
         tweet = {
@@ -285,7 +286,7 @@ class TestArticles:
         }
         responses = {API + "status/702": json_response({"tweet": tweet})}
         result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         assert "finally up" in body_of(result)
 
 
@@ -293,29 +294,33 @@ class TestClassifiedFailures:
     def test_deleted_post_is_dead(self):
         responses = {API + "status/300": json_response({}, status=404)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.DEAD
+        assert isinstance(result, Missing)
 
-    def test_login_walled_post_is_manual_with_reason(self):
+    def test_login_walled_post_is_a_permanent_refusal_with_evidence(self):
         responses = {API + "status/300": json_response({}, status=401)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.MANUAL
-        assert PAYWALL_REASON in reason_of(result)
+        assert isinstance(result, Refused)
+        assert result.permanent
+        assert PAYWALL_REASON in result.evidence
 
-    def test_402_is_manual_x_answers_it(self):
+    def test_402_is_a_permanent_refusal_x_answers_it(self):
         responses = {API + "status/300": json_response({}, status=402)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.MANUAL
+        assert isinstance(result, Refused)
+        assert result.permanent
 
-    def test_rate_limit_is_blocked(self):
+    def test_rate_limit_is_a_transient_refusal(self):
         responses = {API + "status/300": json_response({}, status=429)}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.BLOCKED
+        assert isinstance(result, Refused)
+        assert not result.permanent
 
-    def test_unparseable_json_is_blocked(self):
+    def test_unparseable_json_is_a_transient_refusal(self):
         responses = {API + "status/300": html_response("<html>challenge</html>")}
         result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
-        assert result.status is Status.BLOCKED
-        assert "unparseable JSON" in reason_of(result)
+        assert isinstance(result, Refused)
+        assert not result.permanent
+        assert "unparseable JSON" in result.evidence
 
 
 class TestEdges:
@@ -323,8 +328,9 @@ class TestEdges:
         url = "https://x.com/frank/status/500"
         responses = {API + "status/500": api_fixture("no-text-500.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
-        assert result.status is Status.MANUAL
-        assert "no text" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert result.rescuable
+        assert "no text" in result.evidence
 
     def test_photo_only_post_is_done_with_attributed_body_and_media(self):
         url = "https://x.com/gina/status/600"
@@ -344,7 +350,7 @@ class TestEdges:
         }
         responses = {API + "status/600": json_response({"tweet": tweet})}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
-        assert result.status is Status.DONE
+        assert isinstance(result, Content)
         body = body_of(result)
         assert "@gina" in body
         assert "(photo post)" in body
@@ -353,10 +359,10 @@ class TestEdges:
             "https://pbs.example.test/media/p601.jpg",
         ]
 
-    def test_non_status_url_is_manual(self):
+    def test_non_status_url_is_unusable(self):
         result = driver_for({}).fetch(make_unit("https://x.com/carol", Kind.X))
-        assert result.status is Status.MANUAL
-        assert "not a status URL" in reason_of(result)
+        assert isinstance(result, Unusable)
+        assert "not a status URL" in result.evidence
 
 
 class TestVideoPosts:
@@ -373,10 +379,8 @@ class TestVideoPosts:
         # It parked `manual` on "fxtwitter returned no text or media" — a
         # statement the payload itself contradicts — and dropped the video
         # the media stage would have fetched.
-        result = self.video_result()
-        assert result.status is Status.DONE
-        assert result.reason is None
-        assert result.media == [self.VIDEO]
+        result = content_of(self.video_result())
+        assert result.media == [self.VIDEO]  # Content states no park; the type says so
 
     def test_the_body_names_the_media_it_actually_holds(self):
         body = body_of(self.video_result())
@@ -388,7 +392,7 @@ class TestVideoPosts:
         # `all` is fxtwitter's union of `photos` and `videos`, so every
         # media object appears twice in one payload; pooling it twice would
         # spend two of the item's four media slots on one file.
-        result = self.video_result()
+        result = content_of(self.video_result())
         assert result.media.count(self.VIDEO) == 1
 
     def _mixed_post(self) -> dict:
@@ -406,8 +410,9 @@ class TestVideoPosts:
 
     def test_photos_and_videos_pool_together_in_post_order(self):
         responses = {API + "status/900": json_response({"tweet": self._mixed_post()})}
-        result = driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
-        assert result.status is Status.DONE
+        result = content_of(
+            driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        )
         assert result.media == [
             "https://pbs.example.test/media/p900.jpg",
             "https://video.example.test/tweet_video/g900.mp4",
@@ -420,7 +425,9 @@ class TestVideoPosts:
         post = self._mixed_post()
         del post["media"]["all"]
         responses = {API + "status/900": json_response({"tweet": post})}
-        result = driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        result = content_of(
+            driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        )
         assert result.media == [
             "https://pbs.example.test/media/p900.jpg",
             "https://video.example.test/tweet_video/g900.mp4",
@@ -436,12 +443,11 @@ class TestVideoPosts:
             API + "status/300": json_response({"tweet": captured}),
             API + "ines/status/800": json_response({"tweet": parent}),
         }
-        result = driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X))
+        result = content_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
         assert result.media == ["https://pbs.example.test/media/p300.jpg", self.VIDEO]
 
     def test_a_payload_with_no_media_at_all_still_says_so_honestly(self):
         # The reason survives — it just has to be true when it is said.
         responses = {API + "status/500": api_fixture("no-text-500.json")}
         result = driver_for(responses).fetch(make_unit("https://x.com/frank/status/500", Kind.X))
-        assert result.status is Status.MANUAL
-        assert reason_of(result) == "fxtwitter returned no text or media"
+        assert result == Unusable(evidence="fxtwitter returned no text or media")

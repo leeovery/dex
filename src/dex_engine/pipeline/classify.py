@@ -18,7 +18,7 @@ import ssl
 import urllib.error
 from dataclasses import dataclass
 
-from .types import Result, Status
+from .types import Missing, Refused, Status
 
 __all__ = [
     "MIN_SUBSTANTIAL_CHARS",
@@ -88,16 +88,38 @@ class Classification:
     status: Status
     reason: str
 
-    def to_result(self) -> Result:
-        """This classification as the driver result it means — the ONE conversion.
+    def to_outcome(self) -> Missing | Refused:
+        """This classification as the driver outcome it reports — the ONE conversion.
 
-        Where the classification layer meets the driver-result layer:
-        exactly the classified status and its stated reason, nothing
-        invented, nothing dropped. Seven call sites used to spell this out
-        by hand, which is six places a future change to what a
-        classification means as a result would have to land.
+        Where the classification layer meets the driver seam: the reason
+        rides as evidence, nothing invented, nothing dropped. The dispatch
+        is deliberately partial over ``Status`` — the classifiers produce
+        ``dead``/``blocked``/``manual`` and nothing else, and a
+        classification outside those three at a driver seam is a loud
+        engine bug, never a quiet default. Classifier ``manual`` is the
+        permanent-refusal class (payment/login walls, geo-blocks): a fetch
+        the source turned away and a retry can never change.
+
+        Returns:
+            ``Missing`` for a confirmed-gone classification, ``Refused``
+            (permanent for the manual class) for the rest.
+
+        Raises:
+            RuntimeError: The classification's status has no driver
+                outcome — an engine bug at the call site.
         """
-        return Result(status=self.status, meta={}, reason=self.reason)
+        match self.status:
+            case Status.DEAD:
+                return Missing(evidence=self.reason)
+            case Status.BLOCKED:
+                return Refused(evidence=self.reason)
+            case Status.MANUAL:
+                return Refused(evidence=self.reason, permanent=True)
+            case _:
+                raise RuntimeError(
+                    f"no driver outcome for a {self.status.value!r} classification — "
+                    "the classifiers return dead, blocked and manual only"
+                )
 
 
 def classify_http(status_code: int) -> Classification:

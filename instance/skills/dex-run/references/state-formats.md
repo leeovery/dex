@@ -165,7 +165,7 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, cap?, forced?, engine, date, at?, via?, parent?, depth?,
+  attempts?, cap?, forced?, engine, date, at?, job?, via?, parent?, depth?,
   rerun?, path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
@@ -180,10 +180,14 @@ a malformed record impossible:
   it (`depth`, or `url-requested` — the per-item URL budget an `enrich
   fetch` may exceed with `--force`); `forced` marks the fire `--force`
   waived — the unit still entered, and the health check's drift reading
-  skips it. Heals and manual resolutions:
+  skips it; `job` marks the units that are not fetched pages — `media`
+  downloads (routed through the media stage's redrain) and
+  extraction-`asset` byte-writes — while `via` is provenance only
+  (`harvest`, `sniff`, `migration-<n>`) and never routes. Heals and
+  manual resolutions:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
-  `via: media` line), so pass the URL as the ledger shows it and the heal
+  `job: media` line), so pass the URL as the ledger shows it and the heal
   lands on that entry.
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never

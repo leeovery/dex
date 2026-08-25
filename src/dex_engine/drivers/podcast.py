@@ -5,8 +5,8 @@ Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
 - **Apple link** → iTunes lookup API (public, keyless) on the SHOW id →
   match the episode in the returned window → show RSS → enclosure.
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
-  Spotify exclusives fail honestly → ``manual`` (Claude may rescue via the
-  show's own site).
+  Spotify exclusives fail honestly → ``Unusable`` (Claude may rescue via
+  the show's own site).
 - **Direct RSS / indie episode page** → the ``<link rel>`` feed pointer in
   the page head (its notes are richer), falling back to the enclosure the
   page carries itself. Such a page arrives here by re-detection from the
@@ -14,10 +14,10 @@ Podcasting is RSS underneath; the audio lives in the feed's ``<enclosure>``:
   episode page from a post.
 
 The driver only ever RESOLVES: the enclosure URL and the show notes (from
-the feed — richer than the page) ride the waiting Result's meta/body, the
-run layer writes them into the enrichment file, and the transcribe drain
-acquires the audio from that recorded pointer (audio acquisition
-belongs to the drain, not the drivers).
+the feed — richer than the page) ride the ``NeedsCapability`` outcome's
+meta/body, the run layer writes them into the enrichment file, and the
+transcribe drain acquires the audio from that recorded pointer (audio
+acquisition belongs to the drain, not the drivers).
 """
 
 import html as html_lib
@@ -27,7 +27,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
-from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
+from dex_engine.pipeline.types import (
+    Kind,
+    Need,
+    NeedsCapability,
+    Outcome,
+    Refused,
+    Unusable,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .audio import audio_enclosure
@@ -122,8 +130,8 @@ class PodcastDriver:
             return base_canonical(url, keep_params=frozenset())
         return base_canonical(url)
 
-    def fetch(self, unit: WorkUnit) -> Result:
-        """Resolve the episode; success parks ``waiting`` for the drain."""
+    def fetch(self, unit: WorkUnit) -> Outcome:
+        """Resolve the episode; the resolution parks for the transcribe drain."""
         host = host_of(unit.url)
         if host == "podcasts.apple.com":
             resolved = self._resolve_apple(unit.url)
@@ -131,7 +139,7 @@ class PodcastDriver:
             resolved = self._resolve_spotify(unit.url)
         else:
             resolved = self._resolve_rss_ish(unit.url)
-        if isinstance(resolved, Result):
+        if not isinstance(resolved, _Episode):
             return resolved
         meta: dict[str, str | int | None] = {
             "title": resolved.title,
@@ -139,33 +147,32 @@ class PodcastDriver:
             "published": resolved.published,
             "enclosure": resolved.enclosure,
         }
-        return Result(
-            status=Status.WAITING,
+        return NeedsCapability(
+            need=Need.TRANSCRIBE,
             meta=meta,
             body=resolved.notes or None,
-            needs=Need.TRANSCRIBE,
             reason=_RESOLVED_REASON,
         )
 
     # -- Apple: iTunes lookup → RSS → match --------------------------
 
-    def _resolve_apple(self, url: str) -> "_Episode | Result":
+    def _resolve_apple(self, url: str) -> "_Episode | Outcome":
         parts = urlsplit(url)
         episode_ids = parse_qs(parts.query).get(_APPLE_EPISODE_PARAM, [])
         if not episode_ids or not episode_ids[0].isdigit():
-            return _manual(
+            return _unusable(
                 "Apple link names a show, not an episode — capture an episode link "
                 "(the ?i= parameter)"
             )
         show_id = _apple_show_id(parts.path)
         if show_id is None:
-            return _manual("Apple link carries no show id to look up — rescue by hand")
+            return _unusable("Apple link carries no show id to look up — rescue by hand")
         lookup = self._json(_ITUNES_LOOKUP.format(id=show_id, limit=_ITUNES_EPISODE_WINDOW))
-        if isinstance(lookup, Result):
+        if not isinstance(lookup, dict):
             return lookup
         episode = _itunes_episode(lookup, track_id=int(episode_ids[0]))
         if episode is None:
-            return _manual(
+            return _unusable(
                 f"episode {episode_ids[0]} is not among the {_ITUNES_EPISODE_WINDOW} episodes "
                 "iTunes lists for this show — rescue by hand"
             )
@@ -173,34 +180,34 @@ class PodcastDriver:
 
     # -- Spotify: og-title → iTunes search → RSS → match -------------
 
-    def _resolve_spotify(self, url: str) -> "_Episode | Result":
+    def _resolve_spotify(self, url: str) -> "_Episode | Outcome":
         page = self._transport_result(url)
-        if isinstance(page, Result):
+        if not isinstance(page, str):
             return page
         title = _og_title(page)
         if title is None:
-            return _manual("Spotify page exposed no episode title — rescue by hand")
+            return _unusable("Spotify page exposed no episode title — rescue by hand")
         search = self._json(_ITUNES_SEARCH.format(term=quote(title)))
-        if isinstance(search, Result):
+        if not isinstance(search, dict):
             return search
         episode = _itunes_episode(search, title=title)
         if episode is None:
             # The honest Spotify-exclusive outcome.
-            return _manual(
+            return _unusable(
                 f"episode {title!r} is not in the podcast index — possibly a Spotify "
                 "exclusive; rescue via the show's own site"
             )
         return self._episode_from_feed(episode)
 
-    def _episode_from_feed(self, episode: "_ItunesEpisode") -> "_Episode | Result":
+    def _episode_from_feed(self, episode: "_ItunesEpisode") -> "_Episode | Outcome":
         if episode.feed_url is None:
-            return _manual("iTunes knows the episode but not its feed — rescue by hand")
+            return _unusable("iTunes knows the episode but not its feed — rescue by hand")
         feed = self._feed(episode.feed_url)
-        if isinstance(feed, Result):
+        if not isinstance(feed, _Feed):
             return feed
         item = _match_item(feed.items, guid=episode.guid, title=episode.title)
         if item is None:
-            return _manual(
+            return _unusable(
                 f"episode {episode.title or episode.guid!r} is not in the show's feed — "
                 "it may have been pulled; rescue by hand"
             )
@@ -208,23 +215,23 @@ class PodcastDriver:
 
     # -- Direct RSS / indie episode pages ----------------------------
 
-    def _resolve_rss_ish(self, url: str) -> "_Episode | Result":
+    def _resolve_rss_ish(self, url: str) -> "_Episode | Outcome":
         body = self._transport_result(url)
-        if isinstance(body, Result):
+        if not isinstance(body, str):
             return body
         if _looks_like_xml(body):
             feed = _parse_feed(body)
-            if isinstance(feed, Result):
+            if not isinstance(feed, _Feed):
                 return feed
             if len(feed.items) == 1:
                 return _episode(feed.items[0], show=feed.show)
-            return _manual(
+            return _unusable(
                 f"feed lists {len(feed.items)} episodes — capture an episode link, "
                 "not the show feed"
             )
         return self._resolve_episode_page(url, body)
 
-    def _resolve_episode_page(self, url: str, page: str) -> "_Episode | Result":
+    def _resolve_episode_page(self, url: str, page: str) -> "_Episode | Outcome":
         """Resolve an indie episode page: its feed first, its own audio second.
 
         The feed is preferred because the feed's show notes are richer than
@@ -247,45 +254,41 @@ class PodcastDriver:
             notes="",
         )
 
-    def _episode_from_page_feed(self, url: str, page: str) -> "_Episode | Result":
+    def _episode_from_page_feed(self, url: str, page: str) -> "_Episode | Outcome":
         feed_url = _feed_link(page, url)
         if feed_url is None:
-            return _manual("page exposes no RSS feed link — rescue by hand")
+            return _unusable("page exposes no RSS feed link — rescue by hand")
         feed = self._feed(feed_url)
-        if isinstance(feed, Result):
+        if not isinstance(feed, _Feed):
             return feed
         item = _match_item(feed.items, link=url, title=_og_title(page))
         if item is None:
-            return _manual("episode not found in the site's feed — rescue by hand")
+            return _unusable("episode not found in the site's feed — rescue by hand")
         return _episode(item, show=feed.show)
 
     # -- transport plumbing ------------------------------------------------
 
-    def _transport_result(self, url: str) -> "str | Result":
+    def _transport_result(self, url: str) -> "str | Outcome":
         outcome = fetch_classified(self._transport, url)
         if isinstance(outcome, FetchFailure):
-            return outcome.classification.to_result()
+            return outcome.classification.to_outcome()
         return outcome.text()
 
-    def _json(self, url: str) -> "dict | Result":
+    def _json(self, url: str) -> "dict | Outcome":
         body = self._transport_result(url)
-        if isinstance(body, Result):
+        if not isinstance(body, str):
             return body
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
-            return Result(
-                status=Status.BLOCKED, meta={}, reason="iTunes API returned unparseable JSON"
-            )
+            return Refused(evidence="iTunes API returned unparseable JSON")
         if not isinstance(payload, dict):
-            return Result(
-                status=Status.BLOCKED, meta={}, reason="iTunes API returned an unexpected shape"
-            )
+            return Refused(evidence="iTunes API returned an unexpected shape")
         return payload
 
-    def _feed(self, url: str) -> "_Feed | Result":
+    def _feed(self, url: str) -> "_Feed | Outcome":
         body = self._transport_result(url)
-        if isinstance(body, Result):
+        if not isinstance(body, str):
             return body
         return _parse_feed(body)
 
@@ -368,18 +371,14 @@ def _looks_like_xml(body: str) -> bool:
     return head.startswith(("<?xml", "<rss", "<feed"))
 
 
-def _parse_feed(body: str) -> _Feed | Result:
+def _parse_feed(body: str) -> _Feed | Outcome:
     try:
         root = ET.fromstring(body)  # noqa: S314 — feeds are parsed for text; no DTD/entity expansion in ET
     except ET.ParseError:
-        return Result(status=Status.BLOCKED, meta={}, reason="feed XML is unparseable")
+        return Refused(evidence="feed XML is unparseable")
     channel = root.find("channel")
     if channel is None:
-        return Result(
-            status=Status.MANUAL,
-            meta={},
-            reason="not an RSS feed (no channel) — rescue by hand",
-        )
+        return _unusable("not an RSS feed (no channel) — rescue by hand")
     return _Feed(show=_text(channel.find("title")), items=channel.findall("item"))
 
 
@@ -436,11 +435,11 @@ def _match_by_title(items: list[ET.Element], title: str | None) -> ET.Element | 
     return best
 
 
-def _episode(item: ET.Element, *, show: str | None) -> _Episode | Result:
+def _episode(item: ET.Element, *, show: str | None) -> _Episode | Outcome:
     enclosure = item.find("enclosure")
     audio = enclosure.get("url") if enclosure is not None else None
     if not audio:
-        return _manual("episode item has no audio enclosure — rescue by hand")
+        return _unusable("episode item has no audio enclosure — rescue by hand")
     published = _text(item.find("pubDate"))
     notes_html = (
         _text(item.find(f"{_CONTENT_NS}encoded"))
@@ -515,5 +514,5 @@ def _html_to_markdown(fragment: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", collapsed).strip()
 
 
-def _manual(reason: str) -> Result:
-    return Result(status=Status.MANUAL, meta={}, reason=reason)
+def _unusable(evidence: str) -> Unusable:
+    return Unusable(evidence=evidence)

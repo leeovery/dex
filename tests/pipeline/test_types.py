@@ -8,21 +8,25 @@ from pathlib import Path
 import pytest
 
 from dex_engine.pipeline.types import (
-    DRIVER_STATUSES,
     Availability,
     Cap,
     Config,
+    Content,
     Format,
     Instance,
+    Job,
     Kind,
     LedgerEntry,
     MediaFetch,
     MigrationReport,
+    Missing,
     Need,
-    Redetection,
-    Result,
+    NeedsCapability,
+    Redetected,
+    Refused,
     Skipped,
     Status,
+    Unusable,
     WorkUnit,
     parse_version,
     version_newer,
@@ -59,12 +63,6 @@ class TestEnums:
             Kind("tweet")
         with pytest.raises(ValueError, match="blog"):
             Kind("blog")
-
-    def test_driver_statuses_exclude_queued_and_error(self):
-        # queued is a birth state; error is raised, never returned.
-        assert Status.QUEUED not in DRIVER_STATUSES
-        assert Status.ERROR not in DRIVER_STATUSES
-        assert frozenset(Status) - {Status.QUEUED, Status.ERROR} == DRIVER_STATUSES
 
 
 class TestAvailability:
@@ -132,100 +130,75 @@ class TestWorkUnit:
         assert spawned.parent == "a1b2c3d4e5"
 
 
-class TestResult:
-    def test_simple_driver_return_uses_defaults(self):
-        result = Result(status=Status.DONE, meta={"title": "t"}, body="text")
-        assert result.media == []
-        assert result.needs is None
+class TestOutcomeUnion:
+    """What a driver may state, with the wrong states unrepresentable.
 
-    def test_queued_is_a_birth_state_not_a_driver_outcome(self):
-        with pytest.raises(ValueError, match="birth state"):
-            Result(status=Status.QUEUED, meta={})
+    No outcome carries a Status at all; outputs exist only on Content; a
+    failure variant must state its evidence; a redetection carries the
+    corrected identity and nothing else.
+    """
 
-    def test_waiting_requires_needs(self):
-        with pytest.raises(ValueError, match="needs"):
-            Result(status=Status.WAITING, meta={})
+    def test_no_outcome_carries_a_status(self):
+        for outcome in (
+            Content(meta={}),
+            Missing(evidence="HTTP 404"),
+            Refused(evidence="HTTP 429"),
+            Unusable(evidence="thin-extraction"),
+            NeedsCapability(need=Need.TRANSCRIBE),
+            Redetected(kind=Kind.FILE, format=Format.PDF),
+        ):
+            assert not hasattr(outcome, "status")
 
-    def test_needs_requires_waiting(self):
-        with pytest.raises(ValueError, match="waiting"):
-            Result(status=Status.DONE, meta={}, needs=Need.TRANSCRIBE)
+    def test_a_simple_content_return_uses_defaults(self):
+        content = Content(meta={"title": "t"}, body="text")
+        assert content.media == []
+        assert content.assets == []
 
-    def test_waiting_with_needs_ok(self):
-        result = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
-        assert result.needs is Need.TRANSCRIBE
+    def test_outputs_ride_content_only(self):
+        # The flat Result admitted media on any status and validated assets
+        # done-only by hand; on the union, no other variant has the fields.
+        for variant in (Missing, Refused, Unusable):
+            assert not hasattr(variant(evidence="e"), "media")
+            assert not hasattr(variant(evidence="e"), "assets")
+        assert not hasattr(NeedsCapability(need=Need.OCR), "media")
+        assert not hasattr(Redetected(kind=Kind.WEB), "body")
 
+    @pytest.mark.parametrize("variant", [Missing, Refused, Unusable])
+    def test_a_failure_outcome_must_state_its_evidence(self, variant):
+        with pytest.raises(ValueError, match="evidence"):
+            variant(evidence="")
+        # Whitespace-only is the same absence with padding — the design's
+        # "required and non-empty" claim, not merely "truthy".
+        with pytest.raises(ValueError, match="evidence"):
+            variant(evidence="   ")
 
-class TestRedetection:
-    def test_queued_with_redetect_is_the_sanctioned_re_birth(self):
-        result = Result(
-            status=Status.QUEUED,
-            meta={},
-            redetect=Redetection(kind=Kind.FILE, format=Format.PDF),
+    def test_refused_is_transient_unless_the_driver_knows_better(self):
+        assert Refused(evidence="HTTP 429").permanent is False
+        assert Refused(evidence="payment/login required", permanent=True).permanent is True
+
+    def test_unusable_is_rescuable_unless_nothing_is_there(self):
+        assert Unusable(evidence="thin-extraction").rescuable is True
+        assert Unusable(evidence="root url", rescuable=False).rescuable is False
+
+    def test_needs_capability_carries_the_partial_content(self):
+        park = NeedsCapability(
+            need=Need.TRANSCRIBE, meta={"enclosure": "https://cdn.test/a.mp3"}, reason="resolved"
         )
-        assert result.redetect is not None
-        assert result.redetect.kind is Kind.FILE
+        assert park.body is None
+        assert park.meta["enclosure"] == "https://cdn.test/a.mp3"
 
-    def test_redetect_requires_queued(self):
-        with pytest.raises(ValueError, match="queued"):
-            Result(status=Status.DONE, meta={}, redetect=Redetection(kind=Kind.WEB))
-
-    def test_redetect_carries_identity_only(self):
-        with pytest.raises(ValueError, match="identity only"):
-            Result(
-                status=Status.QUEUED,
-                meta={},
-                body="smuggled",
-                redetect=Redetection(kind=Kind.WEB),
-            )
-
-    def test_meta_is_forbidden_too(self):
-        # meta becomes enrichment frontmatter — smuggling it through a
-        # redetection would be output by another name.
-        with pytest.raises(ValueError, match="identity only"):
-            Result(
-                status=Status.QUEUED,
-                meta={"title": "smuggled"},
-                redetect=Redetection(kind=Kind.WEB),
-            )
-
-    def test_non_work_kinds_are_rejected(self):
+    def test_redetected_non_work_kinds_are_rejected(self):
         with pytest.raises(ValueError, match="never becomes a work unit"):
-            Redetection(kind=Kind.IMAGE)
+            Redetected(kind=Kind.IMAGE)
 
-    def test_format_is_file_work_only(self):
+    def test_redetected_format_is_file_work_only(self):
         with pytest.raises(ValueError, match="file-work only"):
-            Redetection(kind=Kind.WEB, format=Format.PDF)
+            Redetected(kind=Kind.WEB, format=Format.PDF)
 
-
-class TestResultReason:
-    """Result.reason mirrors the ledger's stated-reason contract."""
-
-    @pytest.mark.parametrize("status", [Status.MANUAL, Status.SKIPPED])
-    def test_reason_is_required_on_deliberate_parking(self, status):
-        with pytest.raises(ValueError, match="reason"):
-            Result(status=status, meta={})
-        with pytest.raises(ValueError, match="reason"):
-            Result(status=status, meta={}, reason="")
-        assert Result(status=status, meta={}, reason="thin-extraction").reason == "thin-extraction"
-
-    def test_reason_is_optional_on_waiting_blocked_dead(self):
-        waiting = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE)
-        assert waiting.reason is None
-        primed = Result(status=Status.WAITING, meta={}, needs=Need.TRANSCRIBE, reason="no captions")
-        assert primed.reason == "no captions"
-        assert Result(status=Status.BLOCKED, meta={}, reason="HTTP 403").reason == "HTTP 403"
-        assert Result(status=Status.DEAD, meta={}).reason is None
-        assert Result(status=Status.DEAD, meta={}, reason="HTTP 404").reason == "HTTP 404"
-
-    def test_reason_is_forbidden_on_done(self):
-        with pytest.raises(ValueError, match="forbidden"):
-            Result(status=Status.DONE, meta={}, body="text", reason="unneeded")
-
-    def test_error_is_not_a_driver_outcome_at_all(self):
-        # Errors are raised, never returned — a Result has no error channel,
-        # so a returned 'error' could only fabricate its message.
-        with pytest.raises(ValueError, match="raised, never returned"):
-            Result(status=Status.ERROR, meta={})
+    def test_outcomes_are_frozen(self):
+        outcome = Missing(evidence="HTTP 404")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            outcome.evidence = "rewritten"  # ty: ignore[invalid-assignment]
 
 
 class TestLedgerEntryInvariants:
@@ -297,20 +270,36 @@ class TestLedgerEntryInvariants:
         with pytest.raises(ValueError, match="engine"):
             entry(engine="")
 
-    @pytest.mark.parametrize(
-        "via", ["harvest", "media", "sniff", "extract-asset", "migration-1", "migration-12"]
-    )
+    @pytest.mark.parametrize("via", ["harvest", "sniff", "migration-1", "migration-12"])
     def test_the_known_provenance_vocabulary_is_accepted(self, via):
         assert entry(via=via, rerun=True).via == via
 
     @pytest.mark.parametrize(
-        "via", ["", "harvested", "migration-", "migration-0", "Harvest", "thread", "freehand"]
+        "via",
+        [
+            "",
+            "harvested",
+            "migration-",
+            "migration-0",
+            "Harvest",
+            "thread",
+            "freehand",
+            "media",
+            "extract-asset",
+        ],
     )
     def test_via_outside_the_vocabulary_is_rejected(self, via):
         # `thread` among them: the walk-up writes its chain into ONE
         # enrichment file (§8), so nothing was ever ledgered under it.
+        # `media` and `extract-asset` too: routing left `via` for the typed
+        # `job` field, and the old spellings must not quietly come back.
         with pytest.raises(ValueError, match="via"):
             entry(via=via)
+
+    def test_job_marks_media_and_asset_work(self):
+        assert entry(job=Job.MEDIA, parent="a1b2c3d4e5", depth=1).job is Job.MEDIA
+        assert entry(job=Job.ASSET, parent="a1b2c3d4e5", depth=1).job is Job.ASSET
+        assert entry().job is None
 
     def test_title_without_path_is_rejected(self):
         with pytest.raises(ValueError, match="travel together"):
@@ -357,12 +346,28 @@ class TestLedgerEntryInvariants:
             entry(parent="a1b2c3d4e5", depth=True)
 
     def test_parent_and_depth_are_paired_provenance(self):
-        with pytest.raises(ValueError, match="both or neither"):
+        with pytest.raises(ValueError, match="parent and depth"):
             entry(parent="a1b2c3d4e5")
-        with pytest.raises(ValueError, match="both or neither"):
+        with pytest.raises(ValueError, match="parent and depth"):
             entry(depth=2)
         child = entry(parent="a1b2c3d4e5", depth=2)
         assert (child.parent, child.depth) == ("a1b2c3d4e5", 2)
+
+    def test_a_spawned_entrys_depth_starts_at_one(self):
+        # One rule with WorkUnit, stated once: an entry pairing a parent
+        # with depth 0 was legal here and refused there, so a whole class
+        # of ledger states could never convert to work units.
+        with pytest.raises(ValueError, match="starts at 1"):
+            entry(parent="a1b2c3d4e5", depth=0)
+        with pytest.raises(ValueError, match="parent and depth"):
+            WorkUnit(
+                hash="73bd784849",
+                url="https://example.test",
+                kind=Kind.WEB,
+                item="2026-08-19-example-55ad7b",
+                depth=0,
+                parent="a1b2c3d4e5",
+            )
 
 
 class TestLedgerEntryReason:

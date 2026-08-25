@@ -100,7 +100,14 @@ def classify_probe_failure(message: str) -> Classification:
         "account" in lowered and "closed" in lowered
     ):
         return Classification(status=Status.DEAD, reason=scrub(message))
-    return Classification(status=Status.BLOCKED, reason=scrub(message))
+    # The default arm is the one a bare message can reach: an empty or
+    # whitespace-only yt-dlp message scrubs to "", and a classification
+    # without a stated reason is not blocked-shaped — it would fail
+    # evidence validation at the driver seam and land as an engine error.
+    return Classification(
+        status=Status.BLOCKED,
+        reason=scrub(message) or "probe failed with no message from yt-dlp",
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
