@@ -6,7 +6,9 @@ both immediately drainable now), and formalized the ledger schema.
 This migration moves pre-rewrite instance state onto that vocabulary:
 
 - corpus ``kinds:`` and ``enrichment:`` listings, through corpus.py's typed
-  read/write — Claude-authored bodies pass through byte-exact;
+  read/write — Claude-authored bodies pass through byte-exact, and ``kinds``
+  lands sorted and deduped, the order ``normalize`` derives, so the first
+  regeneration after the migration is a no-op instead of a second rewrite;
 - enrichment filenames (``tweet-*.md`` → ``x-*.md``, ``blog-*.md`` →
   ``web-*.md``);
 - the ledger, line by line, through a tolerant reader for the OLD line
@@ -86,6 +88,7 @@ _TOLERATED_KEYS = frozenset(
         "status",
         "needs",
         "attempts",
+        "capped",
         "engine",
         "date",
         "via",
@@ -198,7 +201,10 @@ def _rewrite_corpus(
                 )
             )
             continue
-        kinds = [_KIND_RENAMES.get(kind, kind) for kind in item.kinds]
+        # sorted+deduped, exactly as normalize derives kinds — otherwise the
+        # first regeneration after the migration rewrites these files again
+        # for ordering alone, and the migration's own commit reads as noise.
+        kinds = sorted({_KIND_RENAMES.get(kind, kind) for kind in item.kinds})
         enrichment = [
             name if (item.id, name) in collisions else _rename_basename(name)
             for name in item.enrichment
@@ -423,6 +429,7 @@ def _translate_record(
             status=status,
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
+            capped=_expect_bool(raw, "capped") if "capped" in raw else False,
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             via=_translate_via(raw, unit_hash=unit_hash, notes=notes),

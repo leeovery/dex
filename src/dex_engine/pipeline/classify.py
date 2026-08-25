@@ -160,12 +160,37 @@ def classify_connection(exc: OSError) -> Classification:
 
 # One scrubber feeds both the ledger `error` field and the issue filer's
 # bodies. Code, not judgment, so it can't leak by judgment lapse.
-_URL_RE = re.compile(r"https?://\S+")
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Every shape of "under a user's home": macOS, Linux (including the root
+# account and systemd's /var/home), and Windows in both slash spellings.
+_HOME_ANCHOR = r"(?:/Users/|/home/|/root/|/var/home/|[A-Za-z]:[\\/]Users[\\/])"
 # A home-anchored path leaks the username AND everything under it (the
-# instance repo name, item slugs, media filenames) — redact to end-of-token,
-# never just the user segment.
-_HOME_RE = re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\Users\\)\S*")
+# instance repo name, item slugs, media filenames) — redact to the end of
+# the PATH, never just the user segment and never merely to the next
+# space: owner-chosen filenames contain spaces, and stopping at one leaks
+# the tail ("<home> Podcast Episode.mp3"). Two bounds, tried in order: a
+# path that OPENS immediately after a bracket or quote runs to that
+# bracket's own partner — how exception messages usually carry a path, and
+# the one bound that holds for a filename of any length; otherwise the
+# whitespace-bounded token, plus (where it has not already ended in a file
+# extension) the few further words that reach one. Nothing wider: past the
+# filename there is only prose, and redacting prose hides the failure.
+_BRACKETS = (("'", "'"), ('"', '"'), ("`", "`"), ("(", ")"), ("[", "]"), ("{", "}"), ("<", ">"))
+_DELIMITERS = "".join(re.escape(char) for pair in _BRACKETS for char in set(pair))
+_BRACKETED = "|".join(
+    rf"(?<={re.escape(opener)}){_HOME_ANCHOR}[^\n{re.escape(closer)}]*(?={re.escape(closer)})"
+    for opener, closer in _BRACKETS
+)
+# A bracket with more path right after it is part of the filename
+# ("File-image(14).png", "Don't Panic.pdf") — only one that ends the token
+# bounds the redaction, or the leaked tail is owner data.
+_PATH_CHAR = rf"[^\s{_DELIMITERS}]"
+_PATH_WORD = rf"(?:{_PATH_CHAR}|[{_DELIMITERS}](?={_PATH_CHAR}))"
+_SPACED_FILENAME_TAIL = rf"(?:(?:[ \t]+{_PATH_WORD}+){{1,4}}?\.[A-Za-z0-9]{{1,6}})?"
+_HOME_RE = re.compile(
+    rf"(?:{_BRACKETED}|{_HOME_ANCHOR}{_PATH_WORD}*{_SPACED_FILENAME_TAIL})"
+)
 _TOKEN_RE = re.compile(r"\S+")
 # Instance content is owner data even in RELATIVE paths (they never touch
 # the home redaction): item ids embed note-derived slugs, media names are

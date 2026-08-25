@@ -7,6 +7,8 @@ import pytest
 
 from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline.ownership import work_identity
+from dex_engine.pipeline.registry import DRIVERS
 from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
@@ -34,6 +36,20 @@ def write_corpus_stub(instance: Instance, item_id: str = ITEM) -> None:
     path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("---\nstub\n---\n")  # lint only reads stems
+
+
+def write_corpus_item(instance: Instance, item_id: str, *, urls: list[str]) -> None:
+    """A parseable item — the URL-claim check reads frontmatter, not stems."""
+    path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    listing = "".join(f"  - {url}\n" for url in urls)
+    path.write_text(
+        "---\n"
+        f"id: {item_id}\n"
+        "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-08-19\n"
+        f"urls:\n{listing}"
+        "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n"
+    )
 
 
 def write_page(instance: Instance, name: str, text: str, group: str = "topics") -> None:
@@ -425,6 +441,157 @@ class TestStateChecks:
         outcome = lint(instance)
         assert "enrichment newer than digest" in outcome.report
         assert ITEM in outcome.report
+
+
+def done_entry(
+    unit_hash: str, *, item: str = ITEM, path: str | None = None, url: str | None = None
+) -> LedgerEntry:
+    return LedgerEntry(
+        hash=unit_hash,
+        url=url or f"https://example.test/{unit_hash}",
+        item=item,
+        kind=Kind.WEB,
+        status=Status.DONE,
+        engine="0.1.0",
+        date=TODAY,
+        path=path,
+    )
+
+
+class TestReferentialIntegrity:
+    """A schema-valid ledger can still point at nothing — lint says so."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_entry_naming_an_excluded_item_is_named_as_excluded(self, instance):
+        self._bare_wiki(instance)
+        (instance.state_dir / "exclusions.tsv").write_text(
+            "2024-04-11-document-library-0a7569\tpensions reference docs\n"
+        )
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", item="2024-04-11-document-library-0a7569"),
+        )
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — 1" in outcome.report
+        assert (
+            "2024-04-11-document-library-0a7569 — 1 entry (excluded on record)"
+            in outcome.report
+        )
+
+    def test_entry_naming_an_unclaimed_item_is_told_apart(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — 1" in outcome.report
+        assert "no exclusions.tsv record, and no live corpus item lists this work" in (
+            outcome.report
+        )
+
+    def test_no_cause_is_guessed_for_an_unclaimed_item(self, instance):
+        # Lint establishes what it checked, never how the item went away.
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert "removed by hand" not in outcome.report
+        assert "purge was interrupted" not in outcome.report
+
+    def test_a_renamed_item_is_not_reported_as_a_ghost(self, instance):
+        # Same shortid, new slug: the entry's item id is dead, but the work
+        # is claimed by a live item — a rename, never a purge.
+        self._bare_wiki(instance)
+        renamed = "2026-08-19-example-renamed-55ad7b"
+        url = "https://example.test/moved"
+        write_corpus_item(instance, renamed, urls=[url])
+        ledger.append(
+            instance.ledger_path, done_entry(work_identity(url, DRIVERS), url=url)
+        )
+        outcome = lint(instance)
+        assert f"{ITEM} — 1 entry (renamed — {renamed} lists this work)" in outcome.report
+        assert "no live corpus item lists this work" not in outcome.report
+
+    def test_one_row_per_item_carries_its_entry_count(self, instance):
+        # Two entries of one item rendered as two rows a reader could not
+        # tell apart; one row states the multiplicity instead.
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        ledger.append(instance.ledger_path, done_entry("aaaaaaaaaa"))
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — 1" in outcome.report
+        assert f"{ITEM} — 2 entries (" in outcome.report
+
+    def test_a_live_item_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(instance.ledger_path, done_entry("73bd784849"))
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — none" in outcome.report
+
+    def test_done_entry_whose_output_is_gone_is_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+        assert f"{ITEM} -> enrichment/{ITEM}/web-73bd78.md" in outcome.report
+
+    def test_an_output_that_exists_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        output = instance.enrichment_dir / ITEM / "web-73bd78.md"
+        output.parent.mkdir(parents=True)
+        output.write_text("the fetched page\n")
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — none" in outcome.report
+
+    def test_a_purged_item_answers_both_checks(self, instance):
+        # exclude deletes enrichment/<item>/ too; both findings are true of
+        # it, and neither is suppressed by the other.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        outcome = lint(instance)
+        assert "ledger items with no corpus file — 1" in outcome.report
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+
+    def test_findings_are_reported_without_failing_the_check(self, instance):
+        # `dex exclude` deliberately leaves ledger history standing, so a
+        # ghost item is the designed steady state — loud, never exit 1.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        ledger.append(instance.ledger_path, done_entry("aaaaaaaaaa", item="2026-08-19-gone-000000"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "ledger items with no corpus file — 1" in outcome.report
+        assert "done entries whose output file is gone from disk — 1" in outcome.report
+
+    def test_the_superseded_line_is_not_the_one_checked(self, instance):
+        # Latest-per-hash: an old done line whose output was cleaned up is
+        # history, not a finding, once the unit moved on.
+        self._bare_wiki(instance)
+        write_corpus_stub(instance)
+        ledger.append(
+            instance.ledger_path,
+            done_entry("73bd784849", path=f"enrichment/{ITEM}/web-73bd78.md"),
+        )
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
+        outcome = lint(instance)
+        assert "done entries whose output file is gone from disk — none" in outcome.report
 
 
 class TestCli:
