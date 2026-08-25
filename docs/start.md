@@ -29,9 +29,11 @@ Check for `git`, `git-lfs`, `uv`, and `gh`. For any that are missing, ask
 the owner before installing (`brew install git git-lfs uv gh` on macOS). If
 there is no way to install, stop and report exactly what is missing.
 
-Run `gh auth status`. If not logged in, run `gh auth login` and walk the
-owner through it (it opens a browser). Their GitHub account must have access
-to `{repo}` (existing) or be able to create a repo (new).
+Run `gh auth status`. If not logged in, ask the GitHub question early: Step
+4 offers GitHub (the default) or local-only for now. An owner going
+local-only skips `gh auth login` entirely. Otherwise run `gh auth login` and
+walk the owner through it (it opens a browser). Their GitHub account must
+have access to `{repo}` (existing) or be able to create a repo (new).
 
 ---
 
