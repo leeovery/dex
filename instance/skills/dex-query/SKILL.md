@@ -17,6 +17,9 @@ full fetched source — and summarize from that.
 1. **Pull.** `git pull` before reading — another surface (a scheduled run,
    another machine) may have ingested since this folder last synced. If the
    pull fails, answer anyway and say the answer is as of the last local sync.
+   A local-only instance (no origin remote) has nothing to pull: the local
+   copy is the only copy, so skip the step — skipped, not passed, the same
+   reading capture and run give it — and answer with no staleness caveat.
 2. Read `wiki/index.md` first; open the relevant pages; follow `[[wikilinks]]`.
    For depth, read the cited items' digests (`state/digests/<id>.md`) and, when
    needed, their full sources (`enrichment/<id>/`).
@@ -28,7 +31,8 @@ full fetched source — and summarize from that.
 5. **Compound**: if the answer required real synthesis (not just reading one
    page), file it as `wiki/syntheses/<slug>.md` — frontmatter `type: synthesis`,
    `question:`, `generated:` date; body cites item ids and wikilinks related
-   topics. Add to index, log it, commit and push. Syntheses are question-shaped, dated
+   topics. Add to index, log it, commit and push (a local-only instance
+   commits without pushing: the push is skipped, not passed). Syntheses are question-shaped, dated
    snapshots; no mechanical check refreshes one — a check cannot tell a
    stale synthesis from a deliberately time-scoped one. Refreshing is
    judgment, done here: when a query reads a synthesis whose `generated:`

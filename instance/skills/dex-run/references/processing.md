@@ -15,8 +15,8 @@ directory).
    **Needs writing up** — fresh captures, drained reruns, rewritten
    items, newly drained waiting cohorts, no-source items (text or
    image captures — nothing to fetch, everything to describe and digest),
-   and items whose every unit died (nothing fetchable remains, so the
-   description and digest come from the owner's note) — plus everything
+   and items whose every unit is dead or ruled out (nothing landed, so
+   the description and digest come from the owner's note) — plus everything
    under **Read these yourself**. Items you created
    this session always get the full per-item procedure whether or not the
    report names them. **Needs you** holds the entries only you can move,

@@ -4,10 +4,14 @@ Fix, in order (state before wiki — a broken ledger blocks the verbs the
 other repairs need):
 
 - **Ledger schema failure** — repair before anything else touches
-  state; the message names the file, line, and likely missing migration
-  (usually: run `bin/dex sync`).
+  state; the advice splits by fault. A line that is valid JSON but
+  violates the schema is stale vocabulary: the message names the file,
+  line, and likely missing migration (usually: run `bin/dex sync`). A
+  line that does not parse as JSON at all is a torn write, and takes
+  the torn-line sanction below: delete exactly the named line.
 - **Torn state file** — the failure row (or sync's error) names the
-  offending file AND line. A torn line in `state/passes.jsonl` or
+  offending file AND line. A torn line in
+  `state/enrichment-ledger.jsonl`, `state/passes.jsonl` or
   `state/migrations.jsonl` is an interrupted write (it starts trailing,
   but later appends or a union merge can leave it mid-file), and the
   sanctioned repair is deleting exactly the line the row names: a
@@ -31,9 +35,10 @@ other repairs need):
   not a per-check chore. **Renamed — `<id>` lists this work** —
   history, not a repair: a ledger line's `item` is the attribution as
   of the day it was written, no line is ever rewritten, and every
-  reader and every write already resolves the work to the item whose
-  corpus file claims it, so the run, the status view, the digest and
-  the item's own frontmatter all say the live id. The count only ever
+  reader and every write already resolves the work — children, media
+  and assets included, up the parent chain — to the item whose corpus
+  file claims it, so the run, the status view, the digest and the
+  item's own frontmatter all say the live id. The count only ever
   grows as items are renamed; if the same rename ALSO shows a misfiled
   output below, that half is real — see that entry. **No exclusions
   record, no live claimant** — an owner decision on whether the item
@@ -57,8 +62,11 @@ other repairs need):
   finish the rename — move `enrichment/<old-id>/` onto the live id, and
   the listing and status follow at the next run — or, where the old
   directory is not this item's work to take, re-fetch the unit and let
-  the drain file it. Moving files is not the engine's business, which is
-  why this is a finding and not a repair the run makes.
+  the drain file it. Finishing the rename settles everything: a digest
+  left under the old id in `state/digests/` needs no move, because the
+  backstop resolves it by shortid to the live item. Moving files is not
+  the engine's business, which is why this is a finding and not a
+  repair the run makes.
 - **Malformed digests** — the message names what broke (no frontmatter
   fence, a missing or bogus field, an `id` disagreeing with its
   filename). Every one of these predates the digest verb or was
@@ -78,12 +86,24 @@ other repairs need):
 - **Items no page cites and the taxonomy does not record** — read the
   digest: cite it on
   the best existing page, or ledger it into `uncategorized-shares` in
-  `state/taxonomy.json` if genuinely low-signal.
+  `state/taxonomy.json` if genuinely low-signal. The row exempts an
+  item still parked short of its digest — units non-terminal, no
+  digest owed yet: coverage is owed once the item is digestible, not
+  while it waits.
 - **Items a page cites but no taxonomy topic records** — the other face
   of the coverage invariant: a citation is not a placement. Read the
   digest and append the id to each matching topic's `items` in
   `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
   genuinely low-signal.
+- **Ghost members** (a topic or an entity lists an id no live corpus
+  item answers) — exclusion's leftover: the purge removes the corpus
+  file, enrichment, digest and ledger entries, and leaves the id
+  wherever `state/taxonomy.json` or `state/entity-members.json` lists
+  it, because those two files are yours to write. The row names the
+  list; remove the id from it — for an excluded item, that is the
+  whole repair.
+  Remove the id from each topic's `items`; `lint --write` reconciles
+  the page counts after.
 - **Pages missing from index** / **ghost index entries** — regenerate
   the affected `wiki/index.md` entries.
 - **Stale pages** (members newer than the page) — fold the newer items

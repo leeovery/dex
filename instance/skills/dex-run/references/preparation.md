@@ -26,14 +26,64 @@ in order:
    deliberately: sync legitimately edits state (pin bump, migration
    rewrites and seeds) before any guard could pass, so a guard placed
    earlier would trip on its own machinery. After the sync commit, a
-   still-dirty tree means a previous session died mid-work — stop and
-   report; do not build on its state.
+   still-dirty tree means a previous session died mid-work. Never build
+   on it silently; clear it deliberately, now, or every later run trips
+   here on the same residue:
+
+   - **Inspect the residue** (`git status`, `git diff`) and attribute
+     it. Engine-written residue is coherent work a dead session never
+     committed: corpus items, enrichment files, state appends, deleted
+     capture files. Commit it with a marked message (e.g. `recovered:
+     previous run died mid-work`) and proceed — the run's redrain
+     re-seeds and retries whatever was half-done, so nothing recovered
+     this way is trusted as finished.
+   - **A tree left mid-merge** (conflict markers, an unfinished merge in
+     git's own state) is the pull procedure's case arriving early:
+     resolve it per step 4's file classes, commit, and continue.
+   - **Residue you cannot attribute stays put**, uncommitted and
+     untouched, and IS the loud report: stop and describe exactly what
+     is sitting in the tree. Recovery is a deliberate act with a commit
+     that says so, never silent building-on-top.
 
 4. **Pull.** `git pull` — captures arrive as commits, and other
    machines' commits arrive with them. A local-only instance (no origin
    remote) has nothing to pull: skip the step — skipped, not passed, the
    same reading `bin/dex inbox` gives its release checks — and skip the
    run's later push steps the same way.
+
+   **A conflicted pull is resolved in this session, never left.** Two
+   machines that both ran since they last synced can conflict, and a
+   tree left mid-merge trips the next run's guard forever, so finish
+   the merge before any other work touches the instance. Resolution is
+   judgment, which is exactly what a session is for: an unattended run
+   performs it the same way, and never stops to ask. Per file class:
+
+   - `state/*.jsonl` and `state/exclusions.tsv` merge as a union
+     automatically — an exclusion is never lost in a merge. Verify no
+     conflict markers remain in them; if any do, the union driver did
+     not run, and the resolution is still the union: keep both sides'
+     lines, markers removed.
+   - `state/taxonomy.json` and `state/entity-members.json` are the two
+     files sessions write directly, so merge them by judgment: the
+     union of both sides' topics, entities and member lists,
+     deduplicated.
+   - A conflicted `state/digests/<id>.md` is re-derived, never
+     hand-spliced: the verb is the writer, so read both sides, write
+     the merged judgment as the payload, and run `bin/dex enrich item
+     digest --file cache/digest.json`.
+   - `wiki/*` is a build artifact: rewrite each conflicted page whole
+     from the merged state (digests and taxonomy), rather than splicing
+     around markers.
+   - A conflicted corpus file is two machines' engine refreshes
+     deriving different `status`/`enrichment:` fields. The body is
+     verbatim forever and identical on both sides; keep either side's
+     frontmatter, and the next run's refresh re-derives it from disk.
+   - Anything else that conflicts is resolved the same way in spirit:
+     understand what each side added, merge by judgment, and never
+     leave a marker in a committed file.
+
+   Then commit the resolution with a message that says what it merged,
+   and continue the run.
 
 5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports

@@ -119,7 +119,11 @@ collapses to one entry with the count stated. The verb records each
 exclusion in `state/exclusions.tsv` (below), removes the corpus file,
 `enrichment/<id>/` and `state/digests/<id>.md`, and purges the item's
 ledger entries except the work another live item still claims; the
-summary line states every count.
+summary line states every count. What the purge leaves is the item's
+entry in `state/taxonomy.json` and any membership in
+`state/entity-members.json` — those two files are yours to write, so
+lint's ghost-members row names each leftover id and its list, and the
+removal is the session's.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 
@@ -198,7 +202,7 @@ this file — they propose changes in the run report.
 
 | key | meaning |
 |---|---|
-| `media_fetch` | `none` \| `lead` — media-stage URL downloads |
+| `media_fetch` | `none` \| `lead` — media-stage URL downloads. `none` withholds the fetch only: media units are still ledgered and rest until the config changes |
 | `transcribe_model` | whisper-local size (default `medium`) |
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
 | `report_issues` | gate on filing engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`). Gates the filing only: the `state/issue-reports.jsonl` record is written either way, `filed` saying which |
@@ -225,7 +229,7 @@ a malformed record impossible:
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
   attempts?, cap?, forced?, engine, date, at?, job?, via?, parent?, depth?,
-  rerun?, path?, title?, error?, reason?}`. The latest line per hash wins, and
+  rerun?, http_shared?, path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
   concatenates their lines in git's order, not in write order. Lines
@@ -239,7 +243,10 @@ a malformed record impossible:
   it (`depth`, or `url-requested` — the per-item URL budget an `enrich
   fetch` may exceed with `--force`); `forced` marks the fire `--force`
   waived — the unit still entered, and the health check's drift reading
-  skips it; `job` marks the units that are not fetched pages — `media`
+  skips it; `http_shared` marks a unit admitted from an http-spelled URL
+  (a capture's `urls:` line, an `enrich fetch` argument) and licenses
+  the fetch's TLS-failure fallback to plain http; `job` marks the units
+  that are not fetched pages — `media`
   downloads (routed through the media stage's redrain) and
   extraction-`asset` byte-writes — while `via` is provenance only
   (`harvest`, `sniff`, `migration-<n>`) and never routes. Heals and
@@ -259,18 +266,26 @@ a malformed record impossible:
 - `state/issue-reports.jsonl` — what this instance observed and reported
   `{fingerprint, action, filed, engine, date, issue?, note?}`.
   Written by the issue filer (crash reports) and by `bin/dex issue`
-  (session-observed reports, above); the owner's visible record. The
-  record is written whether or not `report_issues` let the report file
-  upstream — `filed: true|false` says which — and dedupe treats any
-  record as seen, so turning the gate on later never auto-refiles what
-  was observed while it was off.
+  (session-observed reports, above); the owner's visible record.
+  `action` is what the filing pass did: `filed` (a new upstream issue),
+  `commented` (seen again on an open issue), `recorded` (local record
+  only, the gate off), or `deferred` (local record only, the per-run
+  filing cap reached). The record is written whether or not the report
+  filed upstream — `filed: true|false` says which — and the two local
+  actions mean different things: a gate-off `recorded` is seen for
+  good, so turning the gate on later never auto-refiles what was
+  observed while it was off, while a `deferred` report stays eligible
+  and files the next time the observation recurs, budget allowing. At
+  most one deferred record lands per fingerprint and engine.
   `note` exists only on records the issue verb wrote and is the local
   half of the privacy split: the fuller free-text context that is never
   part of the public issue — the owner reads it here and forwards what
   matters by hand.
 - `state/exclusions.tsv` — one tab-separated `id<TAB>reason` line per
   excluded item, written by `bin/dex exclude` (payload above); excluded
-  items stay excluded across re-normalization. The verb purges the item
+  items stay excluded across re-normalization. Like the `state/*.jsonl`
+  files it merges as a union across machines, and every reader answers
+  by id, so a doubled ruling is harmless. The verb purges the item
   completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
   and the item's ledger entries — and states both the entry count it
   dropped and the count it kept because another live item still claims

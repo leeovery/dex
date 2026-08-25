@@ -628,7 +628,7 @@ Files:
 | `state/enrichment-ledger.jsonl` | work units (§5) |
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran", and the health check reads both sides of that distinction (§10). The digest pass is recorded by `enrich item digest` itself, in the same call as the file (§10); `enrich pass` records the harvest and wiki stages, and remains the manual re-record for any stage |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
-| `state/issue-reports.jsonl` | one record per issue report, filed upstream or gated (`filed: true\|false` says which — the `report_issues` gate stops only the filing, never the record); observed-report records also carry the local-only `note` (§13) |
+| `state/issue-reports.jsonl` | one record per issue report, filed upstream or held locally (`filed: true\|false` says which — the `report_issues` gate and the per-run filing cap stop only the filing, never the record); observed-report records also carry the local-only `note` (§13) |
 | `state/digests/<id>.md` | per-item fact indexes; the one markdown corner of `state/`. Claude's judgment, the engine's shape: `enrich item digest --file <payload>` serializes it (§14). Removed with its item by `dex exclude` — the one thing that ever deletes one |
 | `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
 | `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
@@ -699,15 +699,20 @@ migration 1 carries a stated item verbatim — so every line of an item
 RENAMED since names an id no corpus file answers to, and an `exclude` that
 keeps a line a surviving co-claimant shares leaves it naming the purged
 one. The corpus is the source of truth, so the corpus is asked
-(`pipeline/ownership.py`): the live items listing the URL, failing that
-the parent's owners (a harvest-promoted child, a media download and an
-extracted asset are in no frontmatter), failing that the stored string as
-written. Every reader routes through it — the item's derived
+(`pipeline/ownership.py`): the live items listing the URL; failing that
+the parent chain's owners — an entry carrying `parent` resolves up its
+chain of parents, however deep, to the hash some live item's frontmatter
+claims (a harvest-promoted child, a media download and an extracted
+asset are in no frontmatter, and a promoted child's own children are two
+hops from one); failing that the stored string as written. Every reader
+routes through it — the item's derived
 `status`/`enrichment:` refresh, `enrich status`, the run report's parked
 and incompleteness rows, the digest-staleness backstop (its landing
 dates, and the candidates it derives from enrichment directory names: a
 directory an interrupted rename left under the old id resolves to the
-live item, so the backstop asks the right item for the digest),
+live item, so the backstop asks the right item for the digest; an
+orphaned `state/digests/<old-id>.md` resolves by trailing shortid to the
+live item the same way, so a finished rename keeps its digest),
 `mark`'s post-heal refresh, `exclude`'s claim veto, and lint's ghost and
 output rows.
 
@@ -722,7 +727,9 @@ stands, exactly as the read side falls back. Nothing rewrites a persisted
 line to correct it: a stale `item` on an old line is historical
 attribution, every reader and every writer resolves the work to the live
 item anyway, and a session that renames an item has nothing to do about
-its ledger. What a rename CAN leave behind is the enrichment directory,
+its ledger — a rename carried all the way through leaves only lint's
+ghost "renamed" row, which is history, not work. What a rename CAN leave
+behind is the enrichment directory,
 if the session moved the corpus file and stopped — lint names that as a
 `done` output filed where the item that owns it cannot list it, and moving
 files is judgment work, not the drain's.
@@ -771,6 +778,9 @@ files is judgment work, not the drain's.
   "parent": "a1b2c3d4e5",
   "depth": 2,
   "rerun": true,               // requeued over existing output — overwrite
+  "http_shared": true,         // the admitting URL was spelled http;
+                               // licenses the TLS-failure fallback to
+                               // plain http (below)
   // outputs — success only
   "path": "enrichment/<id>/web-73bd78.md",
   "title": "…",
@@ -863,9 +873,14 @@ independently is seven chances to reintroduce it):
 - **An http-shared source may fall back to http at fetch time.**
   Canonicalization still forces https: identity is the ledger's key, and a
   scheme split would give one resource two entries. But a server that was
-  shared as plain http may never speak TLS at all, so when the https
-  attempt fails at the TLS layer and the item's own `urls:` show the
-  source was shared as http, the fetch retries over http. A TLS failure on
+  shared as plain http may never speak TLS at all, so the admission door
+  records the spelling it saw: a unit admitted from an http-spelled URL —
+  a capture's `urls:` line, an `enrich fetch` argument — carries
+  `http_shared` on its ledger line. When the https attempt fails at the
+  TLS layer and either the item's own `urls:` show the source was shared
+  as http or the unit's line carries `http_shared`, the fetch retries
+  over http — so a promoted URL and a redrain travel the same road as a
+  fresh capture. A TLS failure on
   an https-shared source still classifies `blocked` like any other
   connection failure: the capture is the evidence of what the server was
   ever claimed to speak, and the fallback never downgrades a source the
@@ -1128,13 +1143,13 @@ rules), oversize `skipped` with reason. Media downloads do **not** count
 toward the item's 12-URL cap (that cap bounds fetched pages). The old
 silent `except: pass` dies here.
 
-**`media_fetch: none` means none on every path.** It gates the emit site —
-a driver's media URLs are not ledgered at all — and the redrain alike: a
-media unit already ledgered by a run under `lead` (parked `blocked`, or
-`queued` from a crash window) rests exactly where it is, the way a
-`waiting` unit rests under an absent provider — not fetched, no attempts
-burned, no outcome written — and drains again when the owner turns media
-back on. The run report notes the withheld cohort once.
+**`media_fetch: none` gates the fetch, never the emit.** A driver's media
+URLs are always ledgered at emit, whatever the config says — the work is
+recorded even when it is withheld, so no media unit is invisible. Under
+`none` every media unit rests exactly where it is, the way a `waiting`
+unit rests under an absent provider: not fetched, no attempts burned, no
+outcome written. The run report notes the withheld cohort once, and the
+rested units drain when the owner turns media back on.
 
 **Media URLs are validated before they are ledgered.** The stage fetches
 what a driver hands it verbatim, so a value that could never be a request —
@@ -1266,9 +1281,11 @@ underneath; the audio lives in the feed's `<enclosure>`:
 - **Direct RSS / indie episode page** → the feed the page's `<link rel>`
   names (its notes are richer than the page's markup), falling back to the
   enclosure the page carries itself when that feed is unreachable or does
-  not hold the episode. Either way the unit resolves — it must, because the
-  route it arrives by is a re-detection and bouncing back would park as a
-  loop.
+  not hold the episode. On the fallback road the park body is the episode
+  page's own notes — the page was already fetched, and a park never
+  discards content it already fetched (§6). Either way the unit resolves —
+  it must, because the route it arrives by is a re-detection and bouncing
+  back would park as a loop.
 
   **The route is content-driven, never URL-guessing.** `matches()` stays
   narrow (Apple, Spotify, explicit `.rss`) because bare `/feed` and `/rss`
@@ -1318,7 +1335,9 @@ Engine primitive: `dex enrich fetch <item-id> <url>…` — fetch specific extra
 URLs into an existing item, ledgered as child entries. It is the ONE road
 into the queue besides a capture. Semantics: `parent`
 defaults to the item's primary work unit (override with `--parent <hash>`),
-`depth` = parent's depth + 1, and both caps bind the admission — fetches
+`depth` = parent's depth + 1, an http-spelled URL is admitted with
+`http_shared` on its line — the same TLS-failure fallback a capture's
+http URL licenses (§5) — and both caps bind the admission — fetches
 count against the item's 12-URL cap, and a fetch past depth 4 is refused
 too. `--force` may exceed the URL cap for an owner-requested deepen (the
 cap fire is still recorded); it does **not** reach past depth, which is a
@@ -1356,10 +1375,11 @@ Without that reader, a session that skipped harvest left an item digested
 and cited on the strength of the shared link alone, on no surface. The
 predicate follows the ingest procedure's own bounds: an item still owing a
 unit derives `raw` and has not reached the harvest step, so it is never
-listed; a no-source capture, and an item whose every unit died unfetched,
-has no page to read the subject rule over and owes no pass — its owed work
-is description and digest, written from the owner's note. The run report
-names such an item, the `enrich status`/lint digest backstop lists it
+listed; a no-source capture, and an item whose every unit ended dead or
+skipped with nothing fetched, has no page to read the subject rule over
+and owes no pass — its owed work is description and digest, written from
+the owner's note. The run report names such an item ("dead or ruled out"
+covers the mixed case), the `enrich status`/lint digest backstop lists it
 until its digest pass is recorded, and recording that pass is what clears
 it. A recorded
 pass covers its item by trailing shortid, the same match exclusions use
@@ -1918,10 +1938,13 @@ section.
 - **Local memory** `state/issue-reports.jsonl` — prevents re-spam, and is
   the owner's visible record of what their instance reported. Every
   report writes its record whether or not the gate let it file upstream:
-  the record carries `filed: true|false`, and dedup and refile
-  suppression treat any record as seen, so a defect observed under a
-  closed gate is never auto-refiled when the gate opens later.
-- **Rate limit**: max 3 new issues per run.
+  the record carries `filed: true|false`, and a gate-off record is
+  treated as seen for good, so a defect observed under a closed gate is
+  never auto-refiled when the gate opens later.
+- **Rate limit**: max 3 new upstream filings per run. The cap defers,
+  never gates: the local record still writes, and a rate-limited report
+  is eligible to file on a later run — unlike a gate-off record, which
+  never auto-refiles.
 - **Fire-and-forget**: instances never poll issues or act on tracker
   content — the fix loop closes through releases and sync only. The public
   repo cannot instruct instances.
@@ -1975,8 +1998,8 @@ and the note-never-crash edge.
 - **The local note split**: the payload may carry `note` — free text,
   ≤ 2000 chars, exempt from the detectors BECAUSE it is never filed. It
   lands only in this instance's `issue-reports.jsonl` record
-  (`{fingerprint, action, engine, date, issue?, note?}`), where the
-  owner reads it and forwards what matters by hand.
+  (`{fingerprint, action, filed, engine, date, issue?, note?}`), where
+  the owner reads it and forwards what matters by hand.
 - **Skills**: the rubric lives where a session is when it would notice
   a defect — a guardrail in dex-run's SKILL.md, the full rubric in its
   processing reference (file for engine misbehaviour only, never for
@@ -2091,22 +2114,39 @@ src/dex_engine/
   inbox.py     materialized files feed the pipeline (format detect → extract)
   lint.py      grows checks: ledger schema, ledger↔tree referential
                  integrity (items with no corpus file — excluded-on-record
-                 told apart from renamed, whose URLs a live item still
-                 lists, and from unclaimed; one row per item and finding
+                 told apart from renamed, whose work a live item still
+                 claims by URL or up the parent chain, and from
+                 unclaimed; one row per item and finding
                  with its entry count; done outputs missing on disk, and
                  done outputs filed under another item's directory — both
                  asked of the owning item, §4),
-                 waiting cohorts, pass records, the judgment-drift signals
+                 waiting cohorts, pass records, ghost members (an id in
+                 a taxonomy topic's `items` or an entity-members list
+                 naming no live corpus item — the leftovers an
+                 exclusion's purge leaves in the two session-written
+                 files, a finding with the removal repair), a
+                 parked-item exemption on
+                 the coverage rows (an item whose units are still
+                 non-terminal, with no digest owed yet, is not yet
+                 expected on a page or in the taxonomy),
+                 the judgment-drift signals
                  nothing else reads (cap fires off the ledger, thread
                  markers off enrichment frontmatter), and digest shape —
                  the backstop for digests written before `item digest`,
                  and for anything hand-edited since. A broken state
                  file renders as a failure row naming the offending
-                 file (a malformed `entity-members.json`, a torn
-                 `passes.jsonl` line — named by file and line, since
-                 later appends or a union merge can leave the tear
-                 mid-file) rather than dying bare, so the report
-                 survives to name the repair. Exit 1 is the
+                 file (a malformed `entity-members.json` — any shape
+                 violation fires it, the value shapes included, not
+                 just a file that fails to parse — a torn
+                 `passes.jsonl` or `enrichment-ledger.jsonl` line —
+                 named by file and line, since later appends or a
+                 union merge can leave the tear mid-file) rather than
+                 dying bare, so the report survives to name the
+                 repair. The advice splits by fault: a line that is
+                 not JSON at all is a torn write and carries the
+                 delete-the-named-line sanction, while a valid-JSON
+                 line that violates the schema keeps the
+                 likely-missing-migration hint (run sync). Exit 1 is the
                  hard-failure set: broken wikilinks, bad citations, a
                  ledger schema error, a malformed taxonomy, a malformed
                  `entity-members.json`, an unparseable pass record, a
@@ -2258,12 +2298,15 @@ Skill changes shipping with this:
   the video awaiting its transcript) and nothing about it advances to
   digest or wiki until every part has landed, so one pending transcript
   holds the whole item at `raw`; a `dead` or `skipped` unit owes nothing and
-  holds nothing hostage. What the item OWES is the whole question and the
-  ledger answers it, never the item's own directory listing — which asks a
-  different question, where the item's own files are. The one exception is
-  the capture that seeded nothing at all: no units AND no files is a
-  text-or-image-only share, which owes its description and its digest, and
-  an `any()` over no units would call that finished. So an `enriched` item
+  holds nothing hostage. What the item owes in units is the whole question
+  and the ledger answers it, never the item's own directory listing —
+  which asks a different question, where the item's own files are. The one
+  exception is the item with no units at all: an `any()` over no units
+  would call a fresh text-or-image-only share finished, so a no-unit item
+  derives from its directory instead — `raw` while it is empty, `enriched`
+  once anything lands there — and the description and digest such an item
+  owes are the run report's and the digest backstop's to carry, never the
+  status's. So an `enriched` item
   may legitimately carry `enrichment: []` — seeding dedupes by work hash,
   so a URL shared into two captures is ledgered once and its output lands
   under the first item only, while the second derives `enriched` on the
