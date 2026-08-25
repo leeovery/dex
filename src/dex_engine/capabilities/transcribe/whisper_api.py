@@ -17,6 +17,8 @@ concatenated. Audio at or under one chunk simply yields a single segment —
 one uniform path.
 """
 
+import contextlib
+import http.client
 import json
 import os
 import shutil
@@ -29,7 +31,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
+from dex_engine.drivers.transport import normalize_httplib_errors
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError, scrub
+from dex_engine.pipeline.transcribe import (
+    PROMPT_MAX_TOKENS,
+    estimated_tokens,
+    keep_last_tokens,
+)
 from dex_engine.pipeline.types import Availability
 
 __all__ = [
@@ -49,9 +57,13 @@ DEFAULT_API_MODEL = "whisper-1"
 # cap at any sane audio bitrate.
 CHUNK_SECONDS = 1200
 
-# Whisper's prompt window is ~224 tokens; the continuity tail plus the
-# vocabulary priming must fit, so the tail is bounded in characters.
-_CONTINUITY_TAIL_CHARS = 400
+# The continuity tail's share of PROMPT_MAX_TOKENS: 50 tokens of the
+# running transcript is ample for carrying word boundaries and style into
+# the next chunk, and it leaves three quarters of the window to the priming.
+_CONTINUITY_TAIL_TOKENS = 50
+
+# The "\n" joining the two halves.
+_NEWLINE_TOKENS = 1
 
 _HTTP_OK_FLOOR, _HTTP_OK_CEILING = 200, 300
 _HTTP_BAD_REQUEST = 400
@@ -96,7 +108,8 @@ def urllib_multipart_post(
         ``(status, body)`` — HTTP failures return, never raise.
 
     Raises:
-        OSError: Connection-level failure (DNS, refused, reset, timeout).
+        OSError: Connection-level failure (DNS, refused, reset, timeout, a
+            body truncated mid-read — normalized by the transport seam).
     """
     boundary = uuid.uuid4().hex
     parts: list[bytes] = []
@@ -116,11 +129,24 @@ def urllib_multipart_post(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310 — https endpoint from config
-    try:
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
-            return response.status, response.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()
+    with normalize_httplib_errors():
+        try:
+            with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
+                return response.status, response.read()
+        except urllib.error.HTTPError as e:
+            detail = b""
+            # As at the transport seam: the status is the whole finding and
+            # the body is only detail, so a body that stops short of its
+            # Content-Length must not cost the code. Losing it here inverts
+            # the provider's verdict — 400 says the AUDIO is bad (manual,
+            # with an escalation clock), while the read failure escaping as
+            # a connection error says the ENDPOINT is down (waiting, with
+            # none). ``HTTPException`` is named because it is not an
+            # ``OSError``: an ``IncompleteRead`` would otherwise leave here
+            # through ``normalize_httplib_errors`` as exactly that.
+            with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
+                detail = e.read()
+            return e.code, detail
 
 
 def run_ffmpeg(args: list[str]) -> None:
@@ -307,8 +333,21 @@ class WhisperApi:
 
 
 def _chunk_prompt(initial_prompt: str, previous: list[str]) -> str:
-    """Vocabulary priming plus the running transcript's tail (chunk continuity)."""
+    """Vocabulary priming plus the running transcript's tail (chunk continuity).
+
+    Both halves live inside one ``PROMPT_MAX_TOKENS`` budget, because
+    whisper reads a prompt from its END: appending an unbudgeted tail
+    would push the priming out of the window it exists to occupy. The
+    continuity tail comes off the transcript's end, and the priming is
+    trimmed from its FRONT — the title and show are the last thing in it
+    (:func:`_prompt`), so trimming the front spends show notes to keep
+    them.
+    """
     if not previous:
         return initial_prompt
-    tail = " ".join(previous)[-_CONTINUITY_TAIL_CHARS:].strip()
-    return f"{initial_prompt}\n{tail}".strip()
+    tail = keep_last_tokens(" ".join(previous), _CONTINUITY_TAIL_TOKENS).strip()
+    if not tail:
+        return initial_prompt
+    room = PROMPT_MAX_TOKENS - estimated_tokens(tail) - _NEWLINE_TOKENS
+    priming = keep_last_tokens(initial_prompt, max(room, 0)).lstrip()
+    return f"{priming}\n{tail}".strip()

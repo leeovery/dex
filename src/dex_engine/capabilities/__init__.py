@@ -206,6 +206,14 @@ def _ordered(need: Need, providers: dict[str, _P], config: Config) -> tuple[_P, 
     if unknown:
         known = ", ".join(sorted(providers)) or "none"
         raise ValueError(f"providers.{need.value}: unknown provider(s) {unknown} — known: {known}")
+    repeated = sorted({name for name in configured if configured.count(name) > 1})
+    if repeated:
+        # Silently tolerated, a repeat probes the provider twice and prints
+        # it twice on the report — config typos fail loudly, like unknown
+        # names, rather than producing a quietly odd registry.
+        raise ValueError(
+            f"providers.{need.value}: duplicate provider(s) {repeated} — name each one once"
+        )
     defaults = [name for name in DEFAULT_PROVIDER_ORDER[need] if name not in configured]
     return tuple(providers[name] for name in (*configured, *defaults))
 
@@ -231,15 +239,16 @@ def _capability_row(
     active_seen = False
     for provider in mechanical:
         availability = provider.available()
-        if availability.ok and not active_seen:
-            providers.append({"name": provider.name, "state": "active"})
+        row = {"name": provider.name, "state": "unavailable"}
+        if availability.ok:
+            row["state"] = "active" if not active_seen else "available"
             active_seen = True
-        elif availability.ok:
-            providers.append({"name": provider.name, "state": "available"})
-        else:
-            providers.append(
-                {"name": provider.name, "state": "unavailable", "note": availability.reason}
-            )
+        # An ok-with-caveat reason ("model not cached — the first
+        # transcription downloads it") is exactly what the report exists to
+        # explain; the surface takes a note on any state.
+        if availability.reason:
+            row["note"] = availability.reason
+        providers.append(row)
     if floor is not None:
         # The floor is active only when nothing mechanical outranks it.
         state = "available" if active_seen else "active"

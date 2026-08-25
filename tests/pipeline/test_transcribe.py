@@ -10,20 +10,28 @@ import pytest
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
-from dex_engine.drivers.transport import HttpResponse
+from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.youtube import ProbeError, _video_meta
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
+from dex_engine.pipeline.classify import (
+    Classification,
+    ProviderInputError,
+    ProviderUnavailableError,
+)
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
+    HEAD_MAX_TOKENS,
     TRANSCRIBE_RUN_CAP,
     Acquired,
     YoutubeAudio,
     _cached_audio,
     _download_enclosure,
+    _prompt,
     acquire_youtube_audio,
+    estimated_tokens,
+    keep_last_tokens,
     read_enrichment,
 )
 from dex_engine.pipeline.types import (
@@ -39,7 +47,12 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeTranscriber, fixture_bytes
 from tests.conftest import FakeDriver
-from tests.drivers.conftest import FakeTransport, fixture_text, html_response
+from tests.drivers.conftest import (
+    FakeTransport,
+    fixture_text,
+    html_response,
+    truncating_server,
+)
 from tests.pipeline.test_run import ITEM, TODAY, entry_for, make_ctx, write_item
 
 VIDEO_URL = "https://youtube.com/watch?v=abc123"
@@ -527,6 +540,54 @@ class TestPodcastDrain:
         assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
         assert (entry.reason or "").startswith("audio acquisition failed")
 
+    def test_truncated_enclosure_is_blocked_never_an_engine_error(self, instance):
+        # A server hanging up mid-body is the routine failure for a 100MB
+        # enclosure; the IncompleteRead it raises is not an OSError, so
+        # unnormalized it landed `error` + a filed issue, frozen until the
+        # next engine release.
+        self.park_via_driver(instance)
+        entry = self.entry(instance)
+        record = instance.enrichment_dir / ITEM / f"podcast-{entry.hash[:6]}.md"
+        with truncating_server() as url:
+            record.write_text(
+                record.read_text(encoding="utf-8").replace(self.ENCLOSURE, url), encoding="utf-8"
+            )
+            ctx = transcribe_ctx(instance, transport=urllib_transport)
+            run_mod.run_transcribe(ctx)
+        drained = ledger.load(instance.ledger_path)[entry.hash]
+        assert drained.status is Status.BLOCKED
+        assert drained.attempts == 1
+        assert "truncated response body" in (drained.reason or "")
+        # The issue filer fires on `error` outcomes only — none here.
+        assert drained.error is None
+
+    def test_cdn_error_page_takes_the_blocked_lifecycle_not_manual(self, instance):
+        # A 200 carrying an error page cached as <hash>.mp3 decoded as
+        # garbage and parked the episode manual forever; nothing about the
+        # EPISODE was learned, so it is blocked and retried.
+        self.park_via_driver(instance)
+        page = html_response("<!DOCTYPE html>\n<html><body>Access denied</body></html>")
+        ctx = transcribe_ctx(instance, transport=FakeTransport({self.ENCLOSURE: page}))
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert entry.needs is Need.TRANSCRIBE
+        assert "HTML page" in (entry.reason or "")
+        assert audio_files(instance) == []  # the page never became cached "audio"
+
+    def test_real_audio_that_will_not_decode_still_parks_manual(self, instance):
+        # The guards must not swallow the genuine bad-audio case: bytes
+        # that are not markup reach the provider, and its verdict stands.
+        self.park_via_driver(instance)
+        angry = FakeTranscriber(raise_=ProviderInputError("could not decode the audio"))
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        ctx = transcribe_ctx(instance, transcriber=angry, transport=transport)
+        run_mod.run_transcribe(ctx)
+        entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
+        assert entry.status is Status.MANUAL
+        assert "could not decode" in (entry.reason or "")
+
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
         # A 404ing enclosure is often an expired signed URL — the episode is
         # NOT confirmed gone; manual, with the requeue route stated.
@@ -548,6 +609,50 @@ class TestPodcastDrain:
         entry = ledger.load(instance.ledger_path)[work_hash("https://feeds.pods.test/x.rss")]
         assert entry.status is Status.MANUAL
         assert "no enrichment record" in (entry.reason or "")
+
+
+class TestMalformedModelName:
+    """A model name HuggingFace rejects must cost one provider, not the verb."""
+
+    MODEL = "Systran/faster-whisper/large-v3"  # the real repo id has no third slash
+
+    @pytest.fixture(autouse=True)
+    def _no_api_key(self, monkeypatch):
+        # Both transcribers must be unavailable for the drain to park —
+        # a developer's exported key would otherwise reach a real endpoint.
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    def ctx(self, instance, *, from_config: bool):
+        # The config shape and the `--model` shape reach the same provider.
+        caps = (
+            Capabilities.build(Config(transcribe_model=self.MODEL))
+            if from_config
+            else Capabilities.build(Config(), model=self.MODEL)
+        )
+        return make_ctx(
+            instance, FakeDriver(), capabilities=caps, provider_available=caps.available
+        )
+
+    @pytest.mark.parametrize("from_config", [True, False])
+    def test_status_reports_the_provider_unavailable(self, instance, from_config):
+        ctx = self.ctx(instance, from_config=from_config)
+        report = " ".join(run_mod.status_report(ctx).split())  # the surface wraps
+        assert "unknown whisper model" in report
+
+    @pytest.mark.parametrize("from_config", [True, False])
+    def test_run_and_transcribe_park_the_job_instead_of_crashing(self, instance, from_config):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        ctx = self.ctx(instance, from_config=from_config)
+        run_mod.run(ctx)
+        assert entry_for(ctx, VIDEO_URL).status is Status.WAITING
+        report = " ".join(run_mod.run_transcribe(ctx).split())  # the surface wraps
+        assert "no transcription provider available" in report
+        assert "unknown whisper model" in report
+        entry = entry_for(ctx, VIDEO_URL)
+        assert entry.status is Status.WAITING  # no clock — it waits for a provider
+        assert entry.needs is Need.TRANSCRIBE
 
 
 class TestRunAutoDrain:
@@ -732,6 +837,53 @@ class TestEnclosureDownloadAtomicity:
         assert [p.name for p in tmp_path.iterdir()] == ["abc.mp3"]
 
 
+class TestEnclosureBodyGuards:
+    """A 200 that isn't audio is the CDN's failure, not the episode's."""
+
+    ENCLOSURE = "https://cdn.pods.test/ed/ep42.mp3?sig=abc123"
+
+    def download(self, tmp_path, response) -> object:
+        transport = FakeTransport({self.ENCLOSURE: response})
+        return _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+
+    def audio(self, body: bytes, **kwargs) -> HttpResponse:
+        return HttpResponse(status=200, content_type="audio/mpeg", body=body, **kwargs)
+
+    def test_an_empty_body_is_blocked(self, tmp_path):
+        outcome = self.download(tmp_path, self.audio(b""))
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "empty response body" in outcome.reason
+        assert list(tmp_path.iterdir()) == []  # nothing cached to poison the retry
+
+    def test_a_body_short_of_its_declared_length_is_blocked(self, tmp_path):
+        outcome = self.download(tmp_path, self.audio(b"ID3" + b"x" * 17, content_length=5_000_000))
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "truncated" in outcome.reason
+        assert list(tmp_path.iterdir()) == []
+
+    def test_an_html_error_page_is_blocked_not_manual(self, tmp_path):
+        # Cached as <hash>.mp3 this decodes as garbage and parks the
+        # episode manual forever; blocked is the honest reading.
+        page = HttpResponse(
+            status=200,
+            content_type="text/html",
+            body=b"<!DOCTYPE html>\n<html><body>Access denied</body></html>",
+        )
+        outcome = self.download(tmp_path, page)
+        assert isinstance(outcome, Classification)
+        assert outcome.status is Status.BLOCKED
+        assert "HTML page" in outcome.reason
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_complete_body_still_downloads(self, tmp_path):
+        body = b"ID3\x04\x00\x00audio bytes"
+        outcome = self.download(tmp_path, self.audio(body, content_length=len(body)))
+        assert isinstance(outcome, Path)
+        assert outcome.read_bytes() == body
+
+
 class TestCachedAudio:
     def test_hard_crash_atomic_temp_is_a_partial_never_audio(self, tmp_path):
         # A kill mid-atomic-write can orphan the temp file itself; it must
@@ -760,6 +912,140 @@ class TestCachedAudio:
 
     def test_missing_cache_dir_is_simply_empty(self, tmp_path):
         assert _cached_audio(tmp_path / "audio", "abc") is None
+
+
+# Whisper's real prompt window: `previous_tokens[-(448 // 2 - 1):]` in
+# faster_whisper/transcribe.py, and the same model server-side. A literal,
+# deliberately — the budget is only honest if it is checked against the
+# window rather than against itself.
+WHISPER_WINDOW_TOKENS = 223
+
+# Enough of each script to blow any budget, so the trim is always exercised.
+CJK_NOTES = "这是一个关于软件工程的播客节目，今天我们讨论账本与工作队列的设计。" * 40
+CYRILLIC_NOTES = "Это подкаст о разработке программного обеспечения и практиках. " * 40
+
+
+class TestPromptBudget:
+    """Whisper reads a prompt from its END, and counts the window in TOKENS."""
+
+    TITLE = "Ledgers as Work Queues"
+    SHOW = "Engineering Distilled"
+    HEAD = f"{TITLE} — {SHOW}"
+
+    def test_the_names_are_the_last_thing_in_the_prompt(self):
+        # Not merely present: LAST. Whatever whisper drops for being over
+        # the window, it drops from the front, so the front is where the
+        # expendable vocabulary belongs.
+        prompt = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
+        assert prompt.endswith(self.HEAD)
+        assert prompt.startswith("jargon")
+
+    def test_the_vocabulary_is_trimmed_from_its_tail(self):
+        prompt = _prompt(self.TITLE, self.SHOW, "anydoc CTranslate2 " + "x" * 2000)
+        assert prompt.startswith("anydoc CTranslate2 ")
+        assert prompt.endswith(self.HEAD)
+        assert "x" * 2000 not in prompt
+
+    def test_a_short_prompt_is_untouched(self):
+        assert _prompt(self.TITLE, self.SHOW, "notes") == f"notes — {self.HEAD}"
+        assert _prompt(self.TITLE, None, "") == self.TITLE
+
+    def test_a_latin_prompt_fits_whispers_window(self):
+        prompt = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        # And uses most of it: a budget that fits by being tiny is no budget.
+        assert estimated_tokens(prompt) > WHISPER_WINDOW_TOKENS * 0.7
+
+    def test_a_non_latin_prompt_fits_whispers_window_too(self):
+        # The character cap this replaced was ~180 tokens of Cyrillic but
+        # ~690 of Chinese — three windows' worth, and whisper takes the
+        # overflow off the FRONT, where the title used to sit.
+        for notes in (CJK_NOTES, CYRILLIC_NOTES):
+            prompt = _prompt(self.TITLE, self.SHOW, notes)
+            assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+            assert prompt.endswith(self.HEAD)
+
+    def test_the_budget_is_tokens_not_characters(self):
+        latin = _prompt(self.TITLE, self.SHOW, "jargon " * 400).removesuffix(self.HEAD)
+        cjk = _prompt(self.TITLE, self.SHOW, CJK_NOTES).removesuffix(self.HEAD)
+        # Same token allowance spends very different numbers of characters —
+        # a character cap would make these two lengths equal.
+        assert len(latin) > 3 * len(cjk)
+        assert abs(estimated_tokens(latin) - estimated_tokens(cjk)) < 5
+
+    def test_emoji_dense_notes_are_charged_for_what_they_cost(self):
+        # A show-notes header of emoji tokenizes at ~2 tokens per character.
+        prompt = _prompt(self.TITLE, self.SHOW, "🚀🎧📚✨🔥" * 200)
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        assert prompt.endswith(self.HEAD)
+
+    def test_vocabulary_alone_is_still_bounded(self):
+        assert estimated_tokens(_prompt(None, None, "y " * 1000)) <= WHISPER_WINDOW_TOKENS
+        assert estimated_tokens(_prompt(None, None, CJK_NOTES)) <= WHISPER_WINDOW_TOKENS
+
+    def test_an_overlong_head_is_capped_rather_than_eating_the_prompt(self):
+        prompt = _prompt("T" * 900, self.SHOW, "notes")
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+        assert prompt.startswith("notes — ")
+        assert estimated_tokens(prompt.removeprefix("notes — ")) <= HEAD_MAX_TOKENS
+
+    def test_the_acquisition_path_composes_within_the_budget(self, instance, tmp_path):
+        # The real composition site, not just the helper: a talkative
+        # video description must not cost the title and channel.
+        entry = seed_waiting(instance)
+
+        def download(_url, cache_dir, stem) -> YoutubeAudio:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            path = cache_dir / f"{stem}.m4a"
+            path.write_bytes(b"fake-audio")
+            return YoutubeAudio(
+                path=path,
+                title="Ledgers at Scale",
+                channel="Engineering Distilled",
+                description="sponsors and links " * 200,
+            )
+
+        acquired = acquire_youtube_audio(entry, tmp_path, download)
+        assert isinstance(acquired, Acquired)
+        assert acquired.prompt.endswith("Ledgers at Scale — Engineering Distilled")
+        assert estimated_tokens(acquired.prompt) <= WHISPER_WINDOW_TOKENS
+
+
+class TestTokenEstimate:
+    def test_keeping_the_tail_keeps_the_end(self):
+        assert keep_last_tokens("abcdefghij", 1) == "ij"
+        assert keep_last_tokens("abc", 100) == "abc"
+        assert keep_last_tokens("", 10) == ""
+
+    def test_non_latin_characters_cost_more_than_ascii(self):
+        assert estimated_tokens("这是一个") > estimated_tokens("abcd")
+        assert estimated_tokens("абвг") > estimated_tokens("abcd")
+
+    @pytest.mark.live
+    def test_the_estimate_covers_what_whispers_tokenizer_actually_does(self):
+        # Opt-in: needs openai/whisper-tiny's tokenizer.json from HuggingFace.
+        # Drift check on the cost table — a prompt this estimator passes must
+        # really fit whisper's window, in every script, or the head it puts
+        # last is the only thing that survives the overflow.
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415 — live-only dep
+        from tokenizers import Tokenizer  # noqa: PLC0415 — live-only dep
+
+        tokenizer = Tokenizer.from_file(hf_hub_download("openai/whisper-tiny", "tokenizer.json"))
+        samples = {
+            "english": "anydoc CTranslate2 ledger idempotent frontmatter yt-dlp " * 40,
+            "chinese": CJK_NOTES,
+            "cyrillic": CYRILLIC_NOTES,
+            "japanese": "これはソフトウェアエンジニアリングに関するポッドキャストです。" * 40,
+            "korean": "이것은 소프트웨어 엔지니어링에 관한 팟캐스트입니다 그리고 " * 40,
+            "hindi": "यह सॉफ्टवेयर इंजीनियरिंग के बारे में एक पॉडकास्ट है। " * 40,
+            "thai": "นี่คือพอดแคสต์เกี่ยวกับวิศวกรรมซอฟต์แวร์และแนวปฏิบัติ " * 40,
+            "arabic": "هذه حلقة بودكاست عن هندسة البرمجيات وممارسات الهندسة اليومية. " * 40,
+            "emoji": "🚀🎧📚✨🔥" * 200,
+        }
+        for script, notes in samples.items():
+            prompt = _prompt("Ledgers as Work Queues", "Engineering Distilled", notes)
+            real = len(tokenizer.encode(prompt, add_special_tokens=False).ids)
+            assert real <= WHISPER_WINDOW_TOKENS, f"{script}: {real} tokens"
 
 
 class TestReadEnrichment:

@@ -412,6 +412,23 @@ independently is seven chances to reintroduce it):
   the classifier is total; no HTTP outcome is unclassifiable. Routed
   through by every driver's HTTP path. The §15 regression pin tests the
   classifier once and holds for all drivers.
+- **The transport seam normalizes `http.client`'s protocol failures into
+  `OSError`** before any caller sees them, so the connection classifier
+  covers them like any other. `IncompleteRead` — a server closing the
+  socket mid-body, the routine failure mode for a 100MB enclosure — is an
+  `HTTPException`, not an `OSError`, and would otherwise slip past every
+  `except OSError` guard and land as `error` + a filed issue. A truncated
+  read is a connection failure: **`blocked`, retried**, never an engine bug.
+  The same guard wraps `dex-inbox`'s two urllib sites — an asset download is
+  the same large-read shape — so a truncated read there is a stated
+  `dex-inbox:` failure, not a traceback.
+- **A truncated ERROR body never costs the status code.** The body of a
+  4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
+  transport, whisper-api's multipart POST) drop a failed error-body read and
+  return the status, because losing it inverts the verdict: a `404`'s `dead`
+  would arrive as `blocked`, and whisper-api's `400` — the audio is bad,
+  `manual` under the escalation clock — would arrive as an unreachable
+  endpoint, `waiting` with no clock at all.
 - **Media URLs are hashed un-canonicalized** — signed query params ARE the
   resource. Side effect, accepted: an expiring signed URL re-mints a fresh
   entry per parent rerun, and the stale one retires through normal blocked
@@ -485,6 +502,9 @@ mechanism, not a hack.
   drop to `small` for long/backlogged queues, stay up for dense technical
   audio). First run downloads the model (~HF cache, once per machine) — the
   report surfaces it so slow-first-run is explained. No file-length limits.
+  **The availability probe never raises**: every CLI verb runs it, so a
+  model name HuggingFace rejects (`a/b/c`) costs one unavailable provider
+  with the reason stated — never a crashed `status`/`run`/`transcribe`.
 - `whisper-api` — one provider class, OpenAI-compatible, `base_url` + key
   from config/env. Pointed at Groq et al: GPU-fast, ~pennies/hour (roadmap
   item tracks the provider investigation). **ffmpeg chunking** (~20-min
@@ -497,7 +517,22 @@ mechanism, not a hack.
   `needs: transcribe` with the pointer.
 - Accuracy: **`initial_prompt` priming** with the item's known vocabulary
   (video title + description, episode title + show notes) — mechanical, free,
-  large win on names/jargon. Transcripts are stored **raw**, stamped
+  large win on names/jargon. **Whisper keeps a prompt's LAST 223 tokens and
+  discards its front** (`previous_tokens[-(448 // 2 - 1):]`), so the
+  title/show is written at the END of the composed prompt and the trimmable
+  vocabulary in front of it: whatever overflows the window is show notes,
+  never the two names the priming exists to carry. The window is counted in
+  TOKENS, which is not a character count in any script but English — 600
+  characters is ~180 tokens of Cyrillic and ~690 of Chinese — so the budget
+  (~200 tokens) is spent through a per-script estimate of what whisper's BPE
+  will charge, measured against its tokenizer and rounded up per script
+  family. An estimate, not the tokenizer itself: loading it would put a
+  HuggingFace fetch in a step that primes remote providers needing no local
+  model, and placing the head last is what makes the names safe, so the
+  estimate only decides how much vocabulary rides along. whisper-api's
+  chunk-continuity tail shares that one budget rather than adding to it, and
+  trims the priming from its front for the same reason. Transcripts are
+  stored **raw**, stamped
   `via`/`model` in frontmatter; corrections live downstream in digest/wiki
   where judgment already operates — enrichment stays the mechanical record.
 
@@ -512,7 +547,12 @@ mechanism, not a hack.
   form) or returns none — graceful text-only degradation. Images merely
   *linked* from a document stay links in the markdown, like web body links —
   harvest judgment promotes them if they matter.
-- `csv-builtin` — stdlib, zero deps.
+- `csv-builtin` — stdlib, zero deps. The per-field size bound is raised far
+  past the stdlib's 128KB default — an embedded JSON blob is a big cell in a
+  fine file — but stays finite, since one unterminated quote in a file that
+  merely looked like CSV makes the whole file a single field. A reader
+  refusal (past the bound, a stray newline in an unquoted field) is stated
+  bad input → `manual`, never an engine bug.
 - `cognitive` — floor: parks `needs: extract` for the ingest session.
 - The **Format is the contract, not the tool**: providers register per
   format; if anydoc dies, each format falls back independently (or parks) and
@@ -525,17 +565,26 @@ mechanism, not a hack.
 Provider contract: `available()` failures (model missing, broken install)
 park jobs as `waiting` with the reason — the wait list is normally empty for
 transcription, not absent. A provider raises `ProviderInputError` for
-bad-input cases (corrupt audio, malformed file) → the run layer maps it
-`manual`; **`ProviderUnavailableError`** for call-time availability
-failures (API 5xx/429, missing binary, model-download failure) → the job
-**re-parks `waiting`** with the reason, never burning blocked attempts; an
-uncaught crash is an engine bug and takes the `error` path (issue filed,
-retry on new engine). The availability seam is **per-format** —
+bad-input cases (corrupt audio, a container carrying no audio stream at all,
+malformed file) → the run layer maps it `manual`;
+**`ProviderUnavailableError`** for call-time availability failures (API
+5xx/429, missing binary, model-download failure) → the job **re-parks
+`waiting`** with the reason, never burning blocked attempts — for **every**
+capability, extract included (`waiting` + `needs: extract`), not transcribe
+alone; an uncaught crash is an engine bug and takes the `error` path (issue
+filed, retry on new engine). The availability seam is **per-format** —
 `available(need, format)` — so a PDF wait never wakes for a CSV-only
 provider. **Acquisition failures are not provider failures**: a failed
 audio download (yt-dlp breakage, blocked enclosure GET) classifies through
 the normal §5 lifecycle — `blocked` with attempts, escalating to `manual`
-at 5 — never as no-clock waiting. The blocked line keeps
+at 5 — never as no-clock waiting. **A 200 that cannot be the audio is an
+acquisition failure too**: an empty body, a body short of its declared
+`Content-Length`, or an HTML page where audio was expected (a CDN's cached
+error page) is `blocked` and never written under the audio name — cached as
+`<hash>.mp3` it decodes as garbage and parks the episode `manual` forever
+over a fault that has nothing to do with the episode. Bytes that are merely
+bad audio still reach the provider, and its `manual` stands. The blocked
+line keeps
 `needs: transcribe`, so the retry routes back through the transcribe drain
 rather than the driver (§3: a typed field, never the reason's wording).
 Config keys: `transcribe_base_url`,
@@ -553,6 +602,11 @@ round-trip depends on the frontmatter pointer existing, show notes or not.
 **Capability report** (a render surface): each capability, active provider,
 dormant upgrades and what they'd need —
 `transcribe: whisper-local (active) · whisper-api available — set OPENAI_API_KEY`.
+A note rides **any** state, active included: an ok-with-caveat availability
+("model not cached — the first transcription downloads it") is exactly what
+this surface exists to explain. Provider order is named once per capability
+— a repeated name is refused as loudly as an unknown one, since it would
+probe the provider twice and print it twice here.
 Discoverable, never nagging. This is how a free-floor instance learns what a
 key would buy.
 

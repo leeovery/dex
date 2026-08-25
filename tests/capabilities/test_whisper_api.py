@@ -12,6 +12,13 @@ from dex_engine.capabilities.transcribe.whisper_api import (
     _chunk_prompt,
 )
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
+from dex_engine.pipeline.transcribe import _prompt, estimated_tokens
+
+# Whisper's real prompt window — `previous_tokens[-(448 // 2 - 1):]`. A
+# literal on purpose: the budget is only honest checked against the window.
+WHISPER_WINDOW_TOKENS = 223
+
+CJK_NOTES = "这是一个关于软件工程的播客节目，今天我们讨论账本与工作队列的设计。" * 40
 
 
 class FakePost:
@@ -225,9 +232,33 @@ class TestTranscribe:
 
 
 class TestChunkPrompt:
+    TITLE = "Ledgers as Work Queues"
+    SHOW = "Engineering Distilled"
+    HEAD = f"{TITLE} — {SHOW}"
+
     def test_first_chunk_is_the_initial_prompt_alone(self):
         assert _chunk_prompt("vocab", []) == "vocab"
 
     def test_tail_is_bounded(self):
         prompt = _chunk_prompt("v", ["word " * 500])
-        assert len(prompt) <= 402  # initial + newline + bounded tail
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+
+    def test_the_continuity_tail_never_pushes_the_title_out_of_the_window(self):
+        # Whisper keeps the LAST 223 tokens: an unbudgeted tail appended to
+        # a full priming string would discard the head the priming exists to
+        # carry. Both halves share one budget, and the priming is trimmed
+        # from its front — where its expendable vocabulary lives.
+        priming = _prompt(self.TITLE, self.SHOW, "jargon " * 400)
+        prompt = _chunk_prompt(priming, ["transcribed words " * 200])
+        assert self.HEAD in prompt
+        assert prompt.endswith("transcribed words")
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS
+
+    def test_a_non_latin_chunk_prompt_keeps_the_title_inside_the_window(self):
+        # The case a character budget got backwards: 200 characters of
+        # Chinese continuity is already 230 tokens — a whole window — so an
+        # unbudgeted tail would leave nothing of the priming at all.
+        priming = _prompt(self.TITLE, self.SHOW, CJK_NOTES)
+        prompt = _chunk_prompt(priming, ["这是转录的文本内容。" * 100])
+        assert self.HEAD in prompt
+        assert estimated_tokens(prompt) <= WHISPER_WINDOW_TOKENS

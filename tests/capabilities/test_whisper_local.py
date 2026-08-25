@@ -1,7 +1,9 @@
 """Tests for whisper-local: fake model seams; the real model is live-only."""
 
 import math
+import shutil
 import struct
+import subprocess
 import wave
 from pathlib import Path
 
@@ -54,6 +56,26 @@ class TestAvailability:
         availability = local(FakeModel([]), model="Systran/faster-whisper-large-v3").available()
         assert availability.ok is True
 
+    def test_a_repo_id_huggingface_rejects_is_unavailable_not_a_crash(self):
+        # `Systran/faster-whisper/large-v3` (an easy typo for the real
+        # `Systran/faster-whisper-large-v3`) has a slash, so the name check
+        # waves it through and HF's cache lookup raises HFValidationError.
+        # The real cache seam runs here — the point is that it never
+        # escapes the probe every CLI verb makes.
+        availability = WhisperLocal(model="Systran/faster-whisper/large-v3").available()
+        assert availability.ok is False
+        assert "unknown whisper model" in availability.reason
+
+    def test_an_unreadable_cache_is_unavailable_with_its_own_reason(self):
+        def cached(_model: str) -> bool:
+            raise PermissionError(13, "Permission denied")
+
+        model = FakeModel([])
+        provider = WhisperLocal(model="medium", load=lambda _n: model, cached=cached)
+        availability = provider.available()
+        assert availability.ok is False
+        assert "cache is unreadable" in availability.reason
+
     def test_import_probe_never_crashes(self):
         # On this machine faster-whisper imports; the probe path for a
         # broken install is the (ImportError, OSError) net — asserted by
@@ -80,6 +102,33 @@ class TestTranscribe:
         model = FakeModel([], raise_=ValueError("Invalid data found when processing input"))
         with pytest.raises(ProviderInputError, match="could not decode"):
             local(model).transcribe(Path("/audio/corrupt.mp3"), "")
+
+    def test_a_container_with_no_audio_stream_is_bad_input(self):
+        model = FakeModel([], raise_=IndexError("tuple index out of range"))
+        with pytest.raises(ProviderInputError, match=r"no audio stream in videoonly\.mp4"):
+            local(model).transcribe(Path("/audio/videoonly.mp4"), "")
+
+    def test_real_video_only_container_raises_the_indexerror_we_map(self, tmp_path):
+        # Pins the world half of the mapping above: faster-whisper's own
+        # decode indexes the stream list unguarded, so a video-only file
+        # surfaces as IndexError and not as any decode error. Decoding
+        # needs no model, so this stays off the live marker.
+        if shutil.which("ffmpeg") is None:
+            pytest.skip("ffmpeg is not on PATH")
+        from faster_whisper.audio import decode_audio  # noqa: PLC0415 — heavy dep, one test
+
+        video = tmp_path / "videoonly.mp4"
+        subprocess.run(  # noqa: S603 — fixed args, no shell
+            [
+                shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
+            ],
+            check=True,
+            capture_output=True,
+        )  # fmt: skip
+        with pytest.raises(IndexError):
+            decode_audio(str(video))
 
     def test_silent_audio_is_bad_input(self):
         with pytest.raises(ProviderInputError, match="no speech"):

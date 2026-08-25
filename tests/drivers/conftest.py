@@ -1,7 +1,11 @@
 """Shared driver-test plumbing: fixture loading, fake transports, work units."""
 
+import contextlib
 import json
-from collections.abc import Mapping
+import re
+import socket
+import threading
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -75,3 +79,84 @@ class FakeTransport:
 @pytest.fixture
 def fake_transport():
     return FakeTransport
+
+
+def _drain_request(conn: socket.socket) -> None:
+    """Read the whole request — headers AND body — before answering.
+
+    Answering a POST while the client is still uploading closes the socket
+    on unread bytes, and the client sees a reset instead of the truncated
+    read the test is about.
+    """
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(65536)
+        if not chunk:
+            return
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    declared = re.search(rb"(?i)content-length:\s*(\d+)", head)
+    outstanding = int(declared.group(1)) - len(body) if declared else 0
+    while outstanding > 0:
+        chunk = conn.recv(min(outstanding, 65536))
+        if not chunk:
+            return
+        outstanding -= len(chunk)
+
+
+@contextlib.contextmanager
+def truncating_server(
+    *,
+    body: bytes = b"ID3\x04\x00\x00\x00partial audio",
+    declared: int = 5_000_000,
+    status: bytes = b"200 OK",
+    redirect_first: bool = False,
+) -> Iterator[str]:
+    """Serve one response whose Content-Length far exceeds the bytes sent, then hang up.
+
+    A real socket, deliberately: the truncated-body failure lives inside
+    ``http.client``'s read path, and only a genuine short read raises the
+    ``IncompleteRead`` the transport has to normalize. Yields the URL.
+
+    ``status`` truncates an ERROR body instead — the case where the read
+    failure must not cost the status code. ``redirect_first`` answers the
+    first connection with a 302 to the same server, for the download paths
+    that follow one by hand.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    host, port = listener.getsockname()
+    served = 0
+
+    def serve() -> None:
+        nonlocal served
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return  # the listener closed: the context manager is done
+            served += 1
+            with conn, contextlib.suppress(OSError):
+                _drain_request(conn)
+                if redirect_first and served == 1:
+                    conn.sendall(
+                        b"HTTP/1.1 302 Found\r\nLocation: http://%s:%d/signed\r\n"
+                        b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+                        % (host.encode(), port)
+                    )
+                else:
+                    conn.sendall(
+                        b"HTTP/1.1 %s\r\nContent-Type: audio/mpeg\r\n"
+                        b"Content-Length: %d\r\nConnection: close\r\n\r\n%s"
+                        % (status, declared, body)
+                    )
+                conn.shutdown(socket.SHUT_WR)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield f"http://{host}:{port}/ep42.mp3"
+    finally:
+        listener.close()
+        thread.join(timeout=5)

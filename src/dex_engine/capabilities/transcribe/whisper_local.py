@@ -57,6 +57,11 @@ def model_is_cached(model: str) -> bool:
 
     Returns:
         True when the converted model's weights are on disk.
+
+    Raises:
+        ValueError: HuggingFace rejects ``model`` as a repo id (``a/b/c``).
+            ``available()`` turns this into an unavailable, never a crash.
+        OSError: The HF cache is unreadable.
     """
     from faster_whisper.utils import _MODELS  # noqa: PLC0415 — lazy
     from huggingface_hub import try_to_load_from_cache  # noqa: PLC0415 — lazy
@@ -71,6 +76,16 @@ def _known_model(model: str) -> bool:
     from faster_whisper.utils import _MODELS  # noqa: PLC0415 — lazy
 
     return "/" in model or model in _MODELS
+
+
+def _unknown_model(model: str) -> Availability:
+    return Availability(
+        ok=False,
+        reason=(
+            f"unknown whisper model {model!r} — use a faster-whisper size name "
+            "or an HF repo id"
+        ),
+    )
 
 
 def _load_failure_types() -> tuple[type[Exception], ...]:
@@ -120,7 +135,7 @@ class WhisperLocal:
 
         An uncached model is still available — the first transcription
         downloads it — but the fact is noted so the report can surface the
-        slow first run.
+        slow first run. Nothing here may raise: every CLI verb probes.
         """
         try:
             import faster_whisper  # noqa: F401, PLC0415 — lazy availability probe
@@ -129,14 +144,22 @@ class WhisperLocal:
             # probe itself must never crash the run.
             return Availability(ok=False, reason=f"faster-whisper not importable: {scrub(str(e))}")
         if not _known_model(self.model):
+            return _unknown_model(self.model)
+        try:
+            cached = self._cached(self.model)
+        except ValueError:
+            # `a/b/c` has a slash, so _known_model waves it through, and
+            # HuggingFace then rejects it (HFValidationError, a ValueError)
+            # from the cache lookup itself. This probe runs on EVERY CLI
+            # verb: a typo in transcribe_model would otherwise crash
+            # status/run/transcribe outright instead of reporting one
+            # unavailable provider.
+            return _unknown_model(self.model)
+        except OSError as e:
             return Availability(
-                ok=False,
-                reason=(
-                    f"unknown whisper model {self.model!r} — use a faster-whisper size "
-                    "name or an HF repo id"
-                ),
+                ok=False, reason=f"whisper model cache is unreadable: {scrub(str(e))}"
             )
-        if not self._cached(self.model):
+        if not cached:
             return Availability(
                 ok=True,
                 reason=(
@@ -159,8 +182,8 @@ class WhisperLocal:
         Raises:
             ProviderUnavailableError: The model could not be loaded (a failed
                 download, a broken cache) — the job stays waiting.
-            ProviderInputError: The audio could not be decoded or yielded no
-                speech — the manual path.
+            ProviderInputError: The audio could not be decoded, holds no
+                audio stream, or yielded no speech — the manual path.
         """
         try:
             model = self._load(self.model)
@@ -173,6 +196,13 @@ class WhisperLocal:
             # faster-whisper decodes lazily — errors for corrupt audio
             # surface during iteration, so the join stays inside the try.
             text = "".join(segment.text for segment in segments).strip()
+        except IndexError as e:
+            # A container with no audio stream at all (a video-only mp4):
+            # faster-whisper indexes the stream list unguarded, so the
+            # failure arrives as a bare IndexError rather than a decode
+            # error. Bad input like any other — whisper-api already calls
+            # the same file manual.
+            raise ProviderInputError(f"no audio stream in {audio.name}") from e
         except (OSError, ValueError, RuntimeError, EOFError) as e:
             # PyAV maps FFmpeg decode failures onto OSError/ValueError
             # subclasses: bad input, by contract — never an engine bug.

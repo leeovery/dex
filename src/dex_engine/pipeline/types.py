@@ -417,8 +417,10 @@ class Extractor(Protocol):
         """Extract markdown (and embedded assets, as bytes) from a document.
 
         Raises ``ProviderInputError`` for documents it cannot parse
-        (→ manual) and ``ScannedDocumentError`` for image-only documents
-        (→ the OCR path: ``waiting`` + ``needs: ocr``).
+        (→ manual), ``ScannedDocumentError`` for image-only documents
+        (→ the OCR path: ``waiting`` + ``needs: ocr``), and
+        ``ProviderUnavailableError`` for capability-level failures
+        discovered at call time (→ the job re-parks ``waiting``).
         """
         ...
 
