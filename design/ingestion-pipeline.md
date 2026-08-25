@@ -247,9 +247,9 @@ vocabulary only and never become work units:
 
 | kind | driver | notes |
 |---|---|---|
-| `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment |
+| `youtube` | ✓ | captions; fallback → `needs: transcribe`. Identity is the video id (every watch/short-link/live/shorts/embed shape → `watch?v=<id>`); a playlist page keys on its list id and parks `manual` — picking its videos is judgment. Channel addresses (`/@handle` and its tabs, percent-encoded `/%40handle` included, `/user/…`, `/c/…`, `/channel/…`, and the legacy bare vanity name `/veritasium`), hashtag feeds and search-result pages park `manual` the same way and **before the probe**: yt-dlp answers those URLs by enumerating every video the channel holds, and the transcribe drain would then pull every one of those audio files over a single filename. The vanity form has no marker at all — youtube.com's root namespace belongs to channels — so the driver names youtube.com's own **functional first segments** (`/watch`, `/playlist`, `/results`, `/feed`, `/embed`, `/live`, `/shorts`, `/v`, plus the product and account surfaces) and reads every other bare root segment as a channel. The list errs one way on purpose: a functional segment missing from it parks `manual`, one recoverable ledger line, while a channel mistaken for a functional path reaches the probe and enumerates thousands of videos. A channel's `/live` path is one video and still fetches |
 | `x` | ✓ | renamed from `tweet`; thread walk-up (§8) |
-| `github` | ✓ | repos / profiles / gists / issues / blobs |
+| `github` | ✓ | repos / profiles / gists / issues / blobs. Every route goes through the authenticated `gh` CLI, blobs included — `raw.githubusercontent.com` is unauthenticated, so it 404s every private-repo blob however the machine is signed in, and that 404 classified live content `dead`. Losing raw.githubusercontent.com costs the **ref/path boundary**, which that host resolved server-side and the contents API cannot: branch names hold slashes (`blob/automation/bors/auto/README.md`), and the `blob/refs/heads/<branch>/` permalink form spends two segments before the name even begins, so splitting at the first segment sent a wrong `?ref=` with a wrong path and 404'd live files into `dead`. The driver guesses the shortest ref the URL's shape allows — free, and right for nearly every link — and only when that 404s asks `git/matching-refs/<heads|tags>/<first segment>` which of the repo's own refs the path starts with, matching segment-wise (`automation/bors` must not claim a URL whose branch is `automation/bors-next`) and taking the longest. A repo with thousands of branches costs the same one page as a repo with three. When no ref re-splits the URL, or the lookup itself fails, the original classification stands: a genuinely missing path is still `dead`, never unclassifiable. A blob too large for the contents API to serve inline parks `manual`, never `dead`. github.com's **reserved first segments** (`/features`, `/topics`, `/sponsors`, `/orgs`, `/collections`, `/marketplace`, `/trending`, `/about`, `/pricing`, `/settings`, `/explore`, …) can be neither user nor repo, so the driver declines them and registry order hands them to `web`, which extracts them like any page — driving them as repo work 404'd pages that render fine in a browser into `dead`. Only the first segment is screened: `acme/topics` is an ordinary repo. **Blob bytes are sniffed — by filename — before they are fenced**: a PDF or any other binary committed to a repo parks `manual` naming what it is, never a code fence full of replacement characters ledgered `done`. The name is what catches the two extractable shapes that carry no byte signature: a CSV, and an unsmudged **Git-LFS pointer**, whose 130 bytes of `oid sha256:…` decode as clean UTF-8 and fenced `done` as though they were the document they stand for (the contents API serves the pointer, never the object). A committed CSV parks the same way, deliberately — allowing text-shaped documents to fence is exactly what let the LFS pointer for a `.csv` through, and a captured CSV reaches `csv-builtin` as a real table instead of a fence truncated at 40k characters. It does not re-detect to `file` work, because a GitHub blob URL serves an HTML viewer rather than the bytes — the file driver would fetch that page, find HTML, and re-detect straight back (a loop park on a public repo, `dead` on a private one). The rescue route is capturing the file itself, which is already `file` work |
 | `paper` | ✓ | arxiv / openreview / hf-papers |
 | `podcast` | ✓ | new — Apple/Spotify/RSS episode links (§9) |
 | `web` | ✓ | renamed from `blog`; registry catch-all, always last |
@@ -568,6 +568,13 @@ silent `except: pass` dies here.
   thread's *last* post rolls up the whole thread.
 - Quoted posts stay inline (blockquote); promoting a quote is a harvest
   judgment, not driver mechanics.
+- **Long-form articles render from `article`, not `text`.** fxtwitter
+  returns `text: ""` for them, the prose under `article.title` /
+  `article.preview_text`, and `raw_text.text` holding only the shortlink to
+  the article; the body is title + preview text + that link. A body that is
+  nothing but a shortlink is **not content** — the "no text or media"
+  `manual` park applies, because a post ledgered `done` on ~74 characters of
+  URL is thin garbage the digest layer cannot tell from real capture.
 - Chain media pooled, captured post's first, media-stage cap applies.
 - **Incomplete chains are recorded, never silently presented as complete**
   (learned from a 2026-08-20 production run — a thread's root promised
@@ -592,8 +599,12 @@ silent `except: pass` dies here.
 Today a Spotify/Apple link captures marketing chrome. Podcasting is RSS
 underneath; the audio lives in the feed's `<enclosure>`:
 
-- **Apple link** → iTunes lookup API (public, keyless) → show RSS → match
-  episode → enclosure.
+- **Apple link** → iTunes lookup API (public, keyless) on the **show** id
+  from the `/idNNNN` path segment → match the episode by `trackId` against
+  the `?i=` value inside the returned window (200 episodes, the largest the
+  API serves) → show RSS → enclosure. The lookup API resolves show ids
+  only: handed an episode id it answers `resultCount: 0` for every episode
+  that exists. An episode older than the window parks `manual` saying so.
 - **Spotify link** → og-title from the page → iTunes *search* → RSS → match.
   An enclosure that 404s at drain time is treated as an expired signed URL
   → `manual` with a re-resolve route, never `dead` — expired links are not

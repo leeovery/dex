@@ -8,6 +8,15 @@ is its list id — the playlist page and the ``/embed/videoseries?list=``
 embed alike; playlist units park ``manual`` (a playlist is a collection,
 and which entries deserve capture is judgment).
 
+Channel addresses (``/@handle`` and its tabs, percent-encoded ``/%40handle``
+included, ``/user/…``, ``/c/…``, ``/channel/…``, and the legacy bare vanity
+name ``/veritasium``), hashtag feeds and search-result pages are collections
+too, and park the same way — BEFORE the probe runs, because yt-dlp answers
+those URLs by enumerating every video the channel holds. A bare first
+segment is a channel unless it is one of youtube.com's own functional
+paths, which are named explicitly so ``/watch``, ``/playlist``,
+``/results``, ``/feed`` and their kin keep working.
+
 The driver NEVER downloads audio — audio acquisition belongs to the
 transcribe drain. No usable captions means
 ``Result(waiting, needs=transcribe)``: the work is parked for the
@@ -20,7 +29,7 @@ only a confirmed-unavailable video is ``dead``.
 
 import re
 from collections.abc import Callable
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
 from dex_engine.pipeline.classify import (
     PAYWALL_REASON,
@@ -43,6 +52,68 @@ _VIDEO_PREFIXES = frozenset({"live", "shorts", "embed", "v"})
 # The standard playlist-embed shape: /embed/videoseries?list=<id> — a
 # playlist, not a video called "videoseries".
 _PLAYLIST_EMBED_SEGMENTS = ["embed", "videoseries"]
+
+# Channel address shapes: the @handle form (percent-encoded as %40 by
+# plenty of link shorteners and clipboards) and the legacy /user, /c and
+# /channel prefixes, each with or without a tab segment (/videos, /shorts,
+# /streams, /playlists, …). The one channel-scoped path that addresses a
+# single video is /live — the channel's current livestream.
+_CHANNEL_PREFIXES = frozenset({"user", "c", "channel"})
+_CHANNEL_LIVE_TAB = "live"
+_SEARCH_SEGMENT = "results"
+_HASHTAG_SEGMENT = "hashtag"
+# The oldest channel address is a bare vanity name at the root —
+# youtube.com/veritasium, and its tabs — which no URL shape distinguishes
+# from a functional path. So youtube.com's own first segments are named
+# here and everything else at the root is read as a channel. The list
+# errs in one direction on purpose: a functional segment missing from it
+# parks `manual` (recoverable, one ledger line), while a channel treated
+# as functional reaches the probe and enumerates thousands of videos.
+_FUNCTIONAL_SEGMENTS = frozenset(
+    {
+        # Video, playlist and search surfaces the driver must keep serving.
+        "watch",
+        "watch_videos",
+        "playlist",
+        "results",
+        "embed",
+        "live",
+        "shorts",
+        "v",
+        "feed",
+        "channel",
+        "user",
+        "c",
+        "hashtag",
+        # Product, account and marketing surfaces — never a channel.
+        "about",
+        "account",
+        "ads",
+        "attribution_link",
+        "creators",
+        "error",
+        "gaming",
+        "howyoutubeworks",
+        "logout",
+        "movies",
+        "music",
+        "new",
+        "oops",
+        "playables",
+        "post",
+        "premium",
+        "redirect",
+        "reporthistory",
+        "signin",
+        "source",
+        "supported_browsers",
+        "t",
+        "upload",
+        "verify_age",
+    }
+)
+# A vanity channel address is the name plus at most one tab segment.
+_MAX_CHANNEL_SEGMENTS = 2
 
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
@@ -130,6 +201,13 @@ class YouTubeDriver:
                 meta={},
                 reason="playlist link — capture the videos worth keeping individually",
             )
+        collection = _collection_reason(unit.url)
+        if collection is not None:
+            # Guarded BEFORE the probe: yt-dlp enumerates a whole channel
+            # from these URLs (minutes of work, every video's metadata),
+            # and the transcribe drain would then pull every one of those
+            # audio files over a single filename.
+            return Result(status=Status.MANUAL, meta={}, reason=collection)
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
@@ -192,6 +270,45 @@ def _video_id(url: str) -> str | None:
     if host in _HOSTS and len(segments) == 2 and segments[0] in _VIDEO_PREFIXES:  # noqa: PLR2004 — /live/<id>-shaped pair
         return segments[1]
     return None
+
+
+def _collection_reason(url: str) -> str | None:
+    """Why a channel/tab/hashtag/search URL parks, or None when it is a video."""
+    if host_of(url) != "youtube.com":
+        return None
+    # Unquoted: %40 is a routine spelling of the @ that opens a handle.
+    segments = [unquote(segment) for segment in urlsplit(url).path.split("/") if segment]
+    if not segments:
+        return None
+    first = segments[0].lower()
+    if first == _SEARCH_SEGMENT:
+        return (
+            "search-results link — a result page is a collection: capture the videos "
+            "worth keeping individually"
+        )
+    if first == _HASHTAG_SEGMENT:
+        return (
+            "hashtag link — a hashtag feed is a collection: capture the videos worth "
+            "keeping individually"
+        )
+    tail = _channel_tab(segments, first)
+    if tail is None or tail == [_CHANNEL_LIVE_TAB]:
+        return None
+    return (
+        "channel link — a channel is a collection: capture the videos worth "
+        "keeping individually"
+    )
+
+
+def _channel_tab(segments: list[str], first: str) -> list[str] | None:
+    """The tab segments after a channel address, or None for a non-channel path."""
+    if first.startswith("@"):
+        return segments[1:]
+    if first in _CHANNEL_PREFIXES:
+        return segments[2:] if len(segments) >= 2 else None  # noqa: PLR2004 — /channel/<id> pair
+    if first in _FUNCTIONAL_SEGMENTS or len(segments) > _MAX_CHANNEL_SEGMENTS:
+        return None
+    return segments[1:]  # the legacy vanity form: /veritasium, /veritasium/videos
 
 
 def _playlist_id(url: str) -> str | None:
