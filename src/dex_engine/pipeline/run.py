@@ -29,7 +29,9 @@ from typing import assert_never
 
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import Transport, urllib_transport
+from dex_engine.drivers.ytdlp import DownloadAudio, yt_dlp_audio
 from dex_engine.render import surfaces
 
 from . import issues, ledger
@@ -38,22 +40,23 @@ from .classify import (
     ProviderInputError,
     ProviderUnavailableError,
     classify_connection,
-    classify_http,
     scrub,
 )
 from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
+from .enrichment import (
+    mask_fetched,
+    podcast_body,
+    read_enrichment,
+    render_enrichment,
+    youtube_body,
+)
 from .ownership import corpus_claims
 from .registry import DRIVERS, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
-    DownloadAudio,
     acquire_podcast_audio,
     acquire_youtube_audio,
-    podcast_body,
-    read_enrichment,
-    youtube_body,
-    yt_dlp_audio,
 )
 from .types import (
     Availability,
@@ -73,7 +76,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import resolve_repo_path, work_hash
+from .urls import ext_of, resolve_repo_path, work_hash
 
 __all__ = [
     "CAP_BOUNDS",
@@ -1118,9 +1121,9 @@ class _Drain:
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / owner / name
         body = result.body or ""
-        content = _render_enrichment(entry.url, self.ctx.today(), result.meta, body)
+        content = render_enrichment(entry.url, self.ctx.today(), result.meta, body)
         existed = out.exists()
-        if existed and _mask_fetched(out.read_text(encoding="utf-8")) == _mask_fetched(content):
+        if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             return str(out.relative_to(self.ctx.instance.root))
         if count:
             outcome = self.outcomes.setdefault(owner, _ItemOutcome())
@@ -1297,22 +1300,22 @@ class _Drain:
                 reason="media exceeds 10MB ceiling (declared Content-Length)",
             )
             return
-        try:
-            response = self.ctx.transport(entry.url)
-        except OSError as e:
-            failure = classify_connection(e)
+        outcome = fetch_classified(self.ctx.transport, entry.url)
+        if isinstance(outcome, FetchFailure):
+            failure = outcome.classification
             self._media_failure(entry, failure.status, failure.reason)
             return
-        if not response.ok:
-            failure = classify_http(response.status)
-            self._media_failure(entry, failure.status, failure.reason)
-            return
+        response = outcome
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
         owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{_ext_of(entry.url)}"
+        out = (
+            self.ctx.instance.enrichment_dir
+            / owner
+            / f"media-{slot}.{ext_of(entry.url, default='jpg')}"
+        )
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_bytes(out, response.body)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
@@ -2637,81 +2640,3 @@ def compact(ctx: RunContext) -> str:
     removed = ledger.compact(ctx.instance.ledger_path)
     noun = "line" if removed == 1 else "lines"
     return f"compacted: {removed} superseded {noun} removed"
-
-
-# ---------------------------------------------------------------------------
-# Enrichment file rendering.
-# ---------------------------------------------------------------------------
-
-_YAML_UNSAFE = ":#[]{}&*!|>%@`\"'"
-
-# Values a YAML 1.1 reader (Obsidian's among them) would retype away from
-# the intended string: boolean/null words, int/float lookalikes in every
-# 1.1 spelling (sign, underscores, hex/octal/binary, exponent, .inf/.nan),
-# and date/timestamp lookalikes. Leading `-`/`?`/`,` are indicator
-# characters that make the line invalid or restructure it. All are
-# emitted JSON-quoted.
-_YAML_KEYWORDS = frozenset({"true", "false", "yes", "no", "on", "off", "null", "~"})
-_YAML_NUMBER_RE = re.compile(
-    r"[-+]?(?:\.inf|\.nan|0x[0-9a-f_]+|0b[01_]+|0o?[0-7_]+"
-    r"|[0-9][0-9_]*(?:\.[0-9_]*)?(?:e[-+]?[0-9]+)?"
-    r"|\.[0-9][0-9_]*(?:e[-+]?[0-9]+)?)",
-    re.IGNORECASE,
-)
-# The 1.1 timestamp resolver's shape, mirrored: a bare YYYY-MM-DD retypes
-# to a date and a full timestamp to a datetime — and a shape-matching but
-# calendar-invalid value (2026-08-99) makes those readers RAISE, so the
-# match is on shape alone, never calendar validity.
-_YAML_TIMESTAMP_RE = re.compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
-    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}"
-    r"(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?"
-    r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?"
-)
-
-
-def _render_enrichment(
-    url: str, fetched: datetime.date, meta: dict[str, str | int | None], body: str
-) -> str:
-    lines = ["---", f"url: {_yaml_value(url)}", f"fetched: {fetched.isoformat()}"]
-    for key, value in meta.items():
-        if value is None or value == "":
-            continue
-        lines.append(f"{key}: {_yaml_value(value)}")
-    lines.extend(["---", "", body.strip(), ""])
-    return "\n".join(lines)
-
-
-def _yaml_value(value: str | int) -> str:
-    if isinstance(value, int):
-        return str(value)
-    needs_quoting = (
-        value != value.strip()
-        or "\n" in value
-        or "\t" in value  # a tab in a plain scalar invalidates the whole block
-        or value[:1] in ("-", "?", ",")
-        or any(ch in value for ch in _YAML_UNSAFE)
-        or value.lower() in _YAML_KEYWORDS
-        or _YAML_NUMBER_RE.fullmatch(value) is not None
-        or _YAML_TIMESTAMP_RE.fullmatch(value) is not None
-    )
-    return json.dumps(value, ensure_ascii=False) if needs_quoting else value
-
-
-def _mask_fetched(content: str) -> str:
-    """Drop the ``fetched:`` stamp so rerun byte-compares see real change only.
-
-    Only the frontmatter head is masked — a body line that happens to start
-    with ``fetched:`` is content and must count as change.
-    """
-    head, sep, rest = content.partition("\n---\n")
-    masked = "\n".join(line for line in head.split("\n") if not line.startswith("fetched: "))
-    return masked + sep + rest
-
-
-def _ext_of(url: str) -> str:
-    tail = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
-    ext = tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
-    if not ext or len(ext) > 4 or not ext.isalnum():  # noqa: PLR2004 — 4-char extension heuristic
-        return "jpg"
-    return ext

@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.urls import base_canonical, host_of, resolve_repo_path, work_hash
+from dex_engine.pipeline.urls import base_canonical, ext_of, host_of, resolve_repo_path, work_hash
 
 
 class TestHostOf:
@@ -97,6 +97,19 @@ class TestCanonicalIdempotency:
         for driver in DRIVERS:
             once = driver.canonical(url)
             assert driver.canonical(once) == once
+
+
+class TestExtOf:
+    def test_the_path_tail_names_the_extension(self):
+        assert ext_of("https://cdn.test/a/episode.MP3?sig=1", default="mp3") == "mp3"
+        assert ext_of("https://cdn.test/img.jpeg", default="jpg") == "jpeg"
+
+    def test_no_usable_extension_takes_the_callers_default(self):
+        # The default is the caller's, per media family: images fall back
+        # to jpg, audio enclosures to mp3.
+        assert ext_of("https://cdn.test/stream", default="mp3") == "mp3"
+        assert ext_of("https://cdn.test/file.a-very-long-tail", default="jpg") == "jpg"
+        assert ext_of("https://cdn.test/file.p%20g", default="jpg") == "jpg"
 
 
 class TestWorkHash:

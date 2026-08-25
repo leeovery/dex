@@ -31,9 +31,12 @@ from dex_engine import corpus
 from .detect import canonical_url, detect_kind, sniff_format
 from .types import Instance, Kind, SourceDriver
 
-__all__ = ["item_new", "parse_capture"]
+__all__ = ["URL_RE", "item_new", "parse_capture", "slugify"]
 
-_URL_RE = re.compile(r"https?://[^\s>\)\]]+")
+# The URL-in-prose pattern every corpus-item creator extracts with:
+# `normalize` reads chat exports through the same regex, so one route in
+# cannot see a URL the other misses.
+URL_RE = re.compile(r"https?://[^\s>\)\]]+")
 _STAMP_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-\d{6}$")
 _MEDIA_RE = re.compile(r"^media/([0-9a-f]{6})/[^/]+$")
 
@@ -79,7 +82,7 @@ def _capture_date(name: str, today: Callable[[], datetime.date]) -> datetime.dat
 
 def _slug_source(body: str, urls: list[str]) -> str:
     """Mechanical slug derivation: note text first, then the URL's path tail."""
-    note = _URL_RE.sub("", body).strip()
+    note = URL_RE.sub("", body).strip()
     if note:
         return note[:80]
     if urls:
@@ -87,7 +90,13 @@ def _slug_source(body: str, urls: list[str]) -> str:
     return ""
 
 
-def _slugify(text: str, max_len: int = 40) -> str:
+def slugify(text: str, max_len: int = 40) -> str:
+    """A filename slug: lowercase, hyphenated, bounded, never empty.
+
+    The item-id slug rule, shared with ``normalize``: item ids are read
+    back by shape (the scrubber redacts them, lint checks them), so every
+    creator must emit the one grammar.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug[:max_len].rstrip("-") or "untitled"
 
@@ -136,7 +145,7 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient
     frontmatter, body = parse_capture(capture_path.read_text(encoding="utf-8"))
     # Punctuation strips BEFORE dedupe: "…/post." and "…/post" in one note
     # are the same URL and must land in the frontmatter once.
-    urls = list(dict.fromkeys(url.rstrip(".,") for url in _URL_RE.findall(body)))
+    urls = list(dict.fromkeys(url.rstrip(".,") for url in URL_RE.findall(body)))
     media = frontmatter.get("media")
     staged = [key for key in ("asset", "name") if key in frontmatter]
     if media is None and staged:
@@ -169,7 +178,7 @@ def item_new(  # noqa: PLR0913 — every input is injected, none ambient
         kinds = [Kind.TEXT.value]
 
     date = _capture_date(capture_path.name, today)
-    item_id = f"{date.isoformat()}-{_slugify(slug or _slug_source(body, urls))}-{shortid}"
+    item_id = f"{date.isoformat()}-{slugify(slug or _slug_source(body, urls))}-{shortid}"
     target = instance.corpus_dir / f"{date:%Y}" / f"{item_id}.md"
     if target.exists():
         raise ValueError(

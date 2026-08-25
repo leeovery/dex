@@ -36,14 +36,11 @@ import time
 import urllib.parse
 from collections.abc import Callable
 
-from dex_engine.pipeline.classify import (
-    Classification,
-    classify_connection,
-    classify_http,
-)
+from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 
 __all__ = ["XDriver"]
@@ -134,20 +131,17 @@ class XDriver:
         # and that 404 would misread as a dead post.
         captured = self._fetch_post(f"status/{status_id}")
         if isinstance(captured, Classification):
-            return Result(status=captured.status, meta={}, reason=captured.reason)
+            return captured.to_result()
         posts, walk_meta = self._walk_up(captured)
         return _render(captured, posts, walk_meta)
 
     def _fetch_post(self, api_path: str) -> dict | Classification:
         """One fxtwitter post payload, or the classified failure."""
+        outcome = fetch_classified(self._transport, _API + api_path)
+        if isinstance(outcome, FetchFailure):
+            return outcome.classification
         try:
-            response = self._transport(_API + api_path)
-        except OSError as e:
-            return classify_connection(e)
-        if not response.ok:
-            return classify_http(response.status)
-        try:
-            payload = json.loads(response.text())
+            payload = json.loads(outcome.text())
         except json.JSONDecodeError:
             return Classification(
                 status=Status.BLOCKED, reason="fxtwitter returned unparseable JSON"

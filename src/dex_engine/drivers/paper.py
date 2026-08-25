@@ -33,14 +33,11 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from dex_engine.pipeline.classify import (
-    Classification,
-    classify_connection,
-    classify_http,
-)
+from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Kind, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 from .web import HtmlExtract, WebDriver, trafilatura_extract
 
@@ -124,7 +121,7 @@ class PaperDriver:
     def _fetch_arxiv(self, arxiv_id: str) -> Result:
         entry = self._fetch_feed_entry(arxiv_id)
         if isinstance(entry, Classification):
-            return Result(status=entry.status, meta={}, reason=entry.reason)
+            return entry.to_result()
         meta: dict[str, str | int | None] = {
             "title": entry.title,
             "published": entry.published,
@@ -143,14 +140,11 @@ class PaperDriver:
         return Result(status=Status.DONE, meta=meta, body=body)
 
     def _fetch_feed_entry(self, arxiv_id: str) -> "_Entry | Classification":
+        outcome = fetch_classified(self._transport, _ARXIV_API + arxiv_id)
+        if isinstance(outcome, FetchFailure):
+            return outcome.classification
         try:
-            response = self._transport(_ARXIV_API + arxiv_id)
-        except OSError as e:
-            return classify_connection(e)
-        if not response.ok:
-            return classify_http(response.status)
-        try:
-            feed = ET.fromstring(response.text())  # noqa: S314 — arxiv's own API; no DTD/entity risk in Atom
+            feed = ET.fromstring(outcome.text())  # noqa: S314 — arxiv's own API; no DTD/entity risk in Atom
         except ET.ParseError:
             return Classification(
                 status=Status.BLOCKED, reason="arxiv API returned unparseable XML"

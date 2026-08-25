@@ -9,14 +9,11 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from dex_engine.drivers.transport import HttpResponse
-from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, clean_vtt
+from dex_engine.drivers.youtube import YouTubeDriver, clean_vtt
+from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.transcribe import (
-    Acquired,
-    YoutubeAudio,
-    acquire_youtube_audio,
-    youtube_body,
-)
+from dex_engine.pipeline.enrichment import youtube_body
+from dex_engine.pipeline.transcribe import Acquired, acquire_youtube_audio
 from dex_engine.pipeline.types import Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import base_canonical, work_hash
 from tests.drivers.conftest import FakeTransport, body_of, fixture_text, make_unit, reason_of
@@ -575,6 +572,18 @@ class TestCaptionTrackFailures:
         result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
         assert result.status is Status.BLOCKED
         assert "caption track fetch failed" in reason_of(result)
+
+    def test_track_failure_keeps_the_wire_fact_never_classifier_framing(self):
+        # A 402 on the VIDEO would classify manual/paywalled; on a signed
+        # track URL it is CDN weather like any other code. The reason keeps
+        # the plain wire fact — "payment/login required" here would send a
+        # session rescuing a paywall that does not exist.
+        walled = HttpResponse(status=402, content_type="text/plain", body=b"")
+        driver = driver_for(INFO_WITH, {TRACK_URL: walled})
+        result = driver.fetch(make_unit(URL, Kind.YOUTUBE))
+        assert result.status is Status.BLOCKED
+        assert "caption track fetch failed: HTTP 402" in reason_of(result)
+        assert PAYWALL_REASON not in reason_of(result)
 
 
 class TestCleanVtt:

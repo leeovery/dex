@@ -1823,6 +1823,11 @@ src/dex_engine/
                classify.py   the ONE failure classifier (§5) + the scrubber
                transcribe.py the transcribe drain: audio acquisition,
                              prompt budgeting, chunking (§6, §9)
+               enrichment.py the ONE enrichment-file format point: the
+                             renderer and its two readers, inverses over
+                             frontmatter.py's scalar unquoting rule, plus
+                             the transcript-body section contract the
+                             youtube driver and the drain share
                urls.py       canonicalization and the work-key hash — the
                              one place a ledger identity is computed
                capture.py    `enrich item new`: capture file → corpus item
@@ -1844,6 +1849,12 @@ src/dex_engine/
                  needs healing (§4)
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
                transport.py  the HTTP seam (§5's OSError normalization)
+               fetch.py  gh.py  audio.py  ytdlp.py — the shared lib layer
+                 beside the drivers (§2): the fetch-and-classify pairing,
+                 the authenticated GitHub route, the audio-on-a-page
+                 signal, and the yt-dlp seam (probe, audio download,
+                 failure vocabulary, audio-cache scan) the youtube driver
+                 and the transcribe drain both consume
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
@@ -2203,18 +2214,45 @@ release work and puts them here rather than on the roadmap. Sequence them
 after the driver-outcome change (§2) — the cleanup touches the same seams,
 and the outcome union settles several of these on its way past.
 
-- **One shared fetch-and-classify helper.** Eight hand-rolled copies across
-  the drivers, `transcribe` and `run`.
+- **One shared fetch-and-classify helper.** Nine hand-rolled copies across
+  the drivers, `transcribe` and `run`. **Done**: `drivers/fetch.py` —
+  `fetch_classified` returns the response or a `FetchFailure` carrying
+  the classification together with the wire status, so the callers that
+  route the classification onward and the two that must not inherit its
+  framing (a signed caption track, the wayback-rescue note) share one
+  pairing; only `paper`'s full-text fallback still calls the transport
+  bare, because it classifies nothing by design (a miss degrades to
+  abstract-only).
 - **Duplicated body / slug / extension helpers.** youtube `_body` vs
   `transcribe.youtube_body`; `capture` vs `normalize` for `URL_RE` and
-  slugify; `run._ext_of` vs `transcribe._audio_ext`.
+  slugify; `run._ext_of` vs `transcribe._audio_ext`. **Done**: the
+  transcript-body composition lives in `pipeline/enrichment.py` (the
+  youtube driver and the drain both consume it — the section headings and
+  the `via` field are one contract); `URL_RE` and `slugify` live in
+  `pipeline/capture.py` and `normalize` imports them; the extension guess
+  is `urls.ext_of`, its per-family default (`jpg` media, `mp3` audio)
+  stated by the caller.
 - **Six spellings of Classification→Result.** One conversion, once.
+  **Done**: `Classification.to_result()` in `classify.py`, where the
+  classification layer meets the driver-result layer; every former
+  spelling calls it, and the wayback fallback appends its rescue note
+  onto the classification's reason before converting through the same
+  method.
 - **One enrichment-frontmatter module owning render and parse.** The writer
   lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
-  contract and belongs to one module.
+  contract and belongs to one module. **Done**: `pipeline/enrichment.py`
+  renders the file and parses it back as inverses over the one scalar
+  unquoting rule (`frontmatter.py`, whose digest-side readers are
+  untouched), keeping both readers' deliberately different
+  unterminated-fence contracts — the drain's quiet no-fields answer and
+  the scan's loud raise.
 - **Hoist the yt-dlp seam out of `drivers/youtube.py`** so
   `pipeline/transcribe.py` stops importing a driver — the standing
-  violation of the driver-isolation rule (§2) inside the engine's own code.
+  violation of the driver-isolation rule (§2) inside the engine's own
+  code. **Done**: `drivers/ytdlp.py` (probe, audio download, the probe
+  failure vocabulary, the audio-cache scan) serves the youtube driver and
+  the transcribe drain from the lib layer; outside `registry.py` — the
+  conformance point (§14) — no pipeline module imports a driver.
 - **`ledger.py`'s per-word legacy-vocabulary hint tables.**
 - **The import-time `DRIVERS` registry.** A module-level list against the
   no-import-time-state rule (§14); the typed registry literal is still the

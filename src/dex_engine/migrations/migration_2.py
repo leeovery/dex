@@ -99,6 +99,7 @@ from pathlib import Path
 from dex_engine import atomic
 from dex_engine.migrations import MigrationError
 from dex_engine.pipeline.detect import canonical_url
+from dex_engine.pipeline.enrichment import read_enrichment
 from dex_engine.pipeline.ledger import (
     LedgerSchemaError,
     append,
@@ -109,7 +110,6 @@ from dex_engine.pipeline.ledger import (
 )
 from dex_engine.pipeline.ownership import corpus_owners
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Kind,
     LedgerEntry,

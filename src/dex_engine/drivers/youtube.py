@@ -41,19 +41,15 @@ import re
 from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
-from dex_engine.pipeline.classify import (
-    PAYWALL_REASON,
-    Classification,
-    classify_connection,
-    classify_http,
-    scrub,
-)
+from dex_engine.pipeline.enrichment import description_section, youtube_body
 from dex_engine.pipeline.types import Kind, Need, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical, host_of
 
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
+from .ytdlp import ProbeError, classify_probe_failure, yt_dlp_probe
 
-__all__ = ["ProbeError", "YouTubeDriver", "classify_probe_failure", "clean_vtt", "yt_dlp_probe"]
+__all__ = ["YouTubeDriver", "clean_vtt"]
 
 _HOSTS = frozenset({"youtube.com", "youtu.be"})
 # Path prefixes that address a single video, on youtube.com and youtu.be
@@ -128,21 +124,6 @@ _MAX_CHANNEL_SEGMENTS = 2
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
 
-_HTTP_CODE_RE = re.compile(r"HTTP Error (\d{3})")
-_LOGIN_MARKERS = ("private", "sign in", "members-only", "members only", "log in")
-_GEO_MARKERS = ("in your country", "in your region", "geo restricted", "geo-restricted")
-# `dead` needs an explicit confirmed-gone marker — anything else (transient
-# network trouble, yt-dlp extractor breakage) is the world misbehaving and
-# defaults to `blocked`: the motivating-incident class, again.
-_GONE_MARKERS = ("video unavailable", "removed", "terminated")
-
-# The youtube body's two sections. The transcribe drain splits a stored
-# body on these same headings to append a transcript to a park's
-# description (pipeline/transcribe.py); drivers cannot import that module
-# (it imports this one), so the pairing is pinned by test instead.
-_DESCRIPTION_HEADING = "## Description"
-_TRANSCRIPT_HEADING = "## Transcript"
-
 # The transcript-provenance stamp the CAPTIONS route writes into meta, and
 # thereby into the enrichment frontmatter. **The frontmatter, not the
 # heading, says whether a body holds a transcript** (design §6): the drain
@@ -155,34 +136,6 @@ _CAPTIONS_VIA = "captions"
 
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
-
-
-class ProbeError(Exception):
-    """yt-dlp could not extract video info; the message says why."""
-
-
-def yt_dlp_probe(url: str) -> dict:
-    """Extract video info via yt-dlp, no download.
-
-    Args:
-        url: The canonical video URL.
-
-    Returns:
-        The yt-dlp info dict.
-
-    Raises:
-        ProbeError: yt-dlp reported a download error; the driver maps the
-            message through the central classifier.
-    """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when probing
-
-    options = {"quiet": True, "no_warnings": True, "skip_download": True}
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        raise ProbeError(str(e)) from e
-    return dict(info or {})
 
 
 class YouTubeDriver:
@@ -238,15 +191,14 @@ class YouTubeDriver:
         try:
             info = self._probe(unit.url)
         except ProbeError as e:
-            failure = classify_probe_failure(str(e))
-            return Result(status=failure.status, meta={}, reason=failure.reason)
+            return classify_probe_failure(str(e)).to_result()
         meta = _video_meta(info)
         track_url = _caption_track_url(info)
         if track_url is None:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
-                body=_description_section(info) or None,
+                body=description_section(_description(info)) or None,
                 needs=Need.TRANSCRIBE,
                 reason="no captions available",
             )
@@ -257,26 +209,21 @@ class YouTubeDriver:
     ) -> Result:
         # A failing caption track says nothing about the VIDEO: yt-dlp track
         # URLs are signed and short-lived, so even a 404 here is transient —
-        # blocked (a re-probe next run mints fresh URLs), never dead.
-        try:
-            response = self._transport(track_url)
-        except OSError as e:
-            detail = classify_connection(e).reason
-            return Result(
-                status=Status.BLOCKED, meta={}, reason=f"caption track fetch failed: {detail}"
-            )
-        if not response.ok:
+        # blocked (a re-probe next run mints fresh URLs), never dead. The
+        # wire fact rides the reason; the classified status never does.
+        outcome = fetch_classified(self._transport, track_url)
+        if isinstance(outcome, FetchFailure):
             return Result(
                 status=Status.BLOCKED,
                 meta={},
-                reason=f"caption track fetch failed: HTTP {response.status}",
+                reason=f"caption track fetch failed: {outcome.detail}",
             )
-        transcript = clean_vtt(response.text())
+        transcript = clean_vtt(outcome.text())
         if len(transcript) < _MIN_TRANSCRIPT_CHARS:
             return Result(
                 status=Status.WAITING,
                 meta=meta,
-                body=_description_section(info) or None,
+                body=description_section(_description(info)) or None,
                 needs=Need.TRANSCRIBE,
                 reason="captions track too thin to be a transcript",
             )
@@ -285,7 +232,7 @@ class YouTubeDriver:
         return Result(
             status=Status.DONE,
             meta={**meta, "via": _CAPTIONS_VIA},
-            body=_body(info, transcript),
+            body=youtube_body(_description(info), transcript),
         )
 
 
@@ -356,34 +303,6 @@ def _playlist_id(url: str) -> str | None:
     return dict(parse_qsl(parts.query)).get("list")
 
 
-def classify_probe_failure(message: str) -> Classification:
-    """Map a yt-dlp failure message: code > login > geo > confirmed gone > blocked.
-
-    Public because the transcribe drain's audio acquisition fails in
-    exactly the same vocabulary — one classifier, not two.
-
-    ``dead`` requires an explicit confirmed-gone marker. The default is
-    ``blocked`` — a transient network error or an extractor-breakage message
-    mislabeled ``dead`` would be terminal and never retried, which is
-    exactly the incident class this design exists to kill.
-    """
-    code_match = _HTTP_CODE_RE.search(message)
-    if code_match:
-        return classify_http(int(code_match.group(1)))
-    lowered = message.lower()
-    if any(marker in lowered for marker in _LOGIN_MARKERS):
-        return Classification(status=Status.MANUAL, reason=f"{PAYWALL_REASON} ({scrub(message)})")
-    if any(marker in lowered for marker in _GEO_MARKERS):
-        # Checked before the gone markers: geo messages often open with
-        # "Video unavailable." and the specific diagnosis must win.
-        return Classification(status=Status.MANUAL, reason=f"geo-blocked ({scrub(message)})")
-    if any(marker in lowered for marker in _GONE_MARKERS) or (
-        "account" in lowered and "closed" in lowered
-    ):
-        return Classification(status=Status.DEAD, reason=scrub(message))
-    return Classification(status=Status.BLOCKED, reason=scrub(message))
-
-
 def _video_meta(info: dict) -> dict[str, str | int | None]:
     duration = info.get("duration") or 0
     return {
@@ -411,29 +330,8 @@ def _caption_track_url(info: dict) -> str | None:
     return None
 
 
-def _description_section(info: dict) -> str:
-    """The description as its own body section, or "" when there is none.
-
-    A park writes this on its own: the description is content already
-    fetched, and a video that goes private during a transcription backlog
-    would otherwise take it with it. The transcript is appended to this
-    same section later, never written over it.
-    """
-    description = (info.get("description") or "").strip()
-    return f"{_DESCRIPTION_HEADING}\n\n{description}" if description else ""
-
-
-def _body(info: dict, transcript: str) -> str:
-    """Description section + transcript section — one body shape per kind.
-
-    The transcript is always its own labelled section, description or not:
-    the drain splits a stored body on that heading to append a transcript
-    to what the park already wrote (``pipeline/transcribe.py``).
-    """
-    section = _description_section(info)
-    if section:
-        return f"{section}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
+def _description(info: dict) -> str:
+    return (info.get("description") or "").strip()
 
 
 def clean_vtt(vtt: str) -> str:

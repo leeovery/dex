@@ -1,4 +1,4 @@
-"""Transcribe-drain mechanics: audio acquisition, priming, bodies.
+"""Transcribe-drain mechanics: audio acquisition and prompt priming.
 
 **Audio acquisition belongs to the drain, not the drivers**: drivers only
 ever emit ``needs: transcribe`` with the pointer — a YouTube URL, or an
@@ -14,36 +14,35 @@ recorded enclosure URL is the re-fetch pointer.
 """
 
 import unicodedata
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from dex_engine import atomic, frontmatter
+from dex_engine import atomic
+from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import HttpResponse, Transport
-from dex_engine.drivers.youtube import ProbeError, classify_probe_failure
+from dex_engine.drivers.ytdlp import (
+    DownloadAudio,
+    ProbeError,
+    cached_audio,
+    classify_probe_failure,
+)
 
-from .classify import Classification, classify_connection, classify_http
+from .classify import Classification
 from .detect import looks_like_html
+from .enrichment import DESCRIPTION_HEADING, pre_transcript, read_enrichment
 from .types import LedgerEntry, Status
+from .urls import ext_of
 
 __all__ = [
     "HEAD_MAX_TOKENS",
     "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
-    "DownloadAudio",
-    "YoutubeAudio",
     "acquire_podcast_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
     "keep_first_tokens",
     "keep_last_tokens",
-    "podcast_body",
-    "read_enrichment",
-    "read_enrichment_fields",
-    "youtube_body",
-    "yt_dlp_audio",
 ]
 
 # Per-run transcription cap: a first sync's resurrected backlog must
@@ -65,85 +64,6 @@ PROMPT_MAX_TOKENS = 200
 HEAD_MAX_TOKENS = 60
 
 _SEPARATOR = " — "
-_AUDIO_EXT_DEFAULT = "mp3"
-# The body sections both transcribable kinds compose around. The youtube
-# driver writes the same two headings on its parks (drivers/youtube.py);
-# it cannot import them from here (this module imports that one), so the
-# pairing is pinned by test.
-_TRANSCRIPT_HEADING = "## Transcript"
-_DESCRIPTION_HEADING = "## Description"
-
-# The frontmatter key the transcriber stamps (run.py writes via/model onto
-# every transcript it composes). Neither park writes it, so it is the one
-# fact on disk that says whether a body already holds a transcript.
-_TRANSCRIBED_FIELD = "via"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class YoutubeAudio:
-    """What the yt-dlp seam returns: the audio file plus priming vocabulary."""
-
-    path: Path
-    title: str | None
-    channel: str | None
-    description: str
-    duration_min: int | None = None
-    upload_date: str | None = None
-
-
-# url, cache_dir, stem -> downloaded audio; raises ProbeError on yt-dlp
-# failure (classified by classify_probe_failure — one classifier).
-DownloadAudio = Callable[[str, Path, str], YoutubeAudio]
-
-
-def yt_dlp_audio(url: str, cache_dir: Path, stem: str) -> YoutubeAudio:
-    """The one real :data:`DownloadAudio`: bestaudio into the cache, no ffmpeg.
-
-    An audio file already cached under ``stem`` is reused (retries don't
-    re-download); the probe still runs for the priming vocabulary.
-
-    Args:
-        url: The canonical video URL.
-        cache_dir: ``cache/audio/``.
-        stem: The work-unit hash — the cache filename stem.
-
-    Returns:
-        The audio and its vocabulary.
-
-    Raises:
-        ProbeError: yt-dlp failed; the caller classifies the message.
-    """
-    import yt_dlp  # noqa: PLC0415 — lazy: heavy dep, loaded only when acquiring
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    existing = _cached_audio(cache_dir, stem)
-    options = {
-        "quiet": True,
-        "no_warnings": True,
-        "format": "bestaudio/best",
-        "outtmpl": str(cache_dir / f"{stem}.%(ext)s"),
-        "noplaylist": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = dict(ydl.extract_info(url, download=existing is None) or {})
-            path = existing or Path(ydl.prepare_filename(info))
-    except yt_dlp.utils.DownloadError as e:
-        raise ProbeError(str(e)) from e
-    if not path.exists():
-        fallback = _cached_audio(cache_dir, stem)
-        if fallback is None:
-            raise ProbeError("yt-dlp reported success but produced no audio file")
-        path = fallback
-    duration = info.get("duration") or 0
-    return YoutubeAudio(
-        path=path,
-        title=info.get("title") or None,
-        channel=info.get("channel") or info.get("uploader"),
-        description=(info.get("description") or "").strip(),
-        duration_min=round(duration / 60) if duration else None,
-        upload_date=info.get("upload_date") or None,
-    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -198,9 +118,9 @@ def _stored_description(path: Path) -> str:
     if not path.exists():
         return ""
     fields, body = read_enrichment(path)
-    head = _pre_transcript(fields, body)
-    if head.startswith(_DESCRIPTION_HEADING):
-        return head[len(_DESCRIPTION_HEADING) :].strip()
+    head = pre_transcript(fields, body)
+    if head.startswith(DESCRIPTION_HEADING):
+        return head[len(DESCRIPTION_HEADING) :].strip()
     return head
 
 
@@ -242,12 +162,12 @@ def acquire_podcast_audio(
                 "podcast driver re-resolves it"
             ),
         )
-    notes = _pre_transcript(fields, body)
+    notes = pre_transcript(fields, body)
     meta: dict[str, str | int | None] = {
         key: value for key, value in fields.items() if key not in ("url", "fetched")
     }
     prompt = _prompt(fields.get("title"), fields.get("show"), notes)
-    audio = _cached_audio(cache_dir, entry.hash)
+    audio = cached_audio(cache_dir, entry.hash)
     if audio is None:
         outcome = _download_enclosure(enclosure, cache_dir, entry.hash, transport)
         if isinstance(outcome, Classification):
@@ -256,66 +176,13 @@ def acquire_podcast_audio(
     return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=notes)
 
 
-def _pre_transcript(fields: dict[str, str], body: str) -> str:
-    """The show-notes half of a park/output body — everything before the transcript.
-
-    A body only holds a transcript section if this drain composed it, and
-    the frontmatter is what says so. A park's body is notes end to end,
-    however many "## Transcript" lines a description or a publisher's show
-    notes happen to contain: reading it by the heading alone truncated the
-    notes at the author's own line, and the drain then wrote that
-    truncation back to disk, losing the tail for good.
-
-    A drained no-notes episode's body STARTS with the transcript heading;
-    the newline-anchored split below would miss it and hand the previous
-    transcript back as "notes", duplicating it on a re-drain. That split
-    takes the LAST section, because the transcript is what the drain
-    appended last.
-    """
-    if _TRANSCRIBED_FIELD not in fields:
-        return body
-    if body == _TRANSCRIPT_HEADING or body.startswith(f"{_TRANSCRIPT_HEADING}\n"):
-        return ""
-    return body.rsplit(f"\n{_TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
-
-
-# In-flight artifacts: yt-dlp's `.part` bodies (also `.part-Frag…`) and
-# `.ytdl` state files, the enclosure download's atomic-write `.tmp` temps,
-# and the odd `.download`/`.temp` from other tooling.
-_PARTIAL_MARKERS = (".part", ".ytdl", ".download", ".temp", ".tmp")
-
-
-def _is_partial(name: str) -> bool:
-    lowered = name.lower()
-    return lowered.endswith(_PARTIAL_MARKERS) or ".part-" in lowered
-
-
-def _cached_audio(cache_dir: Path, stem: str) -> Path | None:
-    """The completed cached download for ``stem`` — partials never count.
-
-    A crash mid-download leaves ``.part``/``.ytdl`` files behind; reusing
-    one would transcribe truncated audio and ledger it ``done``. Partials
-    are deleted here so the retry re-downloads from scratch (the
-    don't-re-download rule covers completed audio only).
-    """
-    complete: Path | None = None
-    for path in sorted(cache_dir.glob(f"{stem}.*")):
-        if _is_partial(path.name):
-            path.unlink(missing_ok=True)
-        elif complete is None:
-            complete = path
-    return complete
-
-
 def _download_enclosure(
     url: str, cache_dir: Path, stem: str, transport: Transport
 ) -> Path | Classification:
-    try:
-        response = transport(url)
-    except OSError as e:
-        return classify_connection(e)
-    if not response.ok:
-        return classify_http(response.status)
+    outcome = fetch_classified(transport, url)
+    if isinstance(outcome, FetchFailure):
+        return outcome.classification
+    response = outcome
     unusable = _not_audio(response)
     if unusable is not None:
         # Never cached under <hash>.<ext>: a stored error page is
@@ -323,9 +190,9 @@ def _download_enclosure(
         # would park the episode manual forever over the CDN's mistake.
         return Classification(status=Status.BLOCKED, reason=unusable)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{stem}.{_audio_ext(url)}"
+    path = cache_dir / f"{stem}.{ext_of(url, default='mp3')}"
     # Atomic: a crash mid-write must never leave a truncated file under the
-    # final cache name — _cached_audio would reuse it as completed audio.
+    # final cache name — cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
     return path
 
@@ -350,14 +217,6 @@ def _not_audio(response: HttpResponse) -> str | None:
     if looks_like_html(response.body):
         return f"enclosure served an HTML page ({response.content_type or 'no content type'})"
     return None
-
-
-def _audio_ext(url: str) -> str:
-    tail = urlsplit(url).path.rsplit("/", 1)[-1]
-    ext = tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
-    if not ext or len(ext) > 4 or not ext.isalnum():  # noqa: PLR2004 — 4-char extension heuristic
-        return _AUDIO_EXT_DEFAULT
-    return ext
 
 
 def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
@@ -476,103 +335,3 @@ def keep_last_tokens(text: str, budget: float) -> str:
         if spent > budget:
             return text[len(text) - index :]
     return text
-
-
-# ---------------------------------------------------------------------------
-# Transcript bodies. Raw transcripts, stamped via/model by the caller;
-# corrections live downstream in digest/wiki where judgment operates.
-# ---------------------------------------------------------------------------
-
-
-def youtube_body(description: str, transcript: str) -> str:
-    """Description + transcript sections — the youtube driver's own pattern.
-
-    The transcript is always its own labelled section: a re-drain splits
-    the stored body on that heading, and a bare transcript would come back
-    as "description" and be duplicated under itself.
-    """
-    if description:
-        return f"{_DESCRIPTION_HEADING}\n\n{description}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
-
-
-def podcast_body(show_notes: str, transcript: str) -> str:
-    """Show notes (from the feed) followed by the transcript section."""
-    if show_notes:
-        return f"{show_notes}\n\n{_TRANSCRIPT_HEADING}\n\n{transcript}"
-    return f"{_TRANSCRIPT_HEADING}\n\n{transcript}"
-
-
-# ---------------------------------------------------------------------------
-# Enrichment reads. The inverse of run.py's renderer — enrichment files are
-# machine-written, so the simple shape is guaranteed. Two entry points over
-# one parser: the drain wants fields plus the pre-transcript body, lint's
-# marker scan wants fields alone and must not pull whole transcripts into
-# memory to get them.
-# ---------------------------------------------------------------------------
-
-
-def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
-    """Parse one enrichment file into (frontmatter fields, body).
-
-    Args:
-        path: The enrichment markdown file.
-
-    A fence that opens and never closes yields no fields, not the whole
-    file read as frontmatter — every caller decides on a field it looks up,
-    and transcript prose parsed as fields answers those lookups with
-    nonsense. ``read_enrichment_fields`` raises on the same shape instead,
-    because a scan that exists to report an unreadable file has to tell it
-    apart from a clean one; a drain that only has to avoid being fooled
-    does not.
-
-    Returns:
-        The fields (JSON-quoted values unquoted) and the stripped body.
-    """
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---\n"):
-        return {}, text.strip()
-    head, sep, body = text[4:].partition("\n---\n")
-    if not sep:
-        return {}, text.strip()
-    return _frontmatter_fields(head.split("\n")), body.strip()
-
-
-def read_enrichment_fields(path: Path) -> dict[str, str]:
-    """Parse one enrichment file's frontmatter without reading its body.
-
-    Bodies run to whole transcripts; a scan that only wants the
-    frontmatter stops at the closing fence.
-
-    Args:
-        path: The enrichment markdown file.
-
-    Returns:
-        The fields (quoted values unquoted); empty for a file that opens
-        with no frontmatter fence at all.
-
-    Raises:
-        ValueError: The file opens a fence and never closes it — the shape
-            an interrupted write leaves behind. Empty fields would say
-            "read fine, no markers", and the caller cannot tell the
-            difference it has to report.
-    """
-    head: list[str] = []
-    with path.open(encoding="utf-8") as f:
-        if f.readline().rstrip("\n") != "---":
-            return {}
-        for line in f:
-            if line.rstrip("\n") == "---":
-                return _frontmatter_fields(head)
-            head.append(line.rstrip("\n"))
-    raise ValueError("unterminated frontmatter: no closing '---' fence")
-
-
-def _frontmatter_fields(lines: list[str]) -> dict[str, str]:
-    fields: dict[str, str] = {}
-    for line in lines:
-        if ":" not in line:
-            continue
-        key, _, raw = line.partition(":")
-        fields[key.strip()] = frontmatter.unquote(raw.strip())
-    return fields

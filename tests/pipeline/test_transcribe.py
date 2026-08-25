@@ -13,7 +13,8 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.web import WebDriver
-from dex_engine.drivers.youtube import ProbeError, YouTubeDriver, _video_meta
+from dex_engine.drivers.youtube import YouTubeDriver, _video_meta
+from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio, cached_audio
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import (
@@ -21,21 +22,18 @@ from dex_engine.pipeline.classify import (
     ProviderInputError,
     ProviderUnavailableError,
 )
+from dex_engine.pipeline.enrichment import read_enrichment
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
     HEAD_MAX_TOKENS,
     TRANSCRIBE_RUN_CAP,
     Acquired,
-    YoutubeAudio,
-    _cached_audio,
     _download_enclosure,
     _prompt,
     acquire_youtube_audio,
     estimated_tokens,
     keep_last_tokens,
-    read_enrichment,
-    read_enrichment_fields,
 )
 from dex_engine.pipeline.types import (
     Availability,
@@ -1081,7 +1079,7 @@ class TestEnclosureDownloadAtomicity:
         transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
         with pytest.raises(OSError, match="No space left"):
             _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []
 
     def test_completed_download_lands_under_the_final_name(self, tmp_path):
@@ -1145,29 +1143,29 @@ class TestCachedAudio:
         # A kill mid-atomic-write can orphan the temp file itself; it must
         # be cleared like any partial, never picked up as completed audio.
         (tmp_path / "abc.mp3.k3j2f9.tmp").write_bytes(b"TRUNCATED")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []
 
     def test_partials_are_deleted_and_never_reused(self, tmp_path):
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
         (tmp_path / "abc.ytdl").write_bytes(b"state")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []  # crash leftovers cleared for the re-download
 
     def test_complete_file_wins_and_partial_leftovers_are_cleared(self, tmp_path):
         (tmp_path / "abc.m4a").write_bytes(b"full")
         (tmp_path / "abc.m4a.part").write_bytes(b"half")
-        path = _cached_audio(tmp_path, "abc")
+        path = cached_audio(tmp_path, "abc")
         assert path is not None
         assert path.name == "abc.m4a"
         assert [p.name for p in tmp_path.iterdir()] == ["abc.m4a"]
 
     def test_fragment_partials_count_as_partials(self, tmp_path):
         (tmp_path / "abc.mp4.part-Frag001").write_bytes(b"frag")
-        assert _cached_audio(tmp_path, "abc") is None
+        assert cached_audio(tmp_path, "abc") is None
 
     def test_missing_cache_dir_is_simply_empty(self, tmp_path):
-        assert _cached_audio(tmp_path / "audio", "abc") is None
+        assert cached_audio(tmp_path / "audio", "abc") is None
 
 
 # Whisper's real prompt window: `previous_tokens[-(448 // 2 - 1):]` in
@@ -1305,77 +1303,3 @@ class TestTokenEstimate:
             prompt = _prompt("Ledgers as Work Queues", "Engineering Distilled", notes)
             real = len(tokenizer.encode(prompt, add_special_tokens=False).ids)
             assert real <= WHISPER_WINDOW_TOKENS, f"{script}: {real} tokens"
-
-
-class TestReadEnrichment:
-    def test_round_trips_quoted_values(self, tmp_path):
-        record = tmp_path / "podcast-abc123.md"
-        record.write_text(
-            '---\nurl: https://x.test\nfetched: 2026-08-20\ntitle: "Ep: one"\n'
-            'enclosure: "https://cdn.test/a.mp3?sig=1"\n---\n\nnotes body\n'
-        )
-        fields, body = read_enrichment(record)
-        assert fields["title"] == "Ep: one"
-        assert fields["enclosure"] == "https://cdn.test/a.mp3?sig=1"
-        assert body == "notes body"
-
-    def test_frontmatterless_file_is_all_body(self, tmp_path):
-        record = tmp_path / "x.md"
-        record.write_text("just text\n")
-        assert read_enrichment(record) == ({}, "just text")
-
-    def test_an_unclosed_fence_yields_no_fields(self, tmp_path):
-        # Every caller decides on a field it looks up, so transcript prose
-        # read as frontmatter answers those lookups with nonsense: a stale
-        # output survives a correction, a park reports a description it
-        # never wrote. The sibling scan raises on this shape instead.
-        record = tmp_path / "podcast-abc123.md"
-        record.write_text(
-            "---\nurl: https://x.test\nenclosure: https://cdn.test/a.mp3\n"
-            "and then the transcript began\n"
-        )
-        fields, body = read_enrichment(record)
-        assert fields == {}
-        assert "transcript" in body
-
-
-class TestReadEnrichmentFields:
-    """The frontmatter-only read: same parse, none of the body."""
-
-    def test_agrees_with_the_full_read(self, tmp_path):
-        record = tmp_path / "podcast-abc123.md"
-        record.write_text(
-            '---\nurl: https://x.test\nfetched: 2026-08-20\ntitle: "Ep: one"\n---\n\nnotes body\n'
-        )
-        assert read_enrichment_fields(record) == read_enrichment(record)[0]
-
-    def test_the_body_is_never_parsed_as_fields(self, tmp_path):
-        record = tmp_path / "x-abc123.md"
-        record.write_text('---\nurl: https://x.test\n---\n\nchain_incomplete: "true"\n')
-        assert read_enrichment_fields(record) == {"url": "https://x.test"}
-
-    def test_frontmatterless_file_has_no_fields(self, tmp_path):
-        record = tmp_path / "x.md"
-        record.write_text("just text\n")
-        assert read_enrichment_fields(record) == {}
-
-    def test_an_unterminated_fence_is_loud(self, tmp_path):
-        # The shape an interrupted write leaves. Empty fields would read as
-        # "opened fine, no markers" — indistinguishable from a clean file,
-        # and lint's marker scan is the only reader an enrichment file has.
-        record = tmp_path / "x.md"
-        record.write_text("---\nurl: https://x.test\nand then the file just ends\n")
-        with pytest.raises(ValueError, match="no closing '---' fence"):
-            read_enrichment_fields(record)
-
-    def test_the_file_is_never_slurped(self, tmp_path, monkeypatch):
-        # The reason this function exists: enrichment bodies are whole
-        # transcripts, and a marker scan reads thousands of them.
-        record = tmp_path / "podcast-abc123.md"
-        record.write_text("---\nurl: https://x.test\n---\n\n" + "transcript line\n" * 100_000)
-
-        def refuse(*_args, **_kwargs):
-            raise AssertionError("read_enrichment_fields must not read the whole file")
-
-        monkeypatch.setattr(Path, "read_text", refuse)
-        assert read_enrichment_fields(record) == {"url": "https://x.test"}

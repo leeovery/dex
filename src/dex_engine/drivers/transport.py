@@ -5,9 +5,11 @@ hermetic; :func:`urllib_transport` is the one real implementation. It
 returns an :class:`HttpResponse` for *any* HTTP-level response — 4xx/5xx
 included, so callers can route status codes through the central classifier —
 and lets connection-level failures (DNS, refused, timeout) propagate as
-``OSError`` for ``classify_connection``. ``http.client``'s own protocol
-failures are normalized into that same ``OSError`` shape here, once, rather
-than at each of the eight call sites (:func:`normalize_httplib_errors`).
+``OSError`` for ``classify_connection``; the fetch-and-classify pairing
+itself lives once, in :mod:`dex_engine.drivers.fetch`. ``http.client``'s
+own protocol failures are normalized into that same ``OSError`` shape
+here, once, rather than at every caller
+(:func:`normalize_httplib_errors`).
 URLs the request line cannot carry are encoded for the wire here too
 (:func:`_ascii_url`): ``http.client`` ascii-encodes the request line and
 rejects the controls, space and DEL within it, so an accented Wikipedia

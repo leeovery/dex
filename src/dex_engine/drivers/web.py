@@ -35,20 +35,19 @@ import json
 import re
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dex_engine.pipeline.classify import (
     MIN_SUBSTANTIAL_CHARS,
     THIN_EXTRACTION_REASON,
     Classification,
-    classify_connection,
-    classify_http,
 )
 from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
 from dex_engine.pipeline.types import Format, Kind, Redetection, Result, Status, WorkUnit
 from dex_engine.pipeline.urls import base_canonical
 
 from .audio import audio_enclosure
+from .fetch import FetchFailure, fetch_classified
 from .transport import Transport, urllib_transport
 
 __all__ = ["HtmlExtract", "WebDriver", "trafilatura_extract"]
@@ -159,15 +158,10 @@ class WebDriver:
         return self._wayback_fallback(unit.url, page)
 
     def _fetch_page(self, url: str) -> _Page | Classification:
-        try:
-            response = self._transport(url)
-        except OSError as e:
-            return classify_connection(e)
-        if response.ok:
-            return _Page(
-                html=response.text(), body=response.body, content_type=response.content_type
-            )
-        return classify_http(response.status)
+        outcome = fetch_classified(self._transport, url)
+        if isinstance(outcome, FetchFailure):
+            return outcome.classification
+        return _Page(html=outcome.text(), body=outcome.body, content_type=outcome.content_type)
 
     def _extracted(self, html: str, *, base_url: str, allow_media: bool) -> Result | None:
         """A done Result when extraction is substantial, else None."""
@@ -193,20 +187,22 @@ class WebDriver:
                 note = "wayback snapshot extraction was thin"
             else:
                 note = f"wayback fetch failed: {page.reason}"
-        reason = failure.reason if note is None else f"{failure.reason}; {note}"
-        return Result(status=failure.status, meta={}, reason=reason)
+        if note is not None:
+            # The rescue's fate is appended context on the direct truth —
+            # the classification's own status and reason still decide.
+            failure = replace(failure, reason=f"{failure.reason}; {note}")
+        return failure.to_result()
 
     def _wayback_snapshot(self, url: str) -> tuple[str | None, str | None]:
         """The closest snapshot URL, or (None, why the lookup yielded nothing)."""
         lookup = _WAYBACK_AVAILABLE + urllib.parse.quote(url, safe="")
+        outcome = fetch_classified(self._transport, lookup)
+        if isinstance(outcome, FetchFailure):
+            # A failed rescue is only a note on the direct failure — the
+            # wire fact, never the classifier's status framing.
+            return None, f"wayback lookup failed: {outcome.detail}"
         try:
-            response = self._transport(lookup)
-        except OSError as e:
-            return None, f"wayback lookup failed: {classify_connection(e).reason}"
-        if not response.ok:
-            return None, f"wayback lookup failed: HTTP {response.status}"
-        try:
-            snapshots = json.loads(response.text())
+            snapshots = json.loads(outcome.text())
         except json.JSONDecodeError:
             return None, "wayback lookup returned unparseable JSON"
         if not isinstance(snapshots, dict):

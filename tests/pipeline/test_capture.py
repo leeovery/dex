@@ -86,6 +86,21 @@ class TestUrlPath:
         new(instance, path)
         assert only_item(instance).urls == ["https://example.test/post"]
 
+    def test_markdown_delimiters_never_ride_into_the_url(self, instance):
+        # Notes carry URLs as `[text](url)` links and `<url>` autolinks; the
+        # closing delimiter is the note's markup, not the address, and a
+        # captured "…/post)" would seed an unfetchable unit.
+        path = write_capture(
+            instance,
+            "20260818-101530.md",
+            "A [link](https://example.test/post) and <https://example.test/other>\n",
+        )
+        new(instance, path)
+        assert only_item(instance).urls == [
+            "https://example.test/post",
+            "https://example.test/other",
+        ]
+
     def test_multiple_urls_all_recorded_first_keys_the_id(self, instance):
         path = write_capture(
             instance,
