@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-08-25
+
+✨ Added
+
+- Driver-based ingestion for web pages, X posts, YouTube, GitHub, arXiv papers, podcasts, and documents — each source is fetched by the driver that understands its shape.
+- Transcription, document extraction, and OCR as pluggable capabilities — audio gains transcripts, and PDF/Word/PowerPoint files become readable markdown.
+- Link harvesting via `bin/dex enrich fetch` — a session promotes the links worth following from a fetched page, bounded by depth and a per-item URL budget.
+- Media capture — a page's lead images and a post's attachments download beside its text, LFS-tracked whatever the extension.
+- Engine-defect reporting via `bin/dex issue` and an automatic crash filer — issues reach the public tracker with nothing private in the payload.
+- Rendered report surfaces via `bin/dex render` — run reports, status, receipts, and health checks are consistent markdown, never hand-drawn.
+- Verb-written state throughout — digests, heals, stage passes, exclusions, and compaction each have a command, so a malformed record is impossible.
+- Health checks with judgment repairs — lint names every finding with its repair, and sessions reconcile counts against the work they just did.
+- Tag-pinned releases — `bin/dex sync` bumps an instance's pin, refreshes machinery, and runs migrations in one motion.
+- Three migrations that carry a v0.0.1 instance to this engine losslessly — rehearsed on faithful copies of five real instances before tagging.
+- `dex-new` instance scaffolding and a single getting-started guide covering dependencies, create-or-join, and scheduling.
+- Phone-shortcut capture of images, PDFs, and media alongside links and text.
+- CI across Python 3.11-3.13 on Linux and macOS, a daily third-party drift watch, and a pre-tag release gate.
+
+🔧 Changed
+
+- Source kinds are renamed — tweets are `x` and blogs are `web`, with existing state and files migrated automatically.
+- `normalize-config.json` becomes `state/config.json` — unknown keys are rejected loudly instead of ignored.
+- X, YouTube, and arXiv links collapse to one canonical identity per work, so duplicate spellings no longer fetch twice.
+- Run reports name every item owing work and the exact command that heals anything parked.
+
+🗑️ Removed
+
+- The `dex-ingest` skill is retired — capture and run each own their half of it.
+- The never-applied `name_map` config key is gone.
+
+🐛 Fixed
+
+- A site blocking the fetcher now parks as `blocked` and retries with backoff instead of being marked dead forever.
+
 ## [0.0.1] - 2026-08-18
 
 Initial release.
