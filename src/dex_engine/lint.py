@@ -47,8 +47,12 @@ staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
 Output renders through the ``health-report`` surface. Exit 1 on hard
-failures: broken wikilinks, bad citations, a ledger schema error, or a
-malformed digest.
+failures: broken wikilinks, bad citations, a ledger schema error, a
+malformed taxonomy or entity-members file, an unparseable pass record, a
+malformed digest, and the pre-taxonomy broken-mid-ingest state (corpus
+items but no ``state/taxonomy.json`` — placement never ran). Every one
+renders as a failure row on the report naming the file and its repair;
+lint never dies bare on a state file it exists to check.
 """
 
 import argparse
@@ -154,7 +158,7 @@ def run_lint(
     if special is not None:
         return special
     taxonomy, taxonomy_error = _load_taxonomy(instance)
-    entity_members = _entity_members(instance)
+    entity_members, entity_members_error = _entity_members(instance)
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
     scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
@@ -198,6 +202,8 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
+    if entity_members_error is not None:
+        payload["entity_members_error"] = entity_members_error
     ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids, notes=scan.notes)
     digests, digest_errors = _digest_checks(instance)
     payload["digests"] = digests
@@ -208,7 +214,13 @@ def run_lint(
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error or digest_errors
+        scan.broken_links
+        or scan.bad_citations
+        or ledger_error
+        or taxonomy_error
+        or entity_members_error
+        or "passes_error" in payload
+        or digest_errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -289,14 +301,28 @@ def _pages(instance: Instance) -> dict[str, Path]:
 # ---------------------------------------------------------------------------
 
 
-def _entity_members(instance: Instance) -> dict[str, list[str]]:
+def _entity_members(instance: Instance) -> tuple[dict[str, list[str]], str | None]:
+    """The entity-members map, or an empty one plus the finding when it is broken.
+
+    The taxonomy's treatment (:func:`_load_taxonomy`), applied to the
+    other session-maintained state file the wiki checks read: reporting a
+    broken state file is lint's job, so a malformed
+    ``state/entity-members.json`` becomes a loud failure row naming the
+    file and its repair — never the bare ``Expecting value…`` exit that
+    named nothing. The wiki checks still run, with no entity members.
+    """
     path = instance.state_dir / "entity-members.json"
     if not path.exists():
-        return {}
-    raw = json.loads(path.read_text(encoding="utf-8"))
+        return {}, None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return {}, f"{path.name}: invalid JSON ({' '.join(str(e).split())})"
     if not isinstance(raw, dict):
-        raise ValueError(f"{path}: expected an object of entity -> item list")
-    return {name: members for name, members in raw.items() if isinstance(members, list)}
+        return {}, (
+            f"{path.name}: expected an object of entity -> item list, got {type(raw).__name__}"
+        )
+    return {name: members for name, members in raw.items() if isinstance(members, list)}, None
 
 
 def _frontmatter(text: str) -> str | None:
@@ -595,7 +621,9 @@ def _state_checks(
         payload["misfiled_outputs"] = integrity.misfiled
         payload["capped"] = _cap_fires(entries)
     payload["never_harvested"] = never_harvested(instance)
-    payload["stale_passes"] = _stale_passes(instance)
+    payload["stale_passes"], passes_error = _stale_passes(instance)
+    if passes_error is not None:
+        payload["passes_error"] = passes_error
     threads = _incomplete_threads(instance)
     payload["incomplete_threads"] = threads.rows
     notes += threads.notes
@@ -755,32 +783,47 @@ def _excluded_items(instance: Instance) -> set[str]:
     }
 
 
-def _stale_passes(instance: Instance) -> list[dict[str, object]]:
-    """Items whose latest harvest pass predates the current rules."""
+def _stale_passes(instance: Instance) -> tuple[list[dict[str, object]], str | None]:
+    """Items whose latest harvest pass predates the current rules, and the file's fault.
+
+    A record no reader can parse — the torn line an interrupted append
+    leaves, trailing at first but relocatable mid-file by later appends
+    or a union merge — is the file's finding, never a bare crash: the
+    report gets a failure row naming ``state/passes.jsonl`` and the line,
+    with the sanctioned repair (delete the named torn line — a
+    half-written line is not a record). The stale readings computed from
+    the parseable records still render; the first broken line is the one
+    named.
+    """
     path = instance.passes_path
     if not path.exists():
-        return []
+        return [], None
     latest: dict[str, int] = {}
+    error: str | None = None
     for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
         if not line.strip():
             continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError as e:
-            raise ValueError(f"{path}:{lineno}: unparseable pass record ({e})") from e
+            detail = " ".join(str(e).split())
+            error = error or f"{path.name}:{lineno}: unparseable pass record ({detail})"
+            continue
         if not isinstance(record, dict):
-            raise ValueError(f"{path}:{lineno}: pass record must be an object: {line!r}")
+            error = error or f"{path.name}:{lineno}: pass record must be an object: {line!r}"
+            continue
         if record.get("stage") != "harvest":
             continue
         item = record.get("item")
         rules = record.get("rules")
         if isinstance(item, str) and isinstance(rules, int):
             latest[item] = rules  # later lines supersede (append-order)
-    return [
+    stale: list[dict[str, object]] = [
         {"item": item, "rules": rules}
         for item, rules in sorted(latest.items())
         if rules < HARVEST_RULES_VERSION
     ]
+    return stale, error
 
 
 # ---------------------------------------------------------------------------

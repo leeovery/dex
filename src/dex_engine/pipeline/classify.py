@@ -88,10 +88,17 @@ class ScannedDocumentError(Exception):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Classification:
-    """A classified fetch failure: the status plus the stated reason."""
+    """A classified fetch failure: the status plus the stated reason.
+
+    ``tls`` marks a connection failure raised at the TLS layer, before any
+    HTTP conversation — a typed wire fact (like ``FetchFailure.http_status``),
+    because the run layer's http-only fallback dispatches on it and a
+    routing signal never lives in the reason prose.
+    """
 
     status: Status
     reason: str
+    tls: bool = False
 
     def to_outcome(self) -> Missing | Refused:
         """This classification as the driver outcome it reports — the ONE conversion.
@@ -117,9 +124,9 @@ class Classification:
             case Status.DEAD:
                 return Missing(evidence=self.reason)
             case Status.BLOCKED:
-                return Refused(evidence=self.reason)
+                return Refused(evidence=self.reason, tls=self.tls)
             case Status.MANUAL:
-                return Refused(evidence=self.reason, permanent=True)
+                return Refused(evidence=self.reason, permanent=True, tls=self.tls)
             case _:
                 raise RuntimeError(
                     f"no driver outcome for a {self.status.value!r} classification — "
@@ -192,7 +199,9 @@ def classify_connection(exc: OSError) -> Classification:
     if isinstance(cause, TimeoutError):
         return Classification(status=Status.BLOCKED, reason="connection timed out")
     if isinstance(cause, ssl.SSLError):
-        return Classification(status=Status.BLOCKED, reason=f"TLS failure ({scrub(str(cause))})")
+        return Classification(
+            status=Status.BLOCKED, reason=f"TLS failure ({scrub(str(cause))})", tls=True
+        )
     return Classification(status=Status.BLOCKED, reason=f"connection failed ({scrub(str(cause))})")
 
 

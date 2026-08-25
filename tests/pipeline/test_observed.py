@@ -404,17 +404,40 @@ class TestDedupe:
 
 
 class TestGate:
-    def test_disabled_config_files_and_records_nothing(self, tmp_path):
+    """The gate stops upstream filing only — the local record always lands."""
+
+    def test_disabled_config_records_locally_and_files_nothing(self, tmp_path):
         gh = FakeGh()
         output = _report(_write(tmp_path), gh, tmp_path / "state", enabled=False)
         assert gh.calls == []
-        assert not (tmp_path / "state" / "issue-reports.jsonl").exists()
+        assert "recorded locally" in output
         assert "report_issues" in output
+        records = _records(tmp_path / "state")
+        assert len(records) == 1
+        assert records[0]["filed"] is False
+        assert records[0]["action"] == "recorded"
+        assert records[0]["fingerprint"] == FP
+
+    def test_gated_record_keeps_the_local_note(self, tmp_path):
+        path = _write(tmp_path, note="the full detail, with the item id 2026-08-19-example-55ad7b")
+        output = _report(path, FakeGh(), tmp_path / "state", enabled=False)
+        assert "note kept in state/issue-reports.jsonl" in output
+        assert _records(tmp_path / "state")[0]["note"].startswith("the full detail")
+
+    def test_gate_on_later_never_refiles_the_recorded_observation(self, tmp_path):
+        _report(_write(tmp_path), FakeGh(), tmp_path / "state", enabled=False)
+        gh = FakeGh()
+        output = _report(_write(tmp_path), gh, tmp_path / "state")
+        assert gh.calls == []  # the local record answers before gh is consulted
+        assert output.startswith("nothing filed")
+        assert len(_records(tmp_path / "state")) == 1
 
     def test_disabled_config_still_rejects_a_leaky_payload(self, tmp_path):
         path = _write(tmp_path, observed="the fetch of https://example.com/x lands as done")
         with pytest.raises(IssuePayloadError):
             _report(path, FakeGh(), tmp_path / "state", enabled=False)
+        # A rejected payload writes nothing anywhere, gate on or off.
+        assert not (tmp_path / "state" / "issue-reports.jsonl").exists()
 
 
 class TestSoftEdge:

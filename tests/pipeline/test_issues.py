@@ -65,6 +65,11 @@ def _report(events, gh, state_dir, *, engine="0.1.0", enabled=True):
     )
 
 
+def _memory(state_dir) -> list[dict]:
+    text = (state_dir / "issue-reports.jsonl").read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.split("\n") if line.strip()]
+
+
 def _capture(fn, *, kind=Kind.WEB, unit_format=None) -> ErrorEvent:
     try:
         fn()
@@ -139,9 +144,9 @@ class TestFiling:
     def test_memory_records_the_filing(self, tmp_path):
         gh = FakeGh()
         _report([_event()], gh, tmp_path)
-        lines = (tmp_path / "issue-reports.jsonl").read_text().strip().split("\n")
-        record = json.loads(lines[0])
+        record = _memory(tmp_path)[0]
         assert record["action"] == "filed"
+        assert record["filed"] is True
         assert record["engine"] == "0.1.0"
         assert record["issue"] == 7
         assert record["fingerprint"] == fingerprint(_event())
@@ -169,6 +174,57 @@ class TestFiling:
         gh = FakeGh()
         assert _report([], gh, tmp_path).filed == 0
         assert gh.calls == []
+
+
+class TestGateRecordsLocally:
+    """report_issues: false stops upstream filing only — the record always lands."""
+
+    def test_gate_off_writes_a_filed_false_record(self, tmp_path):
+        gh = FakeGh()
+        outcome = _report([_event()], gh, tmp_path, enabled=False)
+        assert gh.calls == []
+        assert outcome.filed == 0
+        assert outcome.recorded == 1
+        assert any("recorded locally" in note for note in outcome.notes)
+        assert any("report_issues: false" in note for note in outcome.notes)
+        records = _memory(tmp_path)
+        assert len(records) == 1
+        assert records[0]["action"] == "recorded"
+        assert records[0]["filed"] is False
+        assert records[0]["fingerprint"] == fingerprint(_event())
+
+    def test_gate_on_later_never_refiles_a_recorded_fingerprint(self, tmp_path):
+        _report([_event()], FakeGh(), tmp_path, enabled=False)
+        gh = FakeGh()
+        outcome = _report([_event()], gh, tmp_path)
+        assert gh.calls == []  # the local record answers before gh is consulted
+        assert outcome.filed == 0
+        assert len(_memory(tmp_path)) == 1
+
+    def test_gate_off_repeats_do_not_re_record(self, tmp_path):
+        _report([_event()], FakeGh(), tmp_path, enabled=False)
+        outcome = _report([_event()], FakeGh(), tmp_path, enabled=False)
+        assert outcome.recorded == 0
+        assert len(_memory(tmp_path)) == 1
+
+    def test_gate_off_records_spend_the_per_run_budget(self, tmp_path):
+        events = [_event(function=f"fn_{i}") for i in range(MAX_NEW_ISSUES_PER_RUN + 2)]
+        outcome = _report(events, FakeGh(), tmp_path, enabled=False)
+        assert outcome.recorded == MAX_NEW_ISSUES_PER_RUN
+        assert len(_memory(tmp_path)) == MAX_NEW_ISSUES_PER_RUN
+
+    def test_records_predating_the_filed_field_still_suppress(self, tmp_path):
+        fp = fingerprint(_event())
+        (tmp_path / "issue-reports.jsonl").write_text(
+            json.dumps(
+                {"fingerprint": fp, "action": "filed", "engine": "0.1.0", "date": "2026-08-01"}
+            )
+            + "\n"
+        )
+        gh = FakeGh()
+        outcome = _report([_event()], gh, tmp_path)
+        assert gh.calls == []
+        assert outcome.filed == 0
 
 
 class TestDedup:

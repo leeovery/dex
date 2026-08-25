@@ -1005,8 +1005,10 @@ _HEALTH_OPTIONAL = frozenset(
         "count_drift",
         "restated",
         "taxonomy_error",
+        "entity_members_error",
         "ledger_entries",
         "ledger_error",
+        "passes_error",
         "ghost_items",
         "missing_outputs",
         "misfiled_outputs",
@@ -1062,9 +1064,11 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "count_drift": [{"page": str, "recorded": str, "actual": int}],  # actual = member count
           "restated": [{"page": str, "first": str, "second": str}],
           "taxonomy_error": str,        # malformed taxonomy — renders loud
+          "entity_members_error": str,  # malformed entity-members — renders loud
           # state checks
           "ledger_entries": int,
           "ledger_error": str,          # schema failure — renders loud
+          "passes_error": str,          # torn/unparseable pass record — renders loud
           # one row per (item, finding), never per entry — "entries" is the multiplicity
           "ghost_items": [{"item": str, "why": str, "entries": int}],  # item has no corpus file
           "missing_outputs": [{"item": str, "path": str}], # done output gone from disk
@@ -1164,6 +1168,15 @@ def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> lis
             )
         )
         blocks.append(kernel.bullet(_str_at(surface, payload, "taxonomy_error"), depth=1))
+    if "entity_members_error" in payload:
+        blocks.append(
+            kernel.bullet(
+                f"{kernel.bold('ENTITY MEMBERS FAILURE')} — repair "
+                "`state/entity-members.json`; the wiki checks below ran with "
+                "no entity members"
+            )
+        )
+        blocks.append(kernel.bullet(_str_at(surface, payload, "entity_members_error"), depth=1))
     blocks += _health_pairs(
         surface,
         payload,
@@ -1308,6 +1321,16 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
         "never_harvested",
         "harvest these (enrichment landed, no harvest pass on record)",
     )
+    if "passes_error" in payload:
+        blocks.append(
+            kernel.bullet(
+                f"{kernel.bold('PASSES FAILURE')} — repair `state/passes.jsonl`: delete "
+                "the torn line named below, and only that line (a half-written line is "
+                "not a record; every intact line is); the pass readings below ran "
+                "without the broken record"
+            )
+        )
+        blocks.append(kernel.bullet(_str_at(surface, payload, "passes_error"), depth=1))
     stale_passes = _health_rows(surface, payload, "stale_passes", ("item",), int_keys=("rules",))
     blocks += _health_listing(
         "harvest passes under old rules (re-judge)",

@@ -8,7 +8,10 @@ mechanism, two producers: the exception path here fires only on
 path (:mod:`.observed`, the ``dex issue`` verb) files what a session SAW
 misbehave without anything raising. Both reduce to a :class:`Filable` and
 go through :func:`file_reports`: the same repo, dedup arithmetic, local
-memory, rate limit and soft edge.
+memory, rate limit and soft edge. The ``report_issues`` gate stops
+upstream filing only — a gated report still lands in the local memory as
+a ``filed: false`` record, which dedupe treats like any other, so turning
+the gate on later never auto-refiles old observations.
 
 Everything the exception path sends is allowlisted: engine version,
 command, kind/format enums, error class, errno where present,
@@ -136,10 +139,15 @@ class Filable:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FilerOutcome:
-    """What the filer did this run — feeds the run report."""
+    """What the filer did this run — feeds the run report.
+
+    ``recorded`` counts the gate-off outcomes: reports written to the
+    local memory only, with nothing sent upstream.
+    """
 
     filed: int = 0
     commented: int = 0
+    recorded: int = 0
     notes: list[str] = field(default_factory=list)
 
 
@@ -205,9 +213,15 @@ def fingerprint(event: ErrorEvent) -> str:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _MemoryRecord:
     fingerprint: str
-    action: str  # "filed" | "commented"
+    action: str  # "filed" | "commented" | "recorded" (gate off: local only)
     engine: str
     date: str
+    # Whether anything reached GitHub for this record. False is the
+    # report_issues:false record — observed locally, nothing sent — and
+    # dedupe reads records regardless of it: turning the gate on later
+    # must not auto-refile what was already seen. Absent on records that
+    # predate the field, which were all upstream actions.
+    filed: bool = True
     issue: int | None = None
     # The observed verb's local-only free text. THE SPLIT: the note is for
     # the owner to read here and forward by hand — it is never part of any
@@ -242,12 +256,15 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
             )
         issue = raw.get("issue")
         note = raw.get("note")
+        filed = raw.get("filed")
         records.append(
             _MemoryRecord(
                 fingerprint=str(raw["fingerprint"]),
                 action=str(raw["action"]),
                 engine=str(raw["engine"]),
                 date=str(raw["date"]),
+                # Records that predate the field were all upstream actions.
+                filed=filed if isinstance(filed, bool) else True,
                 issue=issue if isinstance(issue, int) else None,
                 note=note if isinstance(note, str) else None,
             )
@@ -256,11 +273,12 @@ def _read_memory(path: Path) -> list[_MemoryRecord]:
 
 
 def _append_memory(path: Path, record: _MemoryRecord) -> None:
-    raw: dict[str, str | int] = {
+    raw: dict[str, str | int | bool] = {
         "fingerprint": record.fingerprint,
         "action": record.action,
         "engine": record.engine,
         "date": record.date,
+        "filed": record.filed,
     }
     if record.issue is not None:
         raw["issue"] = record.issue
@@ -360,15 +378,24 @@ def _issue_number(create_output: str) -> int | None:
 
 @dataclass(slots=True, kw_only=True)
 class _Filer:
-    """One filing pass over producer-shaped reports — internal to :func:`file_reports`."""
+    """One filing pass over producer-shaped reports — internal to :func:`file_reports`.
+
+    ``enabled`` is the ``report_issues`` gate, and it gates UPSTREAM only:
+    with it off, ``gh`` is never consulted and each new report becomes a
+    local ``filed: false`` memory record instead — the same memory dedupe
+    reads, so turning the gate on later never auto-refiles what was
+    already observed.
+    """
 
     gh: GhRunner
     memory_path: Path
     engine_version: str
     today: Callable[[], datetime.date]
+    enabled: bool = True
     memory: list[_MemoryRecord] = field(default_factory=list)
     filed: int = 0
     commented: int = 0
+    recorded: int = 0
     notes: list[str] = field(default_factory=list)
 
     def handle(self, filable: Filable) -> None:
@@ -378,6 +405,9 @@ class _Filer:
             for record in self.memory
         ):
             return  # already reported at this engine version (the re-spam guard)
+        if not self.enabled:
+            self._record_local(filable)
+            return
         found = _search(self.gh, fp)
         open_issues = [e for e in found if str(e.get("state", "")).upper() == "OPEN"]
         closed_issues = [e for e in found if str(e.get("state", "")).upper() == "CLOSED"]
@@ -428,7 +458,7 @@ class _Filer:
         self._file(filable, regression_of=number if isinstance(number, int) else None)
 
     def _file(self, filable: Filable, *, regression_of: int | None) -> None:
-        if self.filed >= MAX_NEW_ISSUES_PER_RUN:
+        if self._rate_limited():
             return  # the rate limit; the fingerprint retries next run
         out = self.gh(
             [
@@ -448,12 +478,30 @@ class _Filer:
         label = f"#{number}" if number is not None else f"fp-{filable.fingerprint}"
         self.notes.append(f"filed engine issue {label}: {filable.summary}")
 
-    def _remember(self, filable: Filable, *, action: str, issue: int | None) -> None:
+    def _record_local(self, filable: Filable) -> None:
+        """The gate-off outcome: the memory record, and nothing upstream."""
+        if self._rate_limited():
+            return  # any record spends the per-run budget; the rest retry next run
+        self.recorded += 1
+        self._remember(filable, action="recorded", issue=None, filed=False)
+        self.notes.append(
+            f"recorded locally: {filable.summary} — issue reporting is off "
+            "(report_issues: false), nothing filed upstream"
+        )
+
+    def _rate_limited(self) -> bool:
+        """Whether this run's new-report budget is spent — any record counts."""
+        return self.filed + self.recorded >= MAX_NEW_ISSUES_PER_RUN
+
+    def _remember(
+        self, filable: Filable, *, action: str, issue: int | None, filed: bool = True
+    ) -> None:
         record = _MemoryRecord(
             fingerprint=filable.fingerprint,
             action=action,
             engine=self.engine_version,
             date=self.today().isoformat(),
+            filed=filed,
             issue=issue,
             note=filable.note,
         )
@@ -484,27 +532,35 @@ def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
     on a newer engine), rate-limited, remembered in
     ``state/issue-reports.jsonl``, and never fatal.
 
+    The gate stops UPSTREAM filing only: with ``enabled`` false, ``gh``
+    is never invoked and each new report still lands in the local memory
+    as a ``filed: false`` record. Dedupe and the per-run rate limit read
+    any record as seen, so turning the gate on later never auto-refiles
+    old observations.
+
     Args:
         filables: The producer-shaped reports to file.
-        enabled: The ``report_issues`` config gate (default true).
+        enabled: The ``report_issues`` config gate (default true) — gates
+            what is sent to GitHub, never the local record.
         state_dir: The instance's ``state/`` — holds the local memory.
         engine_version: The running engine's version (injected).
         today: Injected clock.
         gh: The ``gh`` seam.
 
     Returns:
-        What was filed and commented, plus report notes. Filer failures
-        are wrapped non-fatal: the outcome notes "issue filing failed"
-        and the caller continues — the local state already holds the
-        truth.
+        What was filed, commented and recorded locally, plus report
+        notes. Filer failures are wrapped non-fatal: the outcome notes
+        "issue filing failed" and the caller continues — the local state
+        already holds the truth.
     """
-    if not enabled or not filables:
+    if not filables:
         return FilerOutcome()
     filer = _Filer(
         gh=gh,
         memory_path=_memory_path(state_dir),
         engine_version=engine_version,
         today=today,
+        enabled=enabled,
     )
     try:
         filer.memory = _read_memory(filer.memory_path)
@@ -514,7 +570,9 @@ def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
         # The filer's one soft edge: gh missing/failing, unparseable output, a torn
         # memory line. Never fatal — noted, and the run continues.
         filer.notes.append(f"issue filing failed ({scrub(str(e))}) — run continues")
-    return FilerOutcome(filed=filer.filed, commented=filer.commented, notes=filer.notes)
+    return FilerOutcome(
+        filed=filer.filed, commented=filer.commented, recorded=filer.recorded, notes=filer.notes
+    )
 
 
 def _error_filable(
@@ -559,7 +617,8 @@ def report_errors(  # noqa: PLR0913 — every input is injected, none ambient
 
     Args:
         events: The run's error events (one per errored unit).
-        enabled: The ``report_issues`` config gate (default true).
+        enabled: The ``report_issues`` config gate (default true) — gates
+            what is sent to GitHub, never the local record.
         state_dir: The instance's ``state/`` — holds the local memory.
         engine_version: The running engine's version (injected).
         command: The CLI command that ran, for the issue body.

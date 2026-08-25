@@ -2,15 +2,16 @@
 state/*.jsonl merge=union
 # media is LFS-tracked; capture notes, transcripts, and knowledge stay plain git
 media/** filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.png filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.jpg filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.jpeg filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.webp filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.gif filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.pdf filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.mp4 filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.mov filter=lfs diff=lfs merge=lfs -text
-enrichment/**/media-*.heic filter=lfs diff=lfs merge=lfs -text
+# Enrichment binaries are LFS-tracked by NAME SHAPE, never by extension
+# list: a media download is media-<n>.<ext> and an extraction asset is
+# <hash6>-asset-<n>.<ext>, whatever extension the source served — an
+# unlisted format must not land as a plain-git blob. Both shapes anchor
+# on the numeric index, and the markdown line below exempts what shares
+# the directory: media-<n>.md is a session's written description and
+# <kind>-<hash6>.md is enrichment content — both stay plain git.
+enrichment/**/media-[0-9]*.* filter=lfs diff=lfs merge=lfs -text
+enrichment/**/*-asset-[0-9]*.* filter=lfs diff=lfs merge=lfs -text
+enrichment/**/*.md !filter !diff !merge !text
 raw/**/*.png filter=lfs diff=lfs merge=lfs -text
 raw/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 raw/**/*.jpeg filter=lfs diff=lfs merge=lfs -text

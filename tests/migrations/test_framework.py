@@ -96,6 +96,21 @@ class TestAppliedLog:
         with pytest.raises(MigrationError, match="unparseable"):
             read_applied(path)
 
+    def test_a_torn_record_names_the_file_line_and_sanctioned_repair(self, tmp_path):
+        # The state a crash mid-append leaves: a whole record, then a torn
+        # trailing line. Sync has no report to render, so the error itself
+        # carries the repair — a half-written line is not a record.
+        path = log_path(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text('{"number": 1, "engine": "0.5.0", "date": "2026-08-20"}\n{"number": 2,\n')
+        with pytest.raises(MigrationError) as err:
+            read_applied(path)
+        message = str(err.value)
+        assert "migrations.jsonl:2" in message  # the file AND the torn line
+        assert "delete the torn line" in message
+        assert "re-run sync" in message
+        assert "idempotent migrations make a lost record harmless" in message
+
     def test_record_without_number_is_loud(self, tmp_path):
         path = log_path(tmp_path)
         path.parent.mkdir(parents=True)

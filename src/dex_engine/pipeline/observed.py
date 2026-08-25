@@ -145,13 +145,17 @@ def report_observed(  # noqa: PLR0913 — every input is injected, none ambient
     mechanism (:func:`.issues.file_reports`) owns everything: dedup
     against local memory and the tracker, the seen-again comment, the
     regression arithmetic, the memory record (which alone carries the
-    ``note``), and the never-fatal gh edge.
+    ``note``), and the never-fatal gh edge. The gate stops upstream
+    filing only — a gated report still lands in the local memory as a
+    ``filed: false`` record, so the observation is never lost and never
+    auto-refiled once the gate turns on.
 
     Args:
         payload_path: The JSON payload (conventionally under ``cache/``):
             ``{"verb", "expected", "observed"}``, ``steps`` and the
             local-only ``note`` optional.
-        enabled: The ``report_issues`` config gate.
+        enabled: The ``report_issues`` config gate — gates what is sent
+            to GitHub, never the local record.
         state_dir: The instance's ``state/`` — holds the local memory.
         engine_version: The running engine's version (injected).
         today: Injected clock.
@@ -181,11 +185,6 @@ def report_observed(  # noqa: PLR0913 — every input is injected, none ambient
         [("expected", expected), ("observed", observed)]
         + [(f"steps[{i}]", step) for i, step in enumerate(steps)],
     )
-    if not enabled:
-        return (
-            "issue reporting is off (report_issues: false in state/config.json) — "
-            "nothing filed, nothing recorded"
-        )
     fp = observed_fingerprint(verb=verb, expected=expected, observed=observed)
 
     def body(regression_of: int | None) -> str:
@@ -209,7 +208,7 @@ def report_observed(  # noqa: PLR0913 — every input is injected, none ambient
     )
     outcome = issues.file_reports(
         [filable],
-        enabled=True,
+        enabled=enabled,
         state_dir=state_dir,
         engine_version=engine_version,
         today=today,
@@ -275,14 +274,14 @@ def _render_outcome(outcome: issues.FilerOutcome, *, fp: str, note: str | None) 
     """The verb's one-line account of what the mechanism did."""
     if not outcome.notes:
         # The mechanism's silent branches: this instance already reported
-        # the fingerprint at this engine, or the issue is closed upstream
-        # with no newer-engine recurrence to claim.
+        # or recorded the fingerprint at this engine, or the issue is
+        # closed upstream with no newer-engine recurrence to claim.
         return (
             f"nothing filed: fp-{fp} is already reported at this engine or closed "
-            "upstream — no record written"
+            "upstream — no new record written"
         )
     text = "; ".join(outcome.notes)
-    if note is not None and (outcome.filed or outcome.commented):
+    if note is not None and (outcome.filed or outcome.commented or outcome.recorded):
         text += " · note kept in state/issue-reports.jsonl (local only — the owner forwards it)"
     return text
 

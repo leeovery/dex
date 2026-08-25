@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import ssl
 import zipfile
 from pathlib import Path
 
@@ -25,7 +26,8 @@ from dex_engine.exclude import run_exclude
 from dex_engine.lint import run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.classify import ProviderInputError
+from dex_engine.pipeline.classify import ProviderInputError, classify_connection
+from dex_engine.pipeline.digest import item_digest
 from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
@@ -58,6 +60,7 @@ from dex_engine.pipeline.types import (
     Refused,
     Status,
     Unusable,
+    WorkUnit,
 )
 from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, fixture_bytes
@@ -974,6 +977,82 @@ class TestOutcomeMapping:
         assert entry.status is Status.DONE
         assert entry.via == "sniff"
         assert len(web.fetched) == 1  # the correction re-routed, never re-fetched as web
+
+
+class TestHttpOnlySources:
+    """The TLS-failure http fallback: only for sources actually shared as http."""
+
+    HTTP_URL = "http://legacy.example.test/post"
+    CANONICAL = "https://legacy.example.test/post"
+
+    @staticmethod
+    def tls_refusal() -> Outcome:
+        # Through the real classifier, so the typed tls marker is the one
+        # the production path carries — never a hand-built lookalike.
+        return classify_connection(ssl.SSLError(1, "TLSV1_ALERT_PROTOCOL_VERSION")).to_outcome()
+
+    def scheme_split_driver(self) -> FakeDriver:
+        """TLS-refuses every https fetch; serves content over http."""
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url.startswith("https://"):
+                return self.tls_refusal()
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        return FakeDriver(fetch_fn=fetch)
+
+    def test_http_shared_source_refetches_over_http_and_lands(self, instance):
+        write_item(instance, urls=[self.HTTP_URL])
+        driver = self.scheme_split_driver()
+        ctx = make_ctx(instance, driver)
+        report = run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL, self.HTTP_URL]
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DONE
+        # Identity and ledger semantics unchanged: the line still carries
+        # the canonical https URL; only the wire request downgraded.
+        assert entry.url == self.CANONICAL
+        assert entry.path is not None
+        assert (instance.root / entry.path).exists()
+        # The retry is visible on the report — it otherwise shows an https
+        # URL the owner never shared.
+        assert "refetched over http" in report
+
+    def test_https_shared_source_never_downgrades_on_tls_failure(self, instance):
+        write_item(instance, urls=[self.CANONICAL])
+        driver = self.scheme_split_driver()
+        ctx = make_ctx(instance, driver)
+        report = run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL]  # no http attempt
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.BLOCKED
+        assert entry.reason is not None
+        assert entry.reason.startswith("TLS failure")
+        assert "refetched over http" not in report
+
+    def test_a_non_tls_refusal_never_downgrades_even_when_http_shared(self, instance):
+        write_item(instance, urls=[self.HTTP_URL])
+        driver = FakeDriver(fetch_fn=lambda _u: Refused(evidence="HTTP 403"))
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        assert [unit.url for unit in driver.fetched] == [self.CANONICAL]
+        assert entry_for(ctx, self.CANONICAL).status is Status.BLOCKED
+
+    def test_the_fallback_fetch_takes_the_normal_outcome_road(self, instance):
+        # An http retry that ALSO fails classifies exactly as a normal
+        # fetch would — same outcomes, same statuses.
+        write_item(instance, urls=[self.HTTP_URL])
+
+        def fetch(unit: WorkUnit) -> Outcome:
+            if unit.url.startswith("https://"):
+                return self.tls_refusal()
+            return Missing(evidence="HTTP 404")
+
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
+        run_mod.run(ctx)
+        entry = entry_for(ctx, self.CANONICAL)
+        assert entry.status is Status.DEAD
+        assert entry.reason == "HTTP 404"
 
 
 class TestRerun:
@@ -2398,7 +2477,7 @@ class TestIssueFiling:
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch), gh=gh))
         assert gh.calls == []  # blocked/dead/manual/waiting are not engine bugs
 
-    def test_report_issues_false_files_nothing(self, instance):
+    def test_report_issues_false_files_nothing_but_records_locally(self, instance):
         gh = FakeGh()
         ctx = dataclasses.replace(
             self._crashing_ctx(instance, gh), config=Config(report_issues=False)
@@ -2406,6 +2485,11 @@ class TestIssueFiling:
         report = run_mod.run(ctx)
         assert gh.calls == []
         assert "reported upstream" not in report
+        # The gate stops upstream filing only — the observation still lands
+        # in the local memory, filed: false, and the report says so.
+        assert "recorded locally" in report
+        record = json.loads((instance.state_dir / "issue-reports.jsonl").read_text().split("\n")[0])
+        assert record["filed"] is False
 
     def test_filer_failure_is_a_note_and_the_run_completes(self, instance):
         report = run_mod.run(self._crashing_ctx(instance, refuse_gh))
@@ -2467,6 +2551,56 @@ class TestNoSourceItems:
         self._text_item(instance)
         report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
         assert "no-source item" not in report
+
+
+class TestAllDeadItems:
+    """Every unit dead — the item owes description + digest from the note."""
+
+    ALL_DEAD_REASON = "every source dead — awaiting description + digest from the note"
+
+    def _dead_ctx(self, instance):
+        write_item(instance)
+        return make_ctx(instance, FakeDriver(fetch_fn=lambda _u: Missing(evidence="HTTP 404")))
+
+    def test_named_on_the_landing_run_report(self, instance):
+        report = run_mod.run(self._dead_ctx(instance))
+        assert ITEM in report
+        assert self.ALL_DEAD_REASON in report
+
+    def test_listed_by_the_digest_backstop_on_both_surfaces(self, instance):
+        run_mod.run(self._dead_ctx(instance))
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        report = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "Digest these" in report
+        assert ITEM in report
+
+    def test_drops_off_both_surfaces_once_digested(self, instance):
+        ctx = self._dead_ctx(instance)
+        run_mod.run(ctx)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{ITEM}.md").write_text("digested\n", encoding="utf-8")
+        run_mod.record_pass(ctx, ITEM, "digest")
+        assert run_mod.digest_orphans(instance) == []
+        report = run_mod.run(self._dead_ctx(instance))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_an_item_with_one_landed_unit_is_not_all_dead(self, instance):
+        write_item(instance, urls=[URL, "https://example.test/alive"])
+
+        def fetch(unit):
+            if unit.url == URL:
+                return Missing(evidence="HTTP 404")
+            return Content(meta={"title": "t"}, body="substantial body " * 30)
+
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_a_dead_ghost_item_is_never_listed(self, instance):
+        # A dead unit whose item has no corpus file is lint's ghost-item
+        # finding — never work the backstop can ask anyone to digest.
+        run_mod.run(self._dead_ctx(instance))
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        assert run_mod.digest_orphans(instance) == []
 
 
 ALPHA = "2026-08-19-alpha-111111"
@@ -3160,6 +3294,62 @@ class TestOwnershipIsTheCorpusAnswer:
 
         run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
         assert corpus.read_item(bravo_path).status == "raw"
+
+
+class TestRenameAwareDigestBackstop:
+    """An orphaned enrichment directory resolves to the live item by shortid."""
+
+    def _mid_rename(self, instance) -> None:
+        """File + id renamed; the enrichment directory left under the old name."""
+        write_item(instance, NEW_ITEM)
+        out = instance.enrichment_dir / OLD_ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(f"---\nurl: {URL}\nfetched: '2026-08-01'\n---\n\nthe body\n")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                path=f"enrichment/{OLD_ITEM}/web-{work_hash(URL)[:6]}.md",
+            ),
+        )
+
+    def test_only_the_live_id_is_listed(self, instance):
+        # Not the dead directory name the digest verb would refuse, and
+        # not both — once, under the live id.
+        self._mid_rename(instance)
+        assert run_mod.digest_orphans(instance) == [NEW_ITEM]
+
+    def test_digesting_the_listed_id_succeeds_and_clears_the_listing(self, instance):
+        self._mid_rename(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        payload = instance.cache_dir / "digest.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "id": NEW_ITEM,
+                    "signal": "medium",
+                    "topics": ["uncategorized-shares"],
+                    "facts": ["one fact"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        confirmation = item_digest(payload, ctx=ctx)
+        assert "digest pass recorded" in confirmation
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_directory_matching_no_live_shortid_keeps_its_name(self, instance):
+        # Nothing to attribute to — the name stands, as it always did.
+        stray = instance.enrichment_dir / "2026-01-01-gone-abcdef"
+        stray.mkdir(parents=True)
+        (stray / "web-abc123.md").write_text("enriched", encoding="utf-8")
+        assert run_mod.digest_orphans(instance) == ["2026-01-01-gone-abcdef"]
 
 
 class TestRerunPacing:

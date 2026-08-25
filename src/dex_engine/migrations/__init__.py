@@ -164,7 +164,9 @@ def read_applied(path: Path) -> set[int]:
             raw = json.loads(line)
         except json.JSONDecodeError as e:
             raise MigrationError(
-                f"{path}:{lineno}: unparseable applied-migration record ({e})"
+                f"{path}:{lineno}: unparseable applied-migration record ({e}) — a "
+                "half-written line is not a record: delete the torn line and re-run "
+                "sync (idempotent migrations make a lost record harmless)"
             ) from e
         if not isinstance(raw, dict):
             raise MigrationError(f"{path}:{lineno}: record must be a JSON object: {line!r}")
