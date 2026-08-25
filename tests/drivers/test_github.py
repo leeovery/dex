@@ -11,7 +11,7 @@ import pytest
 
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.pipeline.detect import detect_kind
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Format, Kind, Status
 from tests.drivers.conftest import (
     FakeGh,
@@ -23,6 +23,8 @@ from tests.drivers.conftest import (
     make_unit,
     reason_of,
 )
+
+DRIVERS = default_drivers()
 
 
 def driver_for(gh_responses: dict | None = None) -> GitHubDriver:

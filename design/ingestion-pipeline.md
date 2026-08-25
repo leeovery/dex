@@ -343,9 +343,11 @@ Typing discipline (binding for the implementation):
   — `queued` is a birth state and `error` is raised, never returned
   (`Result` has no error channel by design; the pipeline's single broad
   except is the only route to `error` status). `Result` validates this.
-- The typed registry literal (`DRIVERS: list[SourceDriver] = […]`) is the
-  Protocol-conformance point — the type checker verifies every driver
-  against the interface at that one assignment. Same for provider lists.
+- The typed registry literal (`build_drivers`'s `list[SourceDriver]`
+  return) is the Protocol-conformance point — the type checker verifies
+  every driver against the interface at that one return. Same for
+  provider lists. The registry is built by that function on demand
+  (§16), never at import.
 - Every **total** dispatch over `Status`/`Kind`/`Need` uses `match` +
   `assert_never` (exhaustiveness: adding an enum member becomes a type
   error at every unhandled site). The drain predicate is one total
@@ -2253,16 +2255,65 @@ and the outcome union settles several of these on its way past.
   failure vocabulary, the audio-cache scan) serves the youtube driver and
   the transcribe drain from the lib layer; outside `registry.py` — the
   conformance point (§14) — no pipeline module imports a driver.
-- **`ledger.py`'s per-word legacy-vocabulary hint tables.**
+- **`ledger.py`'s per-word legacy-vocabulary hint tables.** **Done**: the
+  tables are the boundary's public `RENAMED_KINDS` / `RETIRED_STATUSES`,
+  and migration 1 translates from those same objects (its filename
+  prefixes derived from the kind renames), so the loud pre-migration
+  error and the translation are one spelling — the hint can never name a
+  word the migration does not fix, nor miss one it does. The pinned error
+  messages are byte-identical.
 - **The import-time `DRIVERS` registry.** A module-level list against the
   no-import-time-state rule (§14); the typed registry literal is still the
-  Protocol-conformance point (§2), just not at import.
+  Protocol-conformance point (§2), just not at import. **Done**:
+  `registry.default_drivers()` builds the default list on demand and the
+  entry points call it — `run._unit_owners`'s standing-report callers,
+  normalize (threaded once per run), lint, exclude, and migration 2 (once
+  per apply) — so importing `registry` constructs nothing; the typed
+  literal in `build_drivers` remains the conformance point, and the web
+  catch-all stays last in the one place the order is defined.
 - **Streaming transport reads.** An unbounded `response.read()` buffers a
   whole enclosure in memory; enforce the §7 media cap in-stream instead, so
   an oversize download is refused while it arrives rather than after.
+  **Done**: the transport takes the caller's byte ceiling (`limit`) and
+  reads the body in chunks to at most one byte past it, so `len(body) >
+  limit` still fires while the rest is never drawn; `fetch_classified`
+  carries the ceiling through, and the media stage passes the §7 10MB cap
+  on its GET — an oversize body behind a lying or absent Content-Length
+  now costs ~10MB of memory, not the body. Under-ceiling bodies are
+  byte-identical and the over-ceiling outcome is the same `skipped` with
+  the same reason. The ceiling applies exactly where one exists: the
+  transcribe drain's enclosure GET stays whole-body by design (a 150MB
+  episode is the work, and its bytes go to the audio cache), as do
+  inbox's asset download (size known from the API and verified after; the
+  capture must materialize whole) and the JSON API reads — none of these
+  has a ceiling to enforce.
 - **A per-item fetched-count cache.** The cap check recounts the item's
-  entries per admission, which is quadratic in the item's ledger.
-- **One long-lived append handle for the ledger.**
+  entries per admission, which is quadratic in the item's ledger. **Done**:
+  the drain keeps a per-item table built lazily from the entries, updated
+  in `record` — the one door entries change through — and dropped whenever
+  ownership re-resolves, since the counts attribute exactly as `owner_of`
+  does. At every read it equals the full recount (pinned across
+  admissions, cap fires, `--force`, budget-returning skips, media lines,
+  and a rename's re-attribution); the cap check is O(1) per admission
+  after one build.
+- **One long-lived append handle for the ledger.** **Done**:
+  `ledger.Appender` holds one append-mode handle for a drain's many
+  writes (the verbs close it as they finish; `ledger.append` remains as
+  its one-shot form for the single-line callers). Every line is flushed
+  as written, so the durability contract of open-per-line is kept
+  exactly — after each append the line is with the OS, visible to every
+  reader and safe against a process crash; neither shape fsyncs, so an OS
+  crash can cost the tail either way, as before. The file format is
+  byte-identical and append mode keeps an interleaved writer's line
+  intact. The per-line reopen turned out to be load-bearing in a second
+  way: `compact`, exclude's purge, and the migrations rewrite the ledger
+  atomically (temp file + one replace — a new inode at the same path),
+  and open-per-line re-resolved the path every write, so post-rewrite
+  appends followed the file. The held handle keeps that property by
+  revalidating identity per line (`fstat` vs `stat` on dev/ino, reopen
+  on mismatch or a briefly missing path) — one stat pair per line, still
+  far cheaper than the reopen it replaced; the check must never be
+  "optimised" away.
 
 Two seams of this round already landed as part of fixes and are **done**:
 `drivers/gh.py`, the authenticated GitHub route the github and file drivers

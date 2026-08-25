@@ -50,7 +50,12 @@ DEFAULT_TIMEOUT = 30.0
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HttpResponse:
-    """One HTTP response: status, media type, raw body."""
+    """One HTTP response: status, media type, raw body.
+
+    Under a caller's ``limit`` the body holds at most ``limit + 1`` bytes —
+    the read stops one byte past the ceiling, so ``len(body) > limit`` is
+    still exactly the over-ceiling test while the memory cost is bounded.
+    """
 
     status: int
     content_type: str  # lowercased media type, parameters stripped ("text/html")
@@ -70,8 +75,13 @@ class HttpResponse:
 class Transport(Protocol):
     """The injected fetch seam: GET (or HEAD) one URL."""
 
-    def __call__(self, url: str, *, method: str = "GET") -> HttpResponse:
-        """Fetch ``url``; HTTP failures return, connection failures raise ``OSError``."""
+    def __call__(self, url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
+        """Fetch ``url``; HTTP failures return, connection failures raise ``OSError``.
+
+        ``limit`` is the caller's body ceiling: the body is read to at most
+        ``limit + 1`` bytes and the rest never buffered, so an over-ceiling
+        download is refused while it arrives rather than after.
+        """
         ...
 
 
@@ -181,12 +191,44 @@ def _ascii_url(url: str) -> str:
     )
 
 
-def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
+# How much of a body one bounded read call asks for. Only reads under a
+# caller's ``limit`` chunk; an unlimited read stays one ``read()``.
+_READ_CHUNK = 64 * 1024
+
+
+class _BodyStream(Protocol):
+    """What the bounded read needs of a response: ``read(n)``, short reads ok."""
+
+    def read(self, n: int, /) -> bytes: ...
+
+
+def _read_limited(stream: _BodyStream, limit: int) -> bytes:
+    """Read ``stream`` to at most ``limit + 1`` bytes, in chunks, and stop.
+
+    The single extra byte is what keeps the caller's ceiling test honest:
+    ``len(body) > limit`` still fires for an over-ceiling body, while the
+    bytes past it are never requested — a 2GB enclosure behind a lying or
+    absent Content-Length costs ``limit + 1`` bytes of memory, not 2GB.
+    """
+    chunks: list[bytes] = []
+    remaining = limit + 1
+    while remaining > 0:
+        chunk = stream.read(min(_READ_CHUNK, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def urllib_transport(url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
     """Fetch ``url`` over urllib with the browser UA.
 
     Args:
         url: An absolute http(s) URL.
         method: ``GET`` (default) or ``HEAD``.
+        limit: The caller's body ceiling, when it has one — the body is
+            read to at most ``limit + 1`` bytes (:func:`_read_limited`).
 
     Returns:
         The response — 4xx/5xx included, never raised.
@@ -206,7 +248,12 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
     with normalize_httplib_errors():
         try:
             with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT) as response:  # noqa: S310
-                body = b"" if method == "HEAD" else response.read()
+                if method == "HEAD":
+                    body = b""
+                elif limit is None:
+                    body = response.read()
+                else:
+                    body = _read_limited(response, limit)
                 return HttpResponse(
                     status=response.status,
                     content_type=_media_type(response.headers.get("Content-Type")),
@@ -222,7 +269,7 @@ def urllib_transport(url: str, *, method: str = "GET") -> HttpResponse:
             # ``normalize_httplib_errors`` as a connection failure, turning
             # a 404's `dead` into `blocked`.
             with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
-                body = e.read()
+                body = e.read() if limit is None else _read_limited(e, limit)
             return HttpResponse(
                 status=e.code,
                 content_type=_media_type(e.headers.get("Content-Type") if e.headers else None),

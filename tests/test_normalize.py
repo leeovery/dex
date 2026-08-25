@@ -15,6 +15,7 @@ from dex_engine.normalize import (
     run_normalize,
 )
 from dex_engine.pipeline.capture import slugify
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Config, Instance
 
 CHANNEL = "general"
@@ -71,11 +72,12 @@ class TestHelpers:
         assert len(slugify("word " * 30)) <= 40
 
     def test_kind_of_uses_the_shared_registry(self):
-        assert kind_of("https://www.youtube.com/watch?v=abc") == "youtube"
-        assert kind_of("https://m.youtube.com/watch?v=abc") == "youtube"  # the healed split
-        assert kind_of("https://gist.github.com/a/b") == "github"  # the healed gist gap
-        assert kind_of("https://x.com/a/status/1") == "x"  # post-rename vocabulary
-        assert kind_of("https://example.test/post") == "web"
+        drivers = default_drivers()
+        assert kind_of("https://www.youtube.com/watch?v=abc", drivers) == "youtube"
+        assert kind_of("https://m.youtube.com/watch?v=abc", drivers) == "youtube"  # healed split
+        assert kind_of("https://gist.github.com/a/b", drivers) == "github"  # the healed gist gap
+        assert kind_of("https://x.com/a/status/1", drivers) == "x"  # post-rename vocabulary
+        assert kind_of("https://example.test/post", drivers) == "web"
 
     def test_load_exclusions_matches_trailing_shortid(self, tmp_path):
         path = tmp_path / "exclusions.tsv"

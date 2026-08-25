@@ -55,12 +55,17 @@ class FetchFailure:
         return self.classification.reason
 
 
-def fetch_classified(transport: Transport, url: str) -> HttpResponse | FetchFailure:
+def fetch_classified(
+    transport: Transport, url: str, *, limit: int | None = None
+) -> HttpResponse | FetchFailure:
     """GET ``url``; a 2xx response returns, everything else classifies.
 
     Args:
         transport: The HTTP seam.
         url: An absolute http(s) URL.
+        limit: The caller's body ceiling, passed to the transport — the
+            body arrives at most ``limit + 1`` bytes long, so the ceiling
+            check still fires without the over-ceiling body ever buffered.
 
     Returns:
         The successful response, or the classified failure — connection
@@ -68,7 +73,7 @@ def fetch_classified(transport: Transport, url: str) -> HttpResponse | FetchFail
         ``classify_http``.
     """
     try:
-        response = transport(url)
+        response = transport(url, limit=limit)
     except OSError as e:
         return FetchFailure(classification=classify_connection(e))
     if response.ok:

@@ -15,6 +15,7 @@ from typing import ClassVar
 import pytest
 
 from dex_engine.corpus import read_item
+from dex_engine.migrations import migration_1
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.types import Cap, Config, Kind, LedgerEntry, Need, Status
@@ -1041,3 +1042,26 @@ class TestIdempotency:
             "config.json",
             "enrichment-ledger.jsonl",
         ]
+
+
+class TestOneVocabularySpelling:
+    """The migration translates FROM the ledger boundary's own hint tables.
+
+    Two spellings of the legacy vocabulary is the drift this pins against:
+    a word the boundary hints at but no migration translates sends the
+    owner to a sync that fixes nothing, and a word the migration translates
+    but the boundary does not hint at fails with no migration named.
+    """
+
+    def test_the_kind_renames_are_the_ledger_boundarys_table(self):
+        assert migration_1.RENAMED_KINDS is ledger.RENAMED_KINDS
+
+    def test_the_retired_statuses_are_the_ledger_boundarys_table(self):
+        assert migration_1.RETIRED_STATUSES is ledger.RETIRED_STATUSES
+
+    def test_filename_prefixes_follow_the_kind_renames(self):
+        # Outputs are named `<kind>-<hash6>.md`, so a kind rename IS a
+        # filename-prefix rename; a hand-kept prefix list would go stale
+        # the day a rename lands in the shared table alone.
+        derived = tuple((f"{old}-", f"{new}-") for old, new in ledger.RENAMED_KINDS.items())
+        assert derived == migration_1._FILENAME_RENAMES  # noqa: SLF001 — pins the derivation

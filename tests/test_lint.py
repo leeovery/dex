@@ -10,9 +10,11 @@ from dex_engine.drivers.x import MAX_HOPS
 from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
-from dex_engine.pipeline.registry import DRIVERS
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.run import CAP_BOUNDS
 from dex_engine.pipeline.types import Cap, Instance, Kind, LedgerEntry, Need, Status
+
+DRIVERS = default_drivers()
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)

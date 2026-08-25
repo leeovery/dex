@@ -188,6 +188,49 @@ class TestSeedAndDone:
         statuses = {e.status for e in ledger.load(instance.ledger_path).values()}
         assert statuses == {Status.DONE}
 
+    def test_a_runs_ledger_writes_share_one_append_handle(self, instance, monkeypatch):
+        # Six lines (three births, three outcomes), one open for append:
+        # the per-line reopen is the regression this pins against. Every
+        # line is flushed as written, so the single open changes no
+        # reader's view — the report's read-back below still sees all six.
+        urls = [f"https://example.test/p{n}" for n in range(3)]
+        write_item(instance, urls=urls)
+        opens: list[str] = []
+        real_open = Path.open
+
+        def counting_open(self, mode="r", *args, **kwargs):
+            if self == instance.ledger_path and "a" in mode:
+                opens.append(mode)
+            return real_open(self, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", counting_open)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
+        assert len(lines) == 6
+        assert len(opens) == 1
+
+    def test_a_mid_run_ledger_rewrite_never_orphans_later_outcomes(self, instance):
+        # compact/exclude/sync in another terminal during a long run: the
+        # rewrite is a temp file plus one replace, a NEW inode at the same
+        # path. The run's held handle must follow the path — a handle that
+        # keeps the replaced inode writes every later outcome into an
+        # orphan, the report claims work the ledger never took, and the
+        # read-back misdiagnoses the loss as a backwards clock.
+        urls = [f"https://example.test/p{n}" for n in range(3)]
+        write_item(instance, urls=urls)
+        fetched: list[str] = []
+
+        def fetch(unit):
+            fetched.append(unit.url)
+            if len(fetched) == 2:
+                ledger.compact(instance.ledger_path)  # another terminal's compact
+            return Result(status=Status.DONE, meta={}, body="b" * 400)
+
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        loaded = ledger.load(instance.ledger_path)
+        assert all(loaded[work_hash(url)].status is Status.DONE for url in urls)
+        assert "did not take effect" not in report
+
     def test_two_items_sharing_a_url_dedupe_by_hash(self, instance):
         write_item(instance, "2026-08-19-first-aaaaaa")
         write_item(instance, "2026-08-19-second-bbbbbb")
@@ -1164,6 +1207,24 @@ class TestMediaStage:
         assert entry.status is Status.SKIPPED
         assert entry.reason == "media exceeds 10MB ceiling"
 
+    def test_the_media_get_carries_the_byte_ceiling(self, instance):
+        # The ceiling rides the fetch so the transport stops reading one
+        # byte past it — a GET without it buffers a lying server's whole
+        # body before the size check ever runs.
+        write_item(instance)
+        img = HttpResponse(status=200, content_type="image/png", body=b"p")
+        transport = FakeTransport({self.IMG1: img})
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=self.media_fetch([self.IMG1])), transport=transport
+        )
+        run_mod.run(ctx)
+        bounded = [
+            limit
+            for (method, url), limit in zip(transport.calls, transport.limits, strict=True)
+            if url == self.IMG1 and method == "GET"
+        ]
+        assert bounded == [run_mod.MEDIA_MAX_BYTES]
+
     def test_transient_media_failure_is_blocked_and_redrains_without_a_driver(self, instance):
         write_item(instance)
         outage = HttpResponse(status=503, content_type="text/html", body=b"")
@@ -1418,6 +1479,83 @@ class TestMediaStage:
         run_mod.fetch_urls(ctx, ITEM, ["https://example.test/docs"])
         drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
         assert drain.fetched_count(ITEM) == 2  # seed + child; media excluded
+
+
+class TestFetchedCountStaysARecount:
+    """The maintained count answers exactly what a full recount would.
+
+    The cap check reads a per-item table kept beside the entries instead of
+    recounting the ledger per admission; this pins the table to the recount
+    it replaced, across every way the drain's state moves — admissions,
+    cap fires, --force past the bound, outcomes that give budget back,
+    media lines that never spend it, and ownership re-resolving under a
+    rename.
+    """
+
+    def _recount(self, drain, item_id):
+        # Today's rule, spelled independently of the maintained table.
+        return sum(
+            1
+            for entry in drain.entries.values()
+            if drain.owner_of(entry) == item_id
+            and entry.via not in ("media", "extract-asset")
+            and entry.status is not Status.SKIPPED
+        )
+
+    def _agrees(self, drain, *item_ids):
+        for item_id in item_ids:
+            assert drain.fetched_count(item_id) == self._recount(drain, item_id)
+
+    def test_agreement_across_admissions_force_outcomes_and_renames(self, instance):
+        urls = [f"https://example.test/p{n}" for n in range(MAX_URLS_PER_ITEM)]
+        write_item(instance, urls=urls)
+        drain = run_mod._Drain(ctx=make_ctx(instance, FakeDriver()))  # noqa: SLF001 — the table under test is drain state
+        drain.seed_from_corpus()
+        self._agrees(drain, ITEM)
+
+        # A promotion refused at the cap writes only a skipped marker.
+        parent = drain.entries[work_hash(urls[0])]
+        extra = "https://example.test/extra"
+        refused = drain.admit(ITEM, extra, via="harvest", parent=parent)
+        assert refused.cap is Cap.URL_REQUESTED
+        self._agrees(drain, ITEM)
+
+        # --force admits past the bound: the waived fire plus a queued line.
+        forced = drain.admit(ITEM, extra, via="harvest", parent=parent, force=True)
+        assert forced.entry is not None
+        self._agrees(drain, ITEM)
+
+        # A skip landing on an admitted unit gives its budget back...
+        drain.record_outcome(
+            drain.entries[work_hash(urls[1])], status=Status.SKIPPED, reason="thin-extraction"
+        )
+        self._agrees(drain, ITEM)
+
+        # ...and a media line never spent any.
+        drain.record(
+            LedgerEntry(
+                hash=work_hash("https://cdn.example.test/m.png"),
+                url="https://cdn.example.test/m.png",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="seed",
+                date=datetime.date.min,
+                via="media",
+                parent=parent.hash,
+                depth=1,
+            )
+        )
+        self._agrees(drain, ITEM)
+
+        # A rename re-attributes every unit: the counts must follow the
+        # corpus's new answer, not the stored strings.
+        renamed = "2026-08-19-renamed-55ad7b"
+        write_item(instance, renamed, urls=[*urls, extra])
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        drain.resolve_owners()
+        self._agrees(drain, ITEM, renamed)
+        assert drain.fetched_count(renamed) == self._recount(drain, renamed) > 0
 
 
 class TestExtractAssets:
@@ -3170,7 +3308,7 @@ class TestRedetection:
         blocked = HttpResponse(status=403, content_type="text/html", body=b"")
 
         class MethodAware:
-            def __call__(self, url, *, method="GET"):  # noqa: ARG002 — routes on method alone
+            def __call__(self, url, *, method="GET", limit=None):  # noqa: ARG002 — routes on method alone
                 return blocked if method == "HEAD" else pdf
 
         write_item(instance, urls=[self.PDF_URL])

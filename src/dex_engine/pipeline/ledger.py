@@ -27,9 +27,11 @@ every reader resolves and not every reader has a clock to hand.
 
 import datetime
 import json
+import os
 from collections.abc import Callable, Collection
 from dataclasses import replace
 from pathlib import Path
+from typing import TextIO
 
 from dex_engine import atomic
 
@@ -37,6 +39,8 @@ from .types import Cap, Format, Kind, LedgerEntry, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
+    "RENAMED_KINDS",
+    "RETIRED_STATUSES",
     "LedgerSchemaError",
     "append",
     "compact",
@@ -57,10 +61,13 @@ class LedgerSchemaError(ValueError):
     """
 
 
-# Pre-rename vocabulary, translated by migration 1. Recognized here only
-# to name that migration in the error; never silently accepted (no aliases).
-_RENAMED_KINDS = {"tweet": "x", "blog": "web"}
-_RETIRED_STATUSES = {"nocaptions", "toolong"}
+# Pre-rename vocabulary — the one spelling of what the old engine wrote.
+# Migration 1 translates FROM these tables and this boundary hints off the
+# same objects, so the loud error can never name a word the migration does
+# not fix, nor miss one it does. Recognized here only to name that
+# migration in the error; never silently accepted (no aliases).
+RENAMED_KINDS = {"tweet": "x", "blog": "web"}
+RETIRED_STATUSES = frozenset({"nocaptions", "toolong"})
 
 _MIGRATION_HINT = (
     "migration 1 (renames + status vocabulary) has likely not been applied — run `bin/dex sync`"
@@ -108,13 +115,13 @@ def from_line(line: str) -> LedgerEntry:
         raise LedgerSchemaError(f"ledger line is not a JSON object: {line!r}")
 
     kind = raw.get("kind")
-    if kind in _RENAMED_KINDS:
+    if kind in RENAMED_KINDS:
         raise LedgerSchemaError(
-            f"kind {kind!r} is pre-rename vocabulary (now {_RENAMED_KINDS[kind]!r}); "
+            f"kind {kind!r} is pre-rename vocabulary (now {RENAMED_KINDS[kind]!r}); "
             f"{_MIGRATION_HINT}"
         )
     status = raw.get("status")
-    if status in _RETIRED_STATUSES:
+    if status in RETIRED_STATUSES:
         raise LedgerSchemaError(
             f"status {status!r} is retired vocabulary (now 'waiting' + needs: 'transcribe'); "
             f"{_MIGRATION_HINT}"
@@ -316,16 +323,98 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
     return entries
 
 
-def append(path: Path, entry: LedgerEntry) -> None:
-    """Append one entry as a full-record line, creating the file if needed.
+class Appender:
+    """One open append handle over the ledger, for a run's many writes.
 
-    ``entry`` arrives already stamped: :func:`stamp` is the only place a
-    written line's ``at`` is set, so the timestamp that orders a line is
-    always the writing machine's own clock and never a value a caller chose.
+    ``append`` reopens the file per line — a cost the drain paid per unit.
+    Holding the handle makes a line one write, and each line is flushed as
+    it is written, which keeps open-per-line's durability contract exactly:
+    after :meth:`append` returns the line is with the OS, visible to every
+    reader (a fresh ``load`` in this process, or another process's) and
+    safe against this process crashing. Neither shape fsyncs, so an OS
+    crash or power loss can cost the tail either way — the read-back
+    guards (mark's, the run report's) rely on the flush, never on close.
+
+    **The per-line reopen was load-bearing, and the stat below replaces
+    it — do not optimise it away.** ``compact``, exclude's purge, and the
+    migrations rewrite the ledger atomically: a temp file, then one
+    ``replace`` — a NEW inode at the same path. Open-per-line re-resolved
+    the path every write, so appends after a rewrite landed in the new
+    file; a held handle keeps the replaced inode, and without
+    revalidation every later write of the run goes to an orphaned file no
+    reader ever sees (discovered when this class first removed the
+    reopen). So each append re-checks that the handle still names the
+    file at the path — one ``fstat``/``stat`` pair, far cheaper than the
+    open/write/close it replaced — and reopens on mismatch, or where the
+    path is briefly gone mid-rewrite. The window that remains (a replace
+    landing between the check and the write) is the same one the per-line
+    reopen always had between its open and its write.
+
+    The file opens lazily on the first append, in append mode, so every
+    line lands at the file's current end even where another writer's line
+    arrived in between — exactly as the per-line reopen behaved.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(to_line(entry) + "\n")
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._handle: TextIO | None = None
+
+    def append(self, entry: LedgerEntry) -> None:
+        """Append one entry as a full-record line, creating the file if needed.
+
+        ``entry`` arrives already stamped: :func:`stamp` is the only place a
+        written line's ``at`` is set, so the timestamp that orders a line is
+        always the writing machine's own clock and never a value a caller
+        chose.
+        """
+        handle = self._current_handle()
+        handle.write(to_line(entry) + "\n")
+        handle.flush()
+
+    def _current_handle(self) -> TextIO:
+        """The handle for the file the path names NOW, reopened if it moved."""
+        if self._handle is not None:
+            if self._still_current(self._handle):
+                return self._handle
+            self._handle.close()
+            self._handle = None
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._path.open("a", encoding="utf-8")
+        return self._handle
+
+    def _still_current(self, handle: TextIO) -> bool:
+        """Whether the held handle is still the file at the path.
+
+        False when an atomic rewrite replaced the inode, or the file is
+        (however briefly) gone — either way the next line belongs to the
+        file the path names, not to the one the handle kept.
+        """
+        try:
+            current = self._path.stat()
+        except FileNotFoundError:
+            return False
+        held = os.fstat(handle.fileno())
+        return (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino)
+
+    def close(self) -> None:
+        """Release the handle; a later append reopens."""
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+def append(path: Path, entry: LedgerEntry) -> None:
+    """Append one entry and release the handle — :class:`Appender`, one-shot.
+
+    For the callers that write a line and are done (a purge's landing
+    correction, a test's fixture line); a drain holds an :class:`Appender`
+    instead of paying this reopen per unit.
+    """
+    appender = Appender(path)
+    try:
+        appender.append(entry)
+    finally:
+        appender.close()
 
 
 def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:

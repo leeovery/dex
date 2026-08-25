@@ -51,7 +51,7 @@ from .enrichment import (
     youtube_body,
 )
 from .ownership import corpus_claims
-from .registry import DRIVERS, driver_for
+from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
@@ -183,6 +183,16 @@ def _is_media_file(path: Path) -> bool:
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
+
+
+def _spends_url_budget(entry: LedgerEntry) -> bool:
+    """Whether this line spends its item's 12-URL budget.
+
+    Fetched pages only: media downloads and extraction-asset byte-writes
+    are not pages, and a skipped line — the cap's own markers included —
+    holds no unit.
+    """
+    return entry.via not in ("media", "extract-asset") and entry.status is not Status.SKIPPED
 
 
 def no_providers(need: Need, fmt: Format | None = None) -> Availability:  # noqa: ARG001 — the null seam ignores its inputs
@@ -399,10 +409,27 @@ class _Drain:
     # Ledgered media units left resting because `media_fetch` is `none` —
     # noted once, like the transcription deferral.
     deferred_media: int = 0
+    # Per-item fetched-page counts, maintained beside the entries so the
+    # URL-cap check is not a full recount per admission (quadratic in the
+    # item's ledger). Built lazily from the entries, updated in `record` —
+    # the one door entries change through — and dropped whenever ownership
+    # re-resolves, because the counts attribute exactly as `owner_of` does.
+    _fetched_counts: dict[str, int] | None = None
+    # One append handle for the run's many ledger writes (open-per-line
+    # cost the drain per unit). Every line is flushed as written, so the
+    # read-backs (mark's, the report's) and any concurrent reader see it
+    # exactly as they did under open-per-line; the verbs close it when
+    # they finish.
+    _appender: ledger.Appender = field(init=False)
 
     def __post_init__(self) -> None:
         self.entries = ledger.load(self.ctx.instance.ledger_path)
         self.sniff = head_sniffer(self.ctx.transport)
+        self._appender = ledger.Appender(self.ctx.instance.ledger_path)
+
+    def close_ledger(self) -> None:
+        """Release the run's append handle (every line is already flushed)."""
+        self._appender.close()
 
     # -- seeding ---------------------------------------------------------
 
@@ -440,6 +467,10 @@ class _Drain:
     def resolve_owners(self) -> None:
         """Re-read which live corpus item owns each unit (one corpus pass)."""
         self.owners = _unit_owners(self.ctx.instance, self.entries, self.ctx.drivers)
+        # The counts attribute by owner, so a new answer to "whose unit is
+        # this" (a rename mid-run) invalidates them wholesale — they
+        # rebuild from the entries on the next cap check.
+        self._fetched_counts = None
 
     def owner_of(self, entry: LedgerEntry) -> str:
         """Which live item owns this unit's work — the corpus's answer.
@@ -1300,7 +1331,7 @@ class _Drain:
                 reason="media exceeds 10MB ceiling (declared Content-Length)",
             )
             return
-        outcome = fetch_classified(self.ctx.transport, entry.url)
+        outcome = fetch_classified(self.ctx.transport, entry.url, limit=MEDIA_MAX_BYTES)
         if isinstance(outcome, FetchFailure):
             failure = outcome.classification
             self._media_failure(entry, failure.status, failure.reason)
@@ -1308,6 +1339,8 @@ class _Drain:
         response = outcome
         if len(response.body) > MEDIA_MAX_BYTES:
             # Backstop for servers that lie about (or omit) Content-Length.
+            # The ceiling rides the fetch, so the transport stopped reading
+            # one byte past it — the over-ceiling body was never held whole.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
         owner = self.owner_of(entry)
@@ -1407,14 +1440,22 @@ class _Drain:
         live id, ever, so its budget restarted from zero at every rename
         and the cap never fired, which also silences the drift reading a
         cap fire feeds the health check.
+
+        The answer is a maintained count, not a recount: one pass over the
+        entries builds the per-item table, `record` — the one door entries
+        change through — keeps it current per write, and re-resolving
+        ownership drops it (the attribution the counts key on has a new
+        answer). At every read it equals the full recount by the rule
+        above.
         """
-        return sum(
-            1
-            for entry in self.entries.values()
-            if self.owner_of(entry) == item_id
-            and entry.via not in ("media", "extract-asset")
-            and entry.status is not Status.SKIPPED
-        )
+        if self._fetched_counts is None:
+            counts: dict[str, int] = {}
+            for entry in self.entries.values():
+                if _spends_url_budget(entry):
+                    owner = self.owner_of(entry)
+                    counts[owner] = counts.get(owner, 0) + 1
+            self._fetched_counts = counts
+        return self._fetched_counts.get(item_id, 0)
 
     # -- recording -------------------------------------------------------
 
@@ -1425,7 +1466,8 @@ class _Drain:
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
         )
-        ledger.append(self.ctx.instance.ledger_path, stamped)
+        self._appender.append(stamped)
+        self._count_write(stamped)
         self.entries[stamped.hash] = stamped
         self.written[stamped.hash] = stamped
         if count:
@@ -1436,6 +1478,24 @@ class _Drain:
                 _parked_row(stamped, stamped.item, media_fetch=self.ctx.config.media_fetch)
             )
         return stamped
+
+    def _count_write(self, stamped: LedgerEntry) -> None:
+        """Keep the fetched counts equal to a recount across one write.
+
+        Called before ``self.entries`` takes the new line, while the line it
+        supersedes is still readable: the superseded line leaves the count
+        it was in, the new one enters the count its owner and status say —
+        which is how a skip landing on a queued unit gives the budget back,
+        exactly as a recount would.
+        """
+        if self._fetched_counts is None:
+            return
+        previous = self.entries.get(stamped.hash)
+        if previous is not None and _spends_url_budget(previous):
+            self._fetched_counts[self.owner_of(previous)] -= 1
+        if _spends_url_budget(stamped):
+            owner = self.owner_of(stamped)
+            self._fetched_counts[owner] = self._fetched_counts.get(owner, 0) + 1
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional
         self,
@@ -1756,7 +1816,7 @@ def _refresh_item_frontmatter(
 def _unit_owners(
     instance: Instance,
     entries: Mapping[str, LedgerEntry],
-    drivers: Sequence[SourceDriver] = DRIVERS,
+    drivers: Sequence[SourceDriver] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Which live corpus items each work unit belongs to.
 
@@ -1785,13 +1845,15 @@ def _unit_owners(
     Args:
         instance: The instance.
         entries: The ledger, hash -> latest entry.
-        drivers: The driver registry that owns canonicalization.
+        drivers: The driver registry that owns canonicalization; built
+            fresh when the caller has none in hand (the standing-report
+            paths hold no RunContext).
 
     Returns:
         Work hash -> the owning item ids, in id order. Every hash in
         ``entries`` has an answer; none is ever empty.
     """
-    claims = corpus_claims(instance.root, drivers)
+    claims = corpus_claims(instance.root, drivers if drivers is not None else default_drivers())
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     owners: dict[str, tuple[str, ...]] = {}
 
@@ -1929,6 +1991,7 @@ def _finish(drain: _Drain) -> str:
     payload = drain.report_payload()
     if outcome.filed:
         payload["issues_filed"] = outcome.filed
+    drain.close_ledger()
     return surfaces.render("enrich-report", payload)
 
 
@@ -2595,6 +2658,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     drain.resolve_owners()
     for item_id in drain.owners.get(prior.hash, (prior.item,)):
         _refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
+    drain.close_ledger()
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 
 

@@ -66,7 +66,7 @@ from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.enrichment import read_enrichment_fields
 from .pipeline.ownership import corpus_owners
-from .pipeline.registry import DRIVERS
+from .pipeline.registry import default_drivers
 from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans, never_harvested
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
@@ -568,7 +568,7 @@ def _state_checks(
         # entries: the cognitive rows here — manual-work pointers, owed to
         # the live item like every other surface (:func:`_owner`), never to
         # a renamed-away id — and the integrity scan below.
-        owners = corpus_owners(instance.root, DRIVERS)
+        owners = corpus_owners(instance.root, default_drivers())
         waiting: dict[str, int] = {}
         cognitive: list[dict[str, str]] = []
         for entry in entries.values():

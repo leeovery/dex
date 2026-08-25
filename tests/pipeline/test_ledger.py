@@ -500,6 +500,95 @@ class TestLoadAppendCompact:
         assert [p.name for p in instance.state_dir.iterdir()] == ["enrichment-ledger.jsonl"]
 
 
+class TestAppender:
+    """The held handle: open-per-line's bytes and durability, without the reopens."""
+
+    def test_one_handle_writes_the_same_bytes_as_per_line_appends(self, instance, tmp_path):
+        entries = [
+            entry(),
+            entry(status=Status.DONE, path="enrichment/i/web-73bd78.md"),
+            entry(hash="ffff000000", url="https://other.test"),
+        ]
+        pooled = tmp_path / "pooled.jsonl"
+        appender = ledger.Appender(pooled)
+        for record in entries:
+            appender.append(record)
+        appender.close()
+        for record in entries:
+            ledger.append(instance.ledger_path, record)
+        # The union-merge file format is the contract: byte-identical.
+        assert pooled.read_bytes() == instance.ledger_path.read_bytes()
+
+    def test_every_line_is_readable_before_the_handle_closes(self, instance):
+        # mark re-reads the ledger right after appending and the run report
+        # reads its own writes back; open-per-line's close put each line
+        # with the OS, so the held handle must flush per line — a line
+        # sitting in a user-space buffer is invisible to every reader and
+        # gone if the process dies.
+        appender = ledger.Appender(instance.ledger_path)
+        written = []
+        for n in range(3):
+            record = entry(hash=f"{n:010d}", url=f"https://a.test/{n}")
+            appender.append(record)
+            written.append(record)
+            loaded = ledger.load(instance.ledger_path)
+            assert [loaded[w.hash] for w in written] == written
+        appender.close()
+
+    def test_appends_after_a_compact_land_in_the_current_file(self, instance):
+        # compact (and exclude's purge, and the migrations) rewrite the
+        # ledger atomically: temp file, then one replace — a NEW inode at
+        # the same path. The old per-line reopen re-resolved the path every
+        # write; a held handle that doesn't notice the swap writes the rest
+        # of the run into an orphaned file no reader ever sees.
+        first = entry()
+        appender = ledger.Appender(instance.ledger_path)
+        appender.append(first)
+        appender.append(entry(hash="ffff000000", url="https://other.test"))
+        ledger.compact(instance.ledger_path)
+        third = entry(hash="ee00000000", url="https://third.test")
+        fourth = entry(hash="dd00000000", url="https://fourth.test")
+        appender.append(third)
+        appender.append(fourth)
+        appender.close()
+        loaded = ledger.load(instance.ledger_path)
+        assert loaded[third.hash] == third
+        assert loaded[fourth.hash] == fourth
+        assert len(loaded) == 4
+
+    def test_appends_survive_the_path_briefly_missing(self, instance):
+        # The ledger vanishing under the handle (a rewrite's worst-case
+        # window, or an outright delete) must not kill the run's writes:
+        # the next append recreates the file at the path.
+        first = entry()
+        appender = ledger.Appender(instance.ledger_path)
+        appender.append(first)
+        instance.ledger_path.unlink()
+        appender.append(first)
+        appender.close()
+        assert ledger.load(instance.ledger_path) == {first.hash: first}
+
+    def test_appends_land_at_the_files_current_end(self, instance):
+        # Append mode is load-bearing: a one-shot writer's line arriving
+        # between two of the handle's writes (another verb, another
+        # process) must never be overwritten.
+        first = entry()
+        appender = ledger.Appender(instance.ledger_path)
+        appender.append(first)
+        other = entry(hash="ffff000000", url="https://other.test")
+        ledger.append(instance.ledger_path, other)
+        last = entry(status=Status.DONE, path="enrichment/i/web-73bd78.md")
+        appender.append(last)
+        appender.close()
+        hashes = [
+            json.loads(line)["hash"] for line in instance.ledger_path.read_text().splitlines()
+        ]
+        assert hashes == [first.hash, other.hash, last.hash]
+        loaded = ledger.load(instance.ledger_path)
+        assert loaded[other.hash] == other
+        assert loaded[first.hash] == last  # same hash: the later line wins
+
+
 class TestStamp:
     def test_stamp_uses_the_injected_clocks_and_engine(self):
         stamped = ledger.stamp(

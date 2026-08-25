@@ -22,15 +22,15 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
 from . import corpus
 from .pipeline.capture import URL_RE, slugify
 from .pipeline.detect import detect_kind
-from .pipeline.registry import DRIVERS
-from .pipeline.types import Config, Instance
+from .pipeline.registry import default_drivers
+from .pipeline.types import Config, Instance, SourceDriver
 
 __all__ = [
     "DISCORD_GAP_MIN",
@@ -68,13 +68,17 @@ def load_exclusions(path: Path) -> set[str]:
     }
 
 
-def kind_of(url: str) -> str:
+def kind_of(url: str, drivers: Sequence[SourceDriver]) -> str:
     """The provisional kind for a captured URL, via the shared detect module.
 
     The private ``kind_of`` copy — and its divergence from the enricher's —
     is deleted. Pattern-only here; the ledger is authoritative.
+
+    Args:
+        url: The captured URL.
+        drivers: The driver registry in use (the caller builds it once).
     """
-    return str(detect_kind(url, DRIVERS))
+    return str(detect_kind(url, drivers))
 
 
 def _is_internal(url: str, internal_domains: list[str]) -> bool:
@@ -247,12 +251,14 @@ def _cluster_body(messages: list[dict], embed_titles: dict[str, str]) -> str:
     return "\n" + "\n".join(lines).rstrip() + "\n"
 
 
-def _emit_cluster(
+def _emit_cluster(  # noqa: PLR0913 — one keyword per seam: config, warn, registry
     messages: list[dict],
     channel: str,
     instance: Instance,
     config: Config,
+    *,
     warn: Callable[[str], None],
+    drivers: Sequence[SourceDriver],
 ) -> bool:
     """Emit one cluster as a corpus item; False when it is too thin to keep."""
     all_text = "\n".join(message.get("content") or "" for message in messages)
@@ -295,7 +301,7 @@ def _emit_cluster(
         shared_by=_display_name(first["author"]),
         date=date.date(),
         urls=external,
-        kinds=sorted({kind_of(url) for url in external}) or ["text"],
+        kinds=sorted({kind_of(url, drivers) for url in external}) or ["text"],
         reactions=reactions or None,
         attachments=[f"raw/discord/{channel}/{a}" for a in attachments],
         body=_cluster_body(messages, embed_titles),
@@ -394,6 +400,7 @@ def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config,
     config: Config,
     excluded: set[str],
     warn: Callable[[str], None],
+    drivers: Sequence[SourceDriver],
 ) -> tuple[int, int, Exception | None]:
     """Write a channel's clusters as corpus items.
 
@@ -419,6 +426,7 @@ def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config,
         config: Instance config — ``internal_domains`` filters link noise.
         excluded: Shortids from :func:`load_exclusions` — never regenerated.
         warn: Where non-fatal regeneration warnings go.
+        drivers: The driver registry in use (the caller builds it once).
 
     Returns:
         ``(written, skipped, fault)`` — the cluster counts up to the fault
@@ -432,7 +440,7 @@ def _emit_clusters(  # noqa: PLR0913 — one keyword per seam: clusters, config,
             skipped += 1
             continue
         try:
-            kept = _emit_cluster(cluster, channel, instance, config, warn)
+            kept = _emit_cluster(cluster, channel, instance, config, warn=warn, drivers=drivers)
         except (OSError, ValueError, TypeError, AttributeError, KeyError) as e:
             return written, skipped, e
         if kept:
@@ -450,6 +458,7 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
     config: Config,
     excluded: set[str],
     warn: Callable[[str], None],
+    drivers: Sequence[SourceDriver] | None = None,
 ) -> tuple[int, int]:
     """Normalize one Discord channel export into corpus items.
 
@@ -460,6 +469,8 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
         config: Instance config — ``internal_domains`` filters link noise.
         excluded: Shortids from :func:`load_exclusions` — never regenerated.
         warn: Where non-fatal regeneration warnings go.
+        drivers: The driver registry to detect kinds with; built fresh
+            when the caller has none in hand.
 
     Returns:
         ``(written, skipped)`` cluster counts.
@@ -479,6 +490,7 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
         config=config,
         excluded=excluded,
         warn=warn,
+        drivers=drivers if drivers is not None else default_drivers(),
     )
     if fault is not None:
         raise fault
@@ -499,6 +511,7 @@ def run_normalize(instance: Instance, config: Config) -> list[str]:
         ValueError: No exports found under ``raw/``.
     """
     excluded = load_exclusions(instance.state_dir / "exclusions.tsv")
+    drivers = default_drivers()
     raw_discord = instance.root / "raw" / "discord"
     lines: list[str] = []
     channel_dirs = sorted(raw_discord.iterdir()) if raw_discord.exists() else []
@@ -524,6 +537,7 @@ def run_normalize(instance: Instance, config: Config) -> list[str]:
             config=config,
             excluded=excluded,
             warn=lines.append,
+            drivers=drivers,
         )
         if fault is not None:
             # Not the export's fault and not a skip: this channel has items

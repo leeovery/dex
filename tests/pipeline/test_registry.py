@@ -1,7 +1,29 @@
 """Tests for pipeline/registry.py: ordering semantics and kind resolution."""
 
-from dex_engine.pipeline.registry import DRIVERS, driver_for
+from dex_engine.pipeline import registry
+from dex_engine.pipeline.registry import default_drivers, driver_for
 from dex_engine.pipeline.types import Kind
+
+DRIVERS = default_drivers()
+
+
+class TestNoImportTimeState:
+    def test_importing_the_module_holds_no_built_registry(self):
+        # The registry is a function the entry points call. A module-level
+        # driver list would be state built by import order, shared by every
+        # caller in the process — the revert this pins against.
+        assert not hasattr(registry, "DRIVERS")
+        built = {
+            name: value
+            for name, value in vars(registry).items()
+            if not name.startswith("__") and isinstance(value, (list, tuple))
+        }
+        assert built == {}
+
+    def test_each_call_constructs_a_fresh_registry(self):
+        first, second = default_drivers(), default_drivers()
+        assert first is not second
+        assert all(a is not b for a, b in zip(first, second, strict=True))
 
 
 class TestOrdering:
