@@ -39,6 +39,31 @@ step 4.
      editing state files. Instances purged before exclude swept the ledger
      carry this as historical residue: clearing it is a one-off, not a
      per-check chore.
+     **The `renamed — <id> lists this work` row is the exception, and it
+     needs nothing from you.** A ledger line's `item` is the attribution as
+     of the day it was written, so an item renamed since keeps lines naming
+     the id it had then, permanently. Nothing heals them and nothing needs
+     to: every reader and every write resolves the work to the item whose
+     corpus file claims it, so the run, the status view, the digest and the
+     item's own frontmatter all already say the live id. Read the row as
+     history, not as a repair — the count only ever grows as items are
+     renamed. If the same rename ALSO shows a misfiled output below, that
+     half is real: see the next entry.
+   - **Done entries whose output sits under another item's directory** —
+     the third referential row, and not the one above: nothing is missing
+     here, the output is simply filed where its own item cannot see it. An
+     item's `enrichment:` listing is the markdown in `enrichment/<item>/`,
+     so that item shows an empty listing while the unit is `done` and never
+     drainable again. It is what a rename done in steps leaves when it is
+     interrupted between the corpus file and the enrichment directory — the
+     row names the LIVE item, the one that cannot see its own output, and a
+     rename carried all the way through shows here not at all. The repair
+     is judgment, and it is one of two:
+     finish the rename — move `enrichment/<old-id>/` onto the live id, and
+     the listing and status follow at the next run — or, where the old
+     directory is not this item's work to take, re-fetch the unit and let
+     the drain file it. Moving files is not the engine's business, which is
+     why this is a finding and not a repair the run makes.
    - **Malformed digests** — the message names what broke (no frontmatter
      fence, a missing or bogus field, an `id` disagreeing with its
      filename). Repair against `.claude/skills/dex-run/references/state-formats.md`;

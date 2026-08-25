@@ -228,6 +228,98 @@ def _note_section(title: str, notes: list[str]) -> list[str]:
     return ["", kernel.heading(title, level=3), "", *(kernel.bullet(note) for note in notes)]
 
 
+def _parked_rows(
+    surface: str, payload: Mapping[str, object], *, required: bool
+) -> list[dict[str, object]]:
+    """The ``parked`` rows, checked — one shape, read by two surfaces.
+
+    The run report says what its own run parked (always present, often
+    empty); the standing view says what is parked now (present only when
+    something is). Same rows either way, so same reader.
+    """
+    rows: list[dict[str, object]] = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "parked", required=required)):
+        where = f"parked[{i}]."
+        _check_keys(
+            surface,
+            entry,
+            required=frozenset({"item", "url", "status", "reason"}),
+            optional=frozenset({"attempts", "attempt_cap"}),
+            where=where,
+        )
+        status = _status_at(surface, entry, "status", where)
+        if status not in _PARKED_STATUSES:
+            allowed = ", ".join(sorted(s.value for s in _PARKED_STATUSES))
+            _fail(
+                surface,
+                f"{where}status must be a parked status ({allowed}), got {status.value!r}",
+            )
+        row: dict[str, object] = {
+            "item": _str_at(surface, entry, "item", where),
+            "url": _str_at(surface, entry, "url", where),
+            "status": status,
+            "reason": _str_at(surface, entry, "reason", where),
+        }
+        if "attempts" in entry:
+            row["attempts"] = _int_at(surface, entry, "attempts", where)
+        if "attempt_cap" in entry:
+            if "attempts" not in entry:
+                _fail(surface, f"{where}attempt_cap without attempts says nothing")
+            row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
+        rows.append(row)
+    return rows
+
+
+# What the engine will do about a parked entry unasked. `blocked` is absent
+# because its entries carry the concrete attempt count instead, and `manual`
+# because it is the one status where the answer is "nothing".
+_RETRY_NOTE = {
+    Status.WAITING: "retries when a provider appears",
+    Status.ERROR: "retries on the next engine release",
+}
+
+
+def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
+    """One parked section: the entries whose next action belongs to one owner."""
+    rows = [row for row in parked if (row["status"] in _OWNER_IS_YOU) == mine]
+    if not rows:
+        return ""
+    if mine:
+        title = (
+            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} "
+            "the engine has given up on"
+        )
+    else:
+        # "retries" never agrees with the count: the subject of the clause
+        # is the engine, one of it however many entries it holds.
+        title = (
+            f"Waiting on the engine — {kernel.plural(len(rows), 'entry', 'entries')} "
+            "it retries by itself"
+        )
+    lines = [kernel.heading(title, level=3), ""]
+    for row in rows:
+        lines += [
+            _entry(str(row["item"]), *_parked_tags(row)),
+            kernel.detail(str(row["reason"])),
+            kernel.detail(str(row["url"])),
+        ]
+    return "\n".join(lines)
+
+
+def _parked_tags(row: dict[str, object]) -> list[str]:
+    status = Status(str(row["status"]))
+    tags = [kernel.code(status.value)]
+    attempts = row.get("attempts")
+    if isinstance(attempts, int):
+        cap = row.get("attempt_cap")
+        tags.append(
+            f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"
+        )
+    elif status in _RETRY_NOTE:
+        tags.append(_RETRY_NOTE[status])
+    return tags
+
+
 # ---------------------------------------------------------------------------
 # enrich-report — the run report
 # ---------------------------------------------------------------------------
@@ -270,7 +362,7 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         optional=frozenset({"incomplete", "cognitive", "issues_filed", "notes"}),
     )
     counts = _counts_at(surface, payload, "counts")
-    parked = _enrich_parked(surface, payload)
+    parked = _parked_rows(surface, payload, required=True)
     issues_filed = _int_at(surface, payload, "issues_filed", default=0)
     notes = _str_list_at(surface, payload, "notes")
 
@@ -282,8 +374,8 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
     sections = [
         _enrich_writeups(surface, payload),
         _enrich_cognitive(surface, payload),
-        _enrich_parked_section(parked, mine=True),
-        _enrich_parked_section(parked, mine=False),
+        _parked_section(parked, mine=True),
+        _parked_section(parked, mine=False),
         _enrich_incomplete(surface, payload),
     ]
     rendered = [section for section in sections if section]
@@ -294,8 +386,9 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         blocks += [
             "",
             (
-                "Nothing needs attention: no new material, nothing parked, "
-                "nothing left outstanding."
+                "Nothing to report from this run: no new material, nothing newly "
+                "parked, nothing left outstanding on the items it touched. What the "
+                "instance is holding is `enrich status`."
             ),
         ]
     if issues_filed:
@@ -361,90 +454,6 @@ def _cognitive_rows(surface: str, payload: Mapping[str, object]) -> list[tuple[s
             )
         )
     return rows
-
-
-def _enrich_parked(surface: str, payload: Mapping[str, object]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for i, entry in enumerate(_obj_list_at(surface, payload, "parked", required=True)):
-        where = f"parked[{i}]."
-        _check_keys(
-            surface,
-            entry,
-            required=frozenset({"item", "url", "status", "reason"}),
-            optional=frozenset({"attempts", "attempt_cap"}),
-            where=where,
-        )
-        status = _status_at(surface, entry, "status", where)
-        if status not in _PARKED_STATUSES:
-            allowed = ", ".join(sorted(s.value for s in _PARKED_STATUSES))
-            _fail(
-                surface,
-                f"{where}status must be a parked status ({allowed}), got {status.value!r}",
-            )
-        row: dict[str, object] = {
-            "item": _str_at(surface, entry, "item", where),
-            "url": _str_at(surface, entry, "url", where),
-            "status": status,
-            "reason": _str_at(surface, entry, "reason", where),
-        }
-        if "attempts" in entry:
-            row["attempts"] = _int_at(surface, entry, "attempts", where)
-        if "attempt_cap" in entry:
-            if "attempts" not in entry:
-                _fail(surface, f"{where}attempt_cap without attempts says nothing")
-            row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
-        rows.append(row)
-    return rows
-
-
-# What the engine will do about a parked entry unasked. `blocked` is absent
-# because its entries carry the concrete attempt count instead, and `manual`
-# because it is the one status where the answer is "nothing".
-_RETRY_NOTE = {
-    Status.WAITING: "retries when a provider appears",
-    Status.ERROR: "retries on the next engine release",
-}
-
-
-def _enrich_parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
-    """One parked section: the entries whose next action belongs to one owner."""
-    rows = [row for row in parked if (row["status"] in _OWNER_IS_YOU) == mine]
-    if not rows:
-        return ""
-    if mine:
-        title = (
-            f"Needs you — {kernel.plural(len(rows), 'entry', 'entries')} "
-            "the engine has given up on"
-        )
-    else:
-        # "it" is the engine, so the verb agrees with the engine and not
-        # with however many entries it is holding.
-        title = (
-            f"Waiting on the engine — {kernel.plural(len(rows), 'entry', 'entries')} "
-            "it retries by itself"
-        )
-    lines = [kernel.heading(title, level=3), ""]
-    for row in rows:
-        lines += [
-            _entry(str(row["item"]), *_parked_tags(row)),
-            kernel.detail(str(row["reason"])),
-            kernel.detail(str(row["url"])),
-        ]
-    return "\n".join(lines)
-
-
-def _parked_tags(row: dict[str, object]) -> list[str]:
-    status = Status(str(row["status"]))
-    tags = [kernel.code(status.value)]
-    attempts = row.get("attempts")
-    if isinstance(attempts, int):
-        cap = row.get("attempt_cap")
-        tags.append(
-            f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"
-        )
-    elif status in _RETRY_NOTE:
-        tags.append(_RETRY_NOTE[status])
-    return tags
 
 
 # What an outstanding unit is waiting for, as prose. Statuses that are not
@@ -532,11 +541,22 @@ def _enrich_outstanding(surface: str, entry: Mapping[str, object], where: str) -
 def _render_status(payload: Mapping[str, object]) -> str:
     """Render the ledger status summary.
 
+    The standing view of parked work lives here rather than on the run
+    report: a unit parked months ago is untouched state, and a run report
+    that re-listed it would name the same permanently-parked entry as work
+    to do on every run forever — the very thing the digest backstop refuses
+    to do. Counts alone said ``**manual** 1`` and left the id, the URL and
+    the reason on no surface at all.
+
     Payload::
 
         {
           "counts": {"<status>": int, ...},   # whole-ledger, per status
           "waiting": {"<need>": int, ...},    # optional: waiting cohort by need
+          "parked": [{"item": str, "url": str,  # optional: every unit parked
+                      "status": str, "reason": str,   # now, whichever run
+                      "attempts": int,               #   parked it
+                      "attempt_cap": int}],
           "orphans": [str],                   # optional: item ids whose
                                               #   enrichment is newer than their
                                               #   digest (interrupted-session
@@ -548,11 +568,12 @@ def _render_status(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"counts"}),
-        optional=frozenset({"waiting", "orphans"}),
+        optional=frozenset({"waiting", "parked", "orphans"}),
     )
     counts = _counts_at(surface, payload, "counts")
     orphans = _str_list_at(surface, payload, "orphans")
     waiting = _needs_counts(surface, payload, "waiting")
+    parked = _parked_rows(surface, payload, required=False)
 
     total = sum(counts.values())
     blocks = [kernel.heading(f"Ledger — {kernel.plural(total, 'entry', 'entries')}")]
@@ -570,6 +591,9 @@ def _render_status(payload: Mapping[str, object]) -> str:
         blocks += [
             kernel.bullet(f"{kernel.code(need)} — {count}") for need, count in sorted(waiting)
         ]
+    for section in (_parked_section(parked, mine=True), _parked_section(parked, mine=False)):
+        if section:
+            blocks += ["", section]
     if orphans:
         blocks += [
             "",
@@ -915,6 +939,7 @@ _HEALTH_OPTIONAL = frozenset(
         "ledger_error",
         "ghost_items",
         "missing_outputs",
+        "misfiled_outputs",
         "waiting",
         "cognitive",
         "stale_passes",
@@ -964,6 +989,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           # one row per (item, finding), never per entry — "entries" is the multiplicity
           "ghost_items": [{"item": str, "why": str, "entries": int}],  # item has no corpus file
           "missing_outputs": [{"item": str, "path": str}], # done output gone from disk
+          # done output on disk, but under another item's enrichment directory
+          "misfiled_outputs": [{"item": str, "path": str}],
           "waiting": {"<need>": int},
           "cognitive": [{"item": str, "url": str, "need": str}],
           "stale_passes": [{"item": str, "rules": int}],
@@ -1101,6 +1128,11 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
     )
     blocks += _health_pairs(
         surface, payload, "missing_outputs", "done entries whose output file is gone from disk",
+        ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
+    )
+    blocks += _health_pairs(
+        surface, payload, "misfiled_outputs",
+        "done entries whose output sits under another item's directory",
         ("item", "path"), lambda i, p: f"{kernel.bold(i)} → `{p}`",
     )
     waiting = _needs_counts(surface, payload, "waiting")
