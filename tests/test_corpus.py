@@ -43,7 +43,7 @@ BASE_ITEM = CorpusItem(
     id="2026-08-19-example-55ad7b",
     source="inbox",
     channel="inbox",
-    shared_by="Lee",
+    shared_by="Alex",
     date=datetime.date(2026, 8, 19),
     kinds=["web"],
     status="raw",
@@ -157,7 +157,7 @@ class TestValidation:
 
     def test_multiline_scalar_rejected(self):
         with pytest.raises(CorpusSchemaError, match="single line"):
-            item(shared_by="Lee\nOvery")
+            item(shared_by="Alex\nOwen")
 
     def test_unstripped_scalar_rejected(self):
         with pytest.raises(CorpusSchemaError, match="whitespace"):
@@ -189,7 +189,7 @@ class TestSerialize:
             "id: 2026-08-19-example-55ad7b\n"
             "source: inbox\n"
             "channel: inbox\n"
-            "shared_by: Lee\n"
+            "shared_by: Alex\n"
             "date: 2026-08-19\n"
             "urls:\n"
             "  - https://example.test/a\n"
