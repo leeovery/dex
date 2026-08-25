@@ -1,23 +1,37 @@
-# dex — design queue
+# dex — roadmap
 
-Queued design work and operational facts. The current design itself lives
-where it's used: `CLAUDE.md` (structure + design in force), `docs/` (capture
-protocol, shortcut recipe, backfills), and the skill references (schema,
-state formats). This file holds what's *next*, not what is.
+An index over the design files, plus short notes on backlog: things picked
+up **after** the current release. This file is not a design surface and not
+a work log. Anything agreed for the release in hand — built or not — belongs
+in its design file, and design in force lives where it is used: `CLAUDE.md`
+(structure + design in force), `docs/` (capture protocol, shortcut recipe),
+and the skill references (schema, state formats).
 
-## Bugs
+## Design files
 
-- **Pre-rewrite `dead` ledger entries need healing, per instance** — the old
-  enricher could not tell a blocked fetch from a gone one, so transient blocks
-  were ledgered `dead`, a terminal status that is never retried. The engine no
-  longer does this (403/429/5xx → `blocked`, retried every run; `dead` reserved
-  for 404/410/NXDOMAIN), but migration 2 seeds only `done` entries — verdicts
-  the old code condemned are not reseeded. Known case: a business site in one
-  production instance (2026-08-19), hand-healed into `enrichment/` while the ledger
-  still says `dead`, so healed state and ledger disagree. Close these out with
-  `bin/dex enrich mark` during each instance's post-merge sync review.
+- **`design/ingestion-pipeline.md`** — the ingestion machinery: shape,
+  interfaces, enums, state, ledger and statuses, capabilities, media, the
+  drivers, harvest, rendering surfaces, releases/sync/migrations, the issue
+  filer, module layout and testing. It also carries this release's agreed
+  but unbuilt work — the driver-outcome contract (§2), the cleanup round
+  (§16) — and the open questions each section states.
+- **`design/watchers-discussion.md`** — preliminary discussion for the
+  watchers layer (see the backlog entry below); not a design in force.
 
-## Queued discussions (not yet designed)
+## Backlog
+
+- **Watchers — feeding sources as a first-class layer** — the next thing to
+  be designed. Preliminary discussion logged in
+  `design/watchers-discussion.md` (2026-08-20): every feeder (shortcut,
+  Discord, RSS, bookmark folders, Dropbox) becomes a watcher writing
+  standard inbox captures through one shared inserter; cursor position
+  controls history-vs-forward scope; raw/ likely dies into namespaced
+  watcher scratch; staleness/availability become per-watcher facts the
+  report states. Supersedes the "backfill-source freshness" idea (the
+  2026-08-20 overnight analysis found Discord blind for two days,
+  discoverable only by deep analysis). Design it AFTER the
+  ingestion-pipeline work lands — it sits entirely upstream of that design
+  and requires no changes to it.
 
 - **Self-tuning cadence** — a scheduled run can reschedule its own task
   (`update_scheduled_task` is available to desktop scheduled sessions):
@@ -27,42 +41,28 @@ state formats). This file holds what's *next*, not what is.
   no-ops; owner interest confirmed). Shape: simple backoff with hard
   bounds — tighten after working runs, stretch after consecutive no-ops,
   snap tight when captures arrive; report each reschedule with its reason.
-  Mostly a dex-run skill rule; queue behind the pipeline rewrite and the
-  watchers design.
+  Mostly a dex-run skill rule; queue behind the watchers design.
 
-- **App-only owner surfaces** — for an owner who lives in the Claude app,
-  two query-surface candidates to test: a Cowork session on the instance
-  folder (the sandbox's egress proxy allows github.com, so pull-first
-  freshness may work over an HTTPS remote with a token), or a claude.ai
-  Project with `wiki/` synced via the GitHub integration (read-only,
-  manual sync, token-capped). The local scheduled task keeps the folder
-  fresh either way. Cloud runners (Claude Code routines, Cowork cloud
-  tasks, Managed Agents) remain the path for owners with no computer —
-  they need a clone-first run mode and a stored per-instance PAT; not
-  built, not needed yet.
+- **Ingestion pipeline — open ends** — X thread walk-down, and engine OCR
+  providers (the cognitive floor is the only OCR path today). Both are
+  deferred out of the current release by `design/ingestion-pipeline.md`
+  §17; design them against that document when they come up.
 
-- **Ingestion pipeline — open ends** — the ingestion design in force is
-  `design/ingestion-pipeline.md`. Open here: X walk-down, and engine OCR
-  providers (the cognitive floor is the only OCR path). The instagram
-  driver and the hosted-transcription pick are their own entries below.
+- **Instagram driver** — shape not agreed. Facts: no official API for
+  arbitrary public posts (Graph API = own business accounts only). Options
+  mapped: instaloader + dedicated session (residential IP only, flagging
+  risk), paid scraper APIs (Apify etc., ~$/1k posts, run anywhere),
+  screenshot-capture fallback (works today). Requirements when built:
+  caption, full carousels, likes/follower counts; videos = metadata + link
+  only.
 
-- **Code cleanup round (post-first-release)** — behavior-neutral debts in
-  the engine, batched so they aren't lost: extract one shared
-  fetch-and-classify helper (eight hand-rolled copies across
-  drivers/transcribe/run); dedupe driver body/slug helpers (youtube
-  `_body` vs `transcribe.youtube_body`; capture vs normalize
-  `URL_RE`/slugify; `run._ext_of` vs `transcribe._audio_ext`; six
-  spellings of Classification→Result); one enrichment-frontmatter module
-  owning render+parse (writer in run.py, reader in transcribe.py); hoist
-  the yt-dlp seam out of drivers.youtube so pipeline.transcribe stops
-  importing a driver; ledger.py's per-word legacy-vocabulary hint tables; registry's
-  module-level DRIVERS vs the zero-import-time-state rule; streaming
-  transport reads (unbounded `response.read()` buffers whole enclosures —
-  enforce the media cap in-stream); a per-item fetched-count cache
-  (`_cap_fired` is quadratic); one long-lived append handle for the
-  ledger; a repo-wide `ruff format` pass (43 files drift under ruff
-  0.16.3 — one mechanical reformat commit); a cheap guard in
-  `run._admit_children` (unreachable until a driver emits children).
+- **Hosted transcription providers (Groq et al)** — the transcribe capability
+  ships whisper-local (default) plus an OpenAI-compatible whisper-api provider
+  (base_url-configurable; ffmpeg chunking removes upload limits, so any
+  compatible host works today). To investigate for a documented recommended
+  config: Groq whisper-large-v3-turbo, Fireworks, Deepgram (URL ingestion, no
+  upload), Cloudflare Workers AI whisper — compare price per audio hour,
+  accuracy vs local medium, rate limits.
 
 - **Per-instance context instructions (beyond scope)** — some instances need
   more than a scope list: standing context that steers scanning, enrichment,
@@ -81,13 +81,6 @@ state formats). This file holds what's *next*, not what is.
   what happens to digests, citations, and pages that lean on removed items,
   and whether raw/ keeps or drops the export archive.
 
-- **Instagram driver** — shape not agreed. Facts: no official API for
-  arbitrary public posts (Graph API = own business accounts only). Options
-  mapped: instaloader + dedicated session (residential IP only, flagging
-  risk), paid scraper APIs (Apify etc., ~$/1k posts, run anywhere),
-  screenshot-capture fallback (works today). Requirements when built:
-  caption, full carousels, likes/follower counts; videos = metadata + link
-  only.
 - **Resurfacing and the owner's reading queue** — the corpus tracks machine
   ingestion but not owner engagement: saved things vanish from mind exactly
   like bookmarks and screenshot folders did. To design: (1) an owner
@@ -96,23 +89,22 @@ state formats). This file holds what's *next*, not what is.
   substantive items, cleared conversationally; (2) resurfacing views over it:
   index leads with "new this week" / "waiting for you", query answers end
   with related-but-unread items, and a periodic digest page composed by the
-  scheduled session (rides the scheduled-ingestion design). Recall queries
-  ("what did I share about X", "what came in last month") answer from
-  corpus+digests — make that an explicit mode in dex-query. Principle: one
-  store (the corpus); queue, digest, and index sections are regenerable
-  views. A TUI/newsletter delivery layer waits until the digest proves what
-  the owner actually wants to see.
-- **Watchers — feeding sources as a first-class layer** — preliminary
-  discussion logged in `design/watchers-discussion.md` (2026-08-20): every
-  feeder (shortcut, Discord, RSS, bookmark folders, Dropbox) becomes a
-  watcher writing standard inbox captures through one shared inserter;
-  cursor position controls history-vs-forward scope; raw/ likely dies into
-  namespaced watcher scratch; staleness/availability become per-watcher
-  facts the report states. Supersedes the "backfill-source freshness"
-  idea (the 2026-08-20 overnight analysis found Discord blind for two
-  days, discoverable only by deep analysis). Design it AFTER the
-  ingestion-pipeline rewrite lands — it sits entirely upstream of that
-  design and requires no changes to it.
+  scheduled session (rides the scheduled-ingestion design). Recall queries ("what did I share about X", "what came
+  in last month") answer from corpus+digests — make that an explicit mode in
+  dex-query. Principle: one store (the corpus); queue, digest, and index
+  sections are regenerable views. A TUI/newsletter delivery layer waits
+  until the digest proves what the owner actually wants to see.
+
+- **App-only owner surfaces** — for an owner who lives in the Claude app,
+  two query-surface candidates to test: a Cowork session on the instance
+  folder (the sandbox's egress proxy allows github.com, so pull-first
+  freshness may work over an HTTPS remote with a token), or a claude.ai
+  Project with `wiki/` synced via the GitHub integration (read-only,
+  manual sync, token-capped). The local scheduled task keeps the folder
+  fresh either way. Cloud runners (Claude Code routines, Cowork cloud
+  tasks, Managed Agents) remain the path for owners with no computer —
+  they need a clone-first run mode and a stored per-instance PAT; not
+  built, not needed yet.
 
 - **Offline instances can't run bin/dex at all** — measured during the
   pipeline rewrite (2026-08-20, uv 0.12.5): uvx re-resolves the git ref on
@@ -122,20 +114,24 @@ state formats). This file holds what's *next*, not what is.
   To consider: a shim fallback to the cached env when resolution fails,
   or `uv tool install` as an offline-capable channel.
 
-- **Hosted transcription providers (Groq et al)** — the transcribe capability
-  ships whisper-local (default) plus an OpenAI-compatible whisper-api provider
-  (base_url-configurable; ffmpeg chunking removes upload limits, so any
-  compatible host works today). To investigate for a documented recommended
-  config: Groq whisper-large-v3-turbo, Fireworks, Deepgram (URL ingestion, no
-  upload), Cloudflare Workers AI whisper — compare price per audio hour,
-  accuracy vs local medium, rate limits.
-
 - **Paid media/object storage** — S3 or Cloudflare R2 as a media store
   replacing/augmenting LFS (LFS free tier = 1GB), and/or as capture staging.
   Storage is one substitutable ingest step — capture clients and pointers are
   unaffected. Worth deciding only once an image-heavy instance shows real
   volume; note the access-control trade: LFS keeps media behind the repo's
   own permissions, a public bucket does not.
+
+- **Pre-rewrite `dead` ledger entries need healing, per instance** — the old
+  enricher could not tell a blocked fetch from a gone one, so transient
+  blocks were ledgered `dead`, a terminal status that is never retried. The
+  engine no longer does this (403/429/5xx → `blocked`, retried every run;
+  `dead` reserved for 404/410/NXDOMAIN), but migration 2 seeds only `done`
+  entries — verdicts the old code condemned are not reseeded. Known case: a
+  business site in one production instance (2026-08-19), hand-healed into
+  `enrichment/` while the ledger still says `dead`, so healed state and
+  ledger disagree. Close these out with `bin/dex enrich mark` during each
+  instance's post-merge sync review; it is per-instance content work, not
+  engine work.
 
 ## Operational facts worth remembering
 

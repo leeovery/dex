@@ -292,10 +292,13 @@ class _ItemOutcome:
     media: int = 0
 
     def reason(self) -> str:
+        """What landed, named — "3 new" never said new *what*."""
         parts = [
-            f"{self.new} new" if self.new else "",
-            f"{self.changed} changed" if self.changed else "",
-            f"{self.media} media" if self.media else "",
+            f"{self.new} new enrichment {'file' if self.new == 1 else 'files'}"
+            if self.new
+            else "",
+            f"{self.changed} rewritten" if self.changed else "",
+            f"{self.media} media {'file' if self.media == 1 else 'files'}" if self.media else "",
         ]
         return ", ".join(part for part in parts if part)
 
@@ -330,7 +333,7 @@ class _Drain:
     redetected_hashes: set[str] = field(default_factory=set)
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
-    parked: list[dict[str, str]] = field(default_factory=list)
+    parked: list[dict[str, object]] = field(default_factory=list)
     outcomes: dict[str, _ItemOutcome] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     # Error outcomes captured at the catch site for the issue filer —
@@ -1204,16 +1207,21 @@ class _Drain:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
-            self.parked.append(
-                {
-                    "item": stamped.item,
-                    "url": stamped.url,
-                    "status": stamped.status.value,
-                    "reason": stamped.reason
-                    or stamped.error
-                    or (f"waiting on {stamped.needs}" if stamped.needs else "no reason recorded"),
-                }
-            )
+            row: dict[str, object] = {
+                "item": stamped.item,
+                "url": stamped.url,
+                "status": stamped.status.value,
+                "reason": stamped.reason
+                or stamped.error
+                or (f"waiting on {stamped.needs}" if stamped.needs else "no reason recorded"),
+            }
+            if stamped.attempts is not None:
+                # The report splits parked entries by who owns the next
+                # action, and for a blocked one the answer is "the engine,
+                # this many more times" — which only the cap makes readable.
+                row["attempts"] = stamped.attempts
+                row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
+            self.parked.append(row)
         return stamped
 
     def record_outcome(  # noqa: PLR0913 — one keyword per ledger schema slot, all optional

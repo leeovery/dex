@@ -1,8 +1,13 @@
 # Driver-based ingestion pipeline
 
-Status: **agreed design, pre-implementation** (discussed and signed off
-2026-08-19/20). This document is the reference for the rewrite of the
-engine's ingestion machinery. The roadmap items it resolves point here.
+Status: **in force, implemented** (designed and signed off 2026-08-19/20;
+the rewrite has landed). This document is the reference for the engine's
+ingestion machinery and describes what IS. It is also the one design surface
+for this release: work that is agreed and not yet built lives here too,
+marked as such where it belongs — the driver-outcome contract (§2), the
+cleanup round (§16), and the open questions their own sections state. The
+roadmap holds no design; it indexes this file and notes what comes after the
+release.
 
 This document was verified line-by-line against the full design-session
 transcript, which is held locally by the owner and is not part of the repo;
@@ -84,8 +89,8 @@ recorded in the ledger (`cap` on the skipped line, naming the bound that
 refused the work) and internal
 logs. Who the fire answers to decides where it shows (§12): a
 **harvest-time** fire — the walk promoting a link past a bound — is a
-judgment-drift signal for the health check and reaches no user-facing
-surface, run report included; an **owner-requested** refusal, `enrich
+judgment-drift signal for the health check and stays off the run report; an
+**owner-requested** refusal, `enrich
 fetch` naming a URL past the URL cap, is answered where it was asked, on
 that run report, with the `--force` route it needs to be actionable. The
 health check is where the drift reading belongs and where it is read: lint
@@ -99,6 +104,15 @@ owner-requested refusal is not in that reading at all — the owner named
 that URL, so it says nothing about the bounds or about harvest — and
 stands as a note on the report instead. Counts and a listing, never an
 alarm: a fire is a reading, not a fault, so it never fails the check.
+
+**What the 12 counts is fetched pages, and only those.** The count is over
+the item's ledger entries, excluding `via: media` (downloads, not pages),
+`via: extract-asset` (bytes written out of a container, which never touched
+the network), and every `skipped` entry (cap-fire markers record refused
+work, so counting them would let one refusal ratchet the cap shut). A PDF
+carrying thirty embedded images therefore spends one of the item's twelve,
+not thirty-one — the budget bounds how much of the web an item pulls in,
+and the media caps (§7) bound the rest separately.
 
 Children and reruns are ledger entries from birth (`status: queued`). The
 drain picks up `queued`, `blocked` (attempts < 5), `waiting` (provider now
@@ -167,6 +181,29 @@ that still owes work gets a line stating the shape of it — "3 of 4 units
 landed — 1 waiting on transcription" — so completeness is read, never
 inferred from a list of units. Items the run did not touch are the standing
 view's job (`enrich status`), not the run report's.
+
+**Enrichment file format.** Every fetched output is one markdown file,
+`enrichment/<id>/<kind>-<hash6>.md`, opening with a YAML frontmatter fence
+whose first two keys are always `url:` (the canonical URL the unit was
+keyed on) and `fetched:` (the run date), followed by the driver's `meta`
+verbatim, then the body. Empty and null meta values are dropped rather
+than written blank. Values are quoted defensively against **YAML 1.1
+retyping**, because a plain scalar that merely *looks* like something else
+comes back as that something else: `no`/`off`/`y` and friends read as
+booleans, a leading `-`, `?` or `,` or any of the YAML indicator
+characters changes the parse, a tab anywhere invalidates the block, and a
+date-shaped or number-shaped title reads back as a date or a float — so a
+scalar matching any of those shapes is emitted as a JSON string instead.
+The shape match on timestamps is deliberately on shape alone, never
+calendar validity: `2026-08-99` is what makes a YAML reader *raise*, so it
+must be quoted too.
+
+The `fetched:` stamp is **masked out of the rerun byte-compare** — it
+changes every run by definition, so comparing it would report every rerun
+as changed and rewrite every file. Only the frontmatter head is masked; a
+body line that happens to begin `fetched: ` is content and counts as
+change. Two documented mechanics rest on this: the rerun "changed" list on
+the run report (§12), and the enrichment-newer-than-digest backstop.
 
 ## 2. Interfaces
 
@@ -264,11 +301,18 @@ Typing discipline (binding for the implementation):
 - The typed registry literal (`DRIVERS: list[SourceDriver] = […]`) is the
   Protocol-conformance point — the type checker verifies every driver
   against the interface at that one assignment. Same for provider lists.
-- Every dispatch over `Status`/`Kind`/`Need` uses `match` +
+- Every **total** dispatch over `Status`/`Kind`/`Need` uses `match` +
   `assert_never` (exhaustiveness: adding an enum member becomes a type
   error at every unhandled site). The drain predicate is one total
   function, `is_drainable(entry, ctx) -> bool`, exhaustively matched — the
-  highest-value function in the system to make total.
+  highest-value function in the system to make total. A dispatch that is
+  deliberately **partial** — a Kind or Status that is a valid member but
+  not applicable at that site (transcript bodies and audio acquisition
+  cover youtube and podcast only; the acquisition-failure and classifier
+  arms take the three statuses their classifier can return) — closes with
+  a runtime `case _: raise` naming the mismatch instead. Four sites do
+  this, and each one is a loud engine bug when it fires, never a quiet
+  default.
 
 Capability resolution: **per format / per need, first available *mechanical*
 provider wins**, order set by instance config. The **cognitive provider** is
@@ -279,6 +323,99 @@ the `done` entry. Precisely: **`waiting` means no mechanical provider**; a
 job that resolves to the cognitive provider is `waiting` from the queue's
 point of view and work-to-do from the session's. No instance ever hard-fails
 on a missing key or an unsupported format.
+
+### Driver outcomes: drivers report, the orchestrator decides
+
+**Agreed, not yet implemented.** Everything above this heading describes the
+engine as built; this describes the contract that replaces the driver's
+half of it. Drivers stop deciding lifecycle status: they report what they
+found, and the orchestrator decides what that means.
+
+Every driver currently returns a `Result` carrying a `Status`, so each one
+decides the unit's lifecycle for itself. That is the root of the largest
+family of defects the review rounds found, and it recurred in six of them:
+
+- private GitHub blobs classified `dead` because an unauthenticated fetch
+  404s, condemning live content
+- YouTube channel URLs driven as videos, enumerating a whole channel
+- Apple podcast episodes unresolvable because the wrong id was looked up
+- arxiv spellings splitting into separate work units
+- `IncompleteRead` escaping as an engine bug rather than a retryable block
+- a "listen to this article" widget rerouting an article to the podcast
+  driver, discarding the article
+
+Each was fixed where it was found (§3, §5, §9). The class survives because
+there is no single place that decides what a fetch outcome means, and no way
+to audit which statuses a driver may produce.
+
+A driver is a black box over one source shape. It is passed a work unit,
+does its job, and returns an outcome describing what it found:
+
+    Content(body, meta, media, links)   fetched something
+    Missing(evidence)                   confirmed gone
+    Refused(evidence)                   blocked, paywalled, rate limited
+    Unusable(evidence)                  wrong shape, nothing to extract
+    NeedsCapability(need)               needs transcription, extraction, OCR
+    Redetected(kind, format)            this is not what we thought it was
+
+The driver keeps the knowledge only it has. That a particular yt-dlp
+message means confirmed gone, that a 402 means paywalled, that a thin
+extraction is not content: those are per-source judgements and they stay in
+the driver, carried as evidence on the outcome. `Redetected` is the mid-fetch
+kind discovery of §1, which today is the one sanctioned shape in which a
+driver may return `queued`; as an outcome it stops being a special case.
+
+The run layer maps outcome to `Status` in one total match, in one place.
+`Missing` is the only road to `dead`. That mapping becomes auditable and
+testable on its own, and the question "can this driver produce a terminal
+status by accident" stops being answerable only by reading the driver.
+
+**Drivers never raise.** Every escape becomes an outcome at the seam. A
+driver that raises is an engine bug, not a content problem, and the run
+layer's single broad except (§5) records it as such. This kills the
+exception-class defects outright rather than patching one boundary at a
+time, which is what the provider-boundary round had to do for
+`IncompleteRead`, `HFValidationError`, `IndexError` from a container with no
+audio stream, and `csv.Error`.
+
+**Drivers are isolated.** A driver never imports another driver. Behaviour
+two drivers share becomes a lib beside `drivers/transport.py`,
+`drivers/gh.py` and `drivers/audio.py`. **Open question — `paper.py`**,
+which delegates to `WebDriver` wholesale as a fetch strategy rather than
+borrowing a helper, is the one standing exception and needs its own
+decision: either the delegation is legitimate and named, or fetch, wayback
+and extraction hoist into a lib and the exception goes.
+
+**What this replaces.** `Result` becomes the union above rather than a flat
+dataclass whose fields are only meaningful for some statuses. Today 204
+legal combinations carry `media` or `children` on a non-done result, and
+`assets` is validated done-only while the others are not. Making the wrong
+states unrepresentable is the point, not a side effect. (The sketch above
+does not say where `assets` and the driver-stated `reason` ride on the
+union; settle that when it is built.)
+
+**Open question — `links` or `children`.** The sketch says a driver reports
+`links`; today a driver returns `children` and the run layer assigns item,
+parent and depth. The change of noun may be the point, drivers reporting
+what a page pointed at while the pipeline decides what to promote, but
+nothing here states that, so it is a decision rather than a rename.
+
+Two related shapes settle with it:
+
+- `LedgerEntry` and `WorkUnit` disagree on what `depth = 0` means, so 828
+  of 2484 legal ledger states cannot convert. One rule, stated once.
+- `via` carries provenance, routing (`via == "media"` dispatches, §3) and a
+  migration marker. Three jobs, one field. Provenance and routing separate.
+
+**Acceptance bar.** Each change must name the defect class from the review
+record that it makes structurally impossible. Moving code is not enough and
+line count is not a criterion. Secondary tests: the rule now lives in
+exactly one place, the dependency graph is strictly simpler, and the tests
+still mean something afterwards, proven by mutation rather than by passing.
+
+**Not in scope**: inheritance for drivers, a plugin system, and coverage
+targets. `matches()` and `canonical()` stay as they are — an ordered chain
+of responsibility with a catch-all last, which is proven here.
 
 ## 3. Enums
 
@@ -350,8 +487,8 @@ routing signal.
 machines (owner's desktop, other owners' laptops, scheduled sessions —
 environments lacking dex's declared dependencies, such as the Cowork VM
 class, are not dex environments at all, per §13). Git cannot merge a SQLite blob; JSONL merges as a union —
-`.gitattributes` (synced) sets `merge=union` on **all `state/*.jsonl` files**
-(all four are append-only). Diffability is
+`.gitattributes` (synced) sets `merge=union` on **all `state/*.jsonl` files**,
+every one of which is append-only. Diffability is
 load-bearing (audit-by-git-log is free); Claude greps state directly in
 sessions. If an instance ever outgrows this: SQLite as a derived, gitignored
 cache rebuilt from the JSONL — the ledger stays the source of truth.
@@ -367,8 +504,10 @@ Files:
 | `state/passes.jsonl` | per-item stage records — `{stage: harvest, item, rules, date}`; "ran and promoted nothing" must be distinguishable from "never ran" |
 | `state/migrations.jsonl` | applied-migrations log (§12) |
 | `state/issue-reports.jsonl` | filed/commented issue fingerprints (§13) |
-| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, `noise_prefixes`, and provider order as `providers: {<capability>: [<name>, …]}`; unknown keys rejected loudly |
-| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. |
+| `state/digests/<id>.md` | per-item fact indexes, Claude-written; the one markdown corner of `state/` |
+| `state/exclusions.tsv` | id + reason per purged item, written by `dex exclude`; excluded items stay excluded across re-normalization, and migrations consult it before reseeding (§12) |
+| `state/config.json` | instance config — renamed from `normalize-config.json` (migration); holds `media_fetch`, `transcribe_model`, `transcribe_base_url`/`_api_key`/`_api_model`, `report_issues`, `internal_domains`, and provider order as `providers: {<capability>: [<name>, …]}`. `noise_prefixes` is accepted and reserved — nothing reads it yet. Unknown keys rejected loudly |
+| `cache/` (gitignored) | ephemeral: render payloads, in-flight audio. Never state, never synced. Created at scaffold, since the per-item procedure renders every receipt through `cache/receipt.json` |
 
 Ledger mechanics: append-only, full-record lines, **latest-per-hash wins**.
 `enrich compact` rewrites keeping only the latest line per hash (also settles
@@ -519,6 +658,18 @@ independently is seven chances to reintroduce it):
   The same guard wraps `dex-inbox`'s two urllib sites — an asset download is
   the same large-read shape — so a truncated read there is a stated
   `dex-inbox:` failure, not a traceback.
+- **The transport seam puts a non-ASCII URL on the wire, it does not refuse
+  one.** `http.client` encodes the request line as ASCII, so an accented
+  path, a CJK slug or an IDN host raised `UnicodeEncodeError` — a
+  `ValueError`, so it escaped every `except OSError` guard and parked the
+  whole item `manual` with a raw codec dump as the owner-facing reason,
+  before a single byte was fetched. The seam now encodes on the way out:
+  IDNA for the host, percent-encoding for path, query and fragment, with
+  `%` in every safe set so an already-encoded URL passes through
+  byte-identical and the transform is idempotent. Canonical form is
+  untouched — it keys the ledger, and re-encoding it would orphan every
+  existing entry. Only a host DNS genuinely cannot carry fails, as a stated
+  `ValueError` the bad-seed containment parks on with a readable reason.
 - **A truncated ERROR body never costs the status code.** The body of a
   4xx/5xx is only detail; the status is the finding. Both HTTP seams (the
   transport, whisper-api's multipart POST) drop a failed error-body read and
@@ -584,6 +735,32 @@ unsupported format, `blocked`, `manual`), the corpus item was already
 created at ingest — provenance and the owner's note are captured
 immediately and never queued. The item stays `status: raw` with no
 digest/wiki work until its work units complete.
+
+**Bad-seed parking**: a URL that cannot even be canonicalized — a malformed
+IPv6 literal, a media path climbing out of the instance root, a scheme the
+transport refuses — never enters the queue as work. It parks as its own
+`manual` entry with the refusal stated (`unfetchable capture URL: …`), one
+per bad URL, and the rest of the item seeds and drains around it. The
+containment is the point: one garbage URL in a capture must not abort the
+seeding of everything beside it, and it must not disappear either, because
+a silently dropped URL is a capture the owner believes was ingested. The
+same pattern applies a layer in for media URLs a driver emits (§7) and for
+`enrich fetch` batches (§10).
+
+Bad seeds are **the one place a ledger key is minted from a non-canonical
+URL**. Everywhere else the key is `work_hash(canonical(url))`; here
+canonicalization is exactly what failed, so the key is `work_hash(url)` on
+the raw string. Two consequences, both deliberate:
+
+- `enrich mark` resolves a unit by canonical identity **first** and by the
+  exact stored key **second**. A canonical-only lookup could never reach a
+  bad seed — or a `via: media` line, keyed verbatim because signed query
+  params ARE the resource — and the contract forbids healing either by
+  hand-appending JSONL, which would leave judgment with no working tool at
+  all. So pass the URL as the ledger shows it and the heal lands.
+- A bad seed carries `kind: web` — the catch-all's kind — because nothing
+  about an uncanonicalizable string is pattern-detectable, and the entry
+  must still satisfy the schema.
 
 Heals write the ledger: when Claude repairs something by hand (the
 Cloudflare-403 incident above), the ingest skill's heal procedure ends by
@@ -923,17 +1100,20 @@ migration-seeded (§12), not scan-inferred.
 
 ## 11. Rendering: judgment decides, code renders
 
-Ported from the agentic-workflows kernel/surfaces architecture. Layout that
-is fully determined by data is computed in code and emitted verbatim — never
-re-derived character-by-character by the model.
+Composition that is fully determined by data is computed in code and emitted
+verbatim — never re-derived character-by-character by the model.
 
 ```
-render/kernel.py     pure layout, zero dex vocabulary — wrap/width/column
-                     math, tables, trees, kv blocks. Alignment bugs can
-                     exist in exactly one place, and it has tests.
+render/kernel.py     markdown composition, zero dex vocabulary — headings,
+                     bullets, detail lines, `·`-joined inline lists, and the
+                     pluralizer that makes a heading's scale read as
+                     English. No width, no wrapping, no truncation:
+                     identity reaches the reader whole. Composition bugs
+                     can exist in exactly one place, and it has tests.
 render/surfaces.py   named surfaces, loud payload validation:
-                     enrich-report, status, capability-report,
-                     ingest-receipt, health-report, sync-report
+                     enrich-report, status, item-status,
+                     capability-report, sync-report, ingest-receipt,
+                     health-report
 ```
 
 Two call paths: engine-internal (e.g. `enrich run` renders its own report
@@ -941,9 +1121,124 @@ in-process — includes a "reported upstream: N issues" line when the filer
 acted) and cognitive (Claude writes a JSON payload — including free-prose
 fields like `judgment_notes` — to `cache/`, runs `bin/dex render --file …`,
 emits the result verbatim; even prose position/framing is deterministic).
-Standing skill rule: **never hand-draw a table or report; there is a surface
-for it — call it.** Cap-fired events are internal (ledger/log) and appear on
-no user-facing surface.
+Standing skill rule: **never hand-draw a report; there is a surface for it
+— call it.** Harvest-time cap fires stay off the run report and are read on
+the health check as a tuning signal; an owner-requested `enrich fetch`
+refusal is answered on the report of the run the owner asked for (§1).
+
+### Who reads a report
+
+The primary reader is the Claude session driving a scheduled run. It reads
+the report to decide what to do next, and it reads every line of it. The
+owner reads the same reports rarely, in whatever client he happens to be in.
+
+The surfaces were originally laid out for a person at a 72-column terminal:
+fixed-width tables, column fitting to the widest cell, greedy wrapping, and
+hanging-indent continuation. Nothing was ever elided or truncated — the old
+kernel had no elision and no display-column measurement in it — but a token
+wider than the budget was hard-split across lines mid-string. A 375-character
+URL arrived in the reader as several fragments, and an item id could break
+across a line boundary the same way. That costs the two things these reports
+exist for: an id a grep can find, and a URL that survives a copy. It also
+bought nothing, because the primary reader is a Claude session in a client
+with no fixed width at all, and the owner reads the same reports in whatever
+client he happens to be in. So **every surface emits markdown, not
+fixed-width layout**: no column arithmetic, no padding, no rules, no box
+glyphs, and identity is never split.
+
+### Layout rules
+
+**Headings.** `##` opens the report and names it plus its scale
+(`## Enrich run — 6 units processed`). `###` opens each section and names
+the section plus its scale (`### Needs you — 1 entry the engine has given up
+on`). A reader who stops at the headings still knows what happened and how
+much of it there is.
+
+**Bullets.** `-` for every list. One entry per bullet. A detail hanging off
+an entry is a continuation line indented two spaces and opened with `↳`;
+several details are several `↳` lines. Nested `-` bullets are for genuine
+nesting (a migration's actions inside the migration), not for the details of
+a single entry.
+
+**Bold for identifiers.** Item ids, page names, URLs standing as an entry's
+identity, and the count in a finding are `**bold**`. The bold is what the
+eye lands on and what a grep for an id finds.
+
+**Backticks for statuses and literals.** A ledger status (`manual`,
+`blocked`), a capability (`transcribe`), a path or filename, a wikilink
+target, a command. Backticked text is a value the reader can copy, type, or
+match; it is never prose.
+
+**Identity is never truncated and never wrapped.** An item id, a URL, or a
+file path renders whole, on its own line, whatever its length. Real item ids
+average 58 characters and one real URL in a live instance is 375. Nothing in
+the render path may shorten one, split one, or elide the middle of one. The
+code that could split one is deleted rather than bounded, because a bound is
+a setting and a deletion is a guarantee — and with it went the rest of the
+terminal geometry the kernel held: greedy word wrap, hanging-indent wrap,
+fill-to-width, table column fitting, key-value blocks and tree gutters.
+
+**Prose may soft-wrap.** No renderer hard-wraps anything. Terminals,
+editors and chat clients all soft-wrap, and a hard wrap inserted at render
+time is a newline that is wrong in every viewport but one, and that a reader
+searching for a phrase cannot match across.
+
+**No tables.** Not a markdown table, not an aligned one. The only exception
+is a genuinely short columnar count where every cell is a short label and a
+small integer, and even those render as bullets or as one `·`-joined line
+(`**done** 4 · **waiting** 1 · **blocked** 1`) rather than as a table.
+
+**Sections group by who owns the next action, not by internal status.** The
+old enrich report had one `parked` block holding four ledger statuses,
+because that is how the ledger stores them. A reader does not need to know
+that: he needs to know which entries wait on him and which the engine will
+retry without being asked. So `manual` (the engine has given up) becomes
+**Needs you**, while `blocked`, `waiting` and `error` (the engine retries by
+itself) become **Waiting on the engine**, with the retry state visible on
+the entry. The same rule renames every other engine-internal label to what
+the reader must do about it.
+
+**Open question — where `error` entries belong.** They sit under **Waiting
+on the engine** today, on the rule above: `error` retries by itself, once
+per newer engine (§5). The counter-argument is that the retry needs a
+release to happen at all, so an `error` is closer to work the owner owns
+than to work the engine will get to unasked. Undecided.
+
+**A marker rides inside the bullet text, never in the prefix.** A restated
+fact is `- ~ the fact`, not a `~` gutter applied to the entry. This is the
+one behaviour kept from the superseded wrapping work: a prefix repeats on
+every continuation line, so two facts rendered four markers.
+
+**Absent sections are absent; present checks state "none".** The two kinds
+of report differ. A run report (enrich, sync, receipt) omits a section with
+nothing in it, and says in one line when nothing at all happened; a list of
+headings each reading "none" is exactly the noise markdown removes. A check
+report (health) keeps one bullet per check even at zero, because there the
+absence is the finding and its presence proves the check ran.
+
+**A capped listing says it is capped.** A findings list showing only its
+first N entries ends with a bullet naming how many it did not show. A
+silently short list is a lie about scale.
+
+### Reader-facing vocabulary
+
+| label | what it holds |
+|---|---|
+| **Needs writing up** | items with new enrichment for the session to digest |
+| **Read these yourself** | jobs resolving to the cognitive floor (OCR, extraction Claude must do with eyes) |
+| **Needs you** | entries the engine has given up on: ledger status `manual` |
+| **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` |
+| **Not finished** | items still `raw` because a unit they own has not landed |
+| **Digest these** | items whose enrichment is newer than their digest |
+| **Waiting on a capability** | the `waiting` cohort, counted by the capability it needs |
+| **Repair with judgment** | a migration's skipped records |
+| **REVIEW REQUIRED** | a migration's anomalies |
+
+(That table is documentation, not a rendered surface — the no-tables rule
+binds the renderers, not this document.)
+
+Detail text says what changed in plain terms. "3 new enrichment files, 1
+rewritten" replaces "3 new, 1 changed", which never said new *what*.
 
 ## 12. Releases, sync, migrations
 
@@ -970,10 +1265,26 @@ or health check — per the ratified operating walkthrough; also on demand):
 5. render the sync report (one surface)
 ```
 
+**Sync deletes retired engine skills.** The `dex-` namespace under
+`.claude/skills/` is engine-owned, so a `dex-*` directory the template no
+longer ships is removed from the instance, and the removal is reported as a
+machinery change. Copying alone is not enough: a retired skill left on disk
+keeps loading its stale procedure into every session, describing verbs that
+no longer exist — which is worse than having no skill, because the session
+believes it. (`dex-ingest`, split into `dex-capture` + `dex-run`, is the
+case this exists for.) A symlinked skill directory is unlinked rather than
+recursed into, so whatever it pointed at is left alone. Nothing outside the
+`dex-` prefix is ever touched — an owner's own skills are instance-owned.
+
 Majors also auto-apply (the always-migratable commitment) but announce loudly
 in session and health report. Minors only for the foreseeable future.
 Transition bootstrap is automatic: sync rewrites its own shim, so existing
 instances move from main-tracking to tag-pinning on their next sync.
+
+**Version precondition on every release**: the package version stays ahead
+of every released tag. A running version equal to an existing release makes
+the pin bootstrap adopt that (old) tag and brick the instance on older code.
+The pre-rewrite marker `0.0.1` is never re-tagged or re-stamped.
 
 **Migrations** — `src/dex_engine/migrations/migration_<n>.py`, plain
 integers, runner sorts numerically (padding buys nothing; single author +
@@ -1070,9 +1381,23 @@ Shipping migrations for this rewrite:
    Old `error` entries adopt retry-on-new-engine semantics. The old ledger
    used `error` as an informal reason field on non-error statuses (28 wild
    lines: dead/nocaptions/done/skipped/manual, plus one `note` field) —
-   migration 1 **ports those values into `reason`**, never destroys them.
+   migration 1 **never destroys those values**: on a status that may carry
+   a reason they move into `reason`, on `error` they stay in `error`, and
+   on `done`/`queued` — where §5 forbids `reason` outright — the text is
+   preserved in the migration report and dropped from the line, which the
+   report says in as many words. A `manual`/`skipped` line the old engine
+   left with no reason at all gets one, since the schema requires it.
    Must precede any requeue (else reruns write `x-….md` beside stale
    `tweet-….md`).
+
+   **Open question — a guard on an absent or empty corpus.** Migration 1
+   reads the corpus to attribute ledger lines, so it could refuse to run
+   where the corpus is missing or empty rather than dropping every line it
+   cannot attribute. The recommendation is no guard: corpus and ledger live
+   in the same repo and arrive together, so an empty corpus beside a
+   populated ledger is not a state a checkout produces — and a guard teaches
+   a migration to distrust its own repo, which is the ghost-item sweep's
+   mistake in a different costume. Not ruled on.
 2. **Identity re-key + rerun seed** — two steps over one ledger pass, in
    this order. First, identities: the rewrite moved canonical identity
    for two kinds (x posts are keyed by status id; youtube's single-video
@@ -1202,8 +1527,9 @@ corpus item or drops the line, per the attribution rule above.
 migration is code every instance carries forever; a one-off tidy is a
 one-off tidy.
 
-Cap-event surfacing, blessed precisely: harvest-time cap fires stay off
-every user surface; an owner-requested `enrich fetch` refusal IS surfaced
+Cap-event surfacing, blessed precisely: harvest-time cap fires stay off the
+run report and are read on the health check as a tuning signal (§1); an
+owner-requested `enrich fetch` refusal IS surfaced
 (the owner asked and deserves the answer); media-cap and oversize skips
 surface as ordinary unit outcomes per the media-stage rules.
 
@@ -1255,6 +1581,13 @@ involvement: the engine owner only.
 ```
 src/dex_engine/
   pipeline/    types.py  ledger.py  detect.py  registry.py  run.py
+               classify.py   the ONE failure classifier (§5) + the scrubber
+               transcribe.py the transcribe drain: audio acquisition,
+                             prompt budgeting, chunking (§6, §9)
+               urls.py       canonicalization and the work-key hash — the
+                             one place a ledger identity is computed
+               capture.py    `enrich item new`: capture file → corpus item
+               issues.py     the issue filer (§13)
                ownership.py — which live corpus item claims a work unit
                  (its urls:/media: hashed exactly as seeding does), the one
                  answer to "is this entry's item still there?"; lint and
@@ -1262,14 +1595,21 @@ src/dex_engine/
                  purge in one place and a rename in the other; `exclude`
                  asks it before deleting work history, for the same reason
   drivers/     youtube.py  x.py  github.py  paper.py  podcast.py  web.py  file.py
+               transport.py  the HTTP seam (§5's OSError normalization)
   capabilities/
     transcribe/  whisper_local.py  whisper_api.py
     extract/     anydoc.py  csv_builtin.py  cognitive.py
     ocr/         cognitive.py
   atomic.py    the ONE atomic-write implementation (same-dir temp file,
                then one replace; no temp orphan on failure) — every state
-               write shares it: ledger, corpus items, the pin file,
-               capture pointers, cached audio, migration rewrites
+               write shares it: ledger, corpus items, enrichment outputs,
+               the pin file, capture pointers, cached audio, migration
+               rewrites
+  frontmatter.py
+               the ONE frontmatter-scalar unquoting rule (double-quoted
+               read as JSON, single-quoted as YAML's literal form), shared
+               by the enrichment reader and lint's digest check; imports
+               nothing from the package
   corpus.py    the ONE corpus-item frontmatter read/write point: a frozen
                `CorpusItem` dataclass, parse/serialize that passes the
                Claude-authored body through byte-exact. Replaces the old
@@ -1308,7 +1648,7 @@ src/dex_engine/
 ```
 
 Dependencies: `trafilatura` (extraction only), `yt-dlp`, **`firecrawl-anydoc`**
-(+), **`faster-whisper`** (+, packaging pending — §16), `pypdf` (−, replaced
+(+), **`faster-whisper`** (+, packaging pending — §17), `pypdf` (−, replaced
 by anydoc). License: MIT (LICENSE + pyproject, in place; all deps
 MIT-compatible — AGPL options were rejected for this reason and anydoc made
 the question moot).
@@ -1504,7 +1844,7 @@ old monolith had no seams.
   non-audit lines; `canonical(canonical(u)) == canonical(u)` over generated
   URLs (canonicalization keys the ledger hash — a non-idempotent case IS a
   duplicate-entry bug).
-- **Render kernel tests**: the column/wrap math.
+- **Render kernel tests**: the markdown composition primitives (§11).
 - **Live tests opt-in** (pytest marker) for real-API drift checks. CI runs
   hermetic only (enforced by the default `-m "not live"`, §14).
 
@@ -1518,57 +1858,48 @@ Suite structure: `tests/` mirrors `src/dex_engine/`
 Driver/provider Protocol conformance is verified by the typed registry
 literal (§2) — no separate conformance tests needed.
 
-## 15a. Implementation order
+## 16. Cleanup round: behaviour-neutral debts
 
-Sequencing constraints are real; build in this order, each phase leaving
-the tree green:
+Debts the build left in the engine, batched so they aren't lost. Owner
+ruling: these ship **before the first release**, which is what makes them
+release work and puts them here rather than on the roadmap. Sequence them
+after the driver-outcome change (§2) — the cleanup touches the same seams,
+and the outcome union settles several of these on its way past.
 
-1. **Foundations** — `pipeline/types.py` (enums, dataclasses, validation),
-   `pipeline/ledger.py` (from_line/to_line, compact, invariant tests),
-   `corpus.py` (CorpusItem parse/serialize, byte-exact body round-trip),
-   `render/kernel.py` + `surfaces.py` (everything downstream reports
-   through them), tooling (ruff, type checker, pytest config,
-   dependency-groups, uv.lock). Hypothesis properties land here.
-2. **Detection + drivers** — `detect.py`, `registry.py`, `run.py`; port
-   youtube/x/github/paper/web to the driver shape (x gains walk-up, web
-   keeps links + classified fetches); media stage; fixtures per driver;
-   `normalize.py` switched to shared detect; classification module with
-   the 403-regression pin.
-3. **Capabilities** — extract (anydoc, csv-builtin, cognitive), transcribe
-   (whisper-local, whisper-api with chunking), ocr (cognitive); waiting
-   queue semantics; `file` + `podcast` drivers (they depend on
-   capabilities); `enrich fetch` / `mark` / `pass` verbs; capability
-   report surface.
-4. **Releases + migrations** — `.dex-engine-pin`, sync flow (re-exec,
-   migration runner, sync report), Migration protocol + report review;
-   migrations 1 and 2 (in that order — renames before requeues).
-5. **Periphery + uniformity** — issue filer; skill rewrites (dex-capture,
-   dex-run restructure with ingest-item reference, lint additions);
-   **every remaining module brought to the day-zero standard with tests**
-   (inbox, normalize, lint, sync, exclude, new — behavior preserved,
-   expression rewritten; nothing ships legacy); dex-contract.md, README,
-   docs/ updates per the anti-drift obligations; instance rollout (sync
-   each instance, verify migration reports).
+- **One shared fetch-and-classify helper.** Eight hand-rolled copies across
+  the drivers, `transcribe` and `run`.
+- **Duplicated body / slug / extension helpers.** youtube `_body` vs
+  `transcribe.youtube_body`; `capture` vs `normalize` for `URL_RE` and
+  slugify; `run._ext_of` vs `transcribe._audio_ext`.
+- **Six spellings of Classification→Result.** One conversion, once.
+- **One enrichment-frontmatter module owning render and parse.** The writer
+  lives in `run.py`, the reader in `transcribe.py`; the §1 format is one
+  contract and belongs to one module.
+- **Hoist the yt-dlp seam out of `drivers/youtube.py`** so
+  `pipeline/transcribe.py` stops importing a driver — the standing
+  violation of the driver-isolation rule (§2) inside the engine's own code.
+- **`ledger.py`'s per-word legacy-vocabulary hint tables.**
+- **The import-time `DRIVERS` registry.** A module-level list against the
+  no-import-time-state rule (§14); the typed registry literal is still the
+  Protocol-conformance point (§2), just not at import.
+- **Streaming transport reads.** An unbounded `response.read()` buffers a
+  whole enclosure in memory; enforce the §7 media cap in-stream instead, so
+  an oversize download is refused while it arrives rather than after.
+- **A per-item fetched-count cache.** `_cap_fired` recounts the item's
+  entries per admission, which is quadratic in the item's ledger.
+- **One long-lived append handle for the ledger.**
+- **A repo-wide `ruff format` pass.** 43 files drift under ruff 0.16.3 —
+  one mechanical reformat commit, on its own.
+- **A cheap guard in `run._admit_children`.** Unreachable until a driver
+  emits children.
 
-Phases 1–3 are pure engine work with no instance impact; nothing ships to
-instances until phase 4 exists, because the first synced release must carry
-the migrations that make old state valid under the new code.
+Two seams of this round already landed as part of fixes and are **done**:
+`drivers/gh.py`, the authenticated GitHub route the github and file drivers
+share (§3), and `drivers/audio.py`, the audio-on-a-page signal the web and
+podcast drivers share (§9). Neither driver imports the other through them,
+and they are the shape the yt-dlp hoist copies.
 
-**Version precondition** (phase-4 review, F1): the package version must be
-bumped past every released tag before the stack merges — a running version
-equal to an existing release makes the pin bootstrap adopt that (old) tag
-and brick the instance on pre-rewrite code. The pre-rewrite marker
-`0.0.1` must never be re-tagged or re-stamped.
-
-**MERGE GATE — binding on the stack**: instances track `main` HEAD today
-(the shim pins nothing until phase 4), so `impl/*` branches must NOT reach
-`main` before phase 4's migrations and the pin mechanism exist. Landing
-phase 2 early would make every instance's next `bin/dex` run fail loudly:
-`ledger.load` rejects pre-migration vocabulary by design, and the docs/
-skills still describe deleted verbs until phase 5. The stack merges to
-main as a whole, or at minimum from phase 4 downward, never bottom-first.
-
-## 16. Deferred / out of scope (tracked on the roadmap)
+## 17. Deferred / out of scope (tracked on the roadmap)
 
 Instagram driver (shape not
 agreed) · X thread walk-down · hosted

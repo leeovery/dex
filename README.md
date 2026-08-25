@@ -281,7 +281,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
-| `dex-render` | render a named report surface from a JSON payload, verbatim (skills never hand-draw tables) |
+| `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (skills never hand-draw reports) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work

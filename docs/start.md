@@ -87,7 +87,9 @@ seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
   interviewed.
 - Personalize README.md: owner/domain, the same In-scope list (the two
   files mirror each other; scope changes always update both), and the
-  `owner/repo` in its "Run it on another machine" prompt.
+  `<owner>/<repo>` placeholder in its "Run it on another machine" prompt —
+  that prompt is what a second machine or a second person pastes, so it has
+  to name the real repo. If GitHub was declined, delete the section.
 - Commit. If GitHub was wanted: `gh repo create {name} --private --source .
   --push`, then `bin/dex inbox ensure` — creates the standing "inbox"
   release that binary captures stage into.

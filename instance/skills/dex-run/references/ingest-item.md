@@ -49,9 +49,9 @@ its content lives on in the corpus.
 `bin/dex enrich run` fetches everything behind the item's URLs and files —
 captions, articles, READMEs, papers, thread walk-ups, podcast audio →
 transcripts (capped per run), document extraction — and its report names
-what landed, what changed, and what parked. Formats with no mechanical
-provider surface as **cognitive jobs** on the report: those are yours —
-read the document/scan with eyes and write the enrichment file yourself
+what landed, what was rewritten, and what parked. Formats with no
+mechanical provider appear under **Read these yourself**: those are yours
+— read the document/scan with eyes and write the enrichment file yourself
 (step 4). Transcription backlogs: `bin/dex enrich transcribe --limit N`;
 model judgment — `--model small` for long backlogged queues, stay at the
 default for dense technical audio.

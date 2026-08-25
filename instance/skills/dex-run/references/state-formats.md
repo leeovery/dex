@@ -37,6 +37,12 @@ facts beyond that is **never checked**: the count measures the source, not
 the digest, and no honest digest makes three facts out of a two-line
 tweet.
 
+**Never hand-write this file.** Write the judgment as JSON and let the
+engine serialize it: `bin/dex enrich item digest --file cache/digest.json`.
+The judgment is yours, the shape is the engine's, and a digest that went
+through the verb cannot fail the check above. Lint's frontmatter check is a
+backstop for files that predate the verb or were edited by hand.
+
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a

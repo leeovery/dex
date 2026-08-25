@@ -2,9 +2,10 @@
 
 ``uvx --from git+https://github.com/leeovery/dex dex-new <name>``
 
-Creates ``./<name>``: the directory tree, seed CLAUDE.md and README.md (both
-to be personalized), the engine-managed machinery (via the same template
-sync every instance runs), git init, and local LFS.
+Creates ``./<name>``: the directory tree (tracked dirs plus the gitignored
+``cache/``), seed CLAUDE.md and README.md (both to be personalized), the
+engine-managed machinery (via the same template sync every instance runs),
+git init, and local LFS.
 """
 
 import argparse
@@ -17,7 +18,12 @@ from pathlib import Path
 
 from .sync import sync
 
-__all__ = ["SEEDS", "TREE", "build_parser", "main", "scaffold"]
+__all__ = ["EPHEMERAL", "SEEDS", "TREE", "build_parser", "main", "scaffold"]
+
+# Gitignored, so it carries no .gitkeep — but it must exist from birth: the
+# per-item procedure renders every receipt through `cache/receipt.json`, and
+# a fresh instance would otherwise fail its first documented render step.
+EPHEMERAL = ["cache"]
 
 TREE = [
     "corpus",
@@ -83,6 +89,8 @@ def scaffold(
         (root / directory).mkdir(parents=True, exist_ok=True)
         # Empty dirs don't survive git clone — keep the tree shape tracked.
         (root / directory / ".gitkeep").write_text("")
+    for directory in EPHEMERAL:
+        (root / directory).mkdir(parents=True, exist_ok=True)
     for rel, content in SEEDS.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(content)

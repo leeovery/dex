@@ -22,8 +22,10 @@ the engine stays unaware of which ones exist.
     web (catch-all, always last), file; `transport.py` is the HTTP seam.
   - `capabilities/` — transcribe (whisper-local floor, whisper-api),
     extract (anydoc, csv-builtin, cognitive floor), ocr (cognitive floor).
-  - `render/` — `kernel.py` (pure layout), `surfaces.py` (named report
-    surfaces), `cli.py` (`dex-render`). Judgment decides, code renders.
+  - `render/` — `kernel.py` (markdown composition primitives),
+    `surfaces.py` (named report surfaces), `cli.py` (`dex-render`).
+    Judgment decides, code renders; the surface vocabulary and layout
+    rules in force are `design/ingestion-pipeline.md` §11.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -44,9 +46,10 @@ the engine stays unaware of which ones exist.
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
   capture protocol any client implements).
-- `design/ingestion-pipeline.md` — the agreed, in-force design for the
-  ingestion machinery; `design/roadmap.md` — queued design work,
-  operational facts, pending tasks.
+- `design/ingestion-pipeline.md` — the one design surface for this release:
+  the in-force design for the ingestion machinery and the rendered
+  surfaces, plus the work agreed and not yet built. `design/roadmap.md` —
+  an index over the design files, post-release backlog, operational facts.
 - `example/` — a toy instance showing the shapes.
 
 ## Design (current, in force)
@@ -77,10 +80,13 @@ the engine stays unaware of which ones exist.
 ## When you change things (anti-drift rules)
 
 - **The ingestion design is written down**: `design/ingestion-pipeline.md`
-  is the agreed design in force for the pipeline, state, releases, and
-  skills. Check changes against it; when a decision genuinely changes,
-  record the new decision (roadmap for queued work) rather than silently
-  diverging from the document.
+  is the agreed design in force for the pipeline, state, surfaces,
+  releases, and skills, and it is the only design surface for the work of
+  this release — everything discussed and not yet shipped goes in it,
+  marked as agreed-not-built. Check changes against it; when a decision
+  genuinely changes, record the new decision there rather than silently
+  diverging from the document. The roadmap is neither a design surface nor
+  a work log.
 - **Comments earn their place — and never reference the design doc.** A
   comment or docstring exists only for what the code cannot say: a
   non-obvious constraint, a deliberate surprise, a wild-data fact, a why.
@@ -103,9 +109,32 @@ the engine stays unaware of which ones exist.
   migration when existing state must move.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
-- **Decisions**: record in `design/roadmap.md` — present tense, current design
-  only; this file and the docs describe what IS, not what was.
+- **Decisions**: record in the design file the work belongs to —
+  `design/ingestion-pipeline.md` for anything in this release. The roadmap
+  takes only what comes after it, in a line or two. Present tense, current
+  design only; this file and the docs describe what IS, not what was.
 - **README**: its under-the-hood section mirrors the structure and design
   above — keep it true whenever any of this changes.
 - **`docs/shortcut.md` is device-verified**: never guess iOS Shortcuts UI —
   verify on a device or ask the owner what their screen shows.
+
+## When you review
+
+- **Verify by running the code, not by reading it.** Build a scratch instance
+  and drive the verbs. Every finding states the trigger that reaches it and
+  says whether it was reproduced or only reasoned about. Reading a line and
+  imagining a path to it produces findings that cost more to triage than they
+  are worth.
+- **Findings are fix-or-drop.** A finding is an issue when something that
+  actually happens can trigger it: a jumped clock, an interrupted run, an
+  LLM-authored input file, a malformed file, a weird URL. It is not an issue
+  when it needs a hand-edit of a file the contract forbids hand-editing, or a
+  writer that does not exist — drop it, and don't record it. There is no
+  backlog tier for known defects; the roadmap's backlog holds unbuilt features
+  only.
+- **Stop when a cycle returns nothing above that bar.** Early cycles on new
+  work legitimately surface majors, and they get fixed. Later cycles surface a
+  long tail that costs more to chase than to ship. Say the surface is done and
+  stop reviewing it.
+- **Decide the cheap ones.** A low-likelihood finding with a one-line fix is
+  not a decision to escalate. Make the call, do it, and say what you decided.

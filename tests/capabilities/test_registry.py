@@ -176,12 +176,13 @@ class TestReport:
         rows = provider_rows(c.report_payload())["transcribe"]
         assert rows[0] == {"name": "whisper-local", "state": "active", "note": caveat}
         assert rows[1]["note"] == "keyless local server"
-        flat = " ".join(surfaces.render("capability-report", c.report_payload()).split())
-        assert f"whisper-local (active) — {caveat}" in flat
+        report = surfaces.render("capability-report", c.report_payload())
+        assert "- **whisper-local** · `active`" in report
+        assert f"  ↳ {caveat}" in report
 
     def test_payload_renders_on_the_surface(self):
-        # The designed example line, verbatim shape: active first, the
-        # unavailable provider with its unmet requirement after the dash.
+        # The designed example shape: active first, the unavailable
+        # provider with its unmet requirement on its own detail line.
         c = caps(
             transcribers=(
                 FakeTranscriber("whisper-local"),
@@ -189,14 +190,14 @@ class TestReport:
             ),
         )
         report = surfaces.render("capability-report", c.report_payload())
-        flat = " ".join(report.split())  # the kernel may wrap long value lines
-        assert "whisper-local (active)" in flat
-        assert "whisper-api unavailable — set OPENAI_API_KEY" in flat
+        assert "- **whisper-local** · `active`" in report
+        assert "- **whisper-api** · `unavailable`" in report
+        assert "  ↳ set OPENAI_API_KEY" in report
 
     def test_real_build_payload_renders(self):
         # The registry built from a default Config must always produce a
         # renderable payload on this machine, whatever is installed.
         report = surfaces.render("capability-report", Capabilities.build(Config()).report_payload())
-        assert report.startswith("capabilities")
+        assert report.startswith("## Capabilities")
         assert "transcribe" in report
         assert "ocr" in report

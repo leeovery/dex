@@ -563,7 +563,7 @@ class TestPodcastDrain:
     def test_park_is_not_cognitive_work_yet(self, instance):
         ctx = self.park_via_driver(instance)
         report = run_mod.run(ctx)  # a second run: nothing new
-        assert "cognitive work — none" in report
+        assert "Nothing needs attention" in report
 
     def test_park_file_appears_in_the_items_enrichment_listing(self, instance):
         # The frontmatter refresh keys on every write, not only counted
@@ -974,11 +974,11 @@ class TestRunAutoDrain:
         )
         ctx = make_ctx(instance, FakeDriver(), capabilities=caps, provider_available=caps.available)
         report = run_mod.run(ctx)
-        assert "cognitive jobs — the session completes these with eyes" in report
+        assert "### Read these yourself — 1 job the engine cannot do" in report
         assert ocr_url in report
         assert ledger.load(instance.ledger_path)[work_hash(ocr_url)].status is Status.WAITING
         # The transcribe job is parked, not listed as cognitive:
-        lines = report.split("cognitive jobs")[1]
+        lines = report.split("Read these yourself")[1]
         assert VIDEO_URL not in lines
 
 
@@ -1029,9 +1029,9 @@ class TestStatusIncludesCapabilities:
         )
         ctx = make_ctx(instance, FakeDriver(), capabilities=caps)
         report = run_mod.status_report(ctx)
-        assert "ledger — 0 entries" in report
-        assert "capabilities" in report
-        assert "whisper-local (active)" in report
+        assert "## Ledger — 0 entries" in report
+        assert "## Capabilities" in report
+        assert "- **whisper-local** · `active`" in report
 
     def test_without_a_registry_the_status_stands_alone(self, instance):
         ctx = make_ctx(instance, FakeDriver())
