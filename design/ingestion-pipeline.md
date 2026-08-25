@@ -2,12 +2,11 @@
 
 Status: **in force, implemented** (designed and signed off 2026-08-19/20;
 the rewrite has landed). This document is the reference for the engine's
-ingestion machinery and describes what IS. It is also the one design surface
-for this release: work that is agreed and not yet built lives here too,
-marked as such where it belongs — the driver-outcome contract (§2), the
-cleanup round (§16), and the open questions their own sections state. The
-backlog (`backlog/index.md`) holds no design; it lists what comes after the
-release, one file per idea.
+ingestion machinery and describes what IS. It is the one design surface for
+this release, and everything it agreed — the driver-outcome contract (§2),
+the cleanup round (§16), the questions its sections once held open — is
+built and marked done in place. The backlog (`backlog/index.md`) holds no
+design; it lists what comes after the release, one file per idea.
 
 This document was verified line-by-line against the full design-session
 transcript, which is held locally by the owner and is not part of the repo;

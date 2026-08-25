@@ -490,7 +490,7 @@ class TestSyncReport:
         assert "- no release tags on the remote yet — running unpinned" in out
 
     def test_a_major_bump_renders_distinctly_and_loudly(self):
-        # §12: a major is an owner-visible event, not a row — the heading
+        # A major is an owner-visible event, not a row — the heading
         # names it and a loud line follows, unlike any patch bump.
         out = render(
             "sync-report",
@@ -770,7 +770,7 @@ class TestHealthReport:
         assert "- re-entry cap fires (tuning signal, not an alarm) — none" in out
 
     def test_the_offenders_listing_says_how_much_it_withheld(self):
-        # §11: a capped listing says it is capped — the worst-offenders
+        # A capped listing says it is capped — the worst-offenders
         # line shows five items and must name how many it did not.
         payload = dict(HEALTH_PAYLOAD)
         payload["capped"] = [

@@ -717,7 +717,7 @@ class TestReEntryCaps:
         assert "no --force route" in flat
 
     def test_force_does_not_reach_past_the_depth_bound(self, instance):
-        # --force is the URL budget's override (§10). Depth is a hard bound
+        # --force is the URL budget's override. Depth is a hard bound
         # and offering --force against it would promise what it cannot do.
         write_item(instance, urls=["https://chain.test/0"])
         ctx = make_ctx(instance, FakeDriver())
@@ -751,7 +751,7 @@ class TestReEntryCaps:
         assert entries[work_hash("https://elsewhere.test/docs")].status is Status.DONE
 
     def test_a_capture_is_not_a_re_entry_the_caps_read(self, instance):
-        # The caps bound re-entry (§1). Every captured URL is depth 0, the
+        # The caps bound re-entry. Every captured URL is depth 0, the
         # queue's own front door, and what the owner shared is not a
         # promotion for a bound to turn away.
         captured = [f"https://hub.test/page-{n}" for n in range(MAX_URLS_PER_ITEM + 3)]
@@ -2364,7 +2364,7 @@ class TestStatusReport:
         assert "### Digest these" in report
 
     def test_parked_work_that_outlived_its_run_is_still_named(self, instance):
-        # §1's session-end invariant: the entries that survive a session are
+        # The session-end invariant: the entries that survive a session are
         # waiting/blocked/error/manual, each parked for a stated reason and
         # each printed. The run report prints what ITS run parked, so a unit
         # parked months ago appeared on no surface at all — `**manual** 1`
@@ -3741,7 +3741,7 @@ class TestRedetection:
     EPISODE_FEED = "https://feeds.pods.test/engineering-distilled.rss"
 
     def test_an_indie_episode_page_reroutes_web_to_podcast_in_run(self, instance):
-        # §9's third route, end to end: no URL pattern claims this page, so
+        # The podcast detection's third route, end to end: no URL pattern claims this page, so
         # the catch-all fetches it, sees the audio it carries, and hands the
         # unit to the podcast driver — which resolves the feed's enclosure.
         transport = FakeTransport(
