@@ -253,10 +253,6 @@ class _Drain:
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, str]] = field(default_factory=list)
     outcomes: dict[str, _ItemOutcome] = field(default_factory=dict)
-    # Items whose enrichment dir was written at all (counted or not): the
-    # frontmatter refresh keys on EVERY write, so a waiting park's file
-    # appears in the corpus `enrichment:` listing deterministically.
-    written_items: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
     # Error outcomes captured at the catch site for the issue filer —
     # the ledger keeps only the scrubbed message; the fingerprint needs the
@@ -696,10 +692,6 @@ class _Drain:
         )
         if entry.kind is not redetect.kind and stale.exists():
             stale.unlink()
-            # The item's `enrichment:` listing is derived from disk — make
-            # sure the refresh runs for this item even when the corrected
-            # unit's own drain is deferred past a --limit.
-            self.written_items.add(entry.item)
         self.record(
             LedgerEntry(
                 hash=entry.hash,
@@ -747,7 +739,6 @@ class _Drain:
         """
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         out = self.ctx.instance.enrichment_dir / entry.item / name
-        self.written_items.add(entry.item)
         body = result.body or ""
         content = _render_enrichment(entry.url, self.ctx.today(), result.meta, body)
         existed = out.exists()
@@ -1063,19 +1054,14 @@ class _Drain:
     # -- item frontmatter (derived from disk, written by corpus.py) ------
 
     def _refresh_items(self) -> None:
-        for item_id in self.outcomes.keys() | self.written_items:
-            path = self.item_paths.get(item_id)
-            if path is None:
-                continue
-            item = corpus.read_item(path)
-            files = sorted(
-                p.name for p in (self.ctx.instance.enrichment_dir / item_id).glob("*.md")
-            )
-            updated = dataclasses.replace(
-                item, status="enriched" if files else "raw", enrichment=files
-            )
-            if updated != item:
-                corpus.write_item(path, updated)
+        """Reconcile EVERY item — enrichment also lands outside the drain.
+
+        Media descriptions and cognitive heals are session-written files the
+        drain never touched; a full sweep converges them all, and the
+        write-only-on-change rule keeps untouched items untouched.
+        """
+        for item_id, path in self.item_paths.items():
+            _refresh_item_frontmatter(self.ctx.instance, item_id, path)
 
     # -- report ----------------------------------------------------------
 
@@ -1136,6 +1122,25 @@ class _Drain:
             and entry.needs is not None
             and capabilities.is_cognitive(entry.needs, entry.format)
         ]
+
+
+def _refresh_item_frontmatter(instance: Instance, item_id: str, path: Path | None = None) -> None:
+    """Derive one item's ``status``/``enrichment:`` from disk; write only on change.
+
+    Silent when the corpus file is gone or unreadable: a heal may outlive
+    its item (excluded after capture), an unreadable item is seeding's to
+    name — and the ledger write this follows must stand either way.
+    """
+    if path is None:
+        path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
+    try:
+        item = corpus.read_item(path)
+    except (OSError, corpus.CorpusSchemaError):
+        return
+    files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
+    updated = dataclasses.replace(item, status="enriched" if files else "raw", enrichment=files)
+    if updated != item:
+        corpus.write_item(path, updated)
 
 
 # ---------------------------------------------------------------------------
@@ -1477,6 +1482,8 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
 
     A heal never erases what it does not correct: done heals carry the
     prior entry's path/title forward unless a new ``path`` overrides them.
+    The owning item's derived frontmatter is refreshed in the same call, so
+    a hand-written enrichment file is listed the moment its heal lands.
 
     Args:
         ctx: The run context.
@@ -1531,6 +1538,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         reason=reason,
     )
     drain.record(healed)
+    _refresh_item_frontmatter(ctx.instance, prior.item)
     return f"marked {canonical} ({unit_hash}) {status.value}"
 
 
@@ -1538,7 +1546,9 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
     """Record a stage completion in ``state/passes.jsonl``.
 
     "Ran and promoted nothing" must be distinguishable from "never ran" —
-    hence a record even when a pass changed nothing.
+    hence a record even when a pass changed nothing. The item's derived
+    frontmatter is refreshed in the same call — a pass often follows
+    session-written enrichment the engine never saw.
 
     Args:
         ctx: The run context.
@@ -1565,6 +1575,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    _refresh_item_frontmatter(ctx.instance, item_id)
     return f"recorded {stage} pass for {item_id}"
 
 

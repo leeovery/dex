@@ -950,7 +950,14 @@ Skill changes shipping with this:
   belongs in the digest, not the item body; thread context itself lives in
   the enrichment via walk-up. After creation, exactly two frontmatter
   fields ever change (`status`, `enrichment:` listing), both derived from
-  disk, both written by corpus.py.
+  disk, both written by corpus.py. The derivation rule: `status:
+  enriched` iff `enrichment/<id>/` holds markdown files, and the listing
+  is those filenames, sorted. Every run reconciles **every** item against
+  disk — not just the units it drained — writing only on change, so
+  enrichment written outside the drain (media descriptions, cognitive
+  heals) converges at the next run; `enrich mark` and `enrich pass`
+  refresh their owning item in the same call, so frontmatter is already
+  true when the session that wrote the file ends.
 - **Wiki frontmatter's derived fields are lint-repaired, not carefully
   authored**: `lint --write` reconciles `items:` counts and `generated:`
   dates mechanically at health checks (the field the 2026-08-20 analysis
