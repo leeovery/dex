@@ -100,6 +100,14 @@ class TestCaptions:
         assert meta["duration_min"] == 13
         assert meta["upload_date"] == "20260810"
 
+    def test_unknown_duration_is_omitted_never_zero(self):
+        # Parity with the transcribe drain's route: an unknown duration is
+        # None (omitted from frontmatter), not a fabricated 0.
+        info = {k: v for k, v in INFO_WITH.items() if k != "duration"}
+        driver = driver_for(info, {TRACK_URL: vtt_response(VTT)})
+        meta = driver.fetch(make_unit(URL, Kind.YOUTUBE)).meta
+        assert meta["duration_min"] is None
+
 
 class TestWaitingParks:
     def test_no_captions_parks_waiting_transcribe_and_never_downloads_audio(self):

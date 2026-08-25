@@ -1,0 +1,21 @@
+{
+  "resultCount": 2,
+  "results": [
+    {
+      "wrapperType": "podcastEpisode",
+      "trackId": 7770001,
+      "trackName": "An Unrelated Episode",
+      "collectionName": "Some Other Show",
+      "feedUrl": "https://feeds.other.test/show.rss",
+      "episodeGuid": "other-guid"
+    },
+    {
+      "wrapperType": "podcastEpisode",
+      "trackId": 8880042,
+      "trackName": "Ledgers as Work Queues",
+      "collectionName": "Engineering Distilled",
+      "feedUrl": "https://feeds.pods.test/engineering-distilled.rss",
+      "episodeGuid": "ep-42-guid"
+    }
+  ]
+}

@@ -26,6 +26,8 @@ __all__ = [
     "THIN_EXTRACTION_REASON",
     "Classification",
     "ProviderInputError",
+    "ProviderUnavailableError",
+    "ScannedDocumentError",
     "classify_connection",
     "classify_http",
     "scrub",
@@ -56,6 +58,26 @@ class ProviderInputError(Exception):
     Providers raise this for bad *inputs* (corrupt audio, unparseable file);
     the run loop maps it to ``manual``. Anything uncaught is an engine bug
     and takes the ``error`` path instead.
+    """
+
+
+class ProviderUnavailableError(Exception):
+    """A provider that reported available() failed at call time anyway (§6).
+
+    The capability-level failure modes ``available()`` cannot see up front:
+    a rejected API key, a rate limit, a model download that failed mid-way.
+    The transcribe drain maps this to *the job stays ``waiting``* with the
+    stated reason — §6 semantics discovered late: the mechanical provider
+    is, in truth, not available, and waiting has no escalation clock.
+    """
+
+
+class ScannedDocumentError(Exception):
+    """A document with no extractable text — image-only or scanned (§6).
+
+    Extract providers raise this instead of returning empty markdown; the
+    file driver maps it to the OCR path (``waiting`` + ``needs: ocr``),
+    where the cognitive floor reads the pages with eyes.
     """
 
 

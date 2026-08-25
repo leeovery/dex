@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">
+  <channel>
+    <title>Engineering Distilled</title>
+    <link>https://engineering-distilled.test</link>
+    <item>
+      <title>Ledgers as Work Queues</title>
+      <guid isPermaLink="false">ep-42-guid</guid>
+      <link>https://engineering-distilled.test/episodes/ledgers-as-work-queues</link>
+      <pubDate>Tue, 12 Aug 2026 06:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.pods.test/ed/ep42.mp3?sig=abc123" length="52428800" type="audio/mpeg"/>
+      <description><![CDATA[<p>We discuss append-only ledgers with <a href="https://example.test/guest">Ada Guest</a>.</p><ul><li>Why JSONL merges</li><li>Last-per-hash wins</li></ul>]]></description>
+    </item>
+    <item>
+      <title>Pilot: Why Podcasts Are RSS</title>
+      <guid isPermaLink="false">ep-1-guid</guid>
+      <link>https://engineering-distilled.test/episodes/pilot</link>
+      <pubDate>Tue, 06 Jan 2026 06:00:00 GMT</pubDate>
+      <enclosure url="https://cdn.pods.test/ed/ep1.mp3" length="1048576" type="audio/mpeg"/>
+      <description>The pilot episode.</description>
+    </item>
+    <item>
+      <title>Interview With No Audio</title>
+      <guid isPermaLink="false">ep-2-guid</guid>
+      <link>https://engineering-distilled.test/episodes/no-audio</link>
+      <description>A transcript-only post.</description>
+    </item>
+  </channel>
+</rss>

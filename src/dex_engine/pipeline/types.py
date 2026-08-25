@@ -23,6 +23,7 @@ __all__ = [
     "Child",
     "Config",
     "Extraction",
+    "Extractor",
     "Format",
     "Instance",
     "Kind",
@@ -34,6 +35,7 @@ __all__ = [
     "Skipped",
     "SourceDriver",
     "Status",
+    "Transcriber",
     "WorkUnit",
     "parse_version",
     "version_newer",
@@ -253,6 +255,11 @@ class Result:
     body: str | None = None
     media: list[str] = field(default_factory=list)
     children: list[Child] = field(default_factory=list)
+    # Extraction assets (§6): embedded images have no URL, so bytes are the
+    # only possible form — and drivers never touch the disk (§2), so the
+    # Result is the one channel through which they can reach the run layer's
+    # asset-writing step.
+    assets: list["Asset"] = field(default_factory=list)
     needs: Need | None = None
     reason: str | None = None
 
@@ -274,6 +281,8 @@ class Result:
             )
         if self.status in _REASON_FORBIDDEN and self.reason is not None:
             raise ValueError(f"reason is forbidden on a {self.status!r} result (§2/§5)")
+        if self.assets and self.status is not Status.DONE:
+            raise ValueError(f"extraction assets are done-only outputs, got {self.status!r} (§6)")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -293,6 +302,65 @@ class Extraction:
 
     markdown: str
     assets: list[Asset] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Capability providers (§2/§6): structural, resolved per capability by the
+# registries in dex_engine.capabilities. Conformance is verified at the typed
+# provider lists there, exactly like the driver registry literal.
+# ---------------------------------------------------------------------------
+
+
+class Transcriber(Protocol):
+    """A transcription capability provider (§6).
+
+    ``model`` is the model identifier the provider runs — §6 requires raw
+    transcripts stamped ``via``/``model`` in enrichment frontmatter, so the
+    drain must be able to read it off the provider.
+    """
+
+    name: str
+    model: str
+
+    def available(self) -> Availability:
+        """Honest availability: install intact, credentials present (§6)."""
+        ...
+
+    def transcribe(self, audio: Path, initial_prompt: str) -> str:
+        """Transcribe one audio file, primed with the item's known vocabulary.
+
+        Raises ``ProviderInputError`` for audio it cannot decode (→ manual)
+        and ``ProviderUnavailableError`` for capability-level failures
+        discovered at call time (→ the job stays waiting, §6).
+        """
+        ...
+
+
+class Extractor(Protocol):
+    """A document-extraction capability provider (§6).
+
+    The Format is the contract, not the tool: providers register per format
+    via ``supports``, so each format falls back (or parks) independently.
+    """
+
+    name: str
+
+    def supports(self, fmt: Format) -> bool:
+        """True when this provider can extract ``fmt``."""
+        ...
+
+    def available(self) -> Availability:
+        """Honest availability: install intact (§6)."""
+        ...
+
+    def extract(self, data: bytes, fmt: Format) -> Extraction:
+        """Extract markdown (and embedded assets, as bytes) from a document.
+
+        Raises ``ProviderInputError`` for documents it cannot parse
+        (→ manual) and ``ScannedDocumentError`` for image-only documents
+        (→ the §6 OCR path: ``waiting`` + ``needs: ocr``).
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +565,16 @@ class Config:
 
     media_fetch: MediaFetch = MediaFetch.LEAD
     transcribe_model: str = "medium"
+    # whisper-api credentials (§6): base_url + key from config/env — config
+    # wins, the OPENAI_* environment variables are the fallback (read by the
+    # provider at availability time, never at import).
+    transcribe_base_url: str | None = None
+    transcribe_api_key: str | None = None
+    # The API-side model name (§6) — its own key because local size names
+    # (medium, small) never map onto provider model ids (whisper-1,
+    # whisper-large-v3). None → the provider's default; per-call --model
+    # still overrides.
+    transcribe_api_model: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
     name_map: dict[str, str] = field(default_factory=dict)
@@ -528,6 +606,9 @@ class Config:
         known = {
             "media_fetch",
             "transcribe_model",
+            "transcribe_base_url",
+            "transcribe_api_key",
+            "transcribe_api_model",
             "report_issues",
             "providers",
             "name_map",
@@ -543,6 +624,9 @@ class Config:
         return cls(
             media_fetch=_config_enum(path, raw, "media_fetch", default=MediaFetch.LEAD),
             transcribe_model=_config_str(path, raw, "transcribe_model", default="medium"),
+            transcribe_base_url=_config_opt_str(path, raw, "transcribe_base_url"),
+            transcribe_api_key=_config_opt_str(path, raw, "transcribe_api_key"),
+            transcribe_api_model=_config_opt_str(path, raw, "transcribe_api_model"),
             report_issues=_config_bool(path, raw, "report_issues", default=True),
             providers=_config_providers(path, raw),
             name_map=_config_str_map(path, raw, "name_map"),
@@ -571,6 +655,13 @@ def _config_str(path: Path, raw: dict[str, object], key: str, *, default: str) -
     if not isinstance(value, str):
         raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
     return value
+
+
+def _config_opt_str(path: Path, raw: dict[str, object], key: str) -> str | None:
+    value = raw.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{path}: {key} must be a string, got {type(value).__name__}")
+    return value or None  # an empty string is "not configured", not a credential
 
 
 def _config_bool(path: Path, raw: dict[str, object], key: str, *, default: bool) -> bool:

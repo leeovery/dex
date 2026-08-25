@@ -1,8 +1,7 @@
 """dex-enrich: the ingestion pipeline CLI.
 
-Thin by design (§14): parse arguments, build ``Instance``/``Config``, call
-the pipeline. Zero business logic lives here. ``transcribe`` arrives with
-the capability providers in a later phase — absent, not stubbed.
+Thin by design (§14): parse arguments, build ``Instance``/``Config``/
+``Capabilities``, call the pipeline. Zero business logic lives here.
 """
 
 import argparse
@@ -11,7 +10,8 @@ import sys
 from importlib import metadata
 from pathlib import Path
 
-from .pipeline.registry import DRIVERS
+from .capabilities import Capabilities
+from .pipeline.registry import build_drivers
 from .pipeline.run import (
     RunContext,
     compact,
@@ -19,8 +19,10 @@ from .pipeline.run import (
     mark,
     record_pass,
     run,
+    run_transcribe,
     status_report,
 )
+from .pipeline.transcribe import TRANSCRIBE_RUN_CAP
 from .pipeline.types import Config, Instance, Need, Status
 
 __all__ = ["build_parser", "engine_version", "main"]
@@ -39,7 +41,7 @@ def engine_version() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The argparse tree: run · status · fetch · compact · mark · pass."""
+    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass."""
     parser = argparse.ArgumentParser(
         prog="dex-enrich",
         description="Fetch the full content behind every captured URL, ledger-driven.",
@@ -51,7 +53,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="max units this run (big cohorts drain across runs)"
     )
 
-    commands.add_parser("status", help="ledger summary + interrupted-session backstop")
+    commands.add_parser(
+        "status", help="ledger summary + interrupted-session backstop + capability report"
+    )
+
+    transcribe_parser = commands.add_parser(
+        "transcribe", help="drain the waiting transcription cohort (§6)"
+    )
+    transcribe_parser.add_argument(
+        "--model",
+        default=None,
+        help="whisper model override for this run (config transcribe_model / "
+        "transcribe_api_model otherwise; drop to `small` for long backlogged queues, "
+        "stay up for dense technical audio)",
+    )
+    transcribe_parser.add_argument(
+        "--limit",
+        type=int,
+        default=TRANSCRIBE_RUN_CAP,
+        help=f"max transcriptions this run (default {TRANSCRIBE_RUN_CAP}, §12)",
+    )
 
     fetch_parser = commands.add_parser(
         "fetch", help="fetch extra URLs into an existing item (ledgered as children)"
@@ -96,12 +117,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:
+def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR0911 — one return per verb
     match args.command:
         case "run":
             return run(ctx, limit=args.limit)
         case "status":
             return status_report(ctx)
+        case "transcribe":
+            return run_transcribe(ctx, limit=args.limit)
         case "fetch":
             return fetch_urls(ctx, args.item, args.urls, parent=args.parent, force=args.force)
         case "compact":
@@ -128,12 +151,18 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     try:
+        config = Config.load(instance.config_path)
+        # One Capabilities object feeds the drain seam, the transcribe path,
+        # the file driver, and the status surface — they cannot disagree (§6).
+        capabilities = Capabilities.build(config, model=getattr(args, "model", None))
         ctx = RunContext(
             instance=instance,
-            config=Config.load(instance.config_path),
-            drivers=DRIVERS,
+            config=config,
+            drivers=build_drivers(capabilities=capabilities, root=instance.root),
             today=datetime.date.today,
             engine_version=engine_version(),
+            provider_available=capabilities.available,
+            capabilities=capabilities,
         )
         output = _dispatch(args, ctx)
     except (ValueError, RuntimeError) as e:

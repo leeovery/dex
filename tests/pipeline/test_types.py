@@ -369,6 +369,7 @@ class TestConfig:
         config = Config.load(tmp_path / "config.json")
         assert config.media_fetch is MediaFetch.LEAD
         assert config.transcribe_model == "medium"
+        assert config.transcribe_api_model is None
         assert config.report_issues is True
         assert config.providers == {}
         assert config.name_map == {}
@@ -382,6 +383,7 @@ class TestConfig:
                 {
                     "media_fetch": "none",
                     "transcribe_model": "small",
+                    "transcribe_api_model": "whisper-large-v3",
                     "report_issues": False,
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
                     "name_map": {"lee.overy": "Lee"},
@@ -393,6 +395,7 @@ class TestConfig:
         config = Config.load(path)
         assert config.media_fetch is MediaFetch.NONE
         assert config.transcribe_model == "small"
+        assert config.transcribe_api_model == "whisper-large-v3"
         assert config.report_issues is False
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
         assert config.name_map == {"lee.overy": "Lee"}
