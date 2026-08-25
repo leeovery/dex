@@ -580,8 +580,8 @@ class TestLedgerTranslation:
         write_ledger(tmp_path, records)
         report = migration.apply(tmp_path)
         named = [a for a in report.actions if a.startswith("ledger dropped ")]
-        assert len(named) == 5
-        assert any("and 4 further dropped line(s)" in a for a in report.actions)
+        assert len(named) == 9  # every drop named, never truncated
+        assert not any("further dropped" in a for a in report.actions)
 
     def test_unknown_field_is_dropped_hand_healed_shape(self, tmp_path, migration):
         record = {

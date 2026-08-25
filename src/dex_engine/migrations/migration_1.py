@@ -247,7 +247,7 @@ def _rewrite_corpus(
     if rewritten:
         actions.append(
             f"corpus: {rewritten} item(s) rewritten — kinds and enrichment listings "
-            "renamed, bodies untouched"
+            "renamed, empty media: [] lines dropped, bodies untouched"
         )
 
 
@@ -366,9 +366,6 @@ def _output_owners(root: Path) -> dict[str, str]:
 
 # How many dropped lines the report names individually before it summarizes
 # the rest: enough to see what kind of thing went, short enough to read.
-_DROP_REPORT_CAP = 5
-
-
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class _Tree:
     """What the instance on disk says, scanned once for the whole rewrite."""
@@ -444,12 +441,7 @@ def _report_dropped(dropped: list[str], actions: list[str]) -> None:
         "re-raises anything that still matters, and the pre-migration ledger "
         "stays in git history"
     )
-    actions.extend(f"ledger dropped {entry}" for entry in dropped[:_DROP_REPORT_CAP])
-    if len(dropped) > _DROP_REPORT_CAP:
-        actions.append(
-            f"ledger: … and {len(dropped) - _DROP_REPORT_CAP} further dropped line(s), "
-            "same treatment — read them in git history"
-        )
+    actions.extend(f"ledger dropped {entry}" for entry in dropped)
 
 
 def _identify(line: str) -> str:

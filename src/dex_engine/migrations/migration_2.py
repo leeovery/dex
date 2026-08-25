@@ -129,7 +129,8 @@ __all__ = ["IdentityRekeyAndRerunSeed", "build"]
 NUMBER = 2
 INTENT = (
     "identity re-key + rerun seed: every ledger entry moves to its current canonical "
-    "identity (x id-keying, youtube shape collapse) with status preserved; then every "
+    "identity (arxiv version/pdf collapse, x id-keying, youtube shape collapse) "
+    "with status preserved; then every "
     "pre-rewrite done web/x entry requeues as {queued, rerun, via: migration-2} — the "
     "old engine (0.0.1) had neither the link-keeping fix (web) nor thread walk-up (x)"
 )
@@ -480,7 +481,7 @@ def _rekey_action(identity: dict[str, str], reparented: int) -> str:
     collapsed = sum(len(olds) - 1 for olds in landings.values() if len(olds) > 1)
     action = (
         f"re-keyed {moved} entr{'y' if moved == 1 else 'ies'} to current "
-        "identities (x id-keying, youtube shape collapse)"
+        "identities (arxiv version/pdf collapse, x id-keying, youtube shape collapse)"
     )
     if collapsed:
         action += (
