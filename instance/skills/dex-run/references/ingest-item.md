@@ -112,8 +112,11 @@ bin/dex enrich pass <item-id> --stage harvest
 Read the enrichment fully — including viewing any media — and write
 `state/digests/<id>.md` per `state-formats.md` (this directory):
 frontmatter (id, date, `signal: high|medium|low`, topics, entities,
-`media:` when the item has media) + 3–15 standalone fact bullets with
-concrete specifics, each readable without the source in front of you.
+`media:` when the item has media) + one standalone fact bullet per fact
+the source actually yields, with concrete specifics, each readable without
+the source in front of you. No target count: a rich paper earns many
+bullets and a two-line tweet earns two, and padding to a number invents
+facts.
 `signal` and `topics` are the judgment — no verb writes digests; lint
 verifies their shape. Interpretive context lives here, not in item bodies.
 Topics: canonical names from `state/taxonomy.json` when it exists;

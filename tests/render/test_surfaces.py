@@ -2,6 +2,7 @@
 
 import pytest
 
+from dex_engine.render.kernel import DEFAULT_WIDTH
 from dex_engine.render.surfaces import SURFACES, PayloadError, render
 
 ENRICH_PAYLOAD = {
@@ -358,7 +359,21 @@ HEALTH_PAYLOAD = {
         {"item": "2026-01-03-scan-cccccc", "url": "file:media/cccccc/scan.pdf", "need": "ocr"}
     ],
     "stale_passes": [{"item": "2026-01-04-old-dddddd", "rules": 0}],
-    "quarantine": 2,
+    "capped": [
+        # lint sends the bound, one canonical label per bound — never the
+        # ledger line's stated reason.
+        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/deep",
+         "reason": "depth cap (4)"},
+        {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/wide",
+         "reason": "url cap (12 per item)"},
+        {"item": "2026-01-07-wide-999999", "url": "https://example.test/other",
+         "reason": "url cap (12 per item)"},
+    ],
+    "incomplete_threads": [
+        {"path": "enrichment/2026-01-08-thread-888888/x-abc123.md",
+         "why": "parent fetch failed after 3 post(s): fxtwitter says the post is gone"}
+    ],
+    "digest_errors": [{"item": "2026-01-09-broken-777777", "why": "frontmatter missing topics"}],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
@@ -446,18 +461,68 @@ class TestHealthReport:
         assert "waiting cohorts: transcribe 3" in out
         assert "cognitive jobs (the session completes these with eyes) — 1" in out
         assert "harvest passes under old rules (re-judge) — 1" in out
-        assert "QUARANTINE NOT EMPTY — 2 lines" in out
-        assert "enrich mark" in out
         assert "enrichment newer than digest" in out
         assert "reconciled by --write:" in out
         assert "notes:" in out
+
+    def test_cap_fires_lead_with_the_shape_of_the_drift(self):
+        # The tuning question is never "is this one fire wrong" — it is how
+        # many, over how many items, under which bound.
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in out
+        assert "depth cap (4): 1 · url cap (12 per item): 2" in out
+        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 1" in out
+        assert "2026-01-06-deep-ffffff -> https://example.test/deep" in out
+
+    def test_offenders_tied_on_count_are_named_in_id_order(self):
+        # Rows arrive in whatever order the check produced; two items with
+        # the same number of fires read in id order, not in arrival order,
+        # so the same ledger always renders the same line.
+        payload = dict(HEALTH_PAYLOAD)
+        payload["capped"] = [
+            {"item": "2026-01-07-wide-999999", "url": "https://example.test/a",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/b",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-07-wide-999999", "url": "https://example.test/c",
+             "reason": "url cap (12 per item)"},
+            {"item": "2026-01-06-deep-ffffff", "url": "https://example.test/d",
+             "reason": "url cap (12 per item)"},
+        ]
+        out = render("health-report", payload)
+        assert "most often: 2026-01-06-deep-ffffff 2 · 2026-01-07-wide-999999 2" in out
+
+    def test_no_cap_fires_reads_as_none(self):
+        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in out
+
+    def test_incomplete_threads_name_the_file_and_the_gap(self):
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert "stored threads recorded incomplete" in out
+        assert (
+            "enrichment/2026-01-08-thread-888888/x-abc123.md — parent fetch failed after 3"
+        ) in out
+
+    def test_malformed_digests_render_loud(self):
+        out = render("health-report", HEALTH_PAYLOAD)
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — 1" in out
+        assert "2026-01-09-broken-777777: frontmatter missing topics" in out
 
     def test_clean_instance_reads_clean(self):
         out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
         assert "broken wikilinks — none" in out
         assert "waiting cohorts: none" in out
-        assert "QUARANTINE" not in out
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in out
         assert "reconciled" not in out
+
+    def test_every_finding_label_fits_the_width_budget(self):
+        # The clean report is the surface's static text: one label per
+        # check, nothing data-driven. Item ids and URLs overrun on their
+        # own account and are not this budget's business; the labels are
+        # written here and must fit.
+        out = render("health-report", {"summary": {"corpus_items": 0, "pages": 0, "cited": 0}})
+        over = [line for line in out.split("\n") if len(line) > DEFAULT_WIDTH]
+        assert over == []
 
     def test_ledger_error_renders_loud(self):
         out = render(

@@ -16,6 +16,7 @@ __all__ = [
     "DRIVER_STATUSES",
     "Asset",
     "Availability",
+    "Cap",
     "Child",
     "Config",
     "Extraction",
@@ -97,6 +98,23 @@ class Need(StrEnum):
     TRANSCRIBE = "transcribe"
     EXTRACT = "extract"
     OCR = "ocr"
+
+
+class Cap(StrEnum):
+    """Which bound refused a work unit, and who it answers to.
+
+    Typed because the health check aggregates on it: prose that says the
+    same bound three ways splits one bound across three readings, and an
+    owner's own request read as harvest drift. ``DEPTH`` and ``URL`` are
+    harvest-time fires — the walk promoted a link past a bound, which is
+    the tuning signal. ``URL_REQUESTED`` is the owner naming a URL past
+    the URL bound with ``enrich fetch`` and being refused without
+    ``--force``: the same bound, and nothing about harvest judgment.
+    """
+
+    DEPTH = "depth"
+    URL = "url"
+    URL_REQUESTED = "url-requested"
 
 
 class MediaFetch(StrEnum):
@@ -471,8 +489,8 @@ class LedgerEntry:
     needs: Need | None = None
     attempts: int | None = None
     # a cap-fire marker: this skipped line records refused work, not an
-    # admitted unit
-    capped: bool = False
+    # admitted unit, and names the bound that refused it
+    cap: Cap | None = None
     engine: str
     date: datetime.date
     # the write instant, UTC, sub-second — what resolves last-per-hash when
@@ -520,9 +538,9 @@ def _validate_entry_queue_fields(entry: LedgerEntry) -> None:
             f"needs={entry.needs!r} rides waiting parks and blocked retries only, "
             f"got status {entry.status!r}"
         )
-    if entry.capped and entry.status is not Status.SKIPPED:
+    if entry.cap is not None and entry.status is not Status.SKIPPED:
         raise ValueError(
-            f"capped marks a cap-refused skip — skipped-only, got status {entry.status!r}"
+            f"cap marks a cap-refused skip — skipped-only, got status {entry.status!r}"
         )
     if isinstance(entry.attempts, bool):
         raise ValueError("attempts must be an integer, not a boolean")

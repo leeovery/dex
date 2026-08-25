@@ -39,6 +39,7 @@ from dex_engine.pipeline.run import (
 from dex_engine.pipeline.transcribe import read_enrichment
 from dex_engine.pipeline.types import (
     Asset,
+    Cap,
     Child,
     Config,
     Format,
@@ -57,6 +58,7 @@ from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeGh as FakeGhApi
 from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
 from tests.pipeline.test_issues import FakeGh
+from tests.test_atomic import failing_fdopen
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
@@ -574,7 +576,7 @@ class TestIncompleteItemsOnTheReport:
         report, payload = self._run_capturing(
             make_ctx(instance, FakeDriver(fetch_fn=fetch)), monkeypatch
         )
-        capped = [e for e in ledger.load(instance.ledger_path).values() if e.capped]
+        capped = [e for e in ledger.load(instance.ledger_path).values() if e.cap is not None]
         assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)  # 4 children refused
         assert payload["incomplete"] == [
             {
@@ -630,7 +632,7 @@ class TestChildren:
         entries = ledger.load(instance.ledger_path)
         capped = entries[work_hash(f"https://chain.test/{MAX_DEPTH + 1}")]
         assert capped.status is Status.SKIPPED
-        assert capped.capped is True
+        assert capped.cap is Cap.DEPTH
         assert capped.reason == f"depth cap ({MAX_DEPTH}) reached"
         assert capped.depth == MAX_DEPTH + 1
         fetched = [e for e in entries.values() if e.status is Status.DONE]
@@ -654,7 +656,7 @@ class TestChildren:
         admitted = [e for e in entries.values() if e.status is Status.DONE]
         assert len(admitted) == MAX_URLS_PER_ITEM  # the root + 11 children
         assert len(capped) == len(flood) - (MAX_URLS_PER_ITEM - 1)
-        assert all(e.capped for e in capped)
+        assert all(e.cap is Cap.URL for e in capped)
         assert all(e.reason == f"url cap ({MAX_URLS_PER_ITEM} per item) reached" for e in capped)
         assert "url cap" not in report
 
@@ -826,6 +828,27 @@ class TestRerun:
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
         assert "cognitive work — none" in report
+
+    def test_a_failed_rewrite_leaves_the_enrichment_whole(self, instance, monkeypatch):
+        # A plain write truncates before it writes: an interrupted run left an
+        # enrichment file whose frontmatter fence never closes, taking its
+        # thread markers and its re-fetch pointer with it.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        out = instance.root / str(entry_for(ctx).path)
+        intact = out.read_text()
+
+        self.seed_rerun(ctx)
+        rewritten = FakeDriver(
+            fetch_fn=lambda _unit: Result(
+                status=Status.DONE, meta={"title": "t"}, body="a different body " * 30
+            )
+        )
+        failing_fdopen(monkeypatch)
+        run_mod.run(make_ctx(instance, rewritten))
+        assert out.read_text() == intact
+        assert [p.name for p in out.parent.iterdir()] == [out.name]  # no temp orphan
 
     @given(
         pages=st.dictionaries(
@@ -1457,7 +1480,8 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         refused = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert refused.status is Status.SKIPPED
-        assert refused.capped is True
+        # The owner asked for this one: same bound, a different reading.
+        assert refused.cap is Cap.URL_REQUESTED
         assert "url cap" in (refused.reason or "")
 
         # A repeat WITHOUT --force is refused again — the refusal marker is
@@ -1513,7 +1537,7 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [extra])
         again = ledger.load(instance.ledger_path)[work_hash(extra)]
         assert again.status is Status.SKIPPED
-        assert again.capped is True
+        assert again.cap is Cap.URL_REQUESTED
 
     def test_a_marked_skip_with_cap_lookalike_prose_is_not_a_cap_marker(self, instance):
         # Session-authored --reason text lives in the same namespace as the

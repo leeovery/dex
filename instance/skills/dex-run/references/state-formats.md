@@ -21,9 +21,21 @@ topics: [agent-architecture]      # canonical taxonomy names once taxonomy exist
 entities: [claude-code]           #   otherwise 2–5 kebab-case candidates
 media: [media/<id>/photo.jpg]     # only when the item has media
 ---
-- 3–15 standalone fact bullets with concrete specifics, each readable without
-  the source in front of you.
+- one standalone fact bullet per fact the source actually yields, with
+  concrete specifics, each readable without the source in front of you.
 ```
+
+No verb writes digests — `signal` and `topics` are the judgment — so
+`bin/dex lint` is the only thing that checks them, and it checks two
+different things. The frontmatter is a **hard failure**: a digest with no
+complete fence, missing `id`/`date`/`signal`/`topics`, a `signal` outside
+high|medium|low, empty `topics`, or an `id` that disagrees with its
+filename exits 1, exactly like a malformed ledger line — the wiki layer
+reads these files, and a digest that states no facts at all fails with
+them — an empty body is the one thing the file exists not to be. How many
+facts beyond that is **never checked**: the count measures the source, not
+the digest, and no honest digest makes three facts out of a two-line
+tweet.
 
 ## `state/taxonomy.json` — the topic and entity namespace
 
@@ -127,7 +139,7 @@ a malformed record impossible:
 
 - `state/enrichment-ledger.jsonl` — the pipeline's work queue: one entry
   per unit of work `{hash, url, item, kind, format?, status, needs?,
-  attempts?, capped?, engine, date, at?, via?, parent?, depth?, rerun?,
+  attempts?, cap?, engine, date, at?, via?, parent?, depth?, rerun?,
   path?, title?, error?, reason?}`. The latest line per hash wins, and
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
@@ -137,8 +149,10 @@ a malformed record impossible:
   Statuses: queued · done · dead · skipped · manual ·
   waiting · blocked · error. `reason` is the stated parking reason
   (required on manual/skipped); `error` entries carry a scrubbed message
-  and retry once per newer engine; `capped` marks a skip that records
-  cap-refused work, not an admitted unit. Heals and manual resolutions:
+  and retry once per newer engine; `cap` marks a skip that records
+  cap-refused work, not an admitted unit, and names the bound that refused
+  it (`depth`, `url`, or `url-requested` for a URL you asked for yourself
+  and were refused without `--force`). Heals and manual resolutions:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
   `via: media` line), so pass the URL as the ledger shows it and the heal

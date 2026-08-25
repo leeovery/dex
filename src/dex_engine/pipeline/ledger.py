@@ -33,7 +33,7 @@ from pathlib import Path
 
 from dex_engine import atomic
 
-from .types import Format, Kind, LedgerEntry, Need, Status
+from .types import Cap, Format, Kind, LedgerEntry, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
@@ -65,7 +65,6 @@ _RETIRED_STATUSES = {"nocaptions", "toolong"}
 _MIGRATION_HINT = (
     "migration 1 (renames + status vocabulary) has likely not been applied — run `bin/dex sync`"
 )
-
 _REQUIRED_KEYS = ("hash", "url", "item", "kind", "status", "engine", "date")
 _ALL_KEYS = frozenset(
     (
@@ -73,7 +72,7 @@ _ALL_KEYS = frozenset(
         "format",
         "needs",
         "attempts",
-        "capped",
+        "cap",
         "at",
         "via",
         "parent",
@@ -142,7 +141,7 @@ def from_line(line: str) -> LedgerEntry:
             status=Status(_expect_str(raw, "status")),
             needs=None if "needs" not in raw else Need(_expect_str(raw, "needs")),
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
-            capped=_expect_bool(raw, "capped") if "capped" in raw else False,
+            cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
             engine=_expect_str(raw, "engine"),
             date=datetime.date.fromisoformat(_expect_str(raw, "date")),
             at=None if "at" not in raw else _expect_datetime(raw, "at"),
@@ -191,9 +190,8 @@ def _expect_bool(raw: dict[str, object], key: str) -> bool:
 def to_line(entry: LedgerEntry) -> str:
     """Serialize an entry to its JSONL line (no trailing newline).
 
-    ``None`` fields are dropped; ``rerun`` and ``capped`` appear only when
-    true — the written line carries exactly the ledger schema, in schema
-    order.
+    ``None`` fields are dropped; ``rerun`` appears only when true — the
+    written line carries exactly the ledger schema, in schema order.
     """
     fields: tuple[tuple[str, str | int | bool | None], ...] = (
         ("hash", entry.hash),
@@ -204,7 +202,7 @@ def to_line(entry: LedgerEntry) -> str:
         ("status", entry.status.value),
         ("needs", entry.needs.value if entry.needs is not None else None),
         ("attempts", entry.attempts),
-        ("capped", entry.capped or None),
+        ("cap", entry.cap.value if entry.cap is not None else None),
         ("engine", entry.engine),
         ("date", entry.date.isoformat()),
         ("at", entry.at.isoformat() if entry.at is not None else None),

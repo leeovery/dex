@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ledger import LedgerSchemaError
-from dex_engine.pipeline.types import Format, Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Format, Instance, Kind, LedgerEntry, Need, Status
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import ITEM, URL, make_ctx, write_item
@@ -129,10 +129,10 @@ class TestFromLine:
         )
         assert ledger.from_line(ledger.to_line(retry)) == retry
 
-    def test_capped_false_is_dropped_true_round_trips(self):
-        marker = entry(status=Status.SKIPPED, capped=True, reason="url cap reached")
-        assert "capped" not in json.loads(ledger.to_line(entry()))
-        assert json.loads(ledger.to_line(marker))["capped"] is True
+    def test_the_typed_cap_round_trips_and_is_absent_without_a_fire(self):
+        marker = entry(status=Status.SKIPPED, cap=Cap.URL, reason="url cap reached")
+        assert "cap" not in json.loads(ledger.to_line(entry()))
+        assert json.loads(ledger.to_line(marker))["cap"] == "url"
         assert ledger.from_line(ledger.to_line(marker)) == marker
 
     def test_parked_reason_round_trips(self):
@@ -564,7 +564,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
         status=status,
         needs=needs,
         attempts=draw(st.integers(min_value=1, max_value=5)) if status is Status.BLOCKED else None,
-        capped=draw(st.booleans()) if status is Status.SKIPPED else False,
+        cap=draw(st.none() | st.sampled_from(list(Cap))) if status is Status.SKIPPED else None,
         engine=draw(st.sampled_from(["0.1.0", "0.2.1", "1.0.0"])),
         date=draw(st.dates()),
         at=draw(st.none() | st.sampled_from(_WRITE_INSTANTS)),

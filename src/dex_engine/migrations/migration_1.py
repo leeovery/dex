@@ -70,6 +70,7 @@ from pathlib import Path
 from dex_engine import atomic, corpus
 from dex_engine.pipeline.ledger import to_line
 from dex_engine.pipeline.types import (
+    Cap,
     Format,
     Kind,
     LedgerEntry,
@@ -111,7 +112,7 @@ _TOLERATED_KEYS = frozenset(
         "status",
         "needs",
         "attempts",
-        "capped",
+        "cap",
         "engine",
         "date",
         "at",
@@ -509,7 +510,7 @@ def _translate_record(
             status=status,
             needs=needs,
             attempts=None if "attempts" not in raw else _expect_int(raw, "attempts"),
-            capped=_expect_bool(raw, "capped") if "capped" in raw else False,
+            cap=None if "cap" not in raw else Cap(_expect_str(raw, "cap")),
             engine=_expect_str(raw, "engine") if "engine" in raw else PRE_REWRITE_ENGINE,
             date=_translate_date(raw),
             # Carried, never re-stamped: this run's instant would claim the

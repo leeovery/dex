@@ -2,14 +2,17 @@
 
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 
+from dex_engine.drivers.x import MAX_HOPS
 from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.registry import DRIVERS
-from dex_engine.pipeline.types import Instance, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.run import CAP_BOUNDS
+from dex_engine.pipeline.types import Cap, Instance, Kind, LedgerEntry, Need, Status
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
@@ -423,19 +426,6 @@ class TestStateChecks:
         with pytest.raises(ValueError, match=r"passes\.jsonl:1"):
             lint(instance)
 
-    def test_nonempty_quarantine_is_flagged(self, instance):
-        self._bare_wiki(instance)
-        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text(
-            '{"old": "line"}\n{"older": "line"}\n'
-        )
-        outcome = lint(instance)
-        assert "QUARANTINE NOT EMPTY — 2 lines" in outcome.report
-
-    def test_empty_quarantine_is_silent(self, instance):
-        self._bare_wiki(instance)
-        (instance.state_dir / "enrichment-ledger.unmigrated.jsonl").write_text("\n")
-        assert "QUARANTINE" not in lint(instance).report
-
     def test_digest_orphans_listed(self, instance):
         self._bare_wiki(instance)
         item_dir = instance.enrichment_dir / ITEM
@@ -595,6 +585,484 @@ class TestReferentialIntegrity:
         ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
         outcome = lint(instance)
         assert "done entries whose output file is gone from disk — none" in outcome.report
+
+
+def capped_entry(unit_hash: str, *, item: str = ITEM, cap: Cap, url: str) -> LedgerEntry:
+    return LedgerEntry(
+        hash=unit_hash,
+        url=url,
+        item=item,
+        kind=Kind.WEB,
+        status=Status.SKIPPED,
+        cap=cap,
+        engine="0.1.0",
+        date=TODAY,
+        via="harvest",
+        parent="0000000000",
+        depth=5,
+        # The engine words the same bound differently per writer; the check
+        # reads the typed cap, never this.
+        reason=f"{CAP_BOUNDS[cap]} reached",
+    )
+
+
+DEPTH_CAP = CAP_BOUNDS[Cap.DEPTH]
+URL_CAP = CAP_BOUNDS[Cap.URL]
+
+
+class TestCapFires:
+    """The ledger records cap fires for this check and no other surface."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_no_cap_fires_reads_as_none(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(instance.ledger_path, stamped(waiting_entry(Need.TRANSCRIBE)))
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
+
+    def test_fires_are_counted_by_bound_and_by_item(self, instance):
+        self._bare_wiki(instance)
+        other = "2026-08-19-other-bbbbbb"
+        for i, (item, cap) in enumerate(
+            [(ITEM, Cap.DEPTH), (ITEM, Cap.URL), (other, Cap.URL)]
+        ):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
+            )
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in (
+            outcome.report
+        )
+        assert f"{DEPTH_CAP}: 1 · {URL_CAP}: 2" in outcome.report
+        assert f"most often: {ITEM} 2 · {other} 1" in outcome.report
+        assert f"{ITEM} -> https://example.test/0" in outcome.report
+
+    def test_one_bound_reads_as_one_bound(self, instance):
+        # The engine words the same bound three ways — one of them an
+        # owner-requested `fetch` refusal. The bound is one row, and the
+        # owner asking for a URL is not harvest drift.
+        self._bare_wiki(instance)
+        other = "2026-08-19-other-bbbbbb"
+        fires = [
+            (ITEM, Cap.DEPTH),
+            (ITEM, Cap.URL),
+            (other, Cap.URL),
+            (other, Cap.URL_REQUESTED),
+        ]
+        for i, (item, cap) in enumerate(fires):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(f"{i:010x}", item=item, cap=cap, url=f"https://example.test/{i}"),
+            )
+        flat = " ".join(lint(instance).report.split())
+        assert "re-entry cap fires (tuning signal, not an alarm) — 3 across 2 items" in flat
+        assert "depth cap (4): 1 · url cap (12 per item): 2" in flat
+        assert "--force" not in flat.split("stored threads")[0].split("re-entry cap fires")[1]
+        assert "1 owner-requested fetch refusal standing at the url cap (12 per item)" in flat
+        assert "https://example.test/3" not in flat  # the refused-on-request URL
+
+    def test_the_newest_fire_is_listed_first(self, instance):
+        # Nothing supersedes a cap line, so the listing only grows: oldest
+        # first would bury the fires a session can still act on.
+        self._bare_wiki(instance)
+        old_item = "2026-01-02-old-aaaaaa"
+        new_item = "2026-08-20-new-bbbbbb"
+        for i, item in enumerate((old_item, new_item)):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i}"),
+            )
+        # The counts above the listing are ordered their own way; the rows
+        # naming a refused URL are the listing.
+        rows = [line for line in lint(instance).report.split("\n") if " -> " in line]
+        assert rows == [
+            f"  {new_item} -> https://example.test/1",
+            f"  {old_item} -> https://example.test/0",
+        ]
+
+    def test_a_fire_today_is_listed_even_once_the_listing_is_full(self, instance):
+        # The surface caps the listing; the fire stamped today must not be
+        # the one it drops.
+        self._bare_wiki(instance)
+        older = [f"2026-01-{day:02d}-old-{day:06d}" for day in range(1, 26)]
+        newest = "2026-08-20-brand-new-ffffff"
+        for i, item in enumerate([*older, newest]):
+            ledger.append(
+                instance.ledger_path,
+                capped_entry(
+                    f"{i:010x}", item=item, cap=Cap.URL, url=f"https://example.test/{i:02d}"
+                ),
+            )
+        report = lint(instance).report
+        assert "re-entry cap fires (tuning signal, not an alarm) — 26 across 26 items" in report
+        assert f"{newest} -> https://example.test/25" in report
+        # the oldest is what the cap drops (bare ids also appear under the
+        # ghost-item listing, so the URL is what this asserts on)
+        assert "https://example.test/00" not in report
+
+    def test_a_tuning_signal_never_fails_the_check(self, instance):
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            capped_entry("73bd784849", cap=Cap.URL, url="https://example.test/refused"),
+        )
+        assert lint(instance).exit_code == 0
+
+    def test_an_ordinary_skip_is_not_a_cap_fire(self, instance):
+        # `cap` is the marker, not the status: a skipped entry parked for
+        # any other stated reason is not the cap firing.
+        self._bare_wiki(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash="73bd784849",
+                url="https://example.test/paywalled",
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.SKIPPED,
+                engine="0.1.0",
+                date=TODAY,
+                reason="paywalled",
+            ),
+        )
+        outcome = lint(instance)
+        assert "re-entry cap fires (tuning signal, not an alarm) — none" in outcome.report
+
+
+def write_enrichment(
+    instance: Instance, name: str, frontmatter: str, body: str = "body", item: str = ITEM
+) -> None:
+    path = instance.enrichment_dir / item / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\nurl: https://x.com/i/status/1\n{frontmatter}---\n\n{body}\n")
+
+
+SKILL = Path(__file__).resolve().parents[1] / "instance" / "skills" / "dex-lint" / "SKILL.md"
+
+
+class TestThreadCapText:
+    """The shipped guidance names the driver's bound, or it misdiagnoses.
+
+    At 100 hops a cap hit means a cycle or a self-referencing parent, not a
+    truncated thread — a session reading a stale number writes a digest note
+    about a root that is not missing.
+    """
+
+    def test_the_skill_names_the_drivers_walk_up_bound(self):
+        text = SKILL.read_text(encoding="utf-8")
+        assert f"{MAX_HOPS}-hop" in text
+        assert "20-hop" not in text
+
+
+class TestThreadCompleteness:
+    """A half-thread reads exactly like a whole one unless something says so."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    def test_chain_incomplete_reports_the_drivers_note(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance,
+            "x-abc123.md",
+            'chain_incomplete: "true"\nchain_note: "parent fetch failed after 3 post(s): 404"\n',
+        )
+        outcome = lint(instance)
+        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
+        assert (
+            f"enrichment/{ITEM}/x-abc123.md — parent fetch failed after 3 post(s): 404"
+        ) in outcome.report
+
+    def test_thread_cap_hit_names_itself_without_a_note(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", 'thread_cap_hit: "true"\n')
+        outcome = lint(instance)
+        assert f"enrichment/{ITEM}/x-abc123.md — thread_cap_hit" in outcome.report
+
+    def test_both_markers_report_together(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", 'thread_cap_hit: "true"\nchain_incomplete: "true"\n'
+        )
+        outcome = lint(instance)
+        assert "thread_cap_hit + chain_incomplete" in outcome.report
+
+    def test_a_complete_thread_is_never_flagged(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", "author: someone (@someone)\n")
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_the_body_is_never_read(self, instance):
+        # Enrichment bodies are whole transcripts; a body line that looks
+        # like a marker is content, and the scan must not have seen it.
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", "author: someone\n", body="chain_incomplete: true"
+        )
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_incomplete_threads_never_fail_the_check(self, instance):
+        self._bare_wiki(instance)
+        write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n')
+        assert lint(instance).exit_code == 0
+
+    def test_the_newest_thread_is_listed_first(self, instance):
+        # Nothing clears these markers, so the listing only grows: oldest
+        # first would bury the threads a session is about to cite.
+        self._bare_wiki(instance)
+        old_item = "2026-01-02-old-aaaaaa"
+        new_item = "2026-08-19-new-bbbbbb"
+        for item in (old_item, new_item):
+            write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n', item=item)
+        report = lint(instance).report
+        assert report.index(new_item) < report.index(old_item)
+
+    def test_a_new_marker_is_listed_even_once_the_listing_is_full(self, instance):
+        # The surface caps the listing; the marker stamped today must not be
+        # the one it drops.
+        self._bare_wiki(instance)
+        older = [f"2026-01-{day:02d}-old-{day:06d}" for day in range(1, 26)]
+        newest = "2026-08-19-new-bbbbbb"
+        for item in [*older, newest]:
+            write_enrichment(instance, "x-abc123.md", 'chain_incomplete: "true"\n', item=item)
+        report = lint(instance).report
+        assert "stored threads recorded incomplete (never cite one as whole) — 26" in report
+        assert f"enrichment/{newest}/x-abc123.md" in report
+        # the oldest is what the cap drops (bare ids also appear under the
+        # digest-orphan listing, so the path is what this asserts on)
+        assert f"enrichment/{older[0]}/x-abc123.md" not in report
+
+    def test_a_marker_set_to_false_is_not_a_marker(self, instance):
+        # The driver stamps the string "true"; the field's presence says
+        # nothing on its own, and a walk that completed can say so.
+        self._bare_wiki(instance)
+        write_enrichment(
+            instance, "x-abc123.md", 'thread_cap_hit: "false"\nchain_incomplete: ""\n'
+        )
+        outcome = lint(instance)
+        assert (
+            "stored threads recorded incomplete (never cite one as whole) — none"
+        ) in outcome.report
+
+    def test_a_body_that_is_not_utf8_never_hides_the_frontmatter(self, instance):
+        # The scan stops at the closing fence, so a transcript full of bytes
+        # no decoder accepts costs nothing and hides nothing. Slurping the
+        # file would lose the marker to a decode error instead.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(
+            b'---\nchain_incomplete: "true"\n---\n\n' + b"pad\n" * 40000 + b"\xff\xfe\n"
+        )
+        outcome = lint(instance)
+        assert "stored threads recorded incomplete (never cite one as whole) — 1" in outcome.report
+        assert "unreadable" not in outcome.report
+
+    def test_an_unreadable_enrichment_file_is_reported(self, instance):
+        # Nothing else in lint reads enrichment files, so a file this scan
+        # cannot decode is invisible everywhere unless it says so here.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"---\nchain_incomplete: \xff\xfe true\n---\n\nbody\n")
+        flat = " ".join(lint(instance).report.split())  # the surface wraps notes
+        assert f"enrichment/{ITEM}/x-abc123.md: unreadable (UnicodeDecodeError)" in flat
+        assert "thread completeness unknown" in flat
+
+    def test_an_unclosed_frontmatter_fence_is_reported(self, instance):
+        # What an interrupted write leaves: a marker stamped inside a
+        # frontmatter block that never closes. Read as no fields at all, it
+        # was indistinguishable from a clean file and vanished from the
+        # report — the half-thread with it.
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '---\nurl: https://x.com/i/status/1\nchain_incomplete: "true"\n'
+            'chain_note: "parent fetch failed after 3 post(s): 404"\n'
+        )
+        outcome = lint(instance)
+        flat = " ".join(outcome.report.split())  # the surface wraps notes
+        assert f"enrichment/{ITEM}/x-abc123.md: unterminated frontmatter" in flat
+        assert "thread completeness unknown" in flat
+        assert outcome.exit_code == 0
+
+    def test_an_unreadable_enrichment_file_never_fails_the_check(self, instance):
+        self._bare_wiki(instance)
+        path = instance.enrichment_dir / ITEM / "x-abc123.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"---\n\xff\xfe\n---\n")
+        assert lint(instance).exit_code == 0
+
+
+def write_digest(instance: Instance, item: str, text: str) -> None:
+    instance.digests_dir.mkdir(parents=True, exist_ok=True)
+    (instance.digests_dir / f"{item}.md").write_text(text)
+
+
+def digest_text(
+    *,
+    item: str = ITEM,
+    signal: str = "high",
+    topics: str = "[brewing]",
+    bullets: int = 1,
+    omit: str = "",
+) -> str:
+    fields = {"id": item, "date": "2026-08-19", "signal": signal, "topics": topics}
+    fm = ["---", *(f"{key}: {value}" for key, value in fields.items() if key != omit), "---"]
+    body = "\n".join(f"- fact number {i} with concrete specifics." for i in range(bullets))
+    return "\n".join(fm) + "\n" + body + "\n"
+
+
+class TestDigestShape:
+    """No verb writes digests — lint is the only thing that verifies them."""
+
+    def _bare_wiki(self, instance):
+        write_taxonomy(instance)
+        write_index(instance, "")
+
+    @pytest.mark.parametrize("bullets", [1, 2, 3, 40])
+    def test_any_number_of_facts_conforms(self, instance, bullets):
+        # The count measures the source, not the digest: two lines of
+        # tweet yield two facts and a paper yields forty.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=bullets))
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+    def test_no_frontmatter_fence_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, "- a bare bullet list, no frontmatter\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: no complete frontmatter fence" in outcome.report
+
+    def test_unclosed_fence_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, f"---\nid: {ITEM}\nsignal: high\n- a fact\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "no complete frontmatter fence" in outcome.report
+
+    @pytest.mark.parametrize("field", ["id", "date", "signal", "topics"])
+    def test_missing_required_field_fails(self, instance, field):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(omit=field))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: frontmatter missing {field}" in outcome.report
+
+    def test_bogus_signal_fails(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal="urgent"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "signal must be one of high, medium, low, got 'urgent'" in outcome.report
+
+    @pytest.mark.parametrize("topics", ["[]", "[ ]", "[  ]", "[\t]"])
+    def test_empty_topics_fails_however_it_is_spaced(self, instance, topics):
+        # The emptiness of a list is not a spelling of its brackets.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(topics=topics))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "topics is empty" in outcome.report
+
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_quoted_scalars_conform(self, instance, quote):
+        # Digests are freehand and session-written; nothing tells the
+        # session to leave a scalar bare, and to the only other reader they
+        # have — a session reading YAML — a quoted scalar is the same
+        # scalar. Quoted was a hard failure on a correct digest.
+        self._bare_wiki(instance)
+        q = quote
+        write_digest(
+            instance,
+            ITEM,
+            f"---\nid: {q}{ITEM}{q}\ndate: {q}2026-08-19{q}\nsignal: {q}high{q}\n"
+            f"topics: [{q}brewing{q}]\n---\n- fact number 0 with concrete specifics.\n",
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+    def test_a_quoted_signal_is_still_read_against_the_vocabulary(self, instance):
+        # Unquoting is not laxness: the value inside the quotes is checked.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal='"urgent"'))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "signal must be one of high, medium, low, got 'urgent'" in outcome.report
+
+    def test_block_style_topics_conform(self, instance):
+        # YAML's other list form, and the one a session writes by hand.
+        self._bare_wiki(instance)
+        write_digest(
+            instance,
+            ITEM,
+            f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: high\ntopics:\n  - brewing\n"
+            "  - coffee\n---\n- fact number 0 with concrete specifics.\n",
+        )
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+    def test_a_topics_key_with_nothing_under_it_is_missing(self, instance):
+        # A block list opened and never written is the key with no value.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(topics=""))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: frontmatter missing topics" in outcome.report
+
+    def test_id_must_match_the_filename(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(item="2026-08-19-elsewhere-999999"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"id is '2026-08-19-elsewhere-999999' but the file is {ITEM}.md" in outcome.report
+
+    def test_a_digest_stating_no_facts_fails(self, instance):
+        # Empty is different in kind from brief: the file holds none of
+        # the one thing it exists for.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=0))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{ITEM}: states no facts" in outcome.report
+
+    def test_prose_without_bullets_still_states_no_facts(self, instance):
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(bullets=0) + "some loose prose\n")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "states no facts" in outcome.report
+
+    def test_the_frontmatter_fault_is_reported_before_the_body(self, instance):
+        # One digest, one finding — and the frontmatter is what to fix first.
+        self._bare_wiki(instance)
+        write_digest(instance, ITEM, digest_text(signal="urgent", bullets=0))
+        outcome = lint(instance)
+        assert "signal must be one of" in outcome.report
+        assert "states no facts" not in outcome.report
+
+    def test_no_digests_directory_is_clean(self, instance):
+        self._bare_wiki(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
 
 
 class TestCli:

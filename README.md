@@ -277,7 +277,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
 | `dex-enrich item new` | create a corpus item from a capture file (id rules and provenance; code writes frontmatter) |
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
-| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, quarantine, pass records (`--write` reconciles derived wiki frontmatter) |
+| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, pass records (`--write` reconciles derived wiki frontmatter) |
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |

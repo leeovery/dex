@@ -15,10 +15,22 @@ Checks:
   with its entry count — excluded-on-record told apart from renamed and
   from unclaimed; ``done`` entries whose output path is missing on disk),
   waiting cohorts and cognitive-job
-  summary, harvest passes recorded under old rules, the non-empty
-  quarantine file flag, and the enrichment-newer-than-digest orphan
-  listing (the interrupted-session backstop, shared with
-  ``enrich status``).
+  summary, harvest passes recorded under old rules, and the
+  enrichment-newer-than-digest orphan listing (the interrupted-session
+  backstop, shared with ``enrich status``).
+
+  judgment drift — the signals the pipeline records for this check and no
+  other surface: harvest-time re-entry cap fires (ledger lines carrying a
+  ``cap``: are the bounds too tight for this corpus, or is harvest
+  over-promoting?) and
+  thread-completeness markers in enrichment frontmatter
+  (``thread_cap_hit`` / ``chain_incomplete``: a stored thread a digest
+  could otherwise cite as whole).
+
+  digests — the shape ``state/digests/<id>.md`` promises: frontmatter with
+  ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
+  least one fact bullet. No verb writes digests, so lint is the only thing
+  that verifies them.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -28,7 +40,8 @@ staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
 Output renders through the ``health-report`` surface. Exit 1 on hard
-failures: broken wikilinks, bad citations, or a ledger schema error.
+failures: broken wikilinks, bad citations, a ledger schema error, or a
+malformed digest.
 """
 
 import argparse
@@ -41,12 +54,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import frontmatter
 from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.ownership import corpus_owners
 from .pipeline.registry import DRIVERS
-from .pipeline.run import HARVEST_RULES_VERSION, digest_orphans
-from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
+from .pipeline.run import CAP_BOUNDS, HARVEST_RULES_VERSION, digest_orphans
+from .pipeline.transcribe import read_enrichment_fields
+from .pipeline.types import Cap, Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
@@ -68,8 +83,12 @@ ITEMS_RE = re.compile(r"^items: (\d+)$", re.MULTILINE)
 RESTATED_RATIO = 0.85
 RESTATED_MIN_CHARS = 40
 
-# The migration-quarantine file — lint flags it non-empty at every health check.
-QUARANTINE_FILE = "enrichment-ledger.unmigrated.jsonl"
+_DIGEST_SIGNALS = ("high", "medium", "low")
+_DIGEST_REQUIRED = ("id", "date", "signal", "topics")
+
+# Thread-completeness markers the x driver stamps into enrichment
+# frontmatter when a walk-up stops short of the root.
+THREAD_MARKERS = ("thread_cap_hit", "chain_incomplete")
 
 IsCognitive = Callable[[Need, Format | None], bool]
 
@@ -163,14 +182,22 @@ def run_lint(
     }
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
-    ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids)
+    ledger_error = _state_checks(
+        instance, payload, is_cognitive, corpus_ids, notes=scan.notes
+    )
+    digest_errors = _digest_checks(instance)
+    payload["digest_errors"] = digest_errors
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links or scan.bad_citations or ledger_error or taxonomy_error
+        scan.broken_links
+        or scan.bad_citations
+        or ledger_error
+        or taxonomy_error
+        or digest_errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -512,8 +539,14 @@ def _state_checks(
     payload: dict[str, object],
     is_cognitive: IsCognitive,
     corpus_ids: set[str],
+    *,
+    notes: list[str],
 ) -> bool:
-    """Fill the payload's state sections; True when the ledger failed to load."""
+    """Fill the payload's state sections; True when the ledger failed to load.
+
+    ``notes`` is the report's shared note list — the state checks append
+    what has no row of its own.
+    """
     try:
         entries = ledger.load(instance.ledger_path)
     except ledger.LedgerSchemaError as e:
@@ -536,8 +569,13 @@ def _state_checks(
         ghost, missing = _referential_integrity(instance, entries, corpus_ids)
         payload["ghost_items"] = ghost
         payload["missing_outputs"] = missing
+        fires = _cap_fires(entries)
+        payload["capped"] = fires.rows
+        notes += fires.notes
     payload["stale_passes"] = _stale_passes(instance)
-    payload["quarantine"] = _quarantine_lines(instance)
+    threads = _incomplete_threads(instance)
+    payload["incomplete_threads"] = threads.rows
+    notes += threads.notes
     payload["digest_orphans"] = digest_orphans(instance)
     return entries is None
 
@@ -554,19 +592,29 @@ def _referential_integrity(
     """The ledger's two pointers into the tree: item ids, and output paths.
 
     Schema validity says nothing about whether a line points at anything
-    that exists. An entry naming an id with no corpus file is residue: a
-    purge made before ``dex exclude`` swept the ledger, an item removed by
+    that exists. ``dex exclude`` removes an item's ledger entries along with
+    the item, and migration 1 drops any line it can attribute only to a dead
+    item, so a live entry naming a missing item is no longer anything's
+    normal outcome: it is a purge that died partway, an item deleted by
     hand, or work another live item still claims and ``exclude`` therefore
-    kept. Worth seeing, and worth telling apart — an item RENAMED since the
-    line was written has a live item under a new id claiming its work,
-    which reads nothing like an item nothing claims at all. A ``done``
-    entry whose output file is gone is the enrichment claiming work whose
-    product no longer exists. The two are asked independently — an item
-    purged by ``dex exclude`` answers both, and each finding is still true.
+    kept. Which one shows in ``why`` — the exclusions record is the
+    difference between a purge that happened and a disappearance nobody
+    recorded, and an item RENAMED since the line was written has a live item
+    under a new id claiming its work, which reads nothing like an item
+    nothing claims at all. A ``done`` entry whose output file is gone is the
+    enrichment claiming work whose product no longer exists. The two are
+    asked independently — an item purged by ``dex exclude`` answers both,
+    and each finding is still true.
 
-    Ghost rows are one per (item, finding): an item named by ten entries
-    for one reason is one row carrying the count, not ten rows a reader
-    cannot tell apart.
+    Ghost rows are one per (item, finding): an item named by ten entries for
+    one reason is one row carrying the count, not ten rows a reader cannot
+    tell apart.
+
+    Both stay findings rather than failures. Nothing downstream resolves an
+    entry's item back to a corpus file, so neither breaks a later stage the
+    way a schema error or a bad citation does; and the repair — was this
+    purged on purpose? should the ledger line go, or the item come back? —
+    is judgment, which is the report's business, not the exit code's.
     """
     excluded = _excluded_items(instance)
     dead = [entry for entry in entries.values() if entry.item not in corpus_ids]
@@ -634,11 +682,230 @@ def _stale_passes(instance: Instance) -> list[dict[str, object]]:
     ]
 
 
-def _quarantine_lines(instance: Instance) -> int:
-    path = instance.state_dir / QUARANTINE_FILE
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").split("\n") if line.strip())
+# ---------------------------------------------------------------------------
+# Judgment-drift signals. The pipeline records these for the health check
+# specifically — they reach no user-facing surface, and until now had no
+# reader.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, kw_only=True)
+class _CapScan:
+    """The cap fires standing in the ledger, split by who they answer to."""
+
+    rows: list[dict[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _cap_fires(entries: dict[str, LedgerEntry]) -> _CapScan:
+    """The harvest-time cap fires standing in the ledger, one row each.
+
+    A fire is a tuning reading, not a fault: it says either that the
+    depth/URL bounds are too tight for this corpus, or that harvest
+    judgment is promoting links the subject rule would not. Which one it
+    is takes the shape of the fires — how many, spread across how many
+    items, under which bound — so the row carries the item, the refused
+    URL, and the bound that refused it, and the surface aggregates.
+
+    The bound comes from the entry's typed ``cap``, never from its stated
+    reason: the reason is prose written for the audit trail, and a bound
+    worded two ways would aggregate as two bounds.
+
+    An owner-requested ``enrich fetch`` refusal is neither reading — the
+    owner asked for that URL by name, so it says nothing about the bounds
+    being tight or about harvest promoting too much. It leaves the tuning
+    count entirely and stands as a note: it was already answered, with its
+    ``--force`` route, on the run report where it was asked.
+
+    Newest first, by item id (date-prefixed). Nothing supersedes a cap
+    fire — the skipped line is the ledger's standing record that the URL
+    was refused, and compaction keeps it — so this listing only grows, and
+    oldest-first meant the rows the surface shows were held forever by the
+    oldest items, with a fire stamped today appearing nowhere.
+    """
+    scan = _CapScan()
+    requested = 0
+    for entry in sorted(entries.values(), key=lambda e: (e.item, e.url), reverse=True):
+        if entry.cap is None:
+            continue
+        if entry.cap is Cap.URL_REQUESTED:
+            requested += 1
+            continue
+        scan.rows.append(
+            {"item": entry.item, "url": entry.url, "reason": CAP_BOUNDS[entry.cap]}
+        )
+    if requested:
+        scan.notes.append(
+            f"{requested} owner-requested fetch refusal{'' if requested == 1 else 's'} "
+            f"standing at the {CAP_BOUNDS[Cap.URL_REQUESTED]} — answered on the run "
+            "report when asked, and no part of the tuning reading above"
+        )
+    return scan
+
+
+@dataclass(slots=True, kw_only=True)
+class _ThreadScan:
+    """What the marker scan over the enrichment files found."""
+
+    rows: list[dict[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _incomplete_threads(instance: Instance) -> _ThreadScan:
+    """Enrichment files whose stored thread stops short of the root.
+
+    The x driver stamps ``thread_cap_hit`` / ``chain_incomplete`` into
+    frontmatter when a walk-up hits the driver's hop bound (a sanity stop
+    against a cycle, not an editorial one) or a parent it cannot fetch.
+    Unread, a half-thread reads exactly like a whole one, and the digest
+    cites it as though the root were there. The bound is stated in one
+    place — ``drivers.x.MAX_HOPS`` — and restated here in no number.
+
+    Only the frontmatter is read: enrichment bodies are whole transcripts.
+    A file this scan cannot read is reported as a note rather than skipped:
+    no other check in lint opens an enrichment file, so a dropped one is
+    invisible to every check, and the half-thread inside it is invisible
+    forever. Unreadable covers both shapes — bytes no decoder accepts, and
+    a frontmatter block that opens and never closes, which is what a run
+    interrupted mid-write leaves behind. It stays a note, never a failure —
+    the markers are a caution to the session, not a broken contract
+    downstream.
+
+    Newest first, and read as a standing count rather than a work list.
+    Nothing clears a marker — a parent that 404s stays unfetchable — so
+    this listing only grows, as the cap-fire listing above it does, and
+    oldest-first would mean a thread stamped today is never the one shown.
+    Newest is by item id (date-prefixed): the stamping instant is not
+    recorded, and a file mtime resets on any checkout.
+    """
+    scan = _ThreadScan()
+    for path in sorted(instance.enrichment_dir.glob("*/*.md"), reverse=True):
+        rel = str(path.relative_to(instance.root))
+        try:
+            fields = read_enrichment_fields(path)
+        except (OSError, UnicodeDecodeError) as e:
+            scan.notes.append(_unread_note(rel, f"unreadable ({e.__class__.__name__})"))
+            continue
+        except ValueError as e:
+            scan.notes.append(_unread_note(rel, str(e)))
+            continue
+        markers = [marker for marker in THREAD_MARKERS if fields.get(marker) == "true"]
+        if not markers:
+            continue
+        note = " ".join((fields.get("chain_note") or "").split())
+        scan.rows.append(
+            {
+                "path": rel,
+                # The driver's note says how far the walk got; without one
+                # the marker names itself. Both render on a single line.
+                "why": note or " + ".join(markers),
+            }
+        )
+    return scan
+
+
+def _unread_note(rel: str, why: str) -> str:
+    """One note for an enrichment file the marker scan got no markers out of."""
+    return f"{rel}: {why} — thread completeness unknown, and no other check reads enrichment files"
+
+
+# ---------------------------------------------------------------------------
+# Digest shape. No verb writes digests — `signal` and `topics` are the
+# judgment — so this is the only thing that checks what the session wrote.
+# ---------------------------------------------------------------------------
+
+
+def _digest_checks(instance: Instance) -> list[dict[str, str]]:
+    """The digests that do not conform, and how each one breaks.
+
+    Shape only. How MANY facts a digest states is the source's business —
+    two lines of tweet yield two facts and no honest digest can invent a
+    third — so there is no target count and no count finding. Stating
+    none at all is different in kind: the file is empty of the one thing
+    it exists to hold.
+    """
+    errors: list[dict[str, str]] = []
+    for path in sorted(instance.digests_dir.glob("*.md")):
+        item = path.stem or path.name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            errors.append({"item": item, "why": f"unreadable ({e.__class__.__name__})"})
+            continue
+        fields, body = _digest_parts(text)
+        if fields is None:
+            errors.append({"item": item, "why": "no complete frontmatter fence"})
+            continue
+        why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
+        if why is not None:
+            errors.append({"item": item, "why": why})
+    return errors
+
+
+def _digest_body_fault(body: str) -> str | None:
+    """The body fault: no fact bullets at all, or None."""
+    if any(line.startswith("- ") for line in body.split("\n")):
+        return None
+    return "states no facts — the digest body has no bullets"
+
+
+def _digest_parts(text: str) -> tuple[dict[str, str | list[str]] | None, str]:
+    """A digest's frontmatter fields and body; fields None without a fence.
+
+    The YAML a session actually writes, not a canonical subset of it: no
+    verb writes a digest, nothing tells the session to leave a scalar
+    unquoted, and its only other reader is a session reading YAML. So
+    quotes come off (the same way every other frontmatter reader takes
+    them off), and a list is read in either form — flow (``[a, b]``) or
+    block (``- a`` lines under the key). A shape check that failed on a
+    correct digest would route a healthy instance to repair.
+    """
+    if not text.startswith("---\n"):
+        return None, text
+    head, sep, body = text[4:].partition("\n---\n")
+    if not sep:
+        return None, text
+    fields: dict[str, str | list[str]] = {}
+    lines = head.split("\n")
+    i = 0
+    while i < len(lines):
+        key, colon, value = lines[i].partition(":")
+        i += 1
+        if not colon:
+            continue
+        raw = value.strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            inner = raw[1:-1].strip()
+            fields[key.strip()] = (
+                [frontmatter.unquote(part.strip()) for part in inner.split(",")] if inner else []
+            )
+        elif raw:
+            fields[key.strip()] = frontmatter.unquote(raw)
+        else:
+            # A key with nothing after the colon opens a block list; with
+            # no items under it, it is the empty value it looks like.
+            items: list[str] = []
+            while i < len(lines) and lines[i].lstrip().startswith("- "):
+                items.append(frontmatter.unquote(lines[i].lstrip()[2:].strip()))
+                i += 1
+            fields[key.strip()] = items or ""
+    return fields, body
+
+
+def _digest_frontmatter_fault(item: str, fields: dict[str, str | list[str]]) -> str | None:
+    """The first way this digest's frontmatter breaks the contract, or None."""
+    missing = [key for key in _DIGEST_REQUIRED if fields.get(key, "") == ""]
+    if missing:
+        return f"frontmatter missing {', '.join(missing)}"
+    if fields["signal"] not in _DIGEST_SIGNALS:
+        return f"signal must be one of {', '.join(_DIGEST_SIGNALS)}, got {fields['signal']!r}"
+    if not fields["topics"]:
+        return "topics is empty — every item is placed, uncategorized-shares included"
+    if fields["id"] != item:
+        # The id keys the corpus, the taxonomy, and every citation; a digest
+        # filed under one id claiming another is unresolvable either way.
+        return f"id is {fields['id']!r} but the file is {item}.md"
+    return None
 
 
 # ---------------------------------------------------------------------------

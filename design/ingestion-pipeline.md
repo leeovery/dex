@@ -80,8 +80,25 @@ provenance.
 
 Caps on re-entry (mechanical backstops, not targets): **max depth 4** (the
 shared URL is depth 0), **max 12 fetched URLs per item**. A fired cap is
-recorded in the ledger and internal logs — it is a judgment-drift signal for
-the health check, never shown on user-facing surfaces.
+recorded in the ledger (`cap` on the skipped line, naming the bound that
+refused the work) and internal
+logs. Who the fire answers to decides where it shows (§12): a
+**harvest-time** fire — the walk promoting a link past a bound — is a
+judgment-drift signal for the health check and reaches no user-facing
+surface, run report included; an **owner-requested** refusal, `enrich
+fetch` naming a URL past the URL cap, is answered where it was asked, on
+that run report, with the `--force` route it needs to be actionable. The
+health check is where the drift reading belongs and where it is read: lint
+reports the harvest-time fires as a tuning
+signal — how many, spread over how many items, under which bound, worst
+offenders first — so the owner can tell a corpus the bounds are too tight
+for from harvest judgment promoting links the subject rule would not. The
+bound is counted off the typed `cap`, never off the prose that worded it:
+one bound said two ways would otherwise read as two bounds. An
+owner-requested refusal is not in that reading at all — the owner named
+that URL, so it says nothing about the bounds or about harvest — and
+stands as a note on the report instead. Counts and a listing, never an
+alarm: a fire is a reading, not a fault, so it never fails the check.
 
 Children and reruns are ledger entries from birth (`status: queued`). The
 drain picks up `queued`, `blocked` (attempts < 5), `waiting` (provider now
@@ -319,7 +336,10 @@ display text: reports render it, nothing matches on it, and rewording one
 can never change routing. The two signals that once looked reason-shaped
 are §5 fields instead: a blocked audio-acquisition retry carries
 `needs: transcribe` (routing it back through the transcribe drain, not the
-driver), and a cap-fire marker line carries `capped: true`. This keeps the
+driver), and a cap-fire marker line carries `cap: depth|url|url-requested`.
+The bound is typed for the same reason: the health check counts fires by
+bound, and counting them off `reason` split one bound across every wording
+of it. This keeps the
 `reason` namespace safe for session-authored free text
 (`enrich mark --reason …`), which must never be able to collide with a
 routing signal.
@@ -422,9 +442,11 @@ resolution rule itself is untouched.
                                // signal back to the capability drain
   "attempts": 3,               // blocked only (error's retry gate is the
                                // engine field — once per newer engine)
-  "capped": true,              // skipped only, serialized only when true:
-                               // a cap-fire marker — refused work, not an
-                               // admitted unit
+  "cap": "url",                // skipped only: a cap-fire marker — refused
+                               // work, not an admitted unit — naming the
+                               // bound (depth | url | url-requested, the
+                               // last being an owner `fetch` refused
+                               // without --force)
   "engine": "0.2.1",           // engine version that wrote this line
   "date": "2026-08-19",
   "at": "2026-08-19T09:00:00.123456+00:00",
@@ -539,7 +561,7 @@ issues about itself.
 **LedgerEntry is a frozen, validated dataclass, not a dict**: the schema
 comments above are runtime invariants enforced in `__post_init__`
 (`waiting` ⇒ `needs` present; `needs` on `waiting`/`blocked` only;
-`blocked` ⇒ `attempts ≥ 1`; `capped` on `skipped` only; `error` ⇒
+`blocked` ⇒ `attempts ≥ 1`; `cap` on `skipped` only; `error` ⇒
 `error` + `engine` present; `done` with output ⇒ `path` present; `via`
 validated against the known prefixes). Serialization happens in exactly one
 place (`ledger.py`: `from_line`/`to_line`, dropping None fields); a
@@ -1279,7 +1301,9 @@ src/dex_engine/
                  told apart from renamed, whose URLs a live item still
                  lists, and from unclaimed; one row per item and finding
                  with its entry count; done outputs missing on disk),
-                 waiting cohorts, pass records
+                 waiting cohorts, pass records, the judgment-drift signals
+                 nothing else reads (cap fires off the ledger, thread
+                 markers off enrichment frontmatter), and digest shape
   sync.py      grows: pin resolution, re-exec, migration runner, sync report
 ```
 

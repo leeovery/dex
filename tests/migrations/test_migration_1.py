@@ -17,7 +17,7 @@ import pytest
 from dex_engine.corpus import read_item
 from dex_engine.migrations.migration_1 import _legacy_uhash, build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Config, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Cap, Config, Kind, LedgerEntry, Need, Status
 
 ENGINE = "0.5.0"
 
@@ -800,7 +800,7 @@ class TestLedgerTranslation:
         migration.apply(tmp_path)
         assert path.read_text() == original
 
-    def test_current_schema_capped_skip_survives_a_re_apply(self, tmp_path, migration):
+    def test_current_schema_cap_fire_survives_a_re_apply(self, tmp_path, migration):
         # The applied-migrations log can be lost (union-merge race, un-pulled
         # repo), so migration 1 re-runs over lines the rewritten engine wrote.
         # A cap-refused skip is one of those lines: dropping it would erase
@@ -811,8 +811,8 @@ class TestLedgerTranslation:
             item="2026-05-01-item-a1b2c3",
             kind=Kind.WEB,
             status=Status.SKIPPED,
-            capped=True,
-            reason="media cap reached for this item",
+            cap=Cap.URL,
+            reason="url cap (12 per item) reached",
             engine="0.4.0",
             date=datetime.date(2026, 8, 1),
         )
@@ -823,10 +823,10 @@ class TestLedgerTranslation:
         assert path.read_text() == original
         assert report.skipped == []
         assert not any("dropped" in action for action in report.actions)
-        assert ledger.load(path)["6666666666"].capped is True
+        assert ledger.load(path)["6666666666"].cap is Cap.URL
 
     def test_current_schema_write_timestamp_survives_a_re_apply(self, tmp_path, migration):
-        # Same re-apply exposure as `capped`: a key missing from the
+        # Same re-apply exposure as `cap`: a key missing from the
         # tolerated list drops every line the running engine wrote.
         at = datetime.datetime(2026, 8, 20, 9, 0, 0, 125000, tzinfo=datetime.UTC)
         entry = LedgerEntry(
