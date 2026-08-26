@@ -55,6 +55,10 @@ import re
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lxml.html import HtmlElement
 
 from dex_engine.pipeline.classify import (
     MIN_SUBSTANTIAL_CHARS,
@@ -100,6 +104,8 @@ _OG_IMAGE_RES = (
 # a discussion, and the discussion is what was shared.
 _DISCUSSION_RATIO = 2.0
 
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _MAX_TITLE_CHARS = 200
 
@@ -109,10 +115,10 @@ def trafilatura_extract(html: str) -> str | None:
 
     ``include_links=True`` is load-bearing: harvest reads the preserved
     hyperlinks. It is also, unaccompanied, destructive — see
-    :func:`_strip_empty_anchors`, which is why the page is prepared first
-    and never handed to the extractor raw.
+    :func:`_prepare_page`, which is why the page is prepared first and
+    never handed to the extractor raw.
     """
-    prepared = _strip_empty_anchors(html)
+    prepared = _prepare_page(html)
     body = _extract_markdown(prepared, comments=False)
     discussion = _extract_markdown(prepared, comments=True)
     if discussion is not None and len(discussion) > len(body or "") * _DISCUSSION_RATIO:
@@ -128,22 +134,31 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
     )
 
 
-def _strip_empty_anchors(html: str) -> str:
-    """Drop every anchor carrying no text — permalinks, icon links, line anchors.
+def _prepare_page(html: str) -> str:
+    """Repair the page shapes that break extraction, before trafilatura sees it.
 
-    An anchor with nothing inside it is chrome, and with ``include_links``
-    on it is chrome that eats content. A heading whose permalink precedes
-    its words (``<h2><a class="headerlink" href="#x"></a>Text</h2>`` — the
+    Two repairs over one parse. First, drop every anchor carrying no text
+    — permalinks, icon links, line anchors. An anchor with nothing inside
+    it is chrome, and with ``include_links`` on it is chrome that eats
+    content: a heading whose permalink precedes its words
+    (``<h2><a class="headerlink" href="#x"></a>Text</h2>`` — the
     Sphinx/mkdocs/Docusaurus spelling) extracts as a bare ``##`` with the
-    words gone; mkdocs-material puts one such anchor at the start of every
-    highlighted code line, and those take the whole fenced block with them
-    (a llama-cpp docs page: 42 fences down to none, 39 of them prose the
-    owner had already read once).
+    words gone, and mkdocs-material's per-line code anchors take whole
+    fenced blocks with them (a llama-cpp docs page: 42 fences down to
+    none). Dropping them is lossless — there is nothing inside an empty
+    anchor to lose, and an anchor with no text renders no link. On that
+    same page this recovers 92 fences AND keeps all 42 hyperlinks, which
+    neither link setting manages alone.
 
-    Dropping them is lossless — there is nothing inside an empty anchor to
-    lose — and no markdown link is lost with them: an anchor with no text
-    renders no link. On the same llama-cpp page this recovers 92 fences
-    AND keeps all 42 hyperlinks, which neither link setting manages alone.
+    Second, flatten the inside of headings: drop ``<br>`` elements and
+    collapse whitespace runs to one space. A markdown heading is one line
+    by construction, and a heading holding a line break
+    (``<h3><span>Use Case: <br></span></h3>`` — Hugging Face model cards)
+    extracts as the marker alone on its line with the words below it,
+    among the span's source-formatting tabs and newlines emitted verbatim
+    — an empty heading to any consumer keying on the heading line. The
+    ``<br>`` is the break; the whitespace collapse is what puts the words
+    beside the marker cleanly instead of behind a run of tabs.
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -162,7 +177,26 @@ def _strip_empty_anchors(html: str) -> str:
     for anchor in list(tree.iter("a")):
         if isinstance(anchor, HtmlElement) and not (anchor.text_content() or "").strip():
             anchor.drop_tree()
+    for heading in tree.iter("h1", "h2", "h3", "h4", "h5", "h6"):
+        if isinstance(heading, HtmlElement):
+            _flatten_heading(heading)
     return tostring(tree, encoding="unicode")
+
+
+def _flatten_heading(heading: "HtmlElement") -> None:
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for br in list(heading.iter("br")):
+        if isinstance(br, HtmlElement):
+            br.drop_tree()
+    for node in heading.iter():
+        if not isinstance(node, HtmlElement):
+            continue
+        if node.text:
+            node.text = _WHITESPACE_RUN_RE.sub(" ", node.text)
+        # The heading's own tail is the text AFTER it — not its content.
+        if node is not heading and node.tail:
+            node.tail = _WHITESPACE_RUN_RE.sub(" ", node.tail)
 
 
 @dataclass(frozen=True, slots=True)

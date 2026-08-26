@@ -35,6 +35,7 @@ The convention:
 - [A browsable wiki](browsable-wiki.md) — no surface exists for looking at a dex without asking it a question
 - [Capture clients beyond the shortcut](capture-clients.md) — email, bookmarklet, extension, chat bot, voice: push clients to watchers' pull
 - [The owner's curation surface](owner-curation-surface.md) — correcting a dex requires a terminal, so an app-only owner cannot
+- [X article figures](x-article-figures.md) — the article fix reads the prose but not `media_entities`; figures need mapping into the media pool
 - [Rewrite magnitude](rewrite-magnitude.md) — a re-fetch that halves a stored file reports `1 rewritten`, same as one that doubles it
 - [Claim volatility](claim-volatility.md) — how fast a claim decays is not recorded, so a 2024 model-capability claim reads like a durable finding
 - [HTML entities survive into enrichment text](entity-decode-fetched-text.md) — `&nbsp;` in stored transcripts silently breaks phrase search
