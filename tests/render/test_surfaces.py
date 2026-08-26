@@ -89,6 +89,28 @@ class TestEnrichReport:
         assert "- first transcription downloads the whisper model once per machine" in out
         assert_no_trailing_whitespace(out)
 
+    def test_unchanged_units_are_accounted_for_but_not_queued_for_writing(self):
+        out = render(
+            "enrich-report",
+            {
+                "counts": {"done": 2},
+                "items": [],
+                "parked": [],
+                "unchanged": [{"id": "2026-08-19-example-55ad7b", "count": 2}],
+            },
+        )
+        assert "### Already stored — 2 units re-fetched to what was on disk, across 1 item" in out
+        assert "- **2026-08-19-example-55ad7b**" in out
+        assert "  ↳ 2 units unchanged" in out
+        assert "Needs writing up" not in out
+        # The whole point: a run that processed units never claims otherwise.
+        assert "Nothing to report from this run" not in out
+        assert_no_trailing_whitespace(out)
+
+    def test_a_run_with_genuinely_nothing_still_says_so(self):
+        out = render("enrich-report", {"counts": {}, "items": [], "parked": []})
+        assert "Nothing to report from this run" in out
+
     def test_parked_splits_by_who_owns_the_next_action(self):
         out = render("enrich-report", ENRICH_PAYLOAD)
         assert "### Needs you — 1 entry only you can move" in out

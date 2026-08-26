@@ -368,6 +368,8 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
                              "count": int}]}],
           "cognitive": [{"item": str, "url": str,
                          "need": str}],              # optional: jobs for the session
+          "unchanged": [{"id": str,                  # optional: units re-fetched
+                         "count": int}],             #   to what was already stored
           "issues_filed": int,                       # optional, default 0
           "notes": [str],                            # optional
         }
@@ -383,7 +385,7 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"counts", "items", "parked"}),
-        optional=frozenset({"incomplete", "cognitive", "issues_filed", "notes"}),
+        optional=frozenset({"incomplete", "cognitive", "unchanged", "issues_filed", "notes"}),
     )
     counts = _counts_at(surface, payload, "counts")
     parked = _parked_rows(surface, payload, required=True)
@@ -401,6 +403,7 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         _parked_section(parked, mine=True),
         _parked_section(parked, mine=False),
         _enrich_incomplete(surface, payload),
+        _enrich_unchanged(surface, payload),
     ]
     rendered = [section for section in sections if section]
     if rendered:
@@ -445,6 +448,36 @@ def _enrich_writeups(surface: str, payload: Mapping[str, object]) -> str:
     ]
     for item, reason in rows:
         lines += [_entry(item), kernel.detail(reason)]
+    return "\n".join(lines)
+
+
+def _enrich_unchanged(surface: str, payload: Mapping[str, object]) -> str:
+    """Units re-fetched to exactly what was already stored.
+
+    Not the writing-up queue — nothing here is new material — but not
+    silence either: a run that processed units and then printed "nothing
+    to report" read as though the fetch had done nothing, over content
+    that was on disk the whole time. This section is what makes the
+    nothing-to-report line honest when it does print.
+    """
+    rows = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "unchanged", required=False)):
+        where = f"unchanged[{i}]."
+        _check_keys(surface, entry, required=frozenset({"id", "count"}), where=where)
+        rows.append((_str_at(surface, entry, "id", where), _int_at(surface, entry, "count", where)))
+    if not rows:
+        return ""
+    total = sum(count for _, count in rows)
+    lines = [
+        kernel.heading(
+            f"Already stored — {kernel.plural(total, 'unit')} re-fetched to what was "
+            f"on disk, across {kernel.plural(len(rows), 'item')}",
+            level=3,
+        ),
+        "",
+    ]
+    for item, count in rows:
+        lines += [_entry(item), kernel.detail(f"{kernel.plural(count, 'unit')} unchanged")]
     return "\n".join(lines)
 
 
