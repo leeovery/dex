@@ -1144,7 +1144,7 @@ class TestRerun:
         )
         ledger.append(ctx.instance.ledger_path, requeued)
 
-    def test_unchanged_rerun_does_not_rewrite_or_report(self, instance):
+    def test_unchanged_rerun_does_not_rewrite_and_is_not_new_material(self, instance):
         write_item(instance)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.run(ctx)
@@ -1154,8 +1154,41 @@ class TestRerun:
         self.seed_rerun(ctx)
         report = run_mod.run(ctx)
         assert (out.read_text(), out.stat().st_mtime_ns) == before  # byte-compare held
-        assert "Nothing to report from this run" in report
+        assert "Needs writing up" not in report  # nothing new to write up
+        assert "Already stored" in report  # but the unit is still accounted for
         assert entry_for(ctx).status is Status.DONE
+
+    def test_an_explicit_fetch_of_stored_urls_never_reads_as_nothing_happened(self, instance):
+        # The field defect: `enrich fetch` on two URLs the item's harvest had
+        # already fetched printed "2 units processed / done 2" directly above
+        # "Nothing to report from this run: no new material" — the run
+        # contradicting itself over content sitting on disk. The session that
+        # hit it only noticed by listing the enrichment directory by hand.
+        write_item(instance)
+        extra = ["https://example.test/one", "https://example.test/two"]
+        driver = FakeDriver(
+            fetch_fn=lambda unit: Content(meta={}, body=f"stable prose for {unit.url} " * 20)
+        )
+        run_mod.run(make_ctx(instance, driver))
+        run_mod.fetch_urls(make_ctx(instance, driver), ITEM, extra)  # first promotion
+
+        report = run_mod.fetch_urls(make_ctx(instance, driver), ITEM, extra, force=True)
+        assert "Nothing to report from this run" not in report
+        assert "Already stored — 2 units re-fetched to what was on disk" in report
+        assert ITEM in report
+        assert "Needs writing up" not in report  # accounted for, not queued for writing
+
+    def test_a_rerun_that_really_changed_is_still_a_rewrite(self, instance):
+        # The other side of the counter: `unchanged` must not swallow a
+        # rewrite that genuinely replaced the stored body.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        richer = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="a different body " * 40))
+        ctx = make_ctx(instance, richer)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert "1 rewritten" in report
+        assert "Already stored" not in report
 
     def test_unchanged_rerun_on_a_later_day_still_compares_equal(self, instance):
         # The fetched: stamp changes every run by definition — the mask must
@@ -1170,7 +1203,8 @@ class TestRerun:
         later = make_ctx(instance, FakeDriver(), today=lambda: datetime.date(2026, 9, 1))
         report = run_mod.run(later)
         assert (out.read_bytes(), out.stat().st_mtime_ns) == before  # bytes untouched
-        assert "Nothing to report from this run" in report
+        assert "Needs writing up" not in report
+        assert "Already stored" in report
 
     def test_a_failed_rewrite_leaves_the_enrichment_whole(self, instance, monkeypatch):
         # A plain write truncates before it writes: an interrupted run left an

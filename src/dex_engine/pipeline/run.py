@@ -355,6 +355,12 @@ class _ItemOutcome:
     new: int = 0
     changed: int = 0
     media: int = 0
+    # Units re-fetched to exactly what was already stored. Deliberately NOT
+    # part of reason(): an unchanged re-fetch is not new material and must
+    # not join the writing-up queue. It is counted because the report has
+    # to account for every unit it says it processed — see `unchanged` in
+    # the enrich-report payload.
+    unchanged: int = 0
 
     def reason(self) -> str:
         """What landed, named — "3 new" never said new *what*."""
@@ -1262,6 +1268,13 @@ class _Drain:
         content = render_enrichment(entry.url, self.ctx.today(), meta, body or "")
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
+            # Nothing to write, but something to account for. Reporting this
+            # as no outcome at all had a fetch print "2 units processed,
+            # done 2" above "Nothing to report from this run: no new
+            # material" — the run contradicting itself over content that
+            # was sitting on disk the whole time.
+            if count:
+                self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
             return str(out.relative_to(self.ctx.instance.root))
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_text(out, content)
@@ -1746,6 +1759,13 @@ class _Drain:
             "items": items,
             "parked": self.parked,
         }
+        unchanged = [
+            {"id": item_id, "count": outcome.unchanged}
+            for item_id, outcome in sorted(self.outcomes.items())
+            if outcome.unchanged
+        ]
+        if unchanged:
+            payload["unchanged"] = unchanged
         incomplete = self._incomplete_items()
         if incomplete:
             payload["incomplete"] = incomplete

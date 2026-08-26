@@ -1577,6 +1577,7 @@ silently short list is a lie about scale.
 | label | what it holds |
 |---|---|
 | **Needs writing up** | items with new enrichment for the session to digest |
+| **Already stored** | units re-fetched to exactly what was on disk — accounted for, never queued for writing |
 | **Read these yourself** | jobs resolving to the cognitive floor (OCR, extraction Claude must do with eyes) |
 | **Needs you** | entries the engine has given up on (ledger status `manual`), plus media units resting under `media_fetch: none` — the owner's config change is what moves them |
 | **Waiting on the engine** | entries the engine retries unasked: `blocked`, `waiting`, `error` — minus media units resting under `media_fetch: none`, which it will not retry |
@@ -1591,6 +1592,17 @@ binds the renderers, not this document.)
 
 Detail text says what changed in plain terms. "3 new enrichment files, 1
 rewritten" replaces "3 new, 1 changed", which never said new *what*.
+
+**A run never contradicts itself about its own units.** An unchanged
+re-fetch writes nothing (the `fetched:` stamp is masked out of the
+byte-compare, so a rerun does not churn the file) and is correctly NOT new
+material — but reporting it as no outcome at all had `enrich fetch` print
+"2 units processed / **done** 2" directly above "Nothing to report from
+this run: no new material" (#53). The session that hit it found the
+content only by listing the enrichment directory by hand, and the run
+report is documented as the session's work list. So unchanged re-fetches
+are counted and stated under **Already stored**: the nothing-to-report
+line now prints only when the run truly did nothing.
 
 ## 12. Releases, sync, migrations
 
