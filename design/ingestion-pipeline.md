@@ -1360,6 +1360,20 @@ directory listing already shows the outputs.
 
 Prerequisite fix: the web driver **keeps hyperlinks** in extracted markdown
 (the old `include_links=False` stripped the very URLs harvest reasons over).
+Keeping them is not free, and the page is **prepared before extraction** to
+pay for it. With links on, an anchor carrying no text of its own does not
+render as nothing — it swallows the content beside it: heading words after
+a permalink anchor, whole fenced blocks behind mkdocs-material's per-line
+anchors. Field reports on 0.1.0 (#51, #55) had one docs page lose three
+headings' text outright and another lose 42 fenced code blocks. So every
+empty anchor is dropped before the extractor sees the page. It is lossless
+— there is nothing inside one to keep — and it costs no hyperlink, because
+an anchor with no text renders no link. Extraction then runs **twice**,
+with comments off and on, and the larger result wins when it more than
+doubles the other: an article's comment section is chrome and extracts to
+the same length either way, while a discussion page's comments ARE the
+artifact (a Hacker News thread: 1,058 characters of masthead against
+40,353 of discussion). Nothing measured falls between those two clusters.
 Harvest-rule changes bump a version constant in the engine; passes are
 recorded in `state/passes.jsonl`; re-assessment of old items is
 migration-seeded (§12), not scan-inferred.

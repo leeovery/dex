@@ -12,6 +12,10 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "trafilatura>=1.12",
+    # Direct: the article seam prepares a page's HTML before extraction
+    # (drivers/article.py). trafilatura pulls lxml in anyway, but an
+    # import we make ourselves is a dependency we declare ourselves.
+    "lxml>=5.0",
     "yt-dlp>=2025.1.1",
     "firecrawl-anydoc>=0.2.0",
     "faster-whisper>=1.2.1",
@@ -43,6 +47,10 @@ dev = [{ include-group = "lint" }, { include-group = "test" }]
 lint = [
     "ruff>=0.16.3",
     "ty>=0.0.73",
+    # lxml ships no inline types; without the stubs ty cannot resolve the
+    # article seam's imports at all, and the choice is stubs or a blanket
+    # ignore over the one place we touch a DOM.
+    "lxml-stubs>=0.5.1",
 ]
 mutation = [
     "mutmut>=3.7.0",

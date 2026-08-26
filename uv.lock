@@ -426,6 +426,7 @@ source = { editable = "." }
 dependencies = [
     { name = "faster-whisper" },
     { name = "firecrawl-anydoc" },
+    { name = "lxml" },
     { name = "trafilatura" },
     { name = "yt-dlp" },
 ]
@@ -433,12 +434,14 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "lxml-stubs" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "ty" },
 ]
 lint = [
+    { name = "lxml-stubs" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -455,6 +458,7 @@ test = [
 requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "firecrawl-anydoc", specifier = ">=0.2.0" },
+    { name = "lxml", specifier = ">=5.0" },
     { name = "trafilatura", specifier = ">=1.12" },
     { name = "yt-dlp", specifier = ">=2025.1.1" },
 ]
@@ -462,12 +466,14 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.165.10" },
+    { name = "lxml-stubs", specifier = ">=0.5.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.16.3" },
     { name = "ty", specifier = ">=0.0.73" },
 ]
 lint = [
+    { name = "lxml-stubs", specifier = ">=0.5.1" },
     { name = "ruff", specifier = ">=0.16.3" },
     { name = "ty", specifier = ">=0.0.73" },
 ]
@@ -966,6 +972,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0a/63/195dfdde380a84df309e3bccf4384b034b745dba43426886f7ae623b4fba/lxml_html_clean-0.4.5.tar.gz", hash = "sha256:e2a4c7d5beedd17cd7b484d848a0571e54baa239a4f9df5546e3acba7f990560", size = 24142, upload-time = "2026-05-20T12:17:53.574Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/bd/6e2b76a6c5dee10397db9c929f0c5066766ec1036046f0335b7ca7ca08b8/lxml_html_clean-0.4.5-py3-none-any.whl", hash = "sha256:c76fcadd1e5bfb9b8bafc2200d51e4e78eb0dad67f56881c21dfb6484c7e7746", size = 14573, upload-time = "2026-05-20T12:17:52.215Z" },
+]
+
+[[package]]
+name = "lxml-stubs"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/da/1a3a3e5d159b249fc2970d73437496b908de8e4716a089c69591b4ffa6fd/lxml-stubs-0.5.1.tar.gz", hash = "sha256:e0ec2aa1ce92d91278b719091ce4515c12adc1d564359dfaf81efa7d4feab79d", size = 14778, upload-time = "2024-01-10T09:37:46.521Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/c9/e0f8e4e6e8a69e5959b06499582dca6349db6769cc7fdfb8a02a7c75a9ae/lxml_stubs-0.5.1-py3-none-any.whl", hash = "sha256:1f689e5dbc4b9247cb09ae820c7d34daeb1fdbd1db06123814b856dae7787272", size = 13584, upload-time = "2024-01-10T09:37:44.931Z" },
 ]
 
 [[package]]

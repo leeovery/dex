@@ -16,6 +16,15 @@ incident. The transport fetches with visible status codes; trafilatura is
 demoted to extraction only, with ``include_links=True`` because the old
 ``include_links=False`` stripped the very URLs harvest reasons over.
 
+That flag has a price, and the page is prepared before extraction to pay
+it: with links on, an anchor carrying no text of its own does not merely
+render as nothing, it swallows the content beside it — heading words after
+a permalink, whole fenced blocks behind mkdocs-material's per-line
+anchors. Extraction therefore runs twice over the prepared page, once
+without comments and once with, because the two settings answer different
+questions: an article's comment section is chrome, and a discussion page's
+comments are the entire artifact.
+
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
 ``Unusable`` (evidence ``thin-extraction``), never ``Missing`` — our
@@ -80,6 +89,17 @@ _OG_IMAGE_RES = (
         r"<meta[^>]+content=[\"']([^\"'\r\n]+)[\"'][^>]+(?:property|name)=[\"']og:image[\"']"
     ),
 )
+# A discussion page's comments ARE the artifact; an article's are chrome,
+# and dropping them is right for the article. Nothing in the markup tells
+# the two apart, but the SIZE does, and not marginally: measured over docs
+# sites, blogs, a news post and a Django reference, every article extracts
+# to exactly the same length either way (ratio 1.00), while a Hacker News
+# thread grows 38x — 1,058 characters of masthead against the 40,353 the
+# 115 comments actually are. There is nothing in between to misjudge, so
+# the bar sits far from both: a page whose comments more than double it is
+# a discussion, and the discussion is what was shared.
+_DISCUSSION_RATIO = 2.0
+
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _MAX_TITLE_CHARS = 200
 
@@ -88,13 +108,61 @@ def trafilatura_extract(html: str) -> str | None:
     """Extract markdown from HTML via trafilatura — extraction ONLY.
 
     ``include_links=True`` is load-bearing: harvest reads the preserved
-    hyperlinks.
+    hyperlinks. It is also, unaccompanied, destructive — see
+    :func:`_strip_empty_anchors`, which is why the page is prepared first
+    and never handed to the extractor raw.
     """
+    prepared = _strip_empty_anchors(html)
+    body = _extract_markdown(prepared, comments=False)
+    discussion = _extract_markdown(prepared, comments=True)
+    if discussion is not None and len(discussion) > len(body or "") * _DISCUSSION_RATIO:
+        return discussion
+    return body
+
+
+def _extract_markdown(html: str, *, comments: bool) -> str | None:
     import trafilatura  # noqa: PLC0415 — lazy: heavy dep, loaded only when extracting
 
     return trafilatura.extract(
-        html, output_format="markdown", include_links=True, include_comments=False
+        html, output_format="markdown", include_links=True, include_comments=comments
     )
+
+
+def _strip_empty_anchors(html: str) -> str:
+    """Drop every anchor carrying no text — permalinks, icon links, line anchors.
+
+    An anchor with nothing inside it is chrome, and with ``include_links``
+    on it is chrome that eats content. A heading whose permalink precedes
+    its words (``<h2><a class="headerlink" href="#x"></a>Text</h2>`` — the
+    Sphinx/mkdocs/Docusaurus spelling) extracts as a bare ``##`` with the
+    words gone; mkdocs-material puts one such anchor at the start of every
+    highlighted code line, and those take the whole fenced block with them
+    (a llama-cpp docs page: 42 fences down to none, 39 of them prose the
+    owner had already read once).
+
+    Dropping them is lossless — there is nothing inside an empty anchor to
+    lose — and no markdown link is lost with them: an anchor with no text
+    renders no link. On the same llama-cpp page this recovers 92 fences
+    AND keeps all 42 hyperlinks, which neither link setting manages alone.
+
+    A page lxml cannot parse goes through untouched: preparation is a
+    repair, never a gate.
+    """
+    from lxml.etree import LxmlError  # noqa: PLC0415 — lazy: pulled in with trafilatura
+    from lxml.html import HtmlElement, fromstring, tostring  # noqa: PLC0415
+
+    try:
+        tree = fromstring(html)
+    except (LxmlError, ValueError):
+        return html
+    # Materialized before the loop: drop_tree() detaches from the live tree,
+    # and mutating what you are iterating skips siblings. drop_tree is also
+    # the right removal — it MERGES the anchor's tail into the preceding
+    # text, which is exactly where a heading's words live.
+    for anchor in list(tree.iter("a")):
+        if isinstance(anchor, HtmlElement) and not (anchor.text_content() or "").strip():
+            anchor.drop_tree()
+    return tostring(tree, encoding="unicode")
 
 
 @dataclass(frozen=True, slots=True)
