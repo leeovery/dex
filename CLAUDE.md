@@ -113,9 +113,9 @@ vendored `.agents/`. Within that boundary every file satisfies the formatter,
 and the check exists to keep it that way — format what you touch, and never
 reformat files you are not otherwise editing.
 
-**CI** (`.github/workflows/ci.yml`, every branch push and pull request —
-never a tag push: a release's tag would re-run the suite its preflight just
-ran on the identical tree). The suite on
+**CI** (`.github/workflows/ci.yml`, every branch push and pull request — never
+a tag push: a release's tag would re-run the suite its preflight just ran on
+the identical tree). The suite on
 Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"` is a
 promise, and a single local 3.13 cannot keep it — plus one clean macOS box on
 3.13. `ruff` and `ty` run once, on their own job: ruff targets py311 and ty
@@ -165,11 +165,11 @@ gates run before Mint does anything else — before the AI notes, before the
 review, and long before the tag. A failure aborts with no bookkeeping commit
 and no tag, which is the point: instances pin tags, so a broken tag reaches
 every instance at its next sync and the only rollback is hand-editing pins.
-`pre_tag` bumps pyproject and uv.lock
-together to the release version (`uv version "$MINT_NEW_VERSION"` — mint's
-hooks run on the pre-bump tree, so left to mint the bump lands a pyproject
-that disagrees with the lock, which is how the v0.1.1 tag failed every
-`uv sync --locked`), then builds the wheel at that same version. The live suite stays out, and so does
+`pre_tag` bumps pyproject and uv.lock together to the release version
+(`uv version "$MINT_NEW_VERSION"` — mint's hooks run on the pre-bump tree, so
+left to mint the bump lands a pyproject that disagrees with the lock, which is
+how the v0.1.1 tag failed every `uv sync --locked`), then builds the wheel at
+that same version. The live suite stays out, and so does
 mutation testing — hours, not seconds — but the latter is still part of
 releasing: before tagging a release that touched pipeline logic, audit the
 modules you changed with `./mutate` (below) and read the survivors.
