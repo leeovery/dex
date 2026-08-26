@@ -68,7 +68,7 @@ the engine stays unaware of which ones exist.
   dex builds on (Shortcuts, GitHub tokens, scheduled-task hosts, cowork).
   Agent-facing, never owner-facing. Check it before building on any of
   those surfaces; append what you verify the hard way.
-- `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
+- `.github/workflows/` — `ci.yml` (the gates, every pull request) and
   `live.yml` (the daily third-party drift watch). See Development below.
 - `example/` — a toy instance showing the shapes.
 
@@ -120,17 +120,18 @@ vendored `.agents/`. Within that boundary every file satisfies the formatter,
 and the check exists to keep it that way — format what you touch, and never
 reformat files you are not otherwise editing.
 
-**CI** (`.github/workflows/ci.yml`, every branch push and pull request — never
-a tag push: a release's tag would re-run the suite its preflight just ran on
-the identical tree). The suite on
-Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"` is a
-promise, and a single local 3.13 cannot keep it — plus one clean macOS box on
-3.13. `ruff` and `ty` run once, on their own job: ruff targets py311 and ty
-pins `python-version = "3.11"`, so they answer identically on every
+**CI** (`.github/workflows/ci.yml`, every pull request, and nothing else — no
+push trigger at all). It runs where the maintainer's machine cannot: a branch
+mid-work is not a claim worth a runner, and by the tag the same tree has
+already passed here as a PR and passes preflight again at release. The suite
+runs on Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"`
+is a promise, and a single local 3.13 cannot keep it — plus one clean macOS
+box on 3.13. `ruff` and `ty` run once, on their own job: ruff targets py311
+and ty pins `python-version = "3.11"`, so they answer identically on every
 interpreter and a matrix of them would be four copies of one answer. Every job
-syncs with `uv sync --locked`, which also fails on a `pyproject.toml` edit that
-was never re-locked. Windows is not covered and will not be: the shim is POSIX
-sh and instances require git, gh and uv.
+syncs with `uv sync --locked`, which also fails on a `pyproject.toml` edit
+that was never re-locked. Windows is not covered and will not be: the shim is
+POSIX sh and instances require git, gh and uv.
 
 `actions/checkout` is pinned to its major, which moves on its own.
 `astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
