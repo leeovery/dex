@@ -25,6 +25,7 @@ __all__ = [
     "HOME_RE",
     "INSTANCE_TOKEN_RE",
     "ITEM_ID_PATTERN",
+    "ITEM_SLUG_PATTERN",
     "MIN_SUBSTANTIAL_CHARS",
     "PAYWALL_REASON",
     "THIN_EXTRACTION_REASON",
@@ -212,7 +213,33 @@ def classify_connection(exc: OSError) -> Classification:
 # rejectors (pipeline/observed.py) run the SAME patterns and refuse where
 # scrub() redacts, so the two surfaces cannot drift apart on what counts
 # as a leak. A detector added to scrub() must gain a mirror rejector.
+# TLDs a hostname is recognized by. A curated list, not a guess at the
+# whole registry: matching "any two letters after a dot" would read
+# `trafilatura.extract` and `classify.py` as hosts and refuse a report
+# that named the code correctly. Additions are cheap; a false refusal
+# that trains the owner to abstract a sentence that was already fine is
+# not.
+_PUBLIC_TLDS = (
+    "com|org|net|io|dev|co|ai|app|me|gov|edu|info|biz|xyz|tech|blog|news|"
+    "site|online|cloud|sh|ly|to|gg|fm|tv|cc|so|is|im|in|id|uk|us|ca|de|fr|"
+    "jp|cn|au|nl|se|no|it|es|ru|be|at|ch|eu|pl|br|mx|za|nz|ie|dk|fi|cz|gr|"
+    "pt|ro|hu|kr|tw|hk|sg|il|tr|ua|ar|cl|pe|vn|th|my|ph"
+)
+
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+# The same address with its scheme dropped. It exists because a session told
+# "never name the address" does the most natural thing in the world — deletes
+# the `https://` and keeps the rest — which satisfies neither the rule nor a
+# scheme-anchored detector. A PATH is required: `host.tld/anything` is an
+# address by any reading, while a bare `x.com` or `fxtwitter` is a platform
+# this engine names in its own vocabulary, and refusing those would refuse
+# honest reports about the drivers that read them.
+SCHEMELESS_URL_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
+    rf"(?:{_PUBLIC_TLDS})"
+    r"/\S+",
+    re.IGNORECASE,
+)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Every shape of "under a user's home": macOS, Linux (including the root
 # account and systemd's /var/home), and Windows in both slash spellings.
@@ -246,6 +273,12 @@ _TOKEN_RE = re.compile(r"\S+")
 # spelling: lint's citation regex and the observed-report rejectors both
 # build from it, so the grammar cannot fork.
 ITEM_ID_PATTERN = r"\d{4}-\d{2}-\d{2}-[a-z0-9-]+-[0-9a-f]{6}"
+# The same id with its shortid trimmed off. What remains is a date and a
+# NOTE-DERIVED slug — the owner's own words about what they saved, which is
+# the half of an item id that actually says something. The strict grammar
+# above runs first wherever both could match, so a whole id is still named
+# as a whole id.
+ITEM_SLUG_PATTERN = r"\d{4}-\d{2}-\d{2}-[a-z][a-z0-9-]*"
 # Instance content is owner data even in RELATIVE paths (they never touch
 # the home redaction): item ids embed note-derived slugs, media names are
 # owner-chosen, and dex-* names the owner's instance repo. Any token

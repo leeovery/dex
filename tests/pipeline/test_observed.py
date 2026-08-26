@@ -301,11 +301,17 @@ class TestRejection:
 
 
 class TestMirror:
-    """The rejectors and scrub() judge the same texts the same way.
+    """The rejectors and scrub() judge the same texts the same way — mostly.
 
     Both consume classify's detectors, so a detector improvement reaches
     both; this pins that a text scrub() would touch is a text the verb
     refuses, and a text scrub() passes untouched files cleanly.
+
+    The rejectors hold TWO detectors scrub() does not (the schemeless URL
+    and the shortid-trimmed item slug — see TestRejectorsOnly). They guard
+    public fields, where a miss is permanent and off-instance; scrub only
+    ever writes into the instance's own ledger, so widening it would
+    redact honest local diagnostics for no gain.
     """
 
     @pytest.mark.parametrize(
@@ -493,3 +499,55 @@ class TestVocabulary:
             "scripts"
         ]
         assert set(listed.group(1).split("|")) == {name.removeprefix("dex-") for name in scripts}
+
+
+class TestRejectorsOnly:
+    """The two detectors that guard public fields alone.
+
+    Both close gaps found by auditing what the verb actually accepted:
+    every one of these texts filed cleanly to the public tracker before.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Deleting the https:// is what a session naturally does when
+            # told "never name the address" — and it abstracts nothing.
+            "the-pocket.github.io/PocketFlow/guide.html emptied three headings",
+            "news.ycombinator.com/item?id=39675585 rendered as nested tables",
+            "docs.djangoproject.com/en/5.0/topics/ lost its fenced code",
+            # An item id with its shortid trimmed is still the owner's own
+            # words about what they saved.
+            "the item 2025-02-12-bertopic lost its heading text",
+        ],
+    )
+    def test_a_public_field_carrying_these_is_refused(self, tmp_path, text):
+        gh = FakeGh()
+        with pytest.raises(IssuePayloadError):
+            _report(_write(tmp_path, observed=text), gh, tmp_path / "state")
+        assert gh.calls == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # The engine's own vocabulary. Refusing these would refuse
+            # honest reports about the drivers and modules that carry them.
+            "the fxtwitter response held the article unread",
+            "the x.com driver read text before article",
+            "trafilatura.extract returned None on a docs page",
+            "run.py raised before the ledger line was written",
+            "a bare host with no path names a platform, not a page",
+        ],
+    )
+    def test_engine_vocabulary_is_never_mistaken_for_an_address(self, tmp_path, text):
+        gh = FakeGh()
+        _report(_write(tmp_path, observed=text), gh, tmp_path / "state")
+        assert len(gh.of("create")) == 1
+
+    def test_the_refusal_says_what_to_do_about_a_schemeless_address(self, tmp_path):
+        with pytest.raises(IssuePayloadError, match="scheme"):
+            _report(
+                _write(tmp_path, observed="example.com/a/page lost its body"),
+                FakeGh(),
+                tmp_path / "state",
+            )

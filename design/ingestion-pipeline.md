@@ -1947,6 +1947,16 @@ section.
 - **Fire-and-forget**: instances never poll issues or act on tracker
   content — the fix loop closes through releases and sync only. The public
   repo cannot instruct instances.
+- **The tracker is overridable** (`DEX_ISSUE_REPO=owner/repo`), because
+  reviewing this machinery means building a scratch instance and driving
+  the verbs — which the review discipline asks for, and which with a
+  hard-coded constant files real issues at the real public tracker. It
+  has happened: one `[auto]` report there carries `engine: 0.4.0`, a
+  version this project never shipped and only test fixtures use. The
+  override is validated as `owner/repo` and a malformed value files
+  NOTHING rather than falling back — falling back to the shared tracker
+  is the one wrong direction, since the override exists to keep
+  something off it.
 - **`gh` is assumed** — it's a declared instance dependency; an environment
   without it is not a dex environment (the Cowork VM class was discarded for
   exactly this kind of lack). No pending-file/retry machinery. The filer's
@@ -1999,7 +2009,22 @@ and the note-never-crash edge.
   public field runs the scrubber's own detectors — URL, email, home
   path, the strict item-id grammar, instance-content tokens; one
   spelling, shared via `classify.py` — and any hit refuses the whole
-  payload with per-field reasons naming what to abstract. Nothing is
+  payload with per-field reasons naming what to abstract. **Two
+  detectors belong to the rejectors alone**, added after an audit found
+  each of them filing cleanly to the public tracker: a **schemeless
+  URL** (`host.tld/path`), because a session told "never name the
+  address" deletes the `https://` and keeps the rest, which abstracts
+  nothing and defeats a scheme-anchored pattern; and a **shortid-trimmed
+  item slug** (`2025-02-12-bertopic`), because what survives the trim is
+  a date and the owner's own words. A PATH is required for the first,
+  and a curated TLD list backs it: a bare `x.com`, `fxtwitter` or
+  `trafilatura.extract` is this engine's own vocabulary, and refusing
+  those would refuse honest reports about the drivers that read them.
+  A bare host with no path is therefore accepted — the recorded
+  trade, not an oversight. Neither detector joins `scrub()`: the
+  rejectors guard PUBLIC fields, where a miss is permanent and
+  off-instance, while `scrub` only ever writes into the instance's own
+  ledger. Nothing is
   filed, nothing written, exit nonzero. Where the exception path
   eliminates free text structurally, this path admits two
   session-written clauses only because a mechanical detector stands

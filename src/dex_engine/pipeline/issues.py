@@ -37,6 +37,8 @@ run report notes "issue filing failed" and the run continues.
 import datetime
 import hashlib
 import json
+import os
+import re
 import subprocess
 import traceback
 from collections.abc import Callable, Sequence
@@ -48,6 +50,7 @@ from .types import Format, Kind, version_newer
 
 __all__ = [
     "ENGINE_REPO",
+    "ISSUE_REPO_ENV",
     "MAX_NEW_ISSUES_PER_RUN",
     "ErrorEvent",
     "Filable",
@@ -57,12 +60,28 @@ __all__ = [
     "file_reports",
     "fingerprint",
     "gh_runner",
+    "issue_repo",
     "report_errors",
 ]
 
 # The public engine repo issues are filed against. Instances are
 # private; this is the one shared tracker.
 ENGINE_REPO = "leeovery/dex"
+
+# The override, and the reason there is one: reviewing this machinery means
+# building a scratch instance and driving the verbs, which is exactly what
+# the repo's own review discipline asks for — and with a hard-coded repo
+# that files real issues at the real public tracker. It has happened: one
+# `[auto]` report there carries `engine: 0.4.0`, a version this project has
+# never shipped and only test fixtures use. Point a scratch instance
+# somewhere else and the tracker stays the field's.
+ISSUE_REPO_ENV = "DEX_ISSUE_REPO"
+
+# owner/repo, GitHub's own grammar for what `gh --repo` accepts. Validated
+# because the failure it prevents is silent: a typo'd override that gh
+# rejects would otherwise read as an ordinary filing failure, and the next
+# person to look would find no issue and no explanation.
+_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 # Rate limit: a run that suddenly errors everywhere must not flood the
 # tracker — three distinct new bugs is signal enough for one run. It caps
@@ -76,6 +95,30 @@ MAX_NEW_ISSUES_PER_RUN = 3
 MEMORY_FILE = "issue-reports.jsonl"
 
 _PACKAGE_MARKER = "dex_engine"
+
+
+def issue_repo(env: dict[str, str] | None = None) -> str:
+    """The tracker to file at: the override where set, else the engine repo.
+
+    Args:
+        env: Environment mapping; ``None`` reads ``os.environ``.
+
+    Returns:
+        ``owner/repo``.
+
+    Raises:
+        ValueError: The override is set and is not ``owner/repo``. Raised
+            rather than ignored — falling back to the public tracker is
+            the one wrong direction, since the override exists precisely
+            to keep something OFF it.
+    """
+    source = dict(os.environ) if env is None else env
+    override = source.get(ISSUE_REPO_ENV, "").strip()
+    if not override:
+        return ENGINE_REPO
+    if not _REPO_RE.match(override):
+        raise ValueError(f"{ISSUE_REPO_ENV}={override!r} is not owner/repo — nothing filed")
+    return override
 
 
 GhRunner = Callable[[Sequence[str]], str]
@@ -315,13 +358,13 @@ def _append_memory(path: Path, record: _MemoryRecord) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _search(gh: GhRunner, fp: str) -> list[dict[str, object]]:
+def _search(gh: GhRunner, fp: str, *, repo: str) -> list[dict[str, object]]:
     out = gh(
         [
             "issue",
             "list",
             "--repo",
-            ENGINE_REPO,
+            repo,
             "--state",
             "all",
             "--search",
@@ -413,6 +456,7 @@ class _Filer:
     engine_version: str
     today: Callable[[], datetime.date]
     enabled: bool = True
+    repo: str = ENGINE_REPO
     memory: list[_MemoryRecord] = field(default_factory=list)
     filed: int = 0
     commented: int = 0
@@ -435,7 +479,7 @@ class _Filer:
         if not self.enabled:
             self._record_local(filable)
             return
-        found = _search(self.gh, fp)
+        found = _search(self.gh, fp, repo=self.repo)
         open_issues = [e for e in found if str(e.get("state", "")).upper() == "OPEN"]
         closed_issues = [e for e in found if str(e.get("state", "")).upper() == "CLOSED"]
         if open_issues:
@@ -456,7 +500,7 @@ class _Filer:
                 "comment",
                 str(number),
                 "--repo",
-                ENGINE_REPO,
+                self.repo,
                 "--body",
                 f"seen again (engine {self.engine_version}, {self.today().isoformat()})",
             ]
@@ -493,7 +537,7 @@ class _Filer:
                 "issue",
                 "create",
                 "--repo",
-                ENGINE_REPO,
+                self.repo,
                 "--title",
                 filable.title,
                 "--body",
@@ -619,6 +663,9 @@ def file_reports(  # noqa: PLR0913 — every input is injected, none ambient
         enabled=enabled,
     )
     try:
+        # Inside the soft edge on purpose: a malformed override is a filing
+        # failure the run notes and survives, never a dead run.
+        filer.repo = issue_repo()
         filer.memory = _read_memory(filer.memory_path)
         for filable in filables:
             filer.handle(filable)

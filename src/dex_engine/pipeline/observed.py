@@ -31,7 +31,15 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import issues
-from .classify import EMAIL_RE, HOME_RE, INSTANCE_TOKEN_RE, ITEM_ID_PATTERN, URL_RE
+from .classify import (
+    EMAIL_RE,
+    HOME_RE,
+    INSTANCE_TOKEN_RE,
+    ITEM_ID_PATTERN,
+    ITEM_SLUG_PATTERN,
+    SCHEMELESS_URL_RE,
+    URL_RE,
+)
 
 __all__ = [
     "KNOWN_VERBS",
@@ -80,19 +88,36 @@ _REQUIRED_KEYS = frozenset({"verb", "expected", "observed"})
 _OPTIONAL_KEYS = frozenset({"steps", "note"})
 
 # The leak rejectors: the scrubber's own detectors (classify.py), reused
-# for DETECTION with refusal instead of redaction. Order matters only for
+# for DETECTION with refusal instead of redaction. Two of them are the
+# rejectors' alone — the schemeless URL and the shortid-trimmed item slug.
+# They guard PUBLIC fields, where the cost of a miss is permanent and
+# off-instance; `scrub` only ever writes into the instance's own ledger,
+# and widening it would redact honest local diagnostics for no gain. Order matters only for
 # the message — the first hit names the field's problem most precisely,
 # so the specific item-id grammar runs before the instance-token detector
 # that also contains it. Each entry: (pattern, what the field contains,
 # how to abstract it).
 _REJECTORS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (URL_RE, "a URL", "name the fetch mechanics, never the address"),
+    (
+        SCHEMELESS_URL_RE,
+        "a URL with its scheme dropped",
+        "deleting the https:// does not abstract an address — name the fetch mechanics",
+    ),
     (EMAIL_RE, "an email address", "no address belongs in a mechanics sentence"),
     (HOME_RE, "a filesystem path", "name the file's role, never its location"),
     (
         re.compile(ITEM_ID_PATTERN),
         "a corpus item id",
         'describe the item abstractly ("an item with two URLs"), never by id or slug',
+    ),
+    (
+        re.compile(ITEM_SLUG_PATTERN),
+        "a corpus item's date and slug",
+        (
+            "trimming the shortid leaves the owner's own words — describe the "
+            'item abstractly ("an item with two URLs")'
+        ),
     ),
     (
         INSTANCE_TOKEN_RE,

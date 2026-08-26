@@ -4,11 +4,16 @@ import datetime
 import json
 import subprocess
 
+import pytest
+
 from dex_engine.pipeline.issues import (
+    ENGINE_REPO,
+    ISSUE_REPO_ENV,
     MAX_NEW_ISSUES_PER_RUN,
     ErrorEvent,
     error_event,
     fingerprint,
+    issue_repo,
     report_errors,
 )
 from dex_engine.pipeline.ledger import from_line
@@ -470,3 +475,38 @@ class TestSoftEdge:
         outcome = _report([_event()], leaky, tmp_path)
         note = next(n for n in outcome.notes if "issue filing failed" in n)
         assert "/Users/" not in note
+
+
+class TestIssueRepoOverride:
+    """Where reports are filed, and why that is not a constant any more."""
+
+    def test_no_override_files_at_the_engine_repo(self):
+        assert issue_repo({}) == ENGINE_REPO
+
+    def test_an_override_redirects_the_tracker(self):
+        assert issue_repo({ISSUE_REPO_ENV: "lee/scratch"}) == "lee/scratch"
+
+    def test_blank_and_whitespace_are_no_override(self):
+        assert issue_repo({ISSUE_REPO_ENV: "   "}) == ENGINE_REPO
+
+    def test_a_malformed_override_never_falls_back_to_the_public_tracker(self):
+        # Falling back is the one wrong direction: the override exists to
+        # keep something OFF the shared tracker.
+        with pytest.raises(ValueError, match="is not owner/repo"):
+            issue_repo({ISSUE_REPO_ENV: "not a repo"})
+
+    def test_every_gh_call_addresses_the_resolved_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(ISSUE_REPO_ENV, "lee/scratch")
+        gh = FakeGh()
+        _report([_event()], gh, tmp_path)
+        repos = [args[args.index("--repo") + 1] for args in gh.calls if "--repo" in args]
+        assert repos
+        assert set(repos) == {"lee/scratch"}
+
+    def test_a_malformed_override_files_nothing_and_notes_it(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(ISSUE_REPO_ENV, "garbage")
+        gh = FakeGh()
+        outcome = _report([_event()], gh, tmp_path)
+        assert gh.calls == []  # never reached the tracker
+        assert outcome.filed == 0
+        assert any("issue filing failed" in note for note in outcome.notes)
