@@ -1224,14 +1224,26 @@ own naming grammar, so whatever it writes stays out.
   thread's *last* post rolls up the whole thread.
 - Quoted posts stay inline (blockquote); promoting a quote is a harvest
   judgment, not driver mechanics.
-- **Long-form articles render from `article`, not `text`.** fxtwitter
-  returns `text: ""` for them, the prose under `article.title` /
-  `article.preview_text`, and `raw_text.text` holding only the shortlink to
-  the article; the body is title + preview text + that link. A body that is
-  nothing but a shortlink is **not content** — the "no text or media"
-  `manual` park applies, because a post ledgered `done` on a shortlink and
-  nothing else is thin garbage the digest layer cannot tell from real
-  capture.
+- **Long-form articles render from `article`, and `article` is asked
+  first.** Where a post has one, the article IS the post: the body is
+  `article.title` as a heading, then `article.content.blocks[]` rendered as
+  markdown (the draft.js types — `unstyled`, `header-*`, the two list
+  kinds, `blockquote`, `code-block`; anything unmet renders as a
+  paragraph, because an unknown block is still prose), falling back to
+  `article.preview_text` where fxtwitter relays no blocks, then the link.
+  Reading `text` first was the 0.1.0 defect (#54): the fixture had
+  `text: ""` and the field does not — fxtwitter EXPANDS the t.co, so an
+  announcement arrives with `text` already reading
+  `https://x.com/i/article/<id>`, truthy, and the article was never
+  consulted. Three articles ledgered `done` on a two-line file.
+- **A body that is nothing but a link is not content**, in any spelling:
+  not x's own `t.co`, and not the expanded `x.com/i/article/<id>` that
+  actually arrives. The "no text or media" `manual` park applies, because a
+  post ledgered `done` on a URL and nothing else is thin garbage the digest
+  layer cannot tell from real capture. A shared **article URL** parks too,
+  and says why: an article id is not a status id, fxtwitter 404s on it, and
+  it does not resolve to the post that announced it — so the park names
+  capturing that post as the way through.
 - Chain media pooled, captured post's first — **photos and videos alike**:
   both are URL downloads, and the media stage's caps apply. A media-only
   post is `done` with a minimal attributed body, whatever the media is; an
@@ -1879,10 +1891,34 @@ Shipping migrations for this rewrite:
    as an action on an instance-owned file). Without it, in-flight audio
    shows as dirt to the dirty-tree guard.
 
-That is the whole shipping set: 1, 2, 3.
+4. **Article-stub requeue** — the x driver read a post's `text` before its
+   `article`, so a long-form announcement ledgered `done` on a two-line
+   file while the article's body sat unread in the same response (#54).
+   `done` is terminal for the drain, so the fixed driver never revisits
+   those units: they are seeded (`status: queued, rerun: true, via:
+   migration-4`). Membership is read off the **stored file**, not off a
+   vintage — this defect shipped inside 0.1.0 and most x posts that
+   version wrote have no article at all, so requeuing every `done` x unit
+   would re-walk thousands of threads to repair a handful of stubs. The
+   cohort is exactly the units whose stored body IS the stub the broken
+   driver wrote: every line an attribution, a media note, or a bare link,
+   one of those links an x article. Requiring the stub SHAPE, not merely
+   the URL's presence, is what keeps the apply a no-op on already-migrated
+   state: the repaired body keeps the article link at its tail (harvest
+   reads links out of stored bodies), so URL-presence would re-seed
+   repaired work on every log-race re-application. A prose post that
+   merely links someone else's article fails the shape test too — nothing
+   of it was lost. Same guards as
+   migration 2 — page work only, and only work a live corpus item still
+   claims — deliberately re-implemented rather than imported, because a
+   migration is a frozen historical act and reaching into another one's
+   internals would let a later edit to it change what this one already did.
 
-**A ghost-item sweep was drafted as migration 4 and deleted** (owner ruling
-at phase-4 review): permanent machinery, shipped to every instance forever,
+That is the whole shipping set: 1, 2, 3, 4.
+
+**A ghost-item sweep was drafted as a fourth migration and deleted** (owner
+ruling at phase-4 review; the number was later taken by the article-stub
+requeue above): permanent machinery, shipped to every instance forever,
 to tidy a handful of lines in one instance. Its predicate — infer "purged"
 from "the corpus file is missing" — is ambiguous by construction: a rename,
 a partial checkout and a hand deletion look identical to it, and every guard

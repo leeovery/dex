@@ -139,10 +139,10 @@ class TestBootstrap:
     def test_bootstrap_runs_migrations_and_template_sync(self, inst, template):
         channel, _ = make_channel(listing_for("v0.1.0"))
         report, _ = run(inst, channel, template)
-        assert read_applied(log_path(inst.root)) == {1, 2, 3}
+        assert read_applied(log_path(inst.root)) == {1, 2, 3, 4}
         assert (inst.root / "bin" / "dex").read_text() == "#!/bin/sh\nshim\n"
         assert (inst.root / ".gitattributes").exists()
-        assert "### Migrations applied — 3" in report
+        assert "### Migrations applied — 4" in report
 
     def test_unreleased_newer_engine_stays_unpinned(self, inst, template):
         channel, calls = make_channel(listing_for("v0.1.0"))
@@ -237,7 +237,7 @@ class TestSteadyStateAndEdges:
         assert "engine unpinned" in report
         assert "no release tags on the remote yet" in report
         # Migrations + template sync still ran (pre-first-tag mode).
-        assert read_applied(log_path(inst.root)) == {1, 2, 3}
+        assert read_applied(log_path(inst.root)) == {1, 2, 3, 4}
         assert (inst.root / "bin" / "dex").exists()
 
     def test_failed_release_check_is_a_note_not_a_dead_instance(self, inst, template):
@@ -465,7 +465,7 @@ class TestMain:
         main([])
         out = capsys.readouterr().out
         assert "## Sync — engine unpinned" in out
-        assert "### Migrations applied — 3" in out
+        assert "### Migrations applied — 4" in out
 
     def test_main_is_loud_on_a_garbage_pin(self, inst, template, monkeypatch):
         (inst.root / PIN_FILE).write_text("garbage\n")

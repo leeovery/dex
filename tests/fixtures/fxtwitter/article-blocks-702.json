@@ -1,0 +1,42 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "id": "702",
+    "url": "https://x.com/hana/status/702",
+    "text": "https://x.com/i/article/1900000000000000702",
+    "raw_text": {
+      "text": "https://x.com/i/article/1900000000000000702",
+      "display_text_range": [0, 43],
+      "facets": []
+    },
+    "created_at": "Tue Aug 25 13:31:06 +0000 2026",
+    "author": {"name": "Hana Iqbal", "screen_name": "hana"},
+    "replying_to": null,
+    "replying_to_status": null,
+    "article": {
+      "created_at": "2026-08-25T13:20:00.000Z",
+      "id": "1900000000000000702",
+      "title": "How to Build a Company Brain That Gets Smarter Every Week",
+      "preview_text": "Turn every correction and decision your team gives AI into one company brain.",
+      "cover_media": {},
+      "content": {
+        "blocks": [
+          {"type": "unstyled", "text": "Right now the smartest AI in your company probably works for one person, and nobody else can see what it knows.", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "header-two", "text": "Why the knowledge stays trapped", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "unstyled", "text": "One teammate has a chat that understands the strategy. Another has taught a coding agent how you ship. The intelligence is real and it is invisible.", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "unordered-list-item", "text": "Corrections live in private threads", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "unordered-list-item", "text": "Decisions are never written down twice", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "blockquote", "text": "A company brain is the difference between a team that learns and a team that repeats itself.", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "header-two", "text": "The weekly loop", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "ordered-list-item", "text": "Collect every correction the team made this week", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "ordered-list-item", "text": "Fold them into one shared document", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "ordered-list-item", "text": "Hand that document to every agent on Monday", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "unstyled", "text": "", "inlineStyleRanges": [], "entityRanges": []},
+          {"type": "unstyled", "text": "Do that for a quarter and the compounding is obvious to everyone who was skeptical at the start.", "inlineStyleRanges": [], "entityRanges": []}
+        ],
+        "entityMap": []
+      }
+    }
+  }
+}

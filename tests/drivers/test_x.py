@@ -260,6 +260,56 @@ class TestArticles:
         # The old fallback rendered ~74 characters: attribution plus a t.co.
         assert len(body_of(self.article_result())) > 200
 
+    def test_an_announcements_own_text_never_wins_over_the_article(self):
+        # The field defect: fxtwitter expands the t.co, so `text` arrives as
+        # a bare x.com/i/article/<id>. Reading it first stored a two-line
+        # enrichment file, ledgered done, while the whole article sat in
+        # `article.content.blocks[]` in the same response.
+        responses = {API + "status/702": api_fixture("article-blocks-702.json")}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
+        assert isinstance(result, Content)
+        body = body_of(result)
+        assert "the smartest AI in your company" in body
+        assert "compounding is obvious" in body  # the last block, not just the preview
+        assert len(body) > 800  # the article, not the ~90-character announcement
+
+    def test_article_blocks_keep_their_shape(self):
+        responses = {API + "status/702": api_fixture("article-blocks-702.json")}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
+        body = body_of(result)
+        assert "# How to Build a Company Brain That Gets Smarter Every Week" in body
+        assert "## Why the knowledge stays trapped" in body
+        assert "- Corrections live in private threads" in body
+        assert "> A company brain is the difference" in body
+        # Ordered items number in sequence, and a blank block ends the list.
+        assert "1. Collect every correction the team made this week" in body
+        assert "3. Hand that document to every agent on Monday" in body
+
+    def test_an_expanded_link_only_body_is_not_content(self):
+        # The guard was t.co-only; fxtwitter hands over the expanded URL, so
+        # the shape that must not ledger done is "a bare link", not "a t.co".
+        tweet = {
+            "id": "703",
+            "text": "https://x.com/i/article/1900000000000000703",
+            "raw_text": {"text": "https://x.com/i/article/1900000000000000703", "facets": []},
+            "created_at": "Fri Aug 21 09:20:00 +0000 2026",
+            "author": {"name": "Hana Iqbal", "screen_name": "hana"},
+            "replying_to": None,
+            "replying_to_status": None,
+        }
+        responses = {API + "status/703": json_response({"tweet": tweet})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/703", Kind.X))
+        assert isinstance(result, Unusable)
+
+    def test_a_shared_article_url_parks_saying_what_to_share_instead(self):
+        # fxtwitter 404s on an article id and it does not resolve to the
+        # carrier post, so the park has to be actionable rather than blank.
+        result = driver_for({}).fetch(
+            make_unit("https://x.com/i/article/1900000000000000702", Kind.X)
+        )
+        assert isinstance(result, Unusable)
+        assert "capture that post instead" in result.evidence
+
     def test_a_post_that_is_only_a_shortlink_is_not_content(self):
         tweet = {
             "id": "701",
