@@ -35,6 +35,7 @@ The convention:
 - [A browsable wiki](browsable-wiki.md) — no surface exists for looking at a dex without asking it a question
 - [Capture clients beyond the shortcut](capture-clients.md) — email, bookmarklet, extension, chat bot, voice: push clients to watchers' pull
 - [The owner's curation surface](owner-curation-surface.md) — correcting a dex requires a terminal, so an app-only owner cannot
+- [Claim volatility](claim-volatility.md) — how fast a claim decays is not recorded, so a 2024 model-capability claim reads like a durable finding
 - [Offline instances can't run bin/dex at all](offline-instances.md) — uvx resolves the engine from the network every invocation
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
 - [Pre-rewrite dead ledger entries need healing](dead-entry-healing.md) — per-instance content work during each post-merge sync review
