@@ -29,8 +29,9 @@ the engine stays unaware of which ones exist.
     extract (anydoc, csv-builtin, cognitive floor), ocr (cognitive floor).
   - `render/` — `kernel.py` (markdown composition primitives),
     `surfaces.py` (named report surfaces), `cli.py` (`dex-render`).
-    Judgment decides, code renders; the surface vocabulary and layout
-    rules in force are `design/ingestion-pipeline.md` §11.
+    Judgment decides, code renders. `design/ingestion-pipeline.md` §11
+    records where the surface vocabulary and layout rules came from;
+    `surfaces.py` is what they are now.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -51,9 +52,15 @@ the engine stays unaware of which ones exist.
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
   capture protocol any client implements).
-- `design/` — one markdown file per fleshed-out design, kept for reference
-  after it ships. `ingestion-pipeline.md` is this release's: the in-force
-  design for the ingestion machinery and the rendered surfaces.
+- `design/` — one markdown file per fleshed-out design, written when a
+  backlog idea has been discussed into a shape worth building. **A design
+  file is a locked snapshot, not a living document.** It records what was
+  decided and why, at the moment it was decided; it is not a claim about
+  how the system works today. The code moves on, and so do the owner's
+  views. Read one to understand why something is the way it is — never as
+  the authority on what is currently true. That authority is the code, this
+  file, and the docs. Updating a shipped design is allowed but unusual, and
+  never the default reflex.
 - `backlog/` — one file per idea not yet in hand (features and bug fixes
   alike), indexed in `backlog/index.md`, which also states the convention.
   An idea graduates by getting its `design/<name>.md`.
@@ -206,14 +213,20 @@ that as two executors. Neither weakens an ordinary run.
 
 ## When you change things (anti-drift rules)
 
-- **The ingestion design is written down**: `design/ingestion-pipeline.md`
-  is the agreed design in force for the pipeline, state, surfaces,
-  releases, and skills, and it is the only design surface for the work of
-  this release — everything discussed and not yet shipped goes in it,
-  marked as agreed-not-built. Check changes against it; when a decision
-  genuinely changes, record the new decision there rather than silently
-  diverging from the document. The backlog is neither a design surface nor
-  a work log.
+- **Designs graduate out of the backlog, one file each.** The path is:
+  `backlog/<name>.md` holds an idea until it is picked up → the idea is
+  discussed properly with the owner → the result of that conversation
+  becomes its own `design/<name>.md`, and the backlog file and its index
+  line are deleted. That is the convention; a new design belongs in a new
+  file, never folded into an existing one because the existing one is
+  recent. The backlog is neither a design surface nor a work log.
+- **A shipped design describes its moment, not the present.**
+  `design/ingestion-pipeline.md` is the largest and most recent, and it is
+  still a snapshot: it is why the pipeline is shaped as it is, not proof
+  that any given line still holds. Where it disagrees with the code, the
+  code wins and the doc is stale. Where it disagrees with what the owner
+  now wants, the owner wins. Consult designs for reasoning and prior
+  argument; verify current behaviour by reading the code or running it.
 - **Comments earn their place — and never reference the design doc.** A
   comment or docstring exists only for what the code cannot say: a
   non-obvious constraint, a deliberate surprise, a wild-data fact, a why.
@@ -247,11 +260,11 @@ that as two executors. Neither weakens an ordinary run.
   alarm becomes background noise.
 - **Adding a dependency**: re-lock in the same commit (`uv lock`) — CI syncs
   with `--locked` and the release gate does too, so a stale lock fails both.
-- **Decisions**: record in the design file the work belongs to —
-  `design/ingestion-pipeline.md` for anything in this release. The backlog
-  takes what comes after it: one file per idea, indexed in
-  `backlog/index.md`. Present tense, current
-  design only; this file and the docs describe what IS, not what was.
+- **Decisions**: record in the design file the work belongs to — its own
+  `design/<name>.md` for work that graduated from the backlog. The backlog
+  takes what has not been picked up yet: one file per idea, indexed in
+  `backlog/index.md`. Design files are dated snapshots; this file and the
+  docs are the present tense, and describe what IS, not what was.
 - **README**: its under-the-hood section mirrors the structure and design
   above — keep it true whenever any of this changes.
 - **`docs/shortcut.md` is device-verified**: never guess iOS Shortcuts UI —
