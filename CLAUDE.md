@@ -68,8 +68,9 @@ the engine stays unaware of which ones exist.
   dex builds on (Shortcuts, GitHub tokens, scheduled-task hosts, cowork).
   Agent-facing, never owner-facing. Check it before building on any of
   those surfaces; append what you verify the hard way.
-- `.github/workflows/` — `ci.yml` (the gates, every push and PR) and
-  `live.yml` (the daily third-party drift watch). See Development below.
+- `.github/workflows/` — `live.yml` alone, the daily third-party drift
+  watch. The gates run on your machine and at the release tag, never in
+  Actions. See Development below.
 - `example/` — a toy instance showing the shapes.
 
 ## Design (current, in force)
@@ -89,7 +90,7 @@ the engine stays unaware of which ones exist.
   no webhooks: the contents-API PUT is the commit, and failures surface in
   sessions where someone can act. This is a rule about the *data* path — no
   robot writes to a knowledge base. The engine repo is a code repo and does run
-  Actions, but only to check itself (below); nothing in CI touches an instance.
+  one Action, the drift watch (below); nothing in it touches an instance.
 - **Auth is borrowed, never stored.** Commands resolve GITHUB_TOKEN, then
   `gh auth token`. Declared instance dependencies: git, git-lfs, uv, gh
   (authed). The only stored credential in the whole system is the PAT inside
@@ -102,8 +103,8 @@ the engine stays unaware of which ones exist.
 
 ## Development
 
-**The gates.** Four commands, and they are the same four everywhere — on
-your machine, in CI, and in front of the release tag:
+**The gates.** Four commands, run in two places and nowhere else — on your
+machine as you work, and in front of the release tag:
 
 ```
 uv run pytest -m "not live"     # the default suite (`uv run pytest` is the same:
@@ -120,32 +121,15 @@ vendored `.agents/`. Within that boundary every file satisfies the formatter,
 and the check exists to keep it that way — format what you touch, and never
 reformat files you are not otherwise editing.
 
-**CI** (`.github/workflows/ci.yml`, every branch push and pull request — never
-a tag push: a release's tag would re-run the suite its preflight just ran on
-the identical tree). The suite on
-Linux across Python 3.11 / 3.12 / 3.13 — `requires-python = ">=3.11"` is a
-promise, and a single local 3.13 cannot keep it — plus one clean macOS box on
-3.13. `ruff` and `ty` run once, on their own job: ruff targets py311 and ty
-pins `python-version = "3.11"`, so they answer identically on every
-interpreter and a matrix of them would be four copies of one answer. Every job
-syncs with `uv sync --locked`, which also fails on a `pyproject.toml` edit that
-was never re-locked. Windows is not covered and will not be: the shim is POSIX
-sh and instances require git, gh and uv.
-
-`actions/checkout` is pinned to its major, which moves on its own.
-`astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
-`v7`, so `@v10` does not resolve and the pin is an exact release. It needs
-bumping by hand, and nothing will tell you — check it when a runner image
-deprecation bites, or once a year.
-
 **The shim is tested under four shells.** "POSIX sh" is not one interpreter —
 macOS's `/bin/sh` is bash in POSIX mode, a Linux instance's is dash — so
 `tests/test_shim.py` parametrizes every case over `sh`, `bash`, `dash` and
-`ksh`, skipping any the machine lacks. CI sets
-`DEX_SHIM_SHELLS="sh bash dash ksh"` on Linux and `"sh bash"` on macOS, which
-turns a missing interpreter from a silent skip into a failure. Install `dash`
-and `ksh` locally if you touch `instance/dex`; bashisms in that file are
-invisible on a Mac and fatal in an instance.
+`ksh`, skipping any the machine lacks — silently, and still reporting green.
+No workflow forces them any more, so the only defence is local: `brew install
+dash ksh` if you touch `instance/dex`, and set `DEX_SHIM_SHELLS="sh bash dash
+ksh"` to turn a missing interpreter into a failure instead of a skip.
+Bashisms in that file are invisible under macOS's bash-backed `/bin/sh` and
+fatal in an instance, and nothing downstream will catch one.
 
 **Live checks** (`.github/workflows/live.yml`, daily plus manual dispatch,
 never a gate). `pytest -m live` watches third parties for drift, which happens
@@ -161,6 +145,12 @@ root-namespace checks, wayback, the two whisper HuggingFace fetches (the
 `continue-on-error` job that never notifies, because those endpoints answer a
 runner differently from a laptop and a false alarm every morning trains you to
 ignore the real one. Read that job when a driver misbehaves in the field.
+
+`live.yml` pins `actions/checkout` to its major, which moves on its own.
+`astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
+`v7`, so `@v10` does not resolve and the pin is an exact release. It needs
+bumping by hand, and nothing will tell you — check it when a runner image
+deprecation bites, or once a year.
 
 One trap: GitHub disables a scheduled workflow after 60 days without a commit
 to the repo, and only emails to say so. A quiet quarter therefore stops the
@@ -182,8 +172,9 @@ releasing: before tagging a release that touched pipeline logic, audit the
 modules you changed with `./mutate` (below) and read the survivors.
 
 **Mutation testing** (`mutmut`, in the `mutation` dependency group; `./mutate`
-at the repo root is its entry point). Not an automatic gate, not in CI: a
-whole-repo run against 1800 tests takes hours and buries the answer. It is an
+at the repo root is its entry point). Not an automatic gate, not in any
+workflow: a whole-repo run against 1800 tests takes hours and buries the
+answer. It is an
 audit you point at ONE module you suspect, and the manual step before a
 release that touched pipeline logic —
 
@@ -256,9 +247,9 @@ that as two executors. Neither weakens an ordinary run.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in
-  three places — `.github/workflows/ci.yml`, `.mint.toml`'s `preflight`, and
-  the Development section itself. Change one and change all three, or CI and
-  the release stop agreeing about what "green" means.
+  two places — `.mint.toml`'s `preflight` and the Development section itself.
+  Change one and change both, or the release stops agreeing with this file
+  about what "green" means.
 - **A new live check picks a side**: mark it `ci_hostile` (with the reason in a
   comment on the class) if a datacenter IP would be answered differently, or
   leave it unmarked and accept that a failure mails the maintainer at 06:17
