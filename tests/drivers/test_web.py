@@ -343,6 +343,18 @@ class TestExtractionFidelity:
         assert "from llama_cpp import Llama" in body
         assert body.count("```") >= 2  # at least one fence survived, opened and closed
 
+    def test_whitespace_padded_heading_text_stays_on_the_heading_line(self):
+        # Hugging Face model cards wrap heading text in a <span> padded
+        # with source-formatting newlines and tabs. The extractor emitted
+        # that whitespace verbatim: the marker alone on its line, the words
+        # tabs-and-blank-lines below — an empty heading to any consumer
+        # keying on the heading line.
+        page = fixture_text("web", "whitespace-padded-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert not [line for line in body.split("\n") if line.strip("# \t") == "" and "#" in line]
+        assert any(line.startswith("#") and "HunyuanOCR-1.5" in line for line in body.split("\n"))
+        assert any(line.startswith("#") and "Use Case:" in line for line in body.split("\n"))
+
     def test_a_discussion_pages_comments_are_its_substance(self):
         # A thread rendered as nested tables: dropping comments left the
         # masthead and the submission row, and deleted all 115 replies —
