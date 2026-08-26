@@ -311,3 +311,56 @@ class TestWaybackFallback:
         result = driver_for(responses).fetch(make_unit(URL, Kind.WEB))
         assert isinstance(result, Missing)
         assert "unparseable JSON" in result.evidence
+
+
+class TestExtractionFidelity:
+    """What `include_links=True` costs unaccompanied, and the page preparation that pays it.
+
+    Every fixture here is the reduced shape of a page that lost content in
+    the field on 0.1.0 — reported from an instance, reproduced against the
+    live page, then trimmed to the markup that carries the defect.
+    """
+
+    def test_a_headings_permalink_does_not_swallow_its_words(self):
+        # Sphinx/mkdocs/Docusaurus put an empty <a> INSIDE the heading. With
+        # links on, the extractor emitted the marker and dropped the text:
+        # three headings on one docs page became bare `#`/`##` lines, and
+        # the words were nowhere else in the file.
+        page = fixture_text("web", "docs-anchored-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert not [line for line in body.split("\n") if line.strip("# ") == "" and "#" in line]
+        for heading in ("Agentic Coding: Humans Design", "Agentic Coding Steps"):
+            assert heading in body
+        assert "Example LLM Project File Structure" in body
+
+    def test_per_line_code_anchors_do_not_take_the_fence_with_them(self):
+        # mkdocs-material anchors every highlighted line. Those anchors took
+        # the whole block: a llama-cpp docs page went from 42 fenced blocks
+        # to none, losing the quickstart and every install command.
+        page = fixture_text("web", "mkdocs-code-anchors.html")
+        body = trafilatura_extract(page) or ""
+        assert "pip install llama-cpp-python" in body
+        assert "from llama_cpp import Llama" in body
+        assert body.count("```") >= 2  # at least one fence survived, opened and closed
+
+    def test_a_discussion_pages_comments_are_its_substance(self):
+        # A thread rendered as nested tables: dropping comments left the
+        # masthead and the submission row, and deleted all 115 replies —
+        # which were the reason the page was captured at all.
+        page = fixture_text("web", "discussion-thread.html")
+        body = trafilatura_extract(page) or ""
+        assert "the geometry interpretable" in body
+        assert "dot-product rankings" in body
+
+    def test_an_ordinary_articles_comment_section_stays_chrome(self):
+        # The other half of the same rule: an article extracts identically
+        # either way, so the discussion test above must not have turned
+        # comment sections on for every blog post that has one.
+        assert trafilatura_extract(ARTICLE) == trafilatura_extract(ARTICLE)
+        body = trafilatura_extract(ARTICLE) or ""
+        assert "https://example.test/ledger-driven-design" in body  # links still kept
+
+    def test_an_unparseable_page_reaches_the_extractor_untouched(self):
+        # Preparation is a repair, never a gate: whatever lxml cannot read
+        # goes through as it arrived and the extractor decides.
+        assert trafilatura_extract("") is None
