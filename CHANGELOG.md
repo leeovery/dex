@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-26
+
+✨ Added
+
+- `DEX_ISSUE_REPO` environment variable — point crash/issue filing at a scratch tracker instead of the shared public one, useful while testing the engine itself.
+- Run reports now surface an "Already stored" section when a re-fetch matches what's already on disk, so a run no longer says "nothing to report" right above a count of units it just processed.
+
+🔧 Changed
+
+- X posts with a long-form article now render the article's full body (headings, lists, quotes) instead of just the announcement text, which previously stored only a link and threw the article away.
+- Sharing an X article URL directly now parks with guidance to capture the original post instead, since the article can't be fetched on its own.
+- Web page extraction now repairs known markup traps before parsing — empty permalink anchors that were swallowing heading text and code blocks, and line-break-padded headings — and automatically keeps a discussion thread's comments when they clearly are the content, rather than always stripping comments.
+
+🐛 Fixed
+
+- Crash-report scrubbing now also catches URLs with the scheme stripped off and bare item-id slugs, closing two ways private addresses or item identifiers could leak into a filed issue.
+- A ledger migration requeues X posts that were previously stored as a bare article link so their real content gets re-fetched.
+
 ## [0.1.0] - 2026-08-25
 
 ✨ Added
