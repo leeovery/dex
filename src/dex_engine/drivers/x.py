@@ -23,11 +23,18 @@ parent fetch failing mid-walk, or a chain looping back on itself, sets
 ``chain_incomplete`` in meta with how far the walk got. Walk-down is
 explicitly unsolved — backlog.
 
-Long-form articles carry their prose under ``article`` (``text`` is empty
-and ``raw_text`` holds only the shortlink), so they render from title and
-preview text. A body that is nothing but a shortlink is not content: the
-"no text or media" manual park applies rather than ledgering a post done
-on a URL.
+Long-form articles carry their prose under ``article``, and where a post
+has one the article IS the post: its ``content.blocks[]`` render as the
+body, falling back to ``preview_text`` where fxtwitter relays no blocks.
+The announcement's own ``text`` is never the answer — it is a link to the
+article and nothing more, and reading it first threw whole articles away.
+
+A body that is nothing but a link is not content in any spelling: not
+x's own ``t.co``, and not the expanded ``x.com/i/article/<id>`` fxtwitter
+actually hands over. Such a post parks for judgment rather than ledgering
+done on a URL. A shared article URL parks too, and says why: an article
+id is not a status id, and fxtwitter will not resolve one to the post
+that announced it.
 """
 
 import json
@@ -69,9 +76,34 @@ MAX_HOPS = 100
 # paced sequence rather than a burst.
 HOP_SLEEP = 1.0
 
-# A body that is nothing but x's own t.co shortlink is a pointer to
-# content, never the content itself.
-_SHORTLINK_ONLY_RE = re.compile(r"\s*https?://t\.co/\S+\s*")
+# A body that is nothing but a link is a pointer to content, never the
+# content itself. x's own t.co is one spelling of that and not the one
+# that bit: fxtwitter EXPANDS shortlinks, so an article announcement
+# arrives with `text` already reading `https://x.com/i/article/<id>` —
+# past a t.co-only guard, ledgered done, storing a two-line enrichment
+# file for an article whose whole body sat unread in the same response.
+_LINK_ONLY_RE = re.compile(r"\s*https?://\S+\s*")
+
+# fxtwitter serves posts; an article id is not a status id and does not
+# resolve to the post that announced it (the endpoint 404s), so a shared
+# article URL is a park with instructions, not a fetch.
+_ARTICLE_PATH_RE = re.compile(r"/article/\d+")
+
+# draft.js block types, as fxtwitter relays them under
+# `article.content.blocks[]`. Anything unlisted renders as a paragraph:
+# a block type we have not met is still prose, and dropping it would lose
+# the very content this driver exists to keep.
+_BLOCK_PREFIX = {
+    "header-one": "# ",
+    "header-two": "## ",
+    "header-three": "### ",
+    "header-four": "#### ",
+    "header-five": "##### ",
+    "header-six": "###### ",
+    "unordered-list-item": "- ",
+    "blockquote": "> ",
+    "code-block": "    ",
+}
 
 # fxtwitter nests a post's media under `photos` and `videos`, and repeats
 # the union of both under `all` in post order. `all` leads so a mixed post
@@ -121,6 +153,11 @@ class XDriver:
         """Fetch the captured post, walk its parent chain, render reading order."""
         status_id = _status_id(unit.url)
         if status_id is None:
+            if _ARTICLE_PATH_RE.search(urllib.parse.urlsplit(unit.url).path):
+                return Unusable(
+                    evidence="an x article URL — fxtwitter serves posts, and an article id "
+                    "does not resolve to the post that announced it; capture that post instead"
+                )
             return Unusable(evidence="not a status URL — fxtwitter serves posts only")
         # Bare status/<id> is the one fxtwitter path that serves every share
         # shape: the API ignores a username segment but 404s on /i/web/…,
@@ -248,22 +285,59 @@ def _render_post(post: dict) -> str:
 def _text_of(post: dict) -> str:
     """The post's prose, or "" when the payload holds no prose at all.
 
-    Long-form articles carry theirs under ``article``, with ``text`` empty
-    and ``raw_text`` holding nothing but the shortlink to the article — a
-    body that is only a shortlink is a pointer, not content, and must not
-    ledger a post done on ~70 characters of URL.
+    Where a post carries an ``article``, the article IS the post: an
+    announcement's own ``text`` is a link to it and nothing else worth
+    keeping. Reading ``text`` first therefore threw the body away — the
+    payload's ``article`` was never consulted, and the file written held
+    the bare link. Asking for the article first costs nothing: a post
+    without one has no article text to find.
     """
-    text = post.get("text") or _article_text(post) or _raw_text(post)
-    return "" if _SHORTLINK_ONLY_RE.fullmatch(text) else text
+    article = _article_text(post)
+    if article:
+        return article
+    text = post.get("text") or _raw_text(post)
+    return "" if _LINK_ONLY_RE.fullmatch(text) else text
 
 
 def _article_text(post: dict) -> str:
+    """A long-form article as markdown: title, body, and the link to it.
+
+    The body is ``content.blocks[]`` where fxtwitter relays it — the whole
+    article, tens of thousands of characters of it. Where it does not, the
+    ``preview_text`` is all there is and stands in for it. The trailing
+    link is kept either way: harvest reads links out of stored bodies, and
+    on a preview it is the only pointer at the rest.
+    """
     article = post.get("article")
     if not isinstance(article, dict):
         return ""
-    pieces = [str(article.get(field) or "").strip() for field in ("title", "preview_text")]
-    pieces.append(_raw_text(post).strip())
+    title = str(article.get("title") or "").strip()
+    body = _article_blocks(article) or str(article.get("preview_text") or "").strip()
+    pieces = [f"# {title}" if title else "", body, _raw_text(post).strip()]
     return "\n\n".join(piece for piece in pieces if piece)
+
+
+def _article_blocks(article: dict) -> str:
+    """``content.blocks[]`` rendered as markdown, or "" when there are none."""
+    content = article.get("content")
+    blocks = content.get("blocks") if isinstance(content, dict) else None
+    if not isinstance(blocks, list):
+        return ""
+    lines: list[str] = []
+    ordinal = 0
+    for block in blocks:
+        text = str(block.get("text") or "").strip() if isinstance(block, dict) else ""
+        kind = str(block.get("type") or "") if isinstance(block, dict) else ""
+        if not text:
+            ordinal = 0  # a blank block ends whatever list was running
+            continue
+        if kind == "ordered-list-item":
+            ordinal += 1
+            lines.append(f"{ordinal}. {text}")
+            continue
+        ordinal = 0
+        lines.append(_BLOCK_PREFIX.get(kind, "") + text)
+    return "\n\n".join(lines)
 
 
 def _raw_text(post: dict) -> str:
