@@ -5,15 +5,6 @@ version_file = "pyproject.toml"
 version_pattern = 'version = "{version}"'
 
 [release.hooks]
-# Instances pin tags, so a broken tag reaches every instance at its next sync
-# and the only rollback is hand-editing pins. The gate runs in `preflight`,
-# which mint executes before anything else — before the AI release notes and
-# before the human reviews them — so a red suite costs seconds, not a wasted
-# notes pass. A failing entry aborts the run: no bookkeeping commit, no tag.
-#
-# `--locked` fails on a pyproject/uv.lock drift. The live suite is deliberately
-# absent: it is deselected by the default addopts anyway, and a third party
-# having a bad afternoon must never be able to block a release.
 preflight = [
     "uv sync --locked",
     "uv run --no-sync ruff check",
@@ -21,4 +12,4 @@ preflight = [
     "uv run --no-sync ruff format --check .",
     "uv run --no-sync pytest -m 'not live'",
 ]
-pre_tag = "uv build"
+pre_tag = ["sh -c 'uv version \"$MINT_NEW_VERSION\"'", "uv build"]

@@ -1,12 +1,13 @@
 name: ci
 
-# The suite, ruff, ty and the format check on every push and pull request.
+# The suite, ruff, ty and the format check on every branch push and PR.
 # The tree is format-clean and pyproject's extend-exclude keeps `ruff format`
 # away from markdown and the vendored `.agents/`, so the check holds the line
 # instead of demanding a historic reformat.
 
 on:
   push:
+    branches: ["**"]
   pull_request:
 
 permissions:
