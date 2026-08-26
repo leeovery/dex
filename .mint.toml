@@ -21,4 +21,14 @@ preflight = [
     "uv run --no-sync ruff format --check .",
     "uv run --no-sync pytest -m 'not live'",
 ]
-pre_tag = "uv build"
+# pre_tag runs on the PRE-BUMP tree (device-verified: a hook during the
+# v0.0.3 probe read the version file and saw 0.0.2), and no hook runs
+# between mint's own bump and the tag. Left to mint, the bump commits a
+# pyproject that disagrees with uv.lock — the v0.1.1 tag shipped exactly
+# that, and every `uv sync --locked` on it fails — and `uv build` bakes
+# the OLD version into the wheel. So the hook does the bump itself:
+# `uv version` moves pyproject and uv.lock together to $MINT_NEW_VERSION
+# (exported to hooks), mint sweeps both into its pre-tag artifacts
+# commit, and its own bump then finds the file already current — the
+# bookkeeping commit carries just the changelog.
+pre_tag = ["sh -c 'uv version \"$MINT_NEW_VERSION\"'", "uv build"]

@@ -5,8 +5,11 @@ name: ci
 # away from markdown and the vendored `.agents/`, so the check holds the line
 # instead of demanding a historic reformat.
 
+# Branch pushes only: a release's tag push otherwise re-runs the suite the
+# release preflight just ran on the identical tree — two runs, one commit.
 on:
   push:
+    branches: ["**"]
   pull_request:
 
 permissions:
