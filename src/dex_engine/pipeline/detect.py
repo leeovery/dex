@@ -17,6 +17,7 @@ for the obvious signatures otherwise, the filename extension for
 signature-less formats (CSV) and unsmudged LFS pointers.
 """
 
+import codecs
 import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -32,13 +33,24 @@ __all__ = [
     "detect",
     "detect_kind",
     "looks_like_html",
+    "sniff_document",
     "sniff_format",
+    "sniff_media_ext",
 ]
 
 # HTML leads, BOM- and whitespace-tolerant. Bytes decide what a body IS,
 # never the content type a server claimed: shared by the file driver's
 # re-route to web work and the enclosure download's error-page guard.
 _HTML_LEADS = (b"<!doctype", b"<html", b"<head", b"<body")
+
+# Enough to carry an XML declaration, a comment and a DOCTYPE ahead of an
+# SVG's root element, and short enough that a 10MB body is never copied.
+_LEAD_BYTES = 512
+
+
+def _text_lead(data: bytes) -> bytes:
+    """The body's opening markup token: BOM- and whitespace-free, lowercased."""
+    return data[:_LEAD_BYTES].removeprefix(b"\xef\xbb\xbf").lstrip().lower()
 
 
 def looks_like_html(data: bytes) -> bool:
@@ -50,8 +62,7 @@ def looks_like_html(data: bytes) -> bool:
     Returns:
         True for a markup lead.
     """
-    lead = data.removeprefix(b"\xef\xbb\xbf").lstrip()[:64].lower()
-    return lead.startswith(_HTML_LEADS)
+    return _text_lead(data).startswith(_HTML_LEADS)
 
 
 # url -> media type ("application/pdf"), or None when the HEAD itself failed.
@@ -270,3 +281,135 @@ def _zip_sniff(data: bytes) -> Format | None:
     except (zipfile.BadZipFile, OSError, ValueError):
         return None  # truncated or lying container — not extractable work
     return None
+
+
+# ---------------------------------------------------------------------------
+# Media byte signatures: what a downloaded body IS, against what its URL and
+# its server claimed. CDNs content-negotiate — a `.jpg` URL answers with PNG,
+# AVIF or HEIF bytes — and a site's catch-all route answers an image URL with
+# its own HTML shell under a 200.
+# ---------------------------------------------------------------------------
+
+_MEDIA_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8\xff", "jpg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"BM", "bmp"),
+    (b"ID3", "mp3"),
+)
+
+_EBML_MAGIC = b"\x1a\x45\xdf\xa3"
+
+# ISO-BMFF major brands: one container holds stills and video alike, and only
+# the brand separates them. An unlisted brand is unrecognized, never guessed —
+# the URL's own extension is the better answer than a wrong container name.
+_FTYP_EXTENSIONS: dict[bytes, str] = {
+    b"avif": "avif",
+    b"avis": "avif",
+    b"heic": "heic",
+    b"heix": "heic",
+    b"hevc": "heic",
+    b"hevx": "heic",
+    b"heim": "heif",
+    b"heis": "heif",
+    b"mif1": "heif",
+    b"msf1": "heif",
+    b"qt  ": "mov",
+    b"avc1": "mp4",
+    b"dash": "mp4",
+    b"iso2": "mp4",
+    b"isom": "mp4",
+    b"m4v ": "mp4",
+    b"mmp4": "mp4",
+    b"mp41": "mp4",
+    b"mp42": "mp4",
+}
+
+# What may stand between the start of an SVG document and its root element.
+_SVG_PRELUDES = ((b"<?", b"?>"), (b"<!--", b"-->"), (b"<!doctype", b">"))
+
+
+def sniff_media_ext(data: bytes) -> str | None:
+    """The canonical extension for a media body, or None when unrecognized.
+
+    Args:
+        data: The leading bytes (the whole body is fine).
+
+    Returns:
+        The extension the bytes name, undotted, or None when they carry no
+        media signature this knows.
+    """
+    if _svg_lead(_text_lead(data)):
+        return "svg"  # the one media that is text
+    return _binary_media_ext(data)
+
+
+def _binary_media_ext(data: bytes) -> str | None:
+    for magic, ext in _MEDIA_MAGIC:
+        if data.startswith(magic):
+            return ext
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    if data[4:8] == b"ftyp":
+        return _FTYP_EXTENSIONS.get(data[8:12].lower())
+    if data.startswith(_EBML_MAGIC):
+        # The DocType naming which of the two containers this is sits in the
+        # EBML header, ahead of everything else in the file.
+        return "webm" if b"webm" in data[:_LEAD_BYTES] else "mkv"
+    # An MPEG audio frame opens with 11 set sync bits — 0xFF, then a byte of
+    # 0xE0 or above, which across two bytes is exactly this range.
+    if b"\xff\xe0" <= data[:2] <= b"\xff\xff":
+        return "mp3"
+    return None
+
+
+def sniff_document(data: bytes) -> str | None:
+    """The document shape a body reads as — HTML, XML or JSON — or None.
+
+    A media URL answering with one of these answered with a page, not a
+    picture: an SPA catch-all route and an API error body both arrive under
+    a 200. SVG is the one markup body that IS media, and never a document
+    here.
+
+    Args:
+        data: The leading bytes (the whole body is fine).
+
+    Returns:
+        The shape's name, or None for anything else — media, unknown
+        binary, plain text.
+    """
+    lead = _text_lead(data)
+    if _svg_lead(lead):
+        return None
+    if lead.startswith(_HTML_LEADS):
+        return "HTML"
+    if lead.startswith(b"<?xml"):
+        return "XML"
+    if lead.startswith((b"{", b"[")) and _is_utf8(lead):
+        return "JSON"
+    return None
+
+
+def _svg_lead(lead: bytes) -> bool:
+    """Whether a text lead opens an SVG document, its preludes skipped."""
+    while not lead.startswith(b"<svg"):
+        for opener, closer in _SVG_PRELUDES:
+            if lead.startswith(opener):
+                _, found, lead = lead.partition(closer)
+                if not found:
+                    return False  # truncated or unterminated — not a root element
+                lead = lead.lstrip()
+                break
+        else:
+            return False
+    return True
+
+
+def _is_utf8(lead: bytes) -> bool:
+    """Whether a lead is UTF-8 text, tolerating a truncated final character."""
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(lead)
+    except UnicodeDecodeError:
+        return False
+    return True

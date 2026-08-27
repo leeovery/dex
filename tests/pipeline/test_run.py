@@ -75,6 +75,10 @@ NOW = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
 ITEM = "2026-08-19-example-55ad7b"
 URL = "https://example.test/post"
 
+# Real image leads: the media stage names a downloaded file after its bytes.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00"
+
 
 def write_item(
     instance: Instance,
@@ -1586,6 +1590,136 @@ class TestMediaStage:
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
+
+    @pytest.mark.parametrize(
+        ("body", "shape"),
+        [
+            (b"<!doctype html><html><body>Page not found</body></html>", "HTML"),
+            (b'<?xml version="1.0"?><error><code>404</code></error>', "XML"),
+            (b'{"error": "not found"}', "JSON"),
+        ],
+    )
+    def test_a_document_body_is_blocked_and_never_written(self, instance, body, shape):
+        # A framework's catch-all route answers an og:image URL with the
+        # site's own HTML under a 200; written through, that is 89KB of
+        # markup stored as `media-0.jpg` and a unit the ledger calls done.
+        write_item(instance)
+        page = HttpResponse(status=200, content_type="image/png", body=body)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport({self.IMG1: page}),
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.BLOCKED
+        assert entry.reason == f"media URL answered with {shape}, not media bytes"
+        assert entry.attempts == 1
+        assert entry.path is None
+        assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
+
+    def test_a_permanent_document_body_escalates_to_manual(self, instance):
+        # A bot wall clears on a later run; a catch-all route never does.
+        # Blocked is what tells those two apart, and `enrich mark` heals
+        # what lands in manual.
+        write_item(instance)
+        page = HttpResponse(status=200, content_type="text/html", body=b"<html>shell</html>")
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport({self.IMG1: page}),
+        )
+        for _ in range(MAX_BLOCKED_ATTEMPTS):
+            run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.MANUAL
+        assert entry.reason == (
+            f"still blocked after {MAX_BLOCKED_ATTEMPTS} attempts — "
+            "media URL answered with HTML, not media bytes"
+        )
+        assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
+
+    def test_the_bytes_name_the_file_never_the_url(self, instance):
+        # CDNs content-negotiate: a `.jpg` URL answers with PNG bytes, and
+        # an extension that lies about its body breaks every reader after.
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG2])),
+            transport=FakeTransport(
+                {self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=PNG_BYTES)}
+            ),
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG2)]
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert (instance.root / entry.path).read_bytes() == PNG_BYTES
+
+    def test_unrecognized_bytes_keep_the_urls_extension(self, instance):
+        write_item(instance)
+        opaque = b"\x00\x01\x02\x03 a format nobody named"
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG2])),
+            transport=FakeTransport(
+                {self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=opaque)}
+            ),
+        )
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(self.IMG2)].path == (
+            f"enrichment/{ITEM}/media-0.jpg"
+        )
+
+    def _jpeg_in_the_slot(self, instance) -> FakeDriver:
+        """One media unit downloaded from a `.jpg` URL, JPEG bytes and all."""
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG2]))
+        transport = FakeTransport(
+            {self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=JPEG_BYTES)}
+        )
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
+            "media-0.jpg"
+        ]
+        return driver
+
+    def _redrain_after_crash(self, instance, driver, body: bytes) -> None:
+        """Redrain the media unit: drop its outcome line, serve ``body`` again."""
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
+        assert json.loads(lines[-1])["hash"] == work_hash(self.IMG2)
+        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")
+        transport = FakeTransport(
+            {self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=body)}
+        )
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+
+    def test_a_redownload_in_a_new_format_replaces_the_slot(self, instance):
+        # The slot names the file and the bytes name its extension, so a
+        # CDN that switches format between runs must not leave `media-0.png`
+        # standing beside `media-0.jpg` — two files in one slot, both
+        # spending the item's media cap.
+        self._redrain_after_crash(instance, self._jpeg_in_the_slot(instance), PNG_BYTES)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG2)]
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
+            "media-0.png"
+        ]
+
+    def test_a_replaced_slot_leaves_the_session_description_alone(self, instance):
+        # `media-0.md` is the session's description of the capture, not a
+        # file in the slot — the sweep that clears the old format must
+        # never take it.
+        driver = self._jpeg_in_the_slot(instance)
+        described = instance.enrichment_dir / ITEM / "media-0.md"
+        described.write_text("the photographed page, described\n", encoding="utf-8")
+
+        self._redrain_after_crash(instance, driver, PNG_BYTES)
+        assert described.read_text() == "the photographed page, described\n"
+        assert sorted(p.name for p in described.parent.glob("media-0.*")) == [
+            "media-0.md",
+            "media-0.png",
+        ]
 
     def test_media_cap_of_four_files_per_item(self, instance):
         write_item(instance)
