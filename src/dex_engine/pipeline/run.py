@@ -44,6 +44,7 @@ from .classify import (
 )
 from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
 from .enrichment import (
+    instagram_body,
     mask_fetched,
     podcast_body,
     read_enrichment,
@@ -55,6 +56,7 @@ from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
+    acquire_instagram_audio,
     acquire_podcast_audio,
     acquire_youtube_audio,
 )
@@ -191,6 +193,24 @@ def _is_media_file(path: Path) -> bool:
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
     """Transcribe-drain work: a waiting park, or a blocked acquisition retry."""
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
+
+
+def _provider_input_reason(entry: LedgerEntry, error: ProviderInputError) -> str:
+    """The manual-park reason for input a provider could not use.
+
+    The provider's own words lead, always. An instagram unit then carries
+    the disposition it usually needs: silent and music-only reels are a
+    large share of what Instagram holds, so "heard no speech" is a standing
+    outcome there rather than a fault to chase — and the caption the park
+    already stored is a record of the post on its own.
+    """
+    reason = scrub(str(error))
+    if entry.kind is Kind.INSTAGRAM:
+        reason += (
+            " — the caption is already stored; mark done to keep it as the record, "
+            "or rescue by hand"
+        )
+    return reason
 
 
 def _spends_url_budget(entry: LedgerEntry) -> bool:
@@ -874,7 +894,9 @@ class _Drain:
             else:
                 self._drive_unit(entry)
         except ProviderInputError as e:
-            self.record_outcome(entry, status=Status.MANUAL, reason=scrub(str(e)))
+            self.record_outcome(
+                entry, status=Status.MANUAL, reason=_provider_input_reason(entry, e)
+            )
         except Exception as e:  # noqa: BLE001 — the per-unit broad catch, one of two
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
             self.error_events.append(
@@ -1017,6 +1039,8 @@ class _Drain:
                 body = youtube_body(acquired.prefix, transcript)
             case Kind.PODCAST:
                 body = podcast_body(acquired.prefix, transcript)
+            case Kind.INSTAGRAM:
+                body = instagram_body(acquired.prefix, transcript)
             case _:
                 raise RuntimeError(
                     f"no transcript body for kind '{entry.kind}' — _acquire_audio "
@@ -1047,9 +1071,10 @@ class _Drain:
     def _acquire_audio(self, entry: LedgerEntry) -> Acquired | Classification:
         """Audio acquisition belongs to the drain, per kind."""
         audio_dir = self.ctx.instance.cache_dir / "audio"
-        # Both kinds park with content already in hand (a description, show
-        # notes) and both compose the transcript onto what that park wrote,
-        # so both acquisitions read the unit's own output file.
+        # Every transcribable kind parks with content already in hand (a
+        # description, show notes, a caption) and composes the transcript
+        # onto what that park wrote, so each acquisition reads the unit's
+        # own output file.
         name = f"{entry.kind.value}-{entry.hash[:6]}.md"
         enrichment = self.ctx.instance.enrichment_dir / self.owner_of(entry) / name
         match entry.kind:
@@ -1057,12 +1082,14 @@ class _Drain:
                 return acquire_youtube_audio(entry, enrichment, audio_dir, self.ctx.download_audio)
             case Kind.PODCAST:
                 return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
+            case Kind.INSTAGRAM:
+                return acquire_instagram_audio(entry, enrichment, audio_dir, self.ctx.transport)
             case _:
                 return Classification(
                     status=Status.MANUAL,
                     reason=(
                         f"no audio-acquisition path for kind '{entry.kind}' — "
-                        "transcription covers youtube and podcast work"
+                        "transcription covers youtube, podcast and instagram work"
                     ),
                 )
 
@@ -1088,6 +1115,19 @@ class _Drain:
                     reason=(
                         f"audio enclosure gone ({failure.reason}) — requeue the unit so "
                         "the podcast driver re-resolves it, or rescue by hand"
+                    ),
+                )
+            case Status.DEAD if entry.kind is Kind.INSTAGRAM:
+                # The URL that died is the media proxy's, not Instagram's —
+                # an unmaintained host going dark is its expected end, and
+                # says nothing about the reel.
+                self.record_outcome(
+                    entry,
+                    status=Status.MANUAL,
+                    reason=(
+                        f"the media proxy stopped serving the video ({failure.reason}) — "
+                        "requeue the unit so the instagram driver re-resolves it, or point "
+                        "instagram_base_url at another host"
                     ),
                 )
             case Status.DEAD | Status.MANUAL:
