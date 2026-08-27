@@ -36,6 +36,11 @@ class TestPatternDetection:
             ("https://m.youtube.com/watch?v=a", Kind.YOUTUBE),
             ("https://x.com/user/status/1", Kind.X),
             ("https://twitter.com/user/status/1", Kind.X),
+            ("https://www.instagram.com/p/BsOGulcndj-/", Kind.INSTAGRAM),
+            ("https://www.instagram.com/natgeo/reel/DHVrPLrIyQ_/", Kind.INSTAGRAM),
+            # The whole host is the instagram driver's, posts or not: the
+            # catch-all would fetch Instagram's JS app shell and ledger it.
+            ("https://instagram.com/natgeo", Kind.INSTAGRAM),
             ("https://github.com/acme/repo", Kind.GITHUB),
             ("https://gist.github.com/user/abc", Kind.GITHUB),
             ("https://arxiv.org/abs/2408.12345", Kind.PAPER),

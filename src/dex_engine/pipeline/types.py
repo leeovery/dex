@@ -59,6 +59,7 @@ class Kind(StrEnum):
 
     YOUTUBE = "youtube"
     X = "x"
+    INSTAGRAM = "instagram"
     GITHUB = "github"
     PAPER = "paper"
     PODCAST = "podcast"
@@ -759,6 +760,10 @@ class Config:
     # whisper-large-v3). None → the provider's default; per-call --model
     # still overrides.
     transcribe_api_model: str | None = None
+    # The Instagram embed proxy serving the media endpoints. None → the
+    # driver's own default host; the escape hatch when that host dies or
+    # the owner self-hosts a fork.
+    instagram_base_url: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
     internal_domains: list[str] = field(default_factory=list)
@@ -811,6 +816,7 @@ class Config:
             "transcribe_base_url",
             "transcribe_api_key",
             "transcribe_api_model",
+            "instagram_base_url",
             "report_issues",
             "providers",
             "internal_domains",
@@ -828,6 +834,7 @@ class Config:
             transcribe_base_url=_config_opt_str(source, raw, "transcribe_base_url"),
             transcribe_api_key=_config_opt_str(source, raw, "transcribe_api_key"),
             transcribe_api_model=_config_opt_str(source, raw, "transcribe_api_model"),
+            instagram_base_url=_config_opt_str(source, raw, "instagram_base_url"),
             report_issues=_config_bool(source, raw, "report_issues", default=True),
             providers=_config_providers(source, raw),
             internal_domains=_config_str_list(source, raw, "internal_domains"),

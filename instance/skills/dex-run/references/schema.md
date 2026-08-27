@@ -16,7 +16,7 @@ date: 2026-08-18                            # date shared (capture timestamp / m
 urls:
   - https://www.youtube.com/watch?v=...     # capture provenance — what was SHARED, verbatim;
                                             #   immutable after ingest (promoted URLs live in the ledger only)
-kinds: [youtube]                            # youtube | x | github | paper | podcast | web | file | image | text
+kinds: [youtube]                            # youtube | x | instagram | github | paper | podcast | web | file | image | text
 attachments:                                # backfill exports only: repo-relative paths under raw/
   - raw/discord/general/assets/photo.png
 reactions: 5                                # backfill exports only: total reaction count, when > 0

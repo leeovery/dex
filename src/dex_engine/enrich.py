@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> None:
         ctx = RunContext(
             instance=instance,
             config=config,
-            drivers=build_drivers(capabilities=capabilities, root=instance.root),
+            drivers=build_drivers(capabilities=capabilities, root=instance.root, config=config),
             today=datetime.date.today,
             now=lambda: datetime.datetime.now(datetime.UTC),
             engine_version=engine_version(),

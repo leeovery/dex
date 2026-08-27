@@ -22,6 +22,7 @@ from pathlib import Path
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.github import GitHubDriver
+from dex_engine.drivers.instagram import DEFAULT_BASE_URL, InstagramDriver
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.web import WebDriver
@@ -33,20 +34,28 @@ from .types import Config, Kind, SourceDriver
 __all__ = ["build_drivers", "default_drivers", "driver_for"]
 
 
-def build_drivers(*, capabilities: Capabilities, root: Path | None = None) -> list[SourceDriver]:
+def build_drivers(
+    *, capabilities: Capabilities, root: Path | None = None, config: Config | None = None
+) -> list[SourceDriver]:
     """The ordered registry, wired to an instance.
 
     Args:
         capabilities: The resolved capability registries — the file driver
             routes formats through them.
         root: The instance root, for ``file:<repo-path>`` work.
+        config: The instance configuration, for the drivers that take a
+            configurable endpoint. Omitted, every such driver keeps its own
+            default — which is what lets ``default_drivers`` stay
+            config-free for normalize's offline stamping.
 
     Returns:
         The drivers, specialized first, ``web`` last as the catch-all.
     """
+    settings = config or Config()
     return [
         YouTubeDriver(),
         XDriver(),
+        InstagramDriver(base_url=settings.instagram_base_url or DEFAULT_BASE_URL),
         GitHubDriver(),
         PaperDriver(),
         PodcastDriver(),
