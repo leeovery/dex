@@ -27,11 +27,12 @@ engine serialize it:
 then `bin/dex enrich item digest --file cache/digest.json`. `signal` is
 high | medium | low; topics and entities are canonical taxonomy names once
 taxonomy exists, otherwise 2–5 kebab-case candidates; `entities` may be
-omitted. `date` and `media:` are **not yours to pass** — they are the
-item's own share date and media, the engine reads both off the corpus item,
-and a payload naming either is refused. Rewriting is how a revised judgment
-lands: run the verb again with the new payload and the whole file is
-re-derived.
+omitted. `date` and `media:` are **not yours to pass** — the engine derives
+both: the share date off the corpus item, and the media list from the
+item's own `media:` followed by the media files sitting in
+`enrichment/<id>/`. A payload naming either is refused. Rewriting is how a
+revised judgment lands: run the verb again with the new payload and the
+whole file is re-derived.
 
 What it writes:
 
@@ -42,8 +43,9 @@ date: 2026-08-18                  # the item's share date
 signal: high                      # high | medium | low
 topics: [agent-architecture]
 entities: [claude-code]           # omitted when you name none
-media:                            # only when the item has media
-  - media/<id>/photo.jpg
+media:                            # omitted when the item has no media
+  - media/<id>/photo.jpg          #   the item's own paths, then the
+  - enrichment/<id>/media-0.png   #   media files in enrichment/<id>/
 ---
 - one standalone fact bullet per fact the source actually yields.
 ```

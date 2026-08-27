@@ -55,6 +55,13 @@ def digest_text(instance, item_id: str = ITEM) -> str:
     return (instance.digests_dir / f"{item_id}.md").read_text()
 
 
+def write_enrichment(instance, *names: str, item_id: str = ITEM) -> None:
+    item_dir = instance.enrichment_dir / item_id
+    item_dir.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (item_dir / name).write_text("on disk\n")
+
+
 class TestWrite:
     def test_writes_the_canonical_digest(self, instance):
         write_item(instance)
@@ -90,7 +97,47 @@ class TestWrite:
         digest(instance)
         assert "\nmedia:\n  - media/55ad7b/photo, framed.jpg\n---\n" in digest_text(instance)
 
+    def test_downloaded_media_is_listed_though_the_item_states_none(self, instance):
+        # The media stage downloads into `enrichment/<id>/` and never writes
+        # the frontmatter back, so this is the usual shape of a media item.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png")
+        digest(instance)
+        assert f"\nmedia:\n  - enrichment/{ITEM}/media-0.png\n---\n" in digest_text(instance)
+
+    def test_a_media_description_is_not_media(self, instance):
+        # `media-0.md` is the session's written description of the capture,
+        # not a file a page can embed.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png", "media-0.md", "web-abc123.md")
+        digest(instance)
+        assert f"\nmedia:\n  - enrichment/{ITEM}/media-0.png\n---\n" in digest_text(instance)
+
+    def test_extraction_assets_are_media_and_sort_by_name(self, instance):
+        write_item(instance)
+        write_enrichment(instance, "media-1.jpg", "a1b2c3-asset-0.png", "media-0.png")
+        digest(instance)
+        assert digest_text(instance).count("\n  - ") == 3
+        assert (
+            f"\nmedia:\n  - enrichment/{ITEM}/a1b2c3-asset-0.png\n"
+            f"  - enrichment/{ITEM}/media-0.png\n  - enrichment/{ITEM}/media-1.jpg\n---\n"
+        ) in digest_text(instance)
+
+    def test_stated_media_leads_and_downloads_follow(self, instance):
+        write_item(instance, media=["media/55ad7b/photo.jpg"])
+        write_enrichment(instance, "media-0.png")
+        digest(instance)
+        assert (
+            f"\nmedia:\n  - media/55ad7b/photo.jpg\n  - enrichment/{ITEM}/media-0.png\n---\n"
+        ) in digest_text(instance)
+
     def test_an_item_with_no_media_gets_no_media_key(self, instance):
+        write_item(instance)
+        write_enrichment(instance, "web-abc123.md")
+        digest(instance)
+        assert "media" not in digest_text(instance)
+
+    def test_an_item_with_no_enrichment_directory_gets_no_media_key(self, instance):
         write_item(instance)
         digest(instance)
         assert "media" not in digest_text(instance)
@@ -122,6 +169,16 @@ class TestRewrite:
         assert digest_text(instance) == (
             f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: low\ntopics: [brewing]\n---\n- one fact.\n"
         )
+
+    def test_a_rewrite_keeps_the_media_the_download_put_on_disk(self, instance):
+        # Deriving the list from the corpus item alone dropped it on every
+        # re-emit: the file was unchanged on disk, the frontmatter had never
+        # named it, and the page lost the pointer it embeds from.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png")
+        digest(instance)
+        digest(instance, signal="low")
+        assert f"\nmedia:\n  - enrichment/{ITEM}/media-0.png\n---\n" in digest_text(instance)
 
     def test_a_refused_rewrite_leaves_the_standing_digest_alone(self, instance):
         write_item(instance)
