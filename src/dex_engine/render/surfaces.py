@@ -1055,6 +1055,7 @@ _HEALTH_OPTIONAL = frozenset(
         "digests",
         "digest_errors",
         "digest_orphans",
+        "digest_media_drift",
         "reconciled",
         "notes",
     }
@@ -1122,6 +1123,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "digests": int,
           "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
           "digest_orphans": [str],
+          "digest_media_drift": [str],   # stated media: is not the media on disk
           # --write outcomes and free notes
           "reconciled": [str],
           "notes": [str],
@@ -1410,6 +1412,12 @@ def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
     # dex-lint skill.
     blocks += _health_names(
         surface, payload, "digest_orphans", "digest these (enrichment newer than digest)"
+    )
+    blocks += _health_names(
+        surface,
+        payload,
+        "digest_media_drift",
+        "re-emit these digests (`media:` is not the media on disk)",
     )
     return blocks
 

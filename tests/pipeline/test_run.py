@@ -39,6 +39,7 @@ from dex_engine.pipeline.run import (
     RunContext,
     _sniff_bytes,
     is_drainable,
+    is_media_file,
     no_providers,
 )
 from dex_engine.pipeline.types import (
@@ -1303,6 +1304,35 @@ class TestRerun:
         assert "1 rewritten" in report
 
 
+class TestIsMediaFile:
+    """The one predicate: the cap counts it, the digest lists it, lint compares it."""
+
+    @pytest.mark.parametrize(
+        ("name", "media"),
+        [
+            ("media-0.png", True),
+            ("media-12.jpg", True),
+            ("a1b2c3-asset-0.png", True),
+            # The session's written description of a capture, not a file a
+            # page can embed.
+            ("media-0.md", False),
+            # An atomic write killed before its replace: half a file.
+            ("media-0.png.a1b2c3d4.tmp", False),
+            ("a1b2c3-asset-0.png.a1b2c3d4.tmp", False),
+            ("web-abc123.md", False),
+            ("transcript.txt", False),
+        ],
+    )
+    def test_the_media_family(self, tmp_path, name, media):
+        path = tmp_path / name
+        path.write_bytes(b"bytes")
+        assert is_media_file(path) is media
+
+    def test_a_directory_wearing_a_media_name_is_not_a_media_file(self, tmp_path):
+        (tmp_path / "media-0.png").mkdir()
+        assert is_media_file(tmp_path / "media-0.png") is False
+
+
 class TestMediaStage:
     IMG1 = "https://cdn.example.test/a.png"
     IMG2 = "https://cdn.example.test/b.jpg"
@@ -1720,6 +1750,38 @@ class TestMediaStage:
             "media-0.md",
             "media-0.png",
         ]
+
+    def test_a_replaced_slot_sweeps_an_interrupted_downloads_temp(self, instance):
+        # No reader counts a `.tmp` as media any more, so the slot sweep is
+        # the only thing left that clears one — it names them explicitly
+        # rather than leaning on the media predicate.
+        driver = self._jpeg_in_the_slot(instance)
+        orphan = instance.enrichment_dir / ITEM / f"media-0.jpg.a1b2c3d4{atomic.TEMP_SUFFIX}"
+        orphan.write_bytes(b"half a download")
+
+        self._redrain_after_crash(instance, driver, PNG_BYTES)
+        assert not orphan.exists()
+        assert sorted(p.name for p in orphan.parent.glob("media-0.*")) == ["media-0.png"]
+
+    def test_an_orphaned_temp_never_spends_the_media_cap(self, instance):
+        # Before the exclusion the orphan was the item's fourth media-family
+        # file and the download it displaced was refused permanently.
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        for n in range(MEDIA_MAX_FILES - 1):
+            (item_dir / f"aaaaaa-asset-{n}.png").write_bytes(b"asset")
+        (item_dir / f"media-3.png.a1b2c3d4{atomic.TEMP_SUFFIX}").write_bytes(b"half a download")
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport(
+                {self.IMG1: HttpResponse(status=200, content_type="image/png", body=PNG_BYTES)}
+            ),
+        )
+        run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.DONE
+        assert (item_dir / "media-0.png").is_file()
 
     def test_media_cap_of_four_files_per_item(self, instance):
         write_item(instance)

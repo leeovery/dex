@@ -76,6 +76,20 @@ other repairs need):
   `bin/dex enrich item digest --file cache/digest.json`. The wiki layer
   reads these files, so nothing downstream is trustworthy until they
   conform.
+- **Re-emit these digests** (`media:` is not the media on disk) — an
+  advisory, and it never fails the check. What a digest states and what
+  the item carries — its own `media:` paths, then the media files sitting
+  in `enrichment/<id>/` — are no longer the same set, in one direction or
+  the other: a file that landed after the digest was written, or a path
+  left standing for a file since gone. Order and list form are not drift;
+  membership is. The wiki layer embeds from this listing, so a page built
+  off a stale one points at nothing, or misses the capture it is about.
+  Digests written before the engine derived the listing carry this as a
+  standing state, and it clears exactly as a malformed digest does:
+  rewrite the file through the verb — read the facts it already states,
+  write them as the payload, run `bin/dex enrich item digest --file
+  cache/digest.json` — and the engine re-derives `media:` itself. Never
+  hand-edit the line in.
 - **Broken wikilinks** — typo → correct it; genuinely missing target →
   create the page if its members justify one, otherwise de-link.
 - **Bad citations** (id not in corpus) — find the right id or remove

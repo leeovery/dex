@@ -186,15 +186,24 @@ def is_media_file(path: Path) -> bool:
     """Whether ``path`` is one of the item's media-family files.
 
     Downloads (``media-<n>.<ext>``) and extraction assets
-    (``<hash6>-asset-<n>.<ext>``) — the files the 4-per-item cap counts.
-    Markdown is never one of them: ``media-<n>.md`` is the session's
-    written description of a media capture, and reading it as a file the
-    cap counts (or as a slot already taken) let a download land beyond the
-    cap, beside a description of something else entirely.
+    (``<hash6>-asset-<n>.<ext>``) — the files the 4-per-item cap counts,
+    the digest lists, and the health check compares that listing against.
+    Two shapes wear a media name and are not one:
+
+    Markdown — ``media-<n>.md`` is the session's written description of a
+    media capture, and reading it as a file the cap counts (or as a slot
+    already taken) let a download land beyond the cap, beside a
+    description of something else entirely.
+
+    An atomic write's temp (``media-<n>.<ext>.<random>.tmp``), which a
+    process killed mid-download leaves standing: half a file, embeddable
+    by nothing, and counted against the cap while it sat there. The slot
+    sweep clears one it finds (:meth:`_Drain._clear_media_slot`) — it is
+    the only thing that may still look at them.
     """
     return (
         path.is_file()
-        and path.suffix != ".md"
+        and path.suffix not in (".md", atomic.TEMP_SUFFIX)
         and (path.name.startswith("media-") or "-asset-" in path.name)
     )
 
@@ -1562,9 +1571,16 @@ class _Drain:
         file whole; the unit is then unfinished and the next run's redrain
         sweeps what it left. ``media-<n>.md`` is never touched: it is the
         session's description of the capture, not a file in the slot.
+
+        An interrupted download's temp is named explicitly, not through
+        :func:`is_media_file`: every other reader has to skip a temp — half
+        a file is not media — and this sweep is the one place they are
+        cleared instead.
         """
         for path in out.parent.glob(f"{out.stem}.*"):
-            if path != out and is_media_file(path):
+            if path == out or not path.is_file():
+                continue
+            if is_media_file(path) or path.suffix == atomic.TEMP_SUFFIX:
                 path.unlink()
 
     def _media_oversize_by_head(self, url: str) -> bool:

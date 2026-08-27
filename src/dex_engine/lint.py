@@ -39,7 +39,9 @@ Checks:
   ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
   least one fact bullet. ``enrich item digest`` writes digests and cannot
   write any of those faults, so this is the backstop for the files that
-  predate the verb and for anything hand-edited since.
+  predate the verb and for anything hand-edited since. Plus one advisory
+  on a conforming digest: a ``media:`` listing that no longer names the
+  files the item carries, in either direction.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -67,10 +69,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import frontmatter
+from . import corpus, frontmatter
 from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
+from .pipeline.digest import item_media
 from .pipeline.enrichment import read_enrichment_fields
 from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
@@ -216,9 +219,10 @@ def run_lint(
     if entity_members_error is not None:
         payload["entity_members_error"] = entity_members_error
     ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids, notes=scan.notes)
-    digests, digest_errors = _digest_checks(instance)
-    payload["digests"] = digests
-    payload["digest_errors"] = digest_errors
+    digests = _digest_checks(instance)
+    payload["digests"] = digests.count
+    payload["digest_errors"] = digests.errors
+    payload["digest_media_drift"] = digests.media_drift
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:
@@ -231,7 +235,7 @@ def run_lint(
         or taxonomy_error
         or entity_members_error
         or "passes_error" in payload
-        or digest_errors
+        or digests.errors
     )
     return LintOutcome(
         report=surfaces.render("health-report", payload),
@@ -1063,36 +1067,91 @@ def _unread_note(rel: str, why: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _digest_checks(instance: Instance) -> tuple[int, list[dict[str, str]]]:
-    """How many digests there are, and the ones that do not conform.
+@dataclass(slots=True, kw_only=True)
+class _DigestScan:
+    """What the one pass over ``state/digests/`` found."""
 
-    Shape only. How MANY facts a digest states is the source's business —
+    count: int = 0
+    errors: list[dict[str, str]] = field(default_factory=list)
+    media_drift: list[str] = field(default_factory=list)
+
+
+def _digest_checks(instance: Instance) -> _DigestScan:
+    """How many digests there are, the ones that do not conform, and media drift.
+
+    Shape first. How MANY facts a digest states is the source's business —
     two lines of tweet yield two facts and no honest digest can invent a
     third — so there is no target count and no count finding. Stating
     none at all is different in kind: the file is empty of the one thing
     it exists to hold.
 
-    The count comes back with the errors because the section's heading
+    The count comes back with the findings because the section's heading
     states its scale, and this pass is the one that walks the directory.
+
+    Media drift is asked only of a digest whose shape holds: a malformed
+    one already carries the same repair (rewrite it through the verb), and
+    a second row about the same file would say nothing the first did not.
     """
-    errors: list[dict[str, str]] = []
-    digests = 0
+    scan = _DigestScan()
     for path in sorted(instance.digests_dir.glob("*.md")):
-        digests += 1
+        scan.count += 1
         item = path.stem or path.name
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
-            errors.append({"item": item, "why": f"unreadable ({e.__class__.__name__})"})
+            scan.errors.append({"item": item, "why": f"unreadable ({e.__class__.__name__})"})
             continue
         fields, body = _digest_parts(text)
         if fields is None:
-            errors.append({"item": item, "why": "no complete frontmatter fence"})
+            scan.errors.append({"item": item, "why": "no complete frontmatter fence"})
             continue
         why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
         if why is not None:
-            errors.append({"item": item, "why": why})
-    return digests, errors
+            scan.errors.append({"item": item, "why": why})
+        elif _media_drifted(instance, item, fields):
+            scan.media_drift.append(item)
+    return scan
+
+
+def _media_drifted(instance: Instance, item_id: str, fields: dict[str, str | list[str]]) -> bool:
+    """Whether the digest's ``media:`` disagrees with the files the item carries.
+
+    The wiki layer embeds from this listing, so a digest that has lost it
+    costs the page its pointer — and nothing else detects that. The
+    staleness backstop compares pass records, not content, so a digest
+    written before the engine derived the list (engine ≤0.1.4, which stated
+    only what the corpus frontmatter did) sits degraded until some
+    unrelated rerun happens to touch the item.
+
+    A FINDING, never a failure: the repair is re-emitting the digest
+    through ``enrich item digest``, which is a session's act, and failing
+    the check on legacy drift would stop every scheduled run on work no
+    machine can do.
+
+    Compared as SETS, in either direction. Legacy digests wrote the flow
+    form and the verb writes block form; a hand-written listing may be in
+    any order; and a path stated for a file since deleted is drift the
+    same as a file on disk the listing never gained. Membership is the
+    only thing separating a healthy digest from a drifted one.
+
+    An item with no readable corpus file derives nothing to compare
+    against, so it is no drift here — its absence is the ghost and
+    coverage rows' business.
+    """
+    path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
+    try:
+        item = corpus.read_item(path)
+    except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+        return False
+    return _stated_media(fields) != set(item_media(instance, item))
+
+
+def _stated_media(fields: dict[str, str | list[str]]) -> set[str]:
+    """The paths a digest's ``media:`` names, in whichever form it wrote them."""
+    stated = fields.get("media", [])
+    if isinstance(stated, str):
+        return {stated} if stated else set()
+    return set(stated)
 
 
 def _digest_body_fault(body: str) -> str | None:
