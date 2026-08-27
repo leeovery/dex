@@ -167,6 +167,40 @@ class TestPageParse:
         assert "\n\nIn homage to our 33 founders, we're honoring" in body  # &#039; decoded
         assert body.endswith("#NatGeo33")
 
+    def test_a_drifted_og_format_degrades_to_unknown_never_crashes(self):
+        # The live check watches instagram.com's og: format; this pins what
+        # happens when it drifts anyway: og: tags present but in no shape
+        # the parse knows still land as attributed-unknown content, never a
+        # crash over a missing og:title.
+        drifted = html_response(
+            "<html><head><title>Instagram</title>\n"
+            '<meta property="og:description" content="Photos!" />\n'
+            "</head><body></body></html>"
+        )
+        result = content_of(
+            fetch(
+                {post_url(PHOTO_CODE): drifted, **walk(PHOTO_CODE, "image/jpeg")},
+                post_url(PHOTO_CODE),
+            )
+        )
+        assert result.meta["author"] == "unknown (@unknown)"
+        assert result.body is not None
+        assert result.body.startswith("@unknown — undated")
+
+    def test_a_drifted_og_format_with_no_media_is_no_text_or_media(self):
+        # The caption fallback must stay empty when the title parse fails:
+        # anything else turns a metadata-less page into done content.
+        drifted = html_response(
+            "<html><head><title>Instagram</title>\n"
+            '<meta property="og:description" content="Photos!" />\n'
+            "</head><body></body></html>"
+        )
+        result = fetch(
+            {post_url(PHOTO_CODE): drifted, **walk(PHOTO_CODE)},
+            post_url(PHOTO_CODE),
+        )
+        assert evidence_of(result) == "no text or media"
+
     def test_the_handle_and_date_come_off_the_description_engagement_dropped(self):
         result = content_of(
             fetch(

@@ -511,10 +511,11 @@ class TestConfig:
             Config.load(path)
 
     @pytest.mark.parametrize("key", ["transcribe_base_url", "instagram_base_url"])
-    def test_a_fetchable_base_url_loads(self, tmp_path: Path, key: str):
+    @pytest.mark.parametrize("scheme", ["https", "http"])  # a LAN self-host is plain http
+    def test_a_fetchable_base_url_loads(self, tmp_path: Path, key: str, scheme: str):
         path = tmp_path / "config.json"
-        path.write_text(json.dumps({key: "https://proxy.example"}))
-        assert getattr(Config.load(path), key) == "https://proxy.example"
+        path.write_text(json.dumps({key: f"{scheme}://proxy.example"}))
+        assert getattr(Config.load(path), key) == f"{scheme}://proxy.example"
 
     def test_bad_media_fetch_is_loud(self, tmp_path: Path):
         path = tmp_path / "config.json"

@@ -4,6 +4,7 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -574,6 +575,25 @@ class TestPodcastDrain:
         ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
         run_mod.run_transcribe(ctx)
         return ctx
+
+    def test_the_prompt_anchors_on_title_and_show(self, instance):
+        # The names go LAST so an overflowing prompt loses vocabulary, not
+        # them — and the show has to actually be one of them.
+        self.park_via_driver(instance)
+        transcriber = FakeTranscriber("whisper-local", text="words", model="medium")
+        transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        run_mod.run_transcribe(ctx)
+        [(_audio, prompt)] = transcriber.calls
+        assert prompt.endswith("Ledgers as Work Queues — Engineering Distilled")
+
+    def test_a_fresh_instance_grows_its_cache_path_on_first_download(self, instance):
+        # cache/ is gitignored, so a fresh clone has neither it nor
+        # cache/audio/ — the first enclosure download creates both.
+        self.park_via_driver(instance)
+        shutil.rmtree(instance.cache_dir, ignore_errors=True)
+        self.drain(instance)
+        assert self.entry(instance).status is Status.DONE
 
     def test_park_writes_show_notes_with_the_enclosure_pointer(self, instance):
         self.park_via_driver(instance)
