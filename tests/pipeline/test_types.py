@@ -500,6 +500,22 @@ class TestConfig:
         with pytest.raises(ValueError, match="media_fech"):
             Config.load(path)
 
+    @pytest.mark.parametrize("key", ["transcribe_base_url", "instagram_base_url"])
+    def test_a_base_url_the_transport_cannot_fetch_is_loud(self, tmp_path: Path, key: str):
+        # Reached at fetch time instead, a schemeless URL crashes the unit
+        # as an engine error — retried only on the next release, and filed
+        # upstream as an engine bug when issue reporting is on.
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({key: "uuinstagram.com"}))
+        with pytest.raises(ValueError, match="http"):
+            Config.load(path)
+
+    @pytest.mark.parametrize("key", ["transcribe_base_url", "instagram_base_url"])
+    def test_a_fetchable_base_url_loads(self, tmp_path: Path, key: str):
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({key: "https://proxy.example"}))
+        assert getattr(Config.load(path), key) == "https://proxy.example"
+
     def test_bad_media_fetch_is_loud(self, tmp_path: Path):
         path = tmp_path / "config.json"
         path.write_text(json.dumps({"media_fetch": "all"}))

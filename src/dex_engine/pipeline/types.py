@@ -831,10 +831,10 @@ class Config:
         return cls(
             media_fetch=_config_enum(source, raw, "media_fetch", default=MediaFetch.LEAD),
             transcribe_model=_config_str(source, raw, "transcribe_model", default="medium"),
-            transcribe_base_url=_config_opt_str(source, raw, "transcribe_base_url"),
+            transcribe_base_url=_config_opt_url(source, raw, "transcribe_base_url"),
             transcribe_api_key=_config_opt_str(source, raw, "transcribe_api_key"),
             transcribe_api_model=_config_opt_str(source, raw, "transcribe_api_model"),
-            instagram_base_url=_config_opt_str(source, raw, "instagram_base_url"),
+            instagram_base_url=_config_opt_url(source, raw, "instagram_base_url"),
             report_issues=_config_bool(source, raw, "report_issues", default=True),
             providers=_config_providers(source, raw),
             internal_domains=_config_str_list(source, raw, "internal_domains"),
@@ -869,6 +869,20 @@ def _config_opt_str(source: str, raw: dict[str, object], key: str) -> str | None
     if value is not None and not isinstance(value, str):
         raise ValueError(f"{source}: {key} must be a string, got {type(value).__name__}")
     return value or None  # an empty string is "not configured", not a credential
+
+
+def _config_opt_url(source: str, raw: dict[str, object], key: str) -> str | None:
+    """An optional URL key, refused at load unless it is fetchable.
+
+    A base URL the transport cannot fetch fails loudly HERE, not mid-drain:
+    reached at fetch time it crashes the unit as an engine error, which
+    retries only on the next engine release and, with issue reporting on,
+    files an owner's typo upstream as an engine bug.
+    """
+    value = _config_opt_str(source, raw, key)
+    if value is not None and not value.startswith(("http://", "https://")):
+        raise ValueError(f"{source}: {key} must be an http(s) URL, got {value!r}")
+    return value
 
 
 def _config_bool(source: str, raw: dict[str, object], key: str, *, default: bool) -> bool:
