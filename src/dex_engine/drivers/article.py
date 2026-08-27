@@ -150,15 +150,19 @@ def _prepare_page(html: str) -> str:
     same page this recovers 92 fences AND keeps all 42 hyperlinks, which
     neither link setting manages alone.
 
-    Second, flatten the inside of headings: drop ``<br>`` elements and
-    collapse whitespace runs to one space. A markdown heading is one line
-    by construction, and a heading holding a line break
+    Second, flatten the inside of headings: replace ``<br>`` elements with
+    a space and collapse whitespace runs to one space. A markdown heading
+    is one line by construction, and a heading holding a line break
     (``<h3><span>Use Case: <br></span></h3>`` — Hugging Face model cards)
     extracts as the marker alone on its line with the words below it,
     among the span's source-formatting tabs and newlines emitted verbatim
     — an empty heading to any consumer keying on the heading line. The
     ``<br>`` is the break; the whitespace collapse is what puts the words
-    beside the marker cleanly instead of behind a run of tabs.
+    beside the marker cleanly instead of behind a run of tabs. Its
+    replacement is a space and not nothing, because a break BETWEEN two
+    parts is the only separator they have: a page whose top heading
+    carries its subtitle after a ``<br>`` folded to one welded line, the
+    subtitle no longer a line at all and two words run together.
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -188,6 +192,15 @@ def _flatten_heading(heading: "HtmlElement") -> None:
 
     for br in list(heading.iter("br")):
         if isinstance(br, HtmlElement):
+            # A space stands in for the break before the element goes:
+            # drop_tree() merges the tail into the preceding text with
+            # NOTHING between, and the <br> is the only word boundary
+            # there is. Deleting it outright ran the parts together —
+            # "The Big HeadingA one-line subtitle" — which loses the
+            # subtitle as a line AND welds two words into one. The
+            # whitespace collapse below folds whatever doubling this
+            # creates against padding already there.
+            br.tail = f" {br.tail or ''}"
             br.drop_tree()
     for node in heading.iter():
         if not isinstance(node, HtmlElement):

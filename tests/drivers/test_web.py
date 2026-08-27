@@ -355,6 +355,17 @@ class TestExtractionFidelity:
         assert any(line.startswith("#") and "HunyuanOCR-1.5" in line for line in body.split("\n"))
         assert any(line.startswith("#") and "Use Case:" in line for line in body.split("\n"))
 
+    def test_a_line_break_between_heading_parts_stays_a_separator(self):
+        # The break IS the word boundary. Removing it outright welded the
+        # parts: a post whose top heading carried its subtitle after a
+        # <br> came back as one line reading "...Big ModelsWhat a year",
+        # so the subtitle was no longer a line and two words were one.
+        page = fixture_text("web", "line-broken-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert "ModelsWhat" not in body
+        assert "Cheap Tricks Beat Big Models What a year" in body
+        assert "Method and its limits" in body
+
     def test_a_discussion_pages_comments_are_its_substance(self):
         # A thread rendered as nested tables: dropping comments left the
         # masthead and the submission row, and deleted all 115 replies —
