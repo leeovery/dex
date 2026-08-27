@@ -3,8 +3,7 @@
 Instagram posts shared to an instance's inbox become corpus items like any
 other source: author, caption, and media, fetched mechanically and digested
 by the session. The driver is **push-only and credential-free** — it fetches
-what an anonymous visitor can see, through a third-party embed proxy, and
-parks honestly when it cannot.
+what an anonymous visitor can see and parks honestly when it cannot.
 
 This is a **driver, not a watcher**. Nothing here polls Instagram, and
 nothing here reads a saved collection. The watcher question is untouched by
@@ -12,133 +11,181 @@ this design and is not made harder by it: a watcher, if it is ever built,
 only produces URLs, and those URLs still need exactly this driver to become
 knowledge. Building the driver first is the sequencing that serves both.
 
-Facts below marked **(verified 2026-08-26)** were established by testing
-against live endpoints in the design session, not reasoned about.
+Facts marked **(verified 2026-08-26)** were established by testing live
+endpoints in the design session; facts marked **(verified 2026-08-27)**
+in the follow-up session that resolved this design's gaps against the
+engine code. Neither set is reasoned about — all of it ran.
 
 ## 1. Shape
+
+Two anonymous sources, split by what each is good at **(verified
+2026-08-27)**:
+
+- **instagram.com itself, fetched with a bot User-Agent**, serves full
+  `og:` metadata for a public post: the complete caption (untruncated,
+  line breaks intact), the author's display name and handle, the post
+  date, and a `rel="canonical"` link naming the shortcode. It serves a
+  bot UA the way it serves a chat app's link-preview fetcher, because
+  that is what it thinks is asking. It does NOT serve usable media: one
+  signed cover-image URL, no video even for a reel.
+- **The embed proxy** serves media and nothing we still need besides:
+  `/images/<code>/<n>` and `/videos/<code>/<n>` answer **any** UA with a
+  302 to the signed CDN URL, and the CDN serves real bytes to any UA.
+  Its page endpoint (the bot-only one) truncates captions at ~255
+  characters, so the page endpoint is not used at all.
 
 ```
   iOS share sheet ──▶ Send To Dex ──▶ inbox/<stamp>.md ──▶ InstagramDriver
    (URL only)         (unchanged)     (URL in body)              │
-                                                                 ▼
-                                                    embed proxy (anonymous)
-                                                                 │
-                                            ┌────────────────────┴───────┐
-                                            ▼                            ▼
-                                     og: meta tags                  media files
-                                  author + caption            /images/…  /videos/…
-                                            │                            │
-                                            ▼                            ▼
-                                       Content.body            images kept as media
-                                                               video → transcribe,
-                                                                 binary discarded
+                                          ┌──────────────────────┤
+                                          ▼                      ▼
+                              instagram.com (bot UA)     proxy probe walk
+                              caption·author·date·       /videos/<code>/<n>
+                              canonical·public? ─ og:    typed per index
+                                          │                      │
+                                          ▼                      ▼
+                                    Content.body      images → Content.media
+                                                      video  → NeedsCapability
+                                                        (transcribe, binary
+                                                         discarded after)
 ```
 
 No shortcut change. No stored credential. No Instagram account involved at
-any point — not the owner's, not a burner's, not the proxy operator's. The
-proxy fetches public pages as a logged-out visitor.
+any point — not the owner's, not a burner's, not the proxy operator's.
+Both fetches are what an anonymous link preview does.
 
 ## 2. Identity and canonicalization
 
 **A post's identity is its shortcode.** Instagram serves one post under
 several path shapes, and they are interchangeable: `/p/<code>/`,
-`/reel/<code>/`, `/tv/<code>/`, and the username-prefixed
-`/<user>/p/<code>/`. Fetching `/reel/<code>/` and `/p/<code>/` for the same
-code returned byte-identical metadata **(verified 2026-08-26)**, so one post
-is one work unit however it was shared — the same rule `XDriver` applies to
-X's five status-URL spellings.
+`/reel/<code>/`, `/tv/<code>/`, the username-prefixed `/<user>/p/<code>/`
+**(verified 2026-08-26)** and `/<user>/reel/<code>/` **(verified
+2026-08-27** — natgeo's canonical reel URLs use it**)**. One post is one
+work unit however it was shared — the same rule `XDriver` applies to X's
+five status-URL spellings.
 
-Canonical form is `https://www.instagram.com/p/<code>/`. Fetches address the
-proxy by the `/p/<code>/` path, the shape it serves for all of them.
+Canonical form is `https://www.instagram.com/p/<code>/`.
 
-**Two shortcode grammars exist in the wild, and only one works.** An
-ordinary share yields an 11-character code (`DcgAEpxCBDL`). A share of a
-restricted post yields a ~39-character share token
-(`DXRrALviA5hPH4K9L8-2lwQGcLoHWMFKOnkw6E0`) **(verified 2026-08-26)**. The
-proxy handles the short form and cannot resolve the long one — it redirects
-the request back to `instagram.com` rather than erroring. The token grants
-no anonymous access: it is a share link, not a capability.
+**Two shortcode grammars exist in the wild.** An ordinary share yields an
+11-character code (`DcgAEpxCBDL`). A share of a restricted post yields a
+~39-character share token (`DXRrALviA5hPH4K9L8-2lwQGcLoHWMFKOnkw6E0`)
+**(verified 2026-08-26)**. The driver matches both, so a long-token URL is
+*owned* rather than falling through to the web catch-all.
 
-The driver therefore matches both grammars (so a long-token URL is *owned*
-rather than falling through to the web catch-all, which would fetch
-Instagram's app shell and ledger garbage) and treats an unresolvable long
-token as the park in §6. Whether a long token ever accompanies a *public*
-post is **unverified** — if it does, the driver must resolve it to its short
-form before fetching, and it will otherwise look like a random failure.
-Check this against more shares before shipping.
+**Long tokens resolve at fetch time, not canonicalization time.**
+`canonical` is offline (it keys the ledger during normalize, no network),
+so a long-token URL canonicalizes to itself. The fetch goes to
+instagram.com like any other: a public post answers with `og:` metadata
+and a `rel="canonical"` link carrying the short code **(mechanism
+verified 2026-08-27** against short-code pages; that a token page carries
+it too is unverified until a real share token is fetched**)** — the
+resolved code is what the media probe uses, and both spellings land in
+meta. A token whose page comes back `og:`-less is the private park in §6.
+Cost of the offline canonical: a post shared once by token and once by
+code makes two units. Accepted — rare, and the alternative is network in
+`canonical`, which nothing in the pipeline permits.
 
-## 3. Transport: the embed proxy
+**The driver owns the whole host.** `matches` claims `instagram.com`,
+`www.`, and `m.` — post URLs and everything else alike — because the
+alternative is the web catch-all fetching Instagram's app shell and
+ledgering garbage. Non-post shapes state what they are: `/stories/…`
+parks `manual` (stories are login-walled and expire; *screenshot it and
+share that*), profile roots and explore/share pages return `Unusable`
+with the evidence naming the shape.
 
-The proxy is a small server that fetches a public Instagram page and
-re-serves author, caption and media pointers as OpenGraph meta tags. It was
-built so Discord and Telegram could render Instagram previews.
+## 3. Transport
 
-**The proxy answers bots, not browsers (verified 2026-08-26).** A normal
-browser User-Agent is redirected straight to `instagram.com`; the embed data
-is served only to a bot UA. The driver must send one deliberately. This is
-the single non-obvious fact about the transport and the reason a first test
-looks like total failure.
+**Both metadata sources answer bots, not browsers.** The proxy's page
+endpoint 302s a browser UA to `instagram.com` and serves a bot UA the
+embed page **(verified 2026-08-26, redirect shape re-verified
+2026-08-27: a plain 302 with a Location header)**. instagram.com serves a
+bot UA full `og:` metadata where a browser UA gets the JS app shell
+**(verified 2026-08-27)**. The driver therefore fetches pages with a
+deliberate bot UA — the single non-obvious fact about the transport, and
+the reason a first test looks like total failure.
 
-Instance survey **(verified 2026-08-26)**:
+**The seam gains a UA, not a redesign.** `drivers/transport.py` keeps its
+protocol (`(url, *, method, limit)`) and grows a second exported
+transport with the bot UA beside `urllib_transport` — same
+implementation, one different header. The driver injects it as its
+default the way every driver injects its transport; every other caller of
+the seam is untouched. Verified untouched, not assumed **(all 2026-08-27,
+against live endpoints)**:
 
-| host | result |
+- The media stage's browser-UA GET of `/images/<code>/<n>` follows the
+  302 to the CDN and lands real bytes (a valid progressive JPEG).
+- The transcribe acquisition's browser-UA GET of `/videos/<code>/<n>`
+  lands a valid MP4 the same way; range requests answer 206.
+- The media stage's HEAD oversize probe gets a 405 from the proxy, which
+  the existing code already treats as inconclusive and settles by GET.
+- No redirect detection is needed anywhere, so `HttpResponse` does not
+  grow a final-URL field: every park decision reads the *body* (§6).
+
+**The probe walk is the media enumeration.** There is no JSON route
+**(verified 2026-08-26)** and the proxy's own page metadata lies about
+media type: an all-image carousel is served `twitter:card: player` and
+`og:video` pointing at a URL that 302s to a *JPEG* **(verified
+2026-08-27**, natgeo two-image carousel**)**. What tells the truth is the
+media endpoint itself, one index at a time:
+
+| probe `GET /videos/<code>/<n>`, `limit=0` | meaning |
 |---|---|
-| `uuinstagram.com` | author, full caption, indexed media — the best of the four |
-| `instagramfix.com` | author and media, but an **empty caption** on a post `uuinstagram` captioned |
-| `kkinstagram.com` | redirects to the raw CDN image; no metadata at all |
-| `ddinstagram.com` | **dead** — DNS does not resolve |
+| 302 → CDN `.mp4` (content type `video/mp4`) | item *n* is a video |
+| 302 → CDN `.jpg` (content type `image/jpeg`) | item *n* is an image |
+| 200, zero-byte body, `Content-Length: 0` | past the end of the post |
 
-Media is addressable at `/images/<code>/<n>` and `/videos/<code>/<n>`, and
-serves real bytes: the tested reel returned a valid 10.87 MB MP4. **An
-out-of-range index returns HTTP 200 with a zero-byte body, not a 404**, so
-carousel length must be probed by content length, never by status code —
-this is the trap in the transport.
+**(all three shapes verified 2026-08-27.)** Out-of-range is a 200, never
+a 404 **(verified 2026-08-26)** — status codes cannot terminate the walk.
+The walk runs indexes 1..5 (the media stage's 4-file cap plus one, so a
+truncation is visible), stops at the first past-the-end answer, and paces
+1s between probes — the X driver's hop-pacing courtesy, same reason. Each
+probe costs one byte of body (`limit=0` reads at most one).
 
-**There is no JSON route.** `/json`, `/api/…` and `/embed` all return HTML
-**(verified 2026-08-26)**. The driver parses meta tags. This is strictly
-worse than the `api.fxtwitter.com` JSON that `XDriver` enjoys, and it is the
-cost of the source, not a shortcut taken here.
+**The proxy base URL is instance config, not a constant** — the same
+shape `transcribe_base_url` takes. The lineage is visibly decaying:
+upstream InstaFix was archived April 2026, `ddinstagram.com` is already
+dead, and the surviving hosts run unmaintained code. Since captions no
+longer come from the proxy, the host criterion is media-endpoint
+reliability alone; `uuinstagram.com` ships as the default.
 
-**The base URL is instance config, not a constant** — the same shape
-`transcribe_base_url` already takes. The lineage is visibly decaying:
-upstream InstaFix was archived 2 April 2026, `ddinstagram.com` has already
-gone, and the surviving hosts run unmaintained code. Configurability makes
-switching hosts (or self-hosting) a config change rather than a release.
+### What the two sources cost
 
-### What the proxy costs
+Recorded so the trade is not rediscovered. None of it is account risk —
+no account exists in this path:
 
-Recorded so the trade is not rediscovered later. None of these are account
-risk — no account exists in this path:
-
-- **A third-party dependency that is decaying**, per above.
-- **The operator sees the instance's lookups.** Every fetch tells that
-  server which posts this knowledge base is interested in. For a system
-  whose purpose is recording what its owner attends to, this is the
-  sharpest cost, and it is the main argument for self-hosting.
-- **Its output is trusted verbatim.** Whatever it returns is written into
-  the corpus as fact.
-- **No SLA and unknown rate limits.**
-
-Self-hosting (Go, Dockerised, a maintained fork exists) fixes the first
-three and buys a datacenter IP that Instagram blocks faster than a
-residential one, plus the maintenance of archived code. Not chosen for v1;
-the configurable base URL is what keeps the choice cheap.
+- **The proxy operator sees which posts the instance fetches media
+  for.** Sharper before, when it saw every lookup; still the argument
+  for self-hosting (a maintained InstaFix fork exists, Dockerised).
+  The configurable base URL keeps that a config change.
+- **instagram.com sees an anonymous bot-UA page fetch per captured
+  post** — indistinguishable from a link preview, but it is direct
+  traffic, and whether Instagram answers a datacenter IP or a
+  high-volume IP the same way is unknown. The live check will say
+  (`ci_hostile`, §9).
+- **Both outputs are trusted verbatim** into the corpus.
+- **No SLA and unknown rate limits, on either.**
 
 ## 4. What the driver returns
 
 Mapped onto `Content`:
 
-- **`body`** — the caption, attributed to the author handle taken from
-  `og:title` / `twitter:title`. A post whose caption is empty and which
+- **`body`** — the full caption from instagram.com's `og:title`
+  (attributed, untruncated, line breaks intact — the parse must span
+  newlines inside the attribute value, which real captions carry
+  **(verified 2026-08-27)**). A post whose caption is empty and which
   carries media is `done` with a minimal attributed body, matching the X
   driver's rule; "no text or media" is said only when it is true.
-- **`media`** — absolute proxy URLs for images. Video is fetched for
-  transcription and not kept (§5).
-- **`meta`** — author handle, shortcode, canonical Instagram URL, and which
-  proxy host answered (so a bad host's output is traceable after the fact).
-
-Engagement counts stay unrecorded, per the standing rule — they are
-snapshot noise.
+- **`media`** — absolute **proxy** URLs (`<base>/images/<code>/<n>`) for
+  the indexes the probe typed as images. Proxy URLs, not the CDN URLs
+  they 302 to: CDN URLs are signed and expire, and a ledger identity
+  must not. Video is transcribed, not kept (§5).
+- **`meta`** — author handle and display name, post date (instagram.com's
+  `og:description` carries both, `handle on Month D, YYYY`
+  **(verified 2026-08-27)**), shortcode, canonical Instagram URL, the
+  share-token spelling when one resolved (§2), which proxy host served
+  the media, and `images_dropped: n` when §5's video-wins rule dropped
+  any. Engagement counts stay unrecorded, per the standing rule — they
+  are snapshot noise, and the parse that finds the handle discards them.
 
 ## 5. Media policy: video transcribes, images are kept
 
@@ -146,77 +193,97 @@ snapshot noise.
 kept.** This is a driver-level rule, not instance config — no new knob.
 
 The reasoning is that a knowledge base stores knowledge, not artifacts. A
-reel's value is what is said in it; the transcript is that, and the original
-stays one click away at the canonical Instagram URL. Keeping the MP4 buys
-re-watching, which is not what the corpus is for, and it costs LFS budget
-against a 1 GB free tier.
+reel's value is what is said in it; the transcript is that, and the
+original stays one click away at the canonical Instagram URL. Keeping the
+MP4 buys re-watching, which is not what the corpus is for, and it costs
+LFS budget against a 1 GB free tier. Images are the exception because for
+an image the pixels *are* the knowledge — a described design is not a
+substitute for the design.
 
-Images are the exception because for an image the pixels *are* the
-knowledge — a described design is not a substitute for the design. That
-keeps a design-oriented instance correct without a per-instance setting.
+**The discard behaviour is the transcribe lifecycle, joined, not
+invented.** A video post is `NeedsCapability(need=Need.TRANSCRIBE)`,
+exactly as the podcast driver returns for an episode enclosure — and the
+video URL rides the outcome's meta under the **`enclosure` key**, because
+that key is both what the acquisition reads back out of the park file's
+frontmatter and the condition under which the run layer writes the park
+file at all: a differently-named key on a caption-less reel would write no
+file, and the acquisition would loop manual on its absence. The caption
+rides as `body`, the way the podcast driver carries show notes, and the
+transcript composes onto it when it lands. The run layer acquires the MP4
+into gitignored `cache/audio/`, transcribes, and deletes on success only.
+Nothing ever reaches `enrichment/<id>/` as video bytes or LFS.
 
-**The discard behaviour already exists — it is the transcribe lifecycle, and
-this driver joins it rather than inventing anything.** A video post is not
-`Content` with a media URL; it is `NeedsCapability(need=Need.TRANSCRIBE)`,
-exactly as the podcast driver returns for an episode enclosure. The run
-layer then acquires the audio into gitignored `cache/audio/<hash>.<ext>`,
-transcribes it, writes the transcript as the unit's output, and **deletes
-the audio on success only** — pending or failed audio stays cached so a
-retry does not re-download. Nothing ever reaches `enrichment/<id>/` or LFS.
+The engine machinery this touches, all verified against the code
+**(2026-08-27)**:
 
-Two consequences worth stating plainly, because they correct the shape this
-design was first drafted in:
+- **`whisper-local` decodes any container PyAV decodes** — the MP4 goes
+  in as-is, no transcode step, and a video-only file with no audio
+  stream already maps to a clean `ProviderInputError` → manual.
+  `whisper-api` transcodes through ffmpeg and is equally content-shaped.
+- **No media-ceiling change.** The 10 MB ceiling governs the media
+  stage's image downloads; transcribe acquisition is a different path.
+- **Three dispatch sites, not two.** `Kind.INSTAGRAM` joins
+  `_acquire_audio` and the transcript-body dispatch (which raise loudly
+  when they disagree) — **and** `_apply_acquisition_failure`'s
+  podcast-only arm that maps a dead enclosure to `manual` with requeue
+  advice instead of `dead`: a proxy `/videos/` 404 says nothing about
+  the reel, and the generic arm would condemn it. The terminal-mislabel
+  class, one `if` away.
+- **A silent reel is routine, not an edge.** Music-only and ambient
+  video is a large share of Instagram, and "whisper heard no speech"
+  parks manual. The park reason must say what the session should do:
+  *no speech to transcribe — the caption is already stored; mark done to
+  keep it as the record, or rescue by hand.* For podcast and YouTube
+  this case is rare noise; here it is a standing disposition.
 
-- **No media-ceiling change is needed for video.** The 10 MB per-file
-  ceiling governs the media stage, which handles `Content.media` downloads.
-  Transcribe acquisition is a different path with its own rules, so the
-  10.87 MB reel **(verified 2026-08-26)** never meets that ceiling at all.
-  The ceiling still governs images, where it is not a constraint in
-  practice.
-- **An Instagram video URL is shaped exactly like a podcast enclosure** — a
-  direct MP4 over HTTP. The existing enclosure download is the model, and
-  probably the code.
-
-The caption rides on the `NeedsCapability` as its `body`, the way the
-podcast driver carries show notes, and is composed with the transcript when
-the transcript lands.
-
-**This is the one place the driver touches shared machinery.** Audio
-acquisition and transcript-body composition both dispatch on `entry.kind`,
-and the run layer raises loudly if a kind appears in one and not the other —
-"`_acquire_audio` and the body dispatch must cover the same kinds". Adding
-`Kind.INSTAGRAM` means adding it to both, deliberately and together.
-
-If that coupling is judged too invasive for a first cut, the smaller v1 is a
-video post returning `Content` with the caption and no media at all — the
-binary dropped, the canonical link preserved, transcription following in a
-second step. That is a real option, not a fallback: it keeps v1 entirely
-inside `drivers/`.
+**A mixed carousel: video wins, images are dropped and counted.** One
+fetch returns one outcome, and `NeedsCapability` carries no media — so a
+post whose probe walk finds any video item returns the transcribe park,
+records `images_dropped: n` in meta, and the session's judgment can
+rescue the stills (screenshot route, §6) when they matter. The probe
+typing makes this rule safe where the page metadata made it wrong: the
+all-image carousel that *claims* to be video **(§3, verified
+2026-08-27)** probes as images and keeps them all. Whether a genuinely
+mixed carousel occurs in the wild is still unobserved; the rule covers it
+either way.
 
 ## 6. Failure: private accounts are out of scope, and say so
 
-**A private-account post yields nothing and the signal is clean.** The page
-returns a bare `<title>Instagram</title>` with **zero `og:` tags** — no
-title, no description, no image — and the proxy redirects the request to
-`instagram.com` rather than serving data **(verified 2026-08-26,
-against a real private post)**. A public post by contrast returns author,
-full caption and a media pointer.
+**The public/private signal is the instagram.com page itself.** A private
+or unavailable post yields a bare `<title>Instagram</title>` shell with
+**zero `og:` tags** **(verified 2026-08-26, against a real private
+post)**; a public post yields the full `og:` set **(verified
+2026-08-27)**. The driver's park decision reads the body it landed on —
+no redirect inspection needed, which is why the transport seam stays as
+it is.
 
-Two reliable detections, then: the proxy redirecting to an `instagram.com`
-host, and the total absence of `og:` metadata.
+The `og:`-less shell parks `manual` with a reason that names the cause
+and the way through — *private or unavailable; screenshot it and share
+that if you want it*. Deliberately not a generic fetch failure and
+deliberately not `dead`: the content exists, the owner can see it, and
+only this transport cannot. Condemning it would be the terminal-mislabel
+class the pipeline design exists to prevent.
 
-The driver parks these `manual` with a reason that names the cause and the
-way through — *private or unavailable; screenshot it and share that if you
-want it*. This is deliberately not a generic fetch failure and deliberately
-not `dead`: the content exists, the owner can see it, and only this
-transport cannot. Condemning it would be the terminal-mislabel class the
-pipeline design exists to prevent.
+**An `og:`-less page that is not Instagram's shell is not "private".**
+A proxy or CDN error page has no `og:` tags either, and an unmaintained
+freebie serves those routinely. The private park therefore requires the
+shell fingerprint (`<title>Instagram</title>`, no `og:`); an `og:`-less
+body without it classifies `blocked` — the world misbehaving, retried on
+the normal lifecycle. Connection failures and 4xx/5xx were already
+`blocked`/classified through the standard path.
 
-**Why the gap is acceptable.** Shareable content comes from accounts that
-want to be found, and being private cuts directly against that. Businesses,
-influencers and creators publish publicly by design; private accounts are
-personal. The gap is real but sits almost entirely outside the content
-anyone would capture into a knowledge base.
+The media stage gets one guard of its own: a **zero-byte 2xx body is
+`blocked`, not a landed file**. The proxy answers out-of-range — and,
+plausibly, a transient bad day — with exactly that shape **(verified
+2026-08-26)**, and today's media stage would write the empty file and
+ledger it `done`. The guard is the media-stage sibling of the enclosure
+download's `_not_audio` check, and no real media file is zero bytes.
+
+**Why the private gap is acceptable.** Shareable content comes from
+accounts that want to be found, and being private cuts directly against
+that. Businesses, influencers and creators publish publicly by design;
+private accounts are personal. The gap is real but sits almost entirely
+outside the content anyone would capture into a knowledge base.
 
 **The manual fallback needs no machinery.** Screenshot the post and share
 the image: binary capture already stages it under `media/<id>/`, and the
@@ -224,11 +291,14 @@ cognitive OCR floor already reads it at ingest.
 
 ## 7. Config
 
-- `instagram_base_url` — the embed proxy host. Defaults to the surviving
-  best-metadata instance; overridable per instance, and the escape hatch
-  when a host dies or the owner self-hosts.
+- `instagram_base_url` — the embed proxy host, for media endpoints.
+  Defaults to `https://uuinstagram.com`; overridable per instance, and
+  the escape hatch when a host dies or the owner self-hosts.
 
-Nothing else. No credentials, no provider list.
+Nothing else. No credentials, no provider list. One wiring consequence:
+`build_drivers` takes no `Config` today, so it grows the parameter (or
+the one value) — with a constructor default on the driver so
+`default_drivers()` stays config-free for normalize's offline stamping.
 
 ## 8. What this design rejects, and why
 
@@ -258,6 +328,9 @@ otherwise be relitigated.
   private account requires being an approved follower of that specific
   account, granted per-target by a human, which no proxy farm can fake and
   no vendor can resell.
+- **Instagram's embed route** (`/p/<code>/embed/captioned/`) as a
+  metadata source — a JS shell with no caption in the served HTML
+  **(verified 2026-08-27)**.
 - **Share-time pixel capture.** Dead: the Instagram share sheet hands over a
   URL and nothing else — no image representation **(verified 2026-08-26 via
   a share-sheet inspector shortcut)**. A screenshot must be a separate
@@ -284,61 +357,61 @@ otherwise be relitigated.
 
 ## 9. Implementation plan
 
-Ordered; each step is independently reviewable.
+Ordered; each step is independently reviewable, and the PR stack follows
+it.
 
-1. **`Kind.INSTAGRAM`** in `pipeline/types.py`. New ledger and corpus
-   vocabulary, so `instance/skills/dex-run/references/schema.md` changes in
-   the same commit. No migration — a new kind moves no existing state.
-2. **`drivers/instagram.py`** — `matches`, `canonical`, `fetch`, against the
-   `SourceDriver` protocol. Both shortcode grammars in the URL regex; the
-   bot User-Agent as a named module constant with the reason inline (it
-   reads as a mistake otherwise); `sleep` set for politeness against a free
-   community service. HTTP through `drivers/transport.py`, the existing seam.
-3. **Meta-tag parse** — author, caption, media pointers; HTML entities
-   decoded (`&#39;` appeared in real captions). Media URLs absolutized
-   against the configured base and screened before emit: the media stage
-   fetches verbatim and refuses repaired guesses.
-4. **Carousel probing** — walk `/images/<code>/<n>` until a zero-byte body,
-   never until a 404, and bound it by the media stage's file cap.
-5. **Failure classification** — the `og:`-less page and the
-   redirect-to-instagram.com both park `manual` with the private/unavailable
-   reason. Nothing here may produce `Missing`; a private post is not gone.
-6. **Registry** — insert into `registry.build_drivers` ahead of `WebDriver`,
-   which stays last as the catch-all.
-7. **Config** — `instagram_base_url` on `Config`, plus its row in
-   `state-formats.md`.
-8. **Transcription wiring** — a video post returns
-   `NeedsCapability(need=Need.TRANSCRIBE)` carrying the caption as `body`.
-   Add `Kind.INSTAGRAM` to audio acquisition (modelled on the podcast
-   enclosure download — the video URL is a direct MP4) **and** to the
-   transcript-body dispatch, together: the run layer raises loudly when a
-   kind appears in one and not the other. This is the only step that leaves
-   `drivers/`, and the one most likely to need its own review. Deferrable —
-   see §5's smaller v1.
-9. **Tests** — canonicalization across all four path shapes and both
-   shortcode grammars; the bot-UA requirement; meta parsing including the
-   empty-caption post; zero-byte carousel termination; the private-post park.
-   Fixtures captured from the real responses recorded in this document.
-10. **A live check**, marked `ci_hostile` — the proxy is an unmaintained
-    third-party freebie that can rate-limit or vanish, and a daily failure
-    mail on someone else's uptime is how a real alarm becomes noise.
-11. **Housekeeping** — delete `backlog/instagram-driver.md` and its
-    `backlog/index.md` line (the graduation convention); add `instagram` to
-    the kind vocabulary in `schema.md` (the inline
-    `youtube | x | github | …` list); and extend the README's `dex-enrich
-    run` row, which enumerates what the drivers fetch.
+1. **The bot transport** — the second exported transport in
+   `drivers/transport.py` (same implementation, bot UA), with the reason
+   inline: it reads as a mistake otherwise. Protocol unchanged.
+2. **The media stage's zero-byte guard** (§6) — its own small PR:
+   engine-wide, not Instagram-specific, and testable alone.
+3. **`Kind.INSTAGRAM`** in `pipeline/types.py`, plus the kind vocabulary
+   line in `instance/skills/dex-run/references/schema.md`, same commit.
+   No migration — a new kind moves no existing state.
+4. **`drivers/instagram.py`** — `matches` (whole-host, §2), `canonical`,
+   `fetch` against `SourceDriver`. The instagram.com page fetch and its
+   `og:` parse (newline-spanning attribute values, HTML entities
+   decoded); the shell-fingerprint park split (§6); the long-token
+   resolve off `rel="canonical"`; non-post path shapes parked with their
+   evidence. HTTP through the transport seam, bot transport as the
+   injected default.
+5. **The probe walk** (§3) — indexes 1..5 against `/videos/<code>/<n>`
+   with `limit=0`, typed by content type, terminated by the zero-byte
+   200, paced 1s. Image indexes emit as proxy `/images/` URLs, screened
+   by the media stage's existing verbatim-URL checks.
+6. **Registry and config** — `instagram_base_url` on `Config` with its
+   row in `state-formats.md`; `build_drivers` wiring (§7); insert ahead
+   of `WebDriver`, which stays last.
+7. **Transcription wiring** — the video outcome as
+   `NeedsCapability(need=Need.TRANSCRIBE)`, caption as `body`, video URL
+   under the `enclosure` meta key (§5). `Kind.INSTAGRAM` into all
+   **three** run-layer sites together: `_acquire_audio` (modelled on the
+   podcast enclosure download), the transcript-body dispatch, and the
+   dead-enclosure→manual arm of `_apply_acquisition_failure`. The
+   no-speech park reason per §5. The one step that leaves `drivers/`,
+   and the one most likely to need its own review.
+8. **Tests** — canonicalization across all five path shapes and both
+   shortcode grammars; the bot-UA page fetches; the og parse including a
+   multi-line caption and the empty-caption case; the probe walk over
+   image, video, and truncated-carousel fixtures including the lying
+   `og:video` page; the shell-fingerprint split (private park vs proxy
+   garbage → blocked); the zero-byte media guard. Fixtures captured from
+   the real responses recorded in this document.
+9. **Two live checks**, both `ci_hostile` — instagram.com's bot-UA `og:`
+   service and the proxy's probe shapes are each somebody else's
+   behaviour toward an anonymous fetcher, exactly the class a datacenter
+   IP gets answered differently on, and a daily failure mail on someone
+   else's uptime is how a real alarm becomes noise.
+10. **README** — extend the `dex-enrich run` row, which enumerates what
+    the drivers fetch.
 
 ## 10. Open, deliberately
 
-- Whether a long share token ever accompanies a public post (§2). Cheap to
-  settle with a few more shares; decides whether canonicalization needs a
-  resolve step.
-- Which proxy host ships as the default, pending a caption-reliability
-  comparison across more posts than the two tested.
-- **A post carrying both video and images.** A driver returns one outcome,
-  and video means `NeedsCapability` while images mean `Content.media` — so a
-  mixed carousel cannot be both. Likely resolution: video wins and the
-  images are dropped, since a carousel mixing the two is rare and the
-  transcript is the substance. Unverified that Instagram even produces this
-  shape through the proxy's indexed media paths.
-- Whether transcription ships in v1 or a second step (§5).
+- Whether a share-token page on instagram.com carries the
+  `rel="canonical"` short code the resolve step reads (§2). Cheap to
+  settle with one real share of a restricted-then-public post; until
+  then a public long-token share that resolves nothing parks as §6.
+- Whether instagram.com's bot-UA `og:` service holds for a datacenter IP
+  and under repetition — the live check exists to answer it.
+- Whether a genuinely mixed video+image carousel occurs through the
+  probe walk (§5 covers it by rule either way).
