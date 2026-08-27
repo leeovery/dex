@@ -42,6 +42,8 @@ The convention:
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
 - [Pre-rewrite dead ledger entries need healing](dead-entry-healing.md) — per-instance content work during each post-merge sync review
 - [Sibling sessions feeding dex](sibling-session-capture.md) — an official mechanism for other projects' sessions to consult dex and suggest captures; the early global-CLAUDE.md paragraph was removed as hasty
+- [Extraction loses tail text after inline links in list items](tail-text-after-inline-links.md) — real content loss on one live docs page; the glyph-anchor repair does not cover it and the trigger is unisolated
+- [The mutation audit cannot see run.py's methods](mutation-audit-misses-run-methods.md) — mutmut instruments the module's functions but none of its classes' methods, so the drain audit claims less than it appears to
 
 Hard-earned platform facts several of these ideas lean on (shortcut
 mechanics, scheduled-task hosts, cowork limits) live in the repo root's
