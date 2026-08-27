@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-08-27
+
+✨ Added
+- New Instagram driver — share a post link and get its caption, author, date and media, read without needing an account; videos are transcribed, images kept beside the caption, and private posts park with a note to screenshot instead.
+- `instagram_base_url` config key to point at an alternate media proxy if the default host goes down.
+
+🔧 Changed
+- Media downloads that come back empty now retry instead of being recorded as done with a blank file.
+- Provider errors on Instagram parks (e.g. no speech detected) now say the caption is already stored, so it can be kept as the record instead of chased as a failure.
+- A dead media-proxy URL for an Instagram post now asks for a requeue or a different proxy host, rather than being treated as permanently gone.
+
 ## [0.1.4] - 2026-08-27
 
 🐛 Fixed
