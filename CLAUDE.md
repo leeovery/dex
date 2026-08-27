@@ -141,11 +141,12 @@ lookup, the six GitHub contents/matching-refs checks through an authenticated
 maintainer, which is
 GitHub's own default for a failed scheduled workflow and needs no robot in the
 issue tracker. Everything marked `ci_hostile` — fxtwitter, the two YouTube
-root-namespace checks, wayback, the two whisper HuggingFace fetches (the
-~75MB model, the ~2.4MB tokenizer) — runs in a
-`continue-on-error` job that never notifies, because those endpoints answer a
-runner differently from a laptop and a false alarm every morning trains you to
-ignore the real one. Read that job when a driver misbehaves in the field.
+root-namespace checks, wayback, instagram.com's bot-UA `og:` fetch and the
+three embed-proxy probes, the two whisper HuggingFace fetches (the ~75MB
+model, the ~2.4MB tokenizer) — runs in a `continue-on-error` job that never
+notifies, because those endpoints answer a runner differently from a laptop
+and a false alarm every morning trains you to ignore the real one. Read that
+job when a driver misbehaves in the field.
 
 `live.yml` pins `actions/checkout` to its major, which moves on its own.
 `astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
