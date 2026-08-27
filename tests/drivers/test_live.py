@@ -12,14 +12,25 @@ red run nobody reads; the rest are trusted to mean something.
 """
 
 import json
+import time
 
 import pytest
 
 from dex_engine.drivers.gh import Blob, blob_ref, fetch_blob, run_gh
 from dex_engine.drivers.github import GitHubDriver
+from dex_engine.drivers.instagram import (
+    DEFAULT_BASE_URL,
+    PROBE_SLEEP,
+    _canonical_code,
+    _Item,
+    _og_tags,
+    _parse_post,
+    _Post,
+    _typed_item,
+)
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.podcast import PodcastDriver
-from dex_engine.drivers.transport import urllib_transport
+from dex_engine.drivers.transport import HttpResponse, bot_transport, urllib_transport
 from dex_engine.drivers.web import WebDriver
 from dex_engine.drivers.x import XDriver
 from dex_engine.pipeline.types import Content, Format, Kind, Missing, Need, Redetected
@@ -150,3 +161,63 @@ class TestWaybackShape:
         assert response.ok
         payload = json.loads(response.text())
         assert "archived_snapshots" in payload
+
+
+# The world-record egg: public since 2019, the most-liked post on the platform,
+# and a single image — which makes its index 2 the out-of-range answer the probe
+# walk ends on. natgeo's reel is the video index; neither account goes private.
+EGG_CODE = "BsOGulcndj-"
+EGG_POST = f"https://www.instagram.com/p/{EGG_CODE}/"
+REEL_CODE = "DHVrPLrIyQ_"
+
+
+@pytest.mark.ci_hostile  # instagram.com serves an anonymous fetcher at its own
+# discretion, and a datacenter IP is who it is likeliest to answer with a login
+# wall where a laptop gets the og: set — a red run from a runner would be about
+# where the request came from, not about the page.
+class TestInstagramOgShape:
+    """The caption track rests on instagram.com answering a link-preview bot with og: metadata."""
+
+    def test_a_stable_public_post_still_serves_its_og_set(self):
+        response = bot_transport(EGG_POST)
+        assert response.ok
+        page = response.text()
+        assert {"og:title", "og:description"} <= _og_tags(page).keys()
+        post = _parse_post(page, requested=EGG_CODE)
+        assert isinstance(post, _Post), f"expected a parsed post, got {post!r}"
+        assert post.display_name  # og:title still spells `<name> on Instagram: "<caption>"`
+        assert post.caption
+        assert post.handle == "world_record_egg"
+        assert post.posted == "January 4, 2019"
+        assert _canonical_code(page) == EGG_CODE
+
+
+@pytest.mark.ci_hostile  # the media proxy is an unmaintained community freebie —
+# its upstream is archived and ddinstagram.com already died — so it rate-limits,
+# and one day it stops answering for good. Either is a fact about that host's
+# life expectancy, not about this repo.
+class TestInstagramProbeShapes:
+    """The probe walk rests on the proxy typing each media index and ending in a zero-byte 200."""
+
+    def probe(self, family: str, code: str, index: int) -> HttpResponse:
+        """One probe as the walk makes it: paced, and one byte of body — never the media."""
+        time.sleep(PROBE_SLEEP)
+        return bot_transport(f"{DEFAULT_BASE_URL}/{family}/{code}/{index}", limit=0)
+
+    def test_a_video_index_still_types_as_video(self):
+        response = self.probe("videos", REEL_CODE, 1)
+        assert response.ok
+        assert _typed_item(response.content_type) is _Item.VIDEO
+
+    def test_an_image_index_still_types_as_image(self):
+        # The /images/ spelling is what a fetched post carries as its media, so
+        # it has to serve the bytes long after the walk typed the post.
+        response = self.probe("images", EGG_CODE, 1)
+        assert response.ok
+        assert _typed_item(response.content_type) is _Item.IMAGE
+
+    def test_an_index_past_the_end_is_still_an_empty_200(self):
+        # The walk's only terminator: out of range is never a 404.
+        response = self.probe("images", EGG_CODE, 2)
+        assert response.ok
+        assert not response.body

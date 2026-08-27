@@ -201,6 +201,7 @@ different problem from the page having nothing on it.
 |---|---|
 | **YouTube** | captions where they exist, otherwise the audio is downloaded and transcribed |
 | **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole |
+| **Instagram** | a public post's caption, author and date, read credential-free from the link-preview metadata instagram.com serves, with the media pulled through an embed proxy: video is transcribed, images are kept beside the caption. A private post parks and says to screenshot it |
 | **GitHub** | repos and profiles: README, description, metadata |
 | **Papers** | arXiv and friends |
 | **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the real audio enclosure, then transcribes it. Show notes come from the feed, which is richer than the page |
@@ -247,7 +248,6 @@ Three things sit on top of that, and they are where the real work happens:
 
 - **Watchers**: folders, Dropboxes, RSS and social feeds as standing capture
   sources feeding the same inbox, which is the next thing to be designed.
-- **Instagram**: no clean API exists, and the approach is not settled.
 - **Hosted transcription**: any OpenAI-compatible provider already works, but a
   benchmarked recommended config is still to come.
 
@@ -268,7 +268,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 
 | command | does |
 |---|---|
-| `dex-enrich run` | drain the ledger work queue, fetching behind every corpus URL and file (captions, articles with Wayback fallback, GitHub, papers, X thread walk-up, podcast audio to transcript, document extraction) and report the session's cognitive work list |
+| `dex-enrich run` | drain the ledger work queue, fetching behind every corpus URL and file (captions, articles with Wayback fallback, GitHub, papers, X thread walk-up, podcast audio to transcript, Instagram posts with their media, document extraction) and report the session's cognitive work list |
 | `dex-enrich status` | ledger summary, waiting cohorts, interrupted-session backstop, capability report (`--item <id>` for one item's ledger view) |
 | `dex-enrich transcribe` | drain the waiting transcription cohort (whisper local floor or OpenAI-compatible API; `--limit`, `--model`) |
 | `dex-enrich fetch` | fetch extra URLs into an existing item, ledgered as children (the harvest verb) |
