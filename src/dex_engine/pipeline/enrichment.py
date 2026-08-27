@@ -37,6 +37,7 @@ __all__ = [
     "DESCRIPTION_HEADING",
     "TRANSCRIPT_HEADING",
     "description_section",
+    "instagram_body",
     "mask_fetched",
     "podcast_body",
     "pre_transcript",
@@ -238,8 +239,23 @@ def youtube_body(description: str, transcript: str) -> str:
 
 def podcast_body(show_notes: str, transcript: str) -> str:
     """Show notes (from the feed) followed by the transcript section."""
-    if show_notes:
-        return f"{show_notes}\n\n{TRANSCRIPT_HEADING}\n\n{transcript}"
+    return _notes_then_transcript(show_notes, transcript)
+
+
+def instagram_body(caption: str, transcript: str) -> str:
+    """The post's attributed caption followed by the transcript section."""
+    return _notes_then_transcript(caption, transcript)
+
+
+def _notes_then_transcript(notes: str, transcript: str) -> str:
+    """The park's own prose, then the transcript as its own labelled section.
+
+    Labelled even when there is no prose in front of it: a re-drain splits
+    the stored body on that heading, and a bare transcript would come back
+    as notes and be duplicated under itself.
+    """
+    if notes:
+        return f"{notes}\n\n{TRANSCRIPT_HEADING}\n\n{transcript}"
     return f"{TRANSCRIPT_HEADING}\n\n{transcript}"
 
 

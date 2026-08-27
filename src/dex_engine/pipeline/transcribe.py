@@ -38,6 +38,7 @@ __all__ = [
     "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
+    "acquire_instagram_audio",
     "acquire_podcast_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
@@ -144,12 +145,79 @@ def acquire_podcast_audio(
     Returns:
         The acquisition, or the classified failure.
     """
+    parked = _parked_enclosure(enrichment_path, "podcast")
+    if isinstance(parked, Classification):
+        return parked
+    prompt = _prompt(parked.fields.get("title"), parked.fields.get("show"), parked.prefix)
+    return _acquire_parked_audio(
+        entry, parked, cache_dir, transport, prompt=prompt, default_ext="mp3"
+    )
+
+
+def acquire_instagram_audio(
+    entry: LedgerEntry, enrichment_path: Path, cache_dir: Path, transport: Transport
+) -> Acquired | Classification:
+    """Acquire an instagram unit's video from the media proxy the park recorded.
+
+    The proxy URL and the caption come from the enrichment file the
+    instagram driver's park wrote; a cached download under the entry hash
+    is reused. The video is downloaded as it stands — the transcribers
+    decode a video container as readily as an audio one — and the caption
+    primes the prompt behind the author, who is the post's only name.
+
+    A 404 from the proxy classifies ``dead`` but is returned as ``manual``
+    by the caller's mapping: the URL that died is an unmaintained proxy's,
+    and it says nothing about the reel.
+
+    Args:
+        entry: The waiting ledger entry.
+        enrichment_path: ``enrichment/<item>/instagram-<hash6>.md``.
+        cache_dir: ``cache/audio/``.
+        transport: The HTTP seam for the proxy GET.
+
+    Returns:
+        The acquisition, or the classified failure.
+    """
+    parked = _parked_enclosure(enrichment_path, "instagram")
+    if isinstance(parked, Classification):
+        return parked
+    prompt = _prompt(parked.fields.get("author"), None, parked.prefix)
+    # The proxy's `/videos/<code>/<n>` carries no extension of its own; mp4
+    # is what it redirects to, and the decoders sniff the bytes anyway.
+    return _acquire_parked_audio(
+        entry, parked, cache_dir, transport, prompt=prompt, default_ext="mp4"
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Parked:
+    """What a transcribe park left on disk for its acquisition to read back."""
+
+    enclosure: str
+    fields: dict[str, str]
+    prefix: str  # the park's own body — the prose the transcript follows
+
+
+def _parked_enclosure(enrichment_path: Path, driver: str) -> _Parked | Classification:
+    """The pointer and prose a transcribe park wrote, or why they can't be read.
+
+    Both failures requeue rather than condemn: re-resolving a media URL is
+    the DRIVER's work, and neither a missing park file nor a park without a
+    pointer says anything about the source itself.
+
+    Args:
+        enrichment_path: The park file, ``<kind>-<hash6>.md``.
+        driver: The driver named in the requeue instruction.
+
+    Returns:
+        The park's pointer, fields and prose, or the classified failure.
+    """
     if not enrichment_path.exists():
         return Classification(
             status=Status.MANUAL,
             reason=(
                 "waiting transcribe entry has no enrichment record (no enclosure pointer) "
-                "— requeue the unit so the podcast driver re-resolves it"
+                f"— requeue the unit so the {driver} driver re-resolves it"
             ),
         )
     fields, body = read_enrichment(enrichment_path)
@@ -159,25 +227,38 @@ def acquire_podcast_audio(
             status=Status.MANUAL,
             reason=(
                 "enrichment record carries no enclosure URL — requeue the unit so the "
-                "podcast driver re-resolves it"
+                f"{driver} driver re-resolves it"
             ),
         )
-    notes = pre_transcript(fields, body)
-    meta: dict[str, str | int | None] = {
-        key: value for key, value in fields.items() if key not in ("url", "fetched")
-    }
-    prompt = _prompt(fields.get("title"), fields.get("show"), notes)
+    return _Parked(enclosure=enclosure, fields=fields, prefix=pre_transcript(fields, body))
+
+
+def _acquire_parked_audio(  # noqa: PLR0913 — the park, its two seams, and the two facts the kind decides
+    entry: LedgerEntry,
+    parked: _Parked,
+    cache_dir: Path,
+    transport: Transport,
+    *,
+    prompt: str,
+    default_ext: str,
+) -> Acquired | Classification:
+    """The park's audio — cached from an earlier attempt, or downloaded now."""
     audio = cached_audio(cache_dir, entry.hash)
     if audio is None:
-        outcome = _download_enclosure(enclosure, cache_dir, entry.hash, transport)
+        outcome = _download_enclosure(
+            parked.enclosure, cache_dir, entry.hash, transport, default_ext=default_ext
+        )
         if isinstance(outcome, Classification):
             return outcome
         audio = outcome
-    return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=notes)
+    meta: dict[str, str | int | None] = {
+        key: value for key, value in parked.fields.items() if key not in ("url", "fetched")
+    }
+    return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=parked.prefix)
 
 
 def _download_enclosure(
-    url: str, cache_dir: Path, stem: str, transport: Transport
+    url: str, cache_dir: Path, stem: str, transport: Transport, *, default_ext: str
 ) -> Path | Classification:
     outcome = fetch_classified(transport, url)
     if isinstance(outcome, FetchFailure):
@@ -190,7 +271,7 @@ def _download_enclosure(
         # would park the episode manual forever over the CDN's mistake.
         return Classification(status=Status.BLOCKED, reason=unusable)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{stem}.{ext_of(url, default='mp3')}"
+    path = cache_dir / f"{stem}.{ext_of(url, default=default_ext)}"
     # Atomic: a crash mid-write must never leave a truncated file under the
     # final cache name — cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
@@ -219,27 +300,27 @@ def _not_audio(response: HttpResponse) -> str | None:
     return None
 
 
-def _prompt(title: str | None, show: str | None, vocabulary: str) -> str:
+def _prompt(name: str | None, source: str | None, vocabulary: str) -> str:
     """Known-vocabulary priming, single-line, with the names LAST.
 
     Whisper reads a prompt from its END and discards the front of anything
-    that overflows its 223-token window, so the head — title, then
-    channel/show — is written at the END, behind the vocabulary. Two things
-    then have to go wrong before the names are lost rather than one: the
-    prompt must overflow the window AND the overflow must reach past the
-    show notes. The vocabulary is trimmed from its own tail (show notes
-    open with the description and close with sponsor links), the head from
-    its own tail, both against a token estimate.
+    that overflows its 223-token window, so the head — the item's name,
+    then where it came from — is written at the END, behind the
+    vocabulary. Two things then have to go wrong before the names are lost
+    rather than one: the prompt must overflow the window AND the overflow
+    must reach past the vocabulary. The vocabulary is trimmed from its own
+    tail (show notes open with the description and close with sponsor
+    links), the head from its own tail, both against a token estimate.
 
     Args:
-        title: The episode/video title.
-        show: The show or channel name.
-        vocabulary: Show notes or description — the trimmable part.
+        name: The episode/video title, or the author of a post that has none.
+        source: The show or channel, where the item has one.
+        vocabulary: Show notes, description or caption — the trimmable part.
 
     Returns:
         The priming text, an estimated :data:`PROMPT_MAX_TOKENS` at most.
     """
-    parts = (_flat(part) for part in (title, show) if part and part.strip())
+    parts = (_flat(part) for part in (name, source) if part and part.strip())
     head = keep_first_tokens(_SEPARATOR.join(parts), HEAD_MAX_TOKENS).strip()
     vocab = _flat(vocabulary)
     if not head:

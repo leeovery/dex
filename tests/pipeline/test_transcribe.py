@@ -10,6 +10,7 @@ import pytest
 
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.instagram import InstagramDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.web import WebDriver
@@ -56,6 +57,8 @@ from tests.drivers.conftest import (
     html_response,
     truncating_server,
 )
+from tests.drivers.test_instagram import BASE as PROXY_BASE
+from tests.drivers.test_instagram import REEL_CODE, og_page, post_url, probe_url, walk
 from tests.pipeline.test_run import ITEM, TODAY, entry_for, make_ctx, write_item
 
 VIDEO_URL = "https://youtube.com/watch?v=abc123"
@@ -766,7 +769,9 @@ class TestPodcastDrain:
         run_mod.run_transcribe(ctx)
         entry = ledger.load(instance.ledger_path)[self.entry(instance).hash]
         assert entry.status is Status.MANUAL
-        assert "could not decode" in (entry.reason or "")
+        # The provider's verdict, whole and alone — the caption disposition
+        # an instagram unit carries is instagram's, never a podcast's.
+        assert entry.reason == "could not decode the audio"
 
     def test_gone_enclosure_is_manual_with_the_reresolve_route(self, instance):
         # A 404ing enclosure is often an expired signed URL — the episode is
@@ -789,6 +794,168 @@ class TestPodcastDrain:
         entry = ledger.load(instance.ledger_path)[work_hash("https://feeds.pods.test/x.rss")]
         assert entry.status is Status.MANUAL
         assert "no enrichment record" in (entry.reason or "")
+
+
+class TestInstagramDrain:
+    """A reel parks with its caption and the proxy pointer, then transcribes."""
+
+    POST_URL = post_url(REEL_CODE)
+    ENCLOSURE = probe_url(REEL_CODE, 1)
+    CAPTION = "Ledger mechanics with anydoc and CTranslate2"
+    PARKED_BODY = f"@ada — March 18, 2025\n\n{CAPTION}"
+
+    def park_via_driver(self, instance) -> run_mod.RunContext:
+        """Run the real instagram driver so the park writes its proxy pointer."""
+        write_item(instance, urls=[self.POST_URL])
+        transport = FakeTransport(
+            {
+                self.POST_URL: og_page(caption=self.CAPTION, code=REEL_CODE),
+                **walk(REEL_CODE, "video/mp4"),
+            }
+        )
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=[
+                InstagramDriver(
+                    base_url=PROXY_BASE, transport=transport, pace=lambda _seconds: None
+                )
+            ],
+            transport=transport,
+        )
+        run_mod.run(ctx)
+        return ctx
+
+    def video(self) -> HttpResponse:
+        """What the proxy's 302 lands on: MP4 bytes, straight from the CDN."""
+        return HttpResponse(
+            status=200, content_type="video/mp4", body=b"\x00\x00\x00\x18ftypmp42VIDEO-BYTES"
+        )
+
+    def record(self, instance, entry: LedgerEntry) -> Path:
+        return instance.enrichment_dir / ITEM / f"instagram-{entry.hash[:6]}.md"
+
+    def drain(self, instance, *, transcriber=None, transport=None) -> run_mod.RunContext:
+        """One transcribe drain against a canned proxy download."""
+        if transport is None:
+            transport = FakeTransport({self.ENCLOSURE: self.video()})
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        run_mod.run_transcribe(ctx)
+        return ctx
+
+    def test_drain_gets_the_video_appends_the_transcript_deletes_the_audio(self, instance):
+        ctx = self.park_via_driver(instance)
+        parked = entry_for(ctx, self.POST_URL)
+        assert parked.status is Status.WAITING
+        assert parked.needs is Need.TRANSCRIBE
+        transcriber = FakeTranscriber("whisper-local", text="Reel words.", model="medium")
+        drained = entry_for(self.drain(instance, transcriber=transcriber), self.POST_URL)
+
+        assert drained.status is Status.DONE
+        fields, body = read_enrichment(instance.root / str(drained.path))
+        assert fields["via"] == "whisper-local"
+        assert fields["model"] == "medium"
+        assert fields["enclosure"] == self.ENCLOSURE  # the re-fetch pointer survives
+        assert fields["author"] == "Ada Lovelace (@ada)"
+        assert body == f"{self.PARKED_BODY}\n\n## Transcript\n\nReel words."
+        # Priming: the author is the anchor and goes LAST, the caption is
+        # the vocabulary in front of it.
+        prompt = transcriber.calls[0][1]
+        assert prompt.endswith(" — Ada Lovelace (@ada)")
+        assert self.CAPTION in prompt
+        # The proxy URL carries no extension of its own.
+        assert transcriber.calls[0][0].name == f"{drained.hash}.mp4"
+        assert audio_files(instance) == []  # deleted on success
+
+    def test_cached_video_is_reused_never_downloaded_twice(self, instance):
+        entry = entry_for(self.park_via_driver(instance), self.POST_URL)
+        audio_dir = instance.cache_dir / "audio"
+        audio_dir.mkdir(parents=True)
+        (audio_dir / f"{entry.hash}.mp4").write_bytes(b"CACHED-VIDEO")
+        transcriber = FakeTranscriber("whisper-local", text="Reel words.", model="medium")
+        # An empty transport: re-downloading would be a loud unknown fetch.
+        transport = FakeTransport({})
+        ctx = self.drain(instance, transcriber=transcriber, transport=transport)
+        assert entry_for(ctx, self.POST_URL).status is Status.DONE
+        assert ("GET", self.ENCLOSURE) not in transport.calls
+        # The pre-seeded file itself reached the provider, and left with it.
+        assert transcriber.calls[0][0] == audio_dir / f"{entry.hash}.mp4"
+        assert audio_files(instance) == []
+
+    def test_missing_enrichment_record_is_manual(self, instance):
+        write_item(instance, urls=[self.POST_URL])
+        seed_waiting(instance, self.POST_URL, kind=Kind.INSTAGRAM)
+        entry = entry_for(self.drain(instance), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert "no enrichment record" in (entry.reason or "")
+        assert "instagram driver re-resolves" in (entry.reason or "")
+
+    def test_a_record_without_the_pointer_is_manual(self, instance):
+        ctx = self.park_via_driver(instance)
+        record = self.record(instance, entry_for(ctx, self.POST_URL))
+        record.write_text(
+            "\n".join(
+                line
+                for line in record.read_text(encoding="utf-8").split("\n")
+                if not line.startswith("enclosure: ")
+            ),
+            encoding="utf-8",
+        )
+        entry = entry_for(self.drain(instance), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert "no enclosure URL" in (entry.reason or "")
+        assert "instagram driver re-resolves" in (entry.reason or "")
+
+    def test_a_dead_proxy_url_is_manual_never_dead(self, instance):
+        # The URL that 404s is the proxy's, and the proxy is unmaintained —
+        # dying is its expected end and says nothing about the reel.
+        self.park_via_driver(instance)
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: gone}))
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert "media proxy stopped serving the video" in (entry.reason or "")
+        assert "instagram_base_url" in (entry.reason or "")
+
+    def test_a_proxy_error_page_is_blocked_not_manual(self, instance):
+        # An unmaintained freebie serves error pages under a 200; nothing
+        # about the reel was learned, so it is retried, not condemned.
+        self.park_via_driver(instance)
+        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+        ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: page}))
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.BLOCKED
+        assert entry.attempts == 1
+        assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
+        assert "HTML page" in (entry.reason or "")
+        assert audio_files(instance) == []  # the page never became cached "audio"
+
+    def test_an_empty_proxy_answer_is_blocked(self, instance):
+        self.park_via_driver(instance)
+        empty = HttpResponse(status=200, content_type="video/mp4", body=b"")
+        ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: empty}))
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.BLOCKED
+        assert "empty response body" in (entry.reason or "")
+        assert audio_files(instance) == []
+
+    def test_no_speech_parks_manual_saying_the_caption_is_the_record(self, instance):
+        # Silent and music-only reels are routine here, not an edge — the
+        # park reason has to carry the disposition, because the caption on
+        # disk is already a usable record of the post.
+        ctx = self.park_via_driver(instance)
+        silent = FakeTranscriber(
+            raise_=ProviderInputError("whisper-local heard no speech in the audio")
+        )
+        entry = entry_for(self.drain(instance, transcriber=silent), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith("whisper-local heard no speech in the audio")
+        assert "the caption is already stored" in (entry.reason or "")
+        assert "mark done to keep it as the record" in (entry.reason or "")
+        # The record the reason offers is really there.
+        assert self.CAPTION in self.record(instance, entry_for(ctx, self.POST_URL)).read_text(
+            encoding="utf-8"
+        )
 
 
 class TestCorrectedUnitLandsItsTranscript:
@@ -1079,13 +1246,13 @@ class TestEnclosureDownloadAtomicity:
         monkeypatch.setattr("dex_engine.atomic.os.fdopen", failing)
         transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
         with pytest.raises(OSError, match="No space left"):
-            _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+            _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport, default_ext="mp3")
         assert cached_audio(tmp_path, "abc") is None
         assert list(tmp_path.iterdir()) == []
 
     def test_completed_download_lands_under_the_final_name(self, tmp_path):
         transport = FakeTransport({self.ENCLOSURE: html_response("AUDIO-BYTES")})
-        path = _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        path = _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport, default_ext="mp3")
         assert isinstance(path, Path)
         assert path == tmp_path / "abc.mp3"
         assert b"AUDIO-BYTES" in path.read_bytes()
@@ -1099,7 +1266,7 @@ class TestEnclosureBodyGuards:
 
     def download(self, tmp_path, response) -> object:
         transport = FakeTransport({self.ENCLOSURE: response})
-        return _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport)
+        return _download_enclosure(self.ENCLOSURE, tmp_path, "abc", transport, default_ext="mp3")
 
     def audio(self, body: bytes, **kwargs) -> HttpResponse:
         return HttpResponse(status=200, content_type="audio/mpeg", body=body, **kwargs)
