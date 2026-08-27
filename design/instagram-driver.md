@@ -405,6 +405,39 @@ it.
 10. **README** — extend the `dex-enrich run` row, which enumerates what
     the drivers fetch.
 
+### The PR stack
+
+The ten steps land as five PRs, each green on the four gates alone:
+
+1. **Bot transport** (step 1). `transport.py` gains the second exported
+   transport; protocol untouched; shim/driver tests unaffected. No
+   dependency on anything.
+2. **Zero-byte media guard** (step 2). Engine-wide, not
+   Instagram-specific: a 2xx empty body at the media stage classifies
+   `blocked` instead of landing as a `done` empty file. No dependency on
+   anything; PRs 1 and 2 are unordered.
+3. **The driver** (steps 3–6, on PR 1). `Kind.INSTAGRAM` with its
+   `schema.md` vocabulary line; `drivers/instagram.py` (page fetch and
+   `og:` parse, park splits, long-token resolve, probe walk);
+   `instagram_base_url` on `Config` with its `state-formats.md` row;
+   `build_drivers` wiring and registry insertion ahead of `WebDriver`.
+   Fixtures come from the responses recorded in this document. Mid-stack
+   state: a video post's `NeedsCapability` park drains into
+   `_acquire_audio`'s default arm and parks `manual` — honest,
+   non-terminal, healed by requeue once PR 4 lands.
+4. **Transcription wiring** (step 7, on PR 3). The three run-layer
+   dispatch sites together, the no-speech park reason, and the
+   `instagram_body` composition. The only PR that leaves `drivers/`;
+   before its release, `./mutate` audits the touched run/transcribe
+   modules per the release rule for pipeline logic.
+5. **Live checks + README** (steps 9–10, on PR 4). Both checks
+   `ci_hostile`.
+
+Instance rollout after the stack releases: `schema.md` and
+`state-formats.md` ship inside the synced skills, so every maintained
+instance needs `bin/dex sync` + commit, per the standing rule for
+anything under `instance/`.
+
 ## 10. Open, deliberately
 
 - Whether a share-token page on instagram.com carries the
