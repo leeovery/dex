@@ -169,16 +169,19 @@ every instance at its next sync and the only rollback is hand-editing pins.
 left to mint the bump lands a pyproject that disagrees with the lock, which is
 how the v0.1.1 tag failed every `uv sync --locked`), then builds the wheel at
 that same version. The live suite stays out, and so does
-mutation testing — hours, not seconds — but the latter is still part of
-releasing: before tagging a release that touched pipeline logic, audit the
-modules you changed with `./mutate` (below) and read the survivors.
+mutation testing — hours, not seconds. The mutation audit belongs to the
+FEATURE, not the release: releasing is the owner's act, so an audit
+deferred to "before the tag" is an audit nobody runs. Finishing any work
+that touched pipeline logic includes auditing the modules it changed with
+`./mutate` (below) and reading the survivors — a feature is not complete,
+and not reported complete, until that has happened.
 
 **Mutation testing** (`mutmut`, in the `mutation` dependency group; `./mutate`
 at the repo root is its entry point). Not an automatic gate, not in any
 workflow: a whole-repo run against 1800 tests takes hours and buries the
 answer. It is an
-audit you point at ONE module you suspect, and the manual step before a
-release that touched pipeline logic —
+audit you point at ONE module you suspect, and the closing step of any
+feature that touched pipeline logic —
 
 ```
 ./mutate run "dex_engine.pipeline.classify.*"
