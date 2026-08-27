@@ -442,6 +442,7 @@ class TestConfig:
         assert config.media_fetch is MediaFetch.LEAD
         assert config.transcribe_model == "medium"
         assert config.transcribe_api_model is None
+        assert config.instagram_base_url is None
         assert config.report_issues is True
         assert config.providers == {}
         assert config.internal_domains == []
@@ -455,6 +456,7 @@ class TestConfig:
                     "media_fetch": "none",
                     "transcribe_model": "small",
                     "transcribe_api_model": "whisper-large-v3",
+                    "instagram_base_url": "https://mirror.test",
                     "report_issues": False,
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
                     "internal_domains": ["example.internal"],
@@ -466,6 +468,7 @@ class TestConfig:
         assert config.media_fetch is MediaFetch.NONE
         assert config.transcribe_model == "small"
         assert config.transcribe_api_model == "whisper-large-v3"
+        assert config.instagram_base_url == "https://mirror.test"
         assert config.report_issues is False
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
         assert config.internal_domains == ["example.internal"]

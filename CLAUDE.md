@@ -23,8 +23,9 @@ the engine stays unaware of which ones exist.
     digest write point), `issues.py` (the issue filer), `observed.py`
     (`dex issue` — the observation-shaped producer and its leak
     rejectors).
-  - `drivers/` — one per source shape: youtube, x, github, paper, podcast,
-    web (catch-all, always last), file; `transport.py` is the HTTP seam.
+  - `drivers/` — one per source shape: youtube, x, instagram, github,
+    paper, podcast, web (catch-all, always last), file; `transport.py` is
+    the HTTP seam.
   - `capabilities/` — transcribe (whisper-local floor, whisper-api),
     extract (anydoc, csv-builtin, cognitive floor), ocr (cognitive floor).
   - `render/` — `kernel.py` (markdown composition primitives),

@@ -205,6 +205,7 @@ this file — they propose changes in the run report.
 | `media_fetch` | `none` \| `lead` — media-stage URL downloads. `none` withholds the fetch only: media units are still ledgered and rest until the config changes |
 | `transcribe_model` | whisper-local size (default `medium`) |
 | `transcribe_base_url` / `transcribe_api_key` / `transcribe_api_model` | whisper-api (OpenAI-compatible) endpoint + model id; the key belongs in `.env`, not here |
+| `instagram_base_url` | the Instagram embed proxy serving the media endpoints (default `https://uuinstagram.com`); the escape hatch when that host dies or you self-host a fork |
 | `report_issues` | gate on filing engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`). Gates the filing only: the `state/issue-reports.jsonl` record is written either way, `filed` saying which |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
 | `internal_domains` | domains treated as internal/noise at normalize |

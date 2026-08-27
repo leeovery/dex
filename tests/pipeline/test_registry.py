@@ -1,8 +1,10 @@
 """Tests for pipeline/registry.py: ordering semantics and kind resolution."""
 
+from dex_engine.capabilities import Capabilities
+from dex_engine.drivers.instagram import DEFAULT_BASE_URL, InstagramDriver
 from dex_engine.pipeline import registry
-from dex_engine.pipeline.registry import default_drivers, driver_for
-from dex_engine.pipeline.types import Kind
+from dex_engine.pipeline.registry import build_drivers, default_drivers, driver_for
+from dex_engine.pipeline.types import Config, Kind
 
 DRIVERS = default_drivers()
 
@@ -39,12 +41,14 @@ class TestOrdering:
         matching = [driver.kind for driver in DRIVERS if driver.matches(probe)]
         assert matching == [Kind.WEB]
 
-    def test_the_registry_ships_seven_drivers_in_design_order(self):
+    def test_the_registry_ships_eight_drivers_in_design_order(self):
         # Podcast before web (Apple/Spotify/RSS-ish would otherwise fall to
-        # the catch-all); file before web (file: keys likewise).
+        # the catch-all); file before web (file: keys likewise); instagram
+        # before web too, and it claims its whole host.
         assert [driver.kind for driver in DRIVERS] == [
             Kind.YOUTUBE,
             Kind.X,
+            Kind.INSTAGRAM,
             Kind.GITHUB,
             Kind.PAPER,
             Kind.PODCAST,
@@ -69,3 +73,21 @@ class TestDriverFor:
 
     def test_a_partial_registry_resolves_to_none_never_crashes(self):
         assert driver_for(Kind.PODCAST, DRIVERS[:2]) is None
+
+
+class TestConfiguredEndpoints:
+    def test_the_instagram_proxy_comes_from_config_when_set(self):
+        drivers = build_drivers(
+            capabilities=Capabilities.build(Config()),
+            config=Config(instagram_base_url="https://mirror.test"),
+        )
+        instagram = driver_for(Kind.INSTAGRAM, drivers)
+        assert isinstance(instagram, InstagramDriver)
+        assert instagram.base_url == "https://mirror.test"
+
+    def test_omitting_config_leaves_every_driver_on_its_own_default(self):
+        # default_drivers() stays config-free — normalize stamps kinds
+        # offline and must not need an instance to do it.
+        instagram = driver_for(Kind.INSTAGRAM, default_drivers())
+        assert isinstance(instagram, InstagramDriver)
+        assert instagram.base_url == DEFAULT_BASE_URL
