@@ -113,6 +113,16 @@ class TestWrite:
         digest(instance)
         assert f"\nmedia:\n  - enrichment/{ITEM}/media-0.png\n---\n" in digest_text(instance)
 
+    def test_an_interrupted_downloads_temp_is_not_media(self, instance):
+        # `media-0.png.<random>.tmp` is what a process killed between the
+        # atomic write's mkstemp and its replace leaves behind: half a file,
+        # embeddable by nothing, and a junk path in every page that read the
+        # listing.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png", "media-0.png.a1b2c3d4.tmp")
+        digest(instance)
+        assert f"\nmedia:\n  - enrichment/{ITEM}/media-0.png\n---\n" in digest_text(instance)
+
     def test_extraction_assets_are_media_and_sort_by_name(self, instance):
         write_item(instance)
         write_enrichment(instance, "media-1.jpg", "a1b2c3-asset-0.png", "media-0.png")
@@ -376,3 +386,15 @@ class TestLintAgrees:
         outcome = lint(instance)
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
         assert outcome.exit_code == 0
+
+    def test_the_verbs_media_listing_never_reads_as_drift(self, instance):
+        # The writer and the health check share one derivation, so a digest
+        # the verb has just written can never show on the drift row.
+        write_taxonomy(instance)
+        write_index(instance, "")
+        write_item(instance, media=["media/55ad7b/photo.jpg"])
+        write_enrichment(instance, "media-1.jpg", "a1b2c3-asset-0.png", "media-0.png")
+        digest(instance)
+        assert "re-emit these digests (`media:` is not the media on disk) — none" in (
+            lint(instance).report
+        )

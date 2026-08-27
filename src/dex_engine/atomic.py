@@ -13,7 +13,13 @@ import os
 import tempfile
 from pathlib import Path
 
-__all__ = ["write_bytes", "write_text"]
+__all__ = ["TEMP_SUFFIX", "write_bytes", "write_text"]
+
+# What a half-finished write is called: ``<target name>.<random>.tmp``, in
+# the target's own directory. The finally-clause below clears it, but a
+# process killed mid-write leaves one standing — so anything that scans a
+# directory for real files has to know the shape, and reads it from here.
+TEMP_SUFFIX = ".tmp"
 
 
 def write_text(path: Path, text: str) -> None:
@@ -23,7 +29,7 @@ def write_text(path: Path, text: str) -> None:
 
 def write_bytes(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` atomically."""
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=TEMP_SUFFIX)
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as f:

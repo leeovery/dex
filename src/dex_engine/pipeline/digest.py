@@ -39,7 +39,7 @@ from dex_engine import atomic, corpus
 from .run import RunContext, is_media_file, record_pass
 from .types import Instance
 
-__all__ = ["SIGNALS", "DigestPayloadError", "item_digest"]
+__all__ = ["SIGNALS", "DigestPayloadError", "item_digest", "item_media"]
 
 SIGNALS = ("high", "medium", "low")
 
@@ -116,7 +116,7 @@ def item_digest(payload_path: Path, *, ctx: RunContext) -> str:
             signal=signal,
             topics=topics,
             entities=entities,
-            media=_media(instance, item),
+            media=item_media(instance, item),
             facts=facts,
         ),
     )
@@ -149,12 +149,16 @@ def _corpus_item(payload_path: Path, instance: Instance, item_id: str) -> corpus
     return item
 
 
-def _media(instance: Instance, item: corpus.CorpusItem) -> list[str]:
+def item_media(instance: Instance, item: corpus.CorpusItem) -> list[str]:
     """Every media file the item carries, root-relative, stated paths first.
 
     The corpus item's own `media:` is only half of it: the media stage
     downloads into ``enrichment/<id>/`` and never writes the frontmatter
     back, so an item whose media arrived that way states none at all.
+
+    THE derivation, shared with the health check's drift advisory: what a
+    standing digest states is compared against what this returns, so a
+    second reading of the rule would report drift that is only disagreement.
     """
     item_dir = instance.enrichment_dir / item.id
     if not item_dir.is_dir():

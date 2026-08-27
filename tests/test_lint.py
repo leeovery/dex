@@ -44,17 +44,21 @@ def write_corpus_stub(instance: Instance, item_id: str = ITEM) -> None:
     path.write_text("---\nstub\n---\n")  # lint only reads stems
 
 
-def write_corpus_item(instance: Instance, item_id: str, *, urls: list[str]) -> None:
+def write_corpus_item(
+    instance: Instance, item_id: str, *, urls: list[str], media: list[str] | None = None
+) -> None:
     """A parseable item — the URL-claim check reads frontmatter, not stems."""
     path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     listing = "".join(f"  - {url}\n" for url in urls)
+    stated = "".join(f"  - {entry}\n" for entry in media or [])
     path.write_text(
         "---\n"
         f"id: {item_id}\n"
         "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-08-19\n"
         f"urls:\n{listing}"
-        "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n"
+        + (f"media:\n{stated}" if stated else "")
+        + "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n"
     )
 
 
@@ -1525,16 +1529,20 @@ def write_digest(instance: Instance, item: str, text: str) -> None:
     (instance.digests_dir / f"{item}.md").write_text(text)
 
 
-def digest_text(
+def digest_text(  # noqa: PLR0913 — one keyword per digest field the tests vary
     *,
     item: str = ITEM,
     signal: str = "high",
     topics: str = "[brewing]",
     bullets: int = 1,
     omit: str = "",
+    media: str = "",
 ) -> str:
+    """A digest's text; ``media`` goes in verbatim, so both list forms are writable."""
     fields = {"id": item, "date": "2026-08-19", "signal": signal, "topics": topics}
-    fm = ["---", *(f"{key}: {value}" for key, value in fields.items() if key != omit), "---"]
+    fm = ["---", *(f"{key}: {value}" for key, value in fields.items() if key != omit)]
+    fm += [media] if media else []
+    fm.append("---")
     body = "\n".join(f"- fact number {i} with concrete specifics." for i in range(bullets))
     return "\n".join(fm) + "\n" + body + "\n"
 
@@ -1672,6 +1680,23 @@ class TestDigestShape:
         assert "signal must be one of" in outcome.report
         assert "states no facts" not in outcome.report
 
+    def test_one_bad_digest_never_ends_the_scan(self, instance):
+        # Every digest is asked, and the faulty ones are asked first here by
+        # id order: a scan that stopped at the first would undercount the
+        # section's scale and hide every finding behind it.
+        self._bare_wiki(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        unreadable = "2026-08-19-aaa-aaaaaa"
+        (instance.digests_dir / f"{unreadable}.md").write_bytes(b"---\n\xff\xfe\n---\n")
+        fenceless = "2026-08-19-bbb-bbbbbb"
+        write_digest(instance, fenceless, "- a bare bullet list, no frontmatter\n")
+        write_digest(instance, ITEM, digest_text())
+
+        outcome = lint(instance)
+        assert "### Digests — 3 digests" in outcome.report
+        assert f"**{unreadable}** — unreadable (UnicodeDecodeError)" in outcome.report
+        assert f"**{fenceless}** — no complete frontmatter fence" in outcome.report
+
     def test_no_digests_directory_is_clean(self, instance):
         self._bare_wiki(instance)
         outcome = lint(instance)
@@ -1690,6 +1715,118 @@ class TestDigestShape:
         outcome = lint(instance)
         assert "### Digests — 2 digests" in outcome.report
         assert "MALFORMED DIGESTS (the wiki layer reads these) — none" in outcome.report
+
+
+DRIFT_ROW = "re-emit these digests (`media:` is not the media on disk)"
+ENRICHED = f"enrichment/{ITEM}"
+
+
+class TestDigestMediaDrift:
+    """A standing digest's `media:` against the media the item carries now."""
+
+    def _item(
+        self, instance, *, stated: tuple[str, ...] = (), on_disk: tuple[str, ...] = ()
+    ) -> None:
+        write_taxonomy(instance)
+        write_index(instance, "")
+        write_corpus_item(instance, ITEM, urls=["https://example.test/a"], media=list(stated))
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        for name in on_disk:
+            (item_dir / name).write_bytes(b"bytes")
+
+    def _digest(self, instance, *media: str, flow: bool = False) -> None:
+        """The standing digest, stating ``media`` in whichever list form."""
+        if not media:
+            listing = ""
+        elif flow:
+            listing = f"media: [{', '.join(media)}]"
+        else:
+            listing = "media:\n" + "\n".join(f"  - {path}" for path in media)
+        write_digest(instance, ITEM, digest_text(media=listing))
+
+    def test_a_digest_missing_a_file_on_disk_is_flagged(self, instance):
+        # The engine <=0.1.4 shape: the download landed in the enrichment
+        # directory and never reached the item's frontmatter, so a digest
+        # written from the frontmatter alone states no media at all — and
+        # the page it feeds has no pointer to embed.
+        self._item(instance, on_disk=("media-0.png",))
+        self._digest(instance)
+        outcome = lint(instance)
+        assert f"{DRIFT_ROW} — **1**" in outcome.report
+        assert f"**{ITEM}**" in outcome.report
+
+    def test_the_drift_row_never_fails_the_check(self, instance):
+        # The repair needs a session, so failing here would stop every
+        # scheduled run on drift no machine can clear.
+        self._item(instance, on_disk=("media-0.png",))
+        self._digest(instance)
+        assert lint(instance).exit_code == 0
+
+    def test_a_digest_that_matches_the_derivation_is_not_flagged(self, instance):
+        self._item(instance, stated=("media/55ad7b/photo.jpg",), on_disk=("media-0.png",))
+        self._digest(instance, "media/55ad7b/photo.jpg", f"{ENRICHED}/media-0.png")
+        outcome = lint(instance)
+        assert f"{DRIFT_ROW} — none" in outcome.report
+        assert outcome.exit_code == 0
+
+    def test_the_legacy_flow_form_in_another_order_is_not_drift(self, instance):
+        # Digests that predate the verb wrote the flow form, in whatever
+        # order the session typed. Same set, same digest — comparing text
+        # would route a healthy instance to a repair it does not need.
+        self._item(instance, on_disk=("media-0.png", "media-1.jpg"))
+        self._digest(instance, f"{ENRICHED}/media-1.jpg", f"{ENRICHED}/media-0.png", flow=True)
+        assert f"{DRIFT_ROW} — none" in lint(instance).report
+
+    def test_a_digest_naming_a_file_that_is_gone_is_flagged(self, instance):
+        # Drift in the other direction: the listing outlived the file, and
+        # the page embeds a path that resolves to nothing.
+        self._item(instance, on_disk=("media-0.png",))
+        self._digest(instance, f"{ENRICHED}/media-0.png", f"{ENRICHED}/media-1.jpg")
+        assert f"{DRIFT_ROW} — **1**" in lint(instance).report
+
+    def test_an_orphaned_download_temp_is_not_drift(self, instance):
+        # `media-0.png.<random>.tmp` is half a file, so it is no part of the
+        # derivation — reading it as one would flag every conforming digest
+        # of an item whose download was interrupted.
+        self._item(instance, on_disk=("media-0.png", "media-0.png.a1b2c3d4.tmp"))
+        self._digest(instance, f"{ENRICHED}/media-0.png")
+        assert f"{DRIFT_ROW} — none" in lint(instance).report
+
+    def test_an_item_with_no_media_anywhere_is_not_flagged(self, instance):
+        self._item(instance)
+        self._digest(instance)
+        assert f"{DRIFT_ROW} — none" in lint(instance).report
+
+    def test_a_digest_whose_corpus_item_does_not_parse_is_not_flagged(self, instance):
+        # Nothing to derive from, so nothing to compare: the missing or
+        # unreadable item is the ghost and coverage rows' business.
+        write_taxonomy(instance)
+        write_index(instance, "")
+        write_corpus_stub(instance)
+        self._digest(instance, f"{ENRICHED}/media-0.png")
+        outcome = lint(instance)
+        assert f"{DRIFT_ROW} — none" in outcome.report
+        assert outcome.exit_code == 0
+
+    def test_a_malformed_digest_is_not_also_a_drift_row(self, instance):
+        # One file, one repair — and it is the rewrite the shape failure
+        # already names.
+        self._item(instance, on_disk=("media-0.png",))
+        write_digest(instance, ITEM, digest_text(signal="urgent"))
+        outcome = lint(instance)
+        assert "signal must be one of" in outcome.report
+        assert f"{DRIFT_ROW} — none" in outcome.report
+
+    def test_a_malformed_digest_earlier_in_the_scan_never_hides_drift(self, instance):
+        # The shape findings and this one come off one walk of the
+        # directory, and the bad file sorts first.
+        self._item(instance, on_disk=("media-0.png",))
+        write_digest(instance, "2026-08-19-aaa-aaaaaa", "- no frontmatter\n")
+        self._digest(instance)
+        outcome = lint(instance)
+        assert "no complete frontmatter fence" in outcome.report
+        assert f"{DRIFT_ROW} — **1**" in outcome.report
 
 
 class TestCli:

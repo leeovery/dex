@@ -50,7 +50,7 @@ media:                            # omitted when the item has no media
 - one standalone fact bullet per fact the source actually yields.
 ```
 
-`bin/dex lint` checks the same shape, and it checks two different things.
+`bin/dex lint` checks the same shape, and it checks three different things.
 The frontmatter is a **hard failure**: a digest with no complete fence,
 missing `id`/`date`/`signal`/`topics`, a `signal` outside high|medium|low,
 empty `topics`, or an `id` that disagrees with its filename exits 1,
@@ -58,11 +58,17 @@ exactly like a malformed ledger line — the wiki layer reads these files,
 and a digest that states no facts at all fails with them — an empty body is
 the one thing the file exists not to be. How many facts beyond that is
 **never checked**: the count measures the source, not the digest, and no
-honest digest makes three facts out of a two-line tweet.
+honest digest makes three facts out of a two-line tweet. `media:` is the
+third, and it is an **advisory** — lint re-derives the listing and flags a
+digest whose stated paths are not the same SET, drift in either direction
+(order and list form are not drift; a path for a file since deleted is),
+but never exits 1: re-emitting the digest is a session's act, and failing
+the check on it would stop every scheduled run.
 
-A digest that went through the verb cannot fail any of that — the check is
-a backstop for files that predate the verb or were edited by hand, and the
-repair for one is to rewrite it through the verb.
+A digest that went through the verb cannot fail any of that, and cannot
+drift the moment it lands — the check is a backstop for files that predate
+the verb or were edited by hand, and the repair for every one of them is to
+rewrite it through the verb.
 
 ## `bin/dex issue` — session-observed engine bug reports
 
