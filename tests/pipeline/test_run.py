@@ -1553,6 +1553,40 @@ class TestMediaStage:
         # The media redrain never went through a driver fetch:
         assert all(unit.url != self.IMG1 for unit in driver.fetched)
 
+    def test_an_empty_media_body_is_blocked_and_never_written(self, instance):
+        # The Instagram embed proxies answer an out-of-range media index
+        # with a 200 and no body at all; written through, that is an empty
+        # `media-0.png` the ledger calls done.
+        write_item(instance)
+        hollow = HttpResponse(status=200, content_type="image/png", body=b"")
+        ctx = make_ctx(
+            instance,
+            FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
+            transport=FakeTransport({self.IMG1: hollow}),
+        )
+        run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.BLOCKED
+        assert entry.reason == "media URL returned an empty response body"
+        assert entry.attempts == 1
+        assert entry.path is None
+        assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
+
+    def test_an_empty_media_body_redrains_when_the_server_serves_bytes(self, instance):
+        write_item(instance)
+        hollow = HttpResponse(status=200, content_type="image/png", body=b"")
+        driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
+        run_mod.run(make_ctx(instance, driver, transport=FakeTransport({self.IMG1: hollow})))
+        assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.BLOCKED
+
+        healed = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        run_mod.run(make_ctx(instance, driver, transport=healed))
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert entry.status is Status.DONE
+        assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
+
     def test_media_cap_of_four_files_per_item(self, instance):
         write_item(instance)
         urls = [f"https://cdn.example.test/img-{n}.png" for n in range(MEDIA_MAX_FILES + 2)]

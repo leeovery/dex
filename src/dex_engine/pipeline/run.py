@@ -1468,6 +1468,14 @@ class _Drain:
             # one byte past it — the over-ceiling body was never held whole.
             self.record_outcome(entry, status=Status.SKIPPED, reason="media exceeds 10MB ceiling")
             return
+        if not response.body:
+            # No image or video is zero bytes, and a 200 carrying nothing
+            # says nothing about the MEDIA — the Instagram embed proxies
+            # answer an out-of-range index with exactly this shape — so it
+            # earns the retries a flaky server gets, never a done ledger
+            # line over an empty file.
+            self._media_failure(entry, Status.BLOCKED, "media URL returned an empty response body")
+            return
         owner = self.owner_of(entry)
         out = (
             self.ctx.instance.enrichment_dir
