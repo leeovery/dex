@@ -220,6 +220,72 @@ class TestSuccessfulFetch:
         assert result == Unusable(evidence="thin-extraction")
 
 
+class TestDescriptionMeta:
+    """The deck the publisher declares in meta, lifted into the frontmatter.
+
+    The reported page: a Substack post whose standfirst — the sentence
+    under the headline — sits in the post header, outside the body div.
+    Trafilatura reads that header as boilerplate, so the H1 and the deck
+    leave the extraction together; the title lift already compensates the
+    H1, and until this nothing carried the deck.
+    """
+
+    def meta_for(self, head: str) -> dict:
+        html = f"<html><head>{head}</head><body>body</body></html>"
+        outcome = driver_for({URL: html_response(html)}).fetch(make_unit(URL, Kind.WEB))
+        return content_of(outcome).meta
+
+    def test_a_deck_in_the_post_header_survives_extraction_dropping_it(self):
+        page = fixture_text("web", "substack-header-deck.html")
+        driver = driver_for({URL: html_response(page)}, extract=trafilatura_extract)
+        result = content_of(driver.fetch(make_unit(URL, Kind.WEB)))
+        assert "pattern work" not in body_of(result)  # the loss this compensates
+        assert list(result.meta) == ["title", "description"]  # frontmatter order
+        assert result.meta["description"] == (
+            "Engineering leadership is pattern work. I'm treating it that way."
+        )
+
+    def test_og_description_wins_over_the_plain_name(self):
+        # A page writing both puts its considered wording in the og: block.
+        meta = self.meta_for(
+            '<meta name="description" content="Truncated for search results…">'
+            '<meta property="og:description" content="The deck as the author wrote it.">'
+        )
+        assert meta["description"] == "The deck as the author wrote it."
+
+    def test_the_plain_name_carries_a_page_with_no_og_block(self):
+        meta = self.meta_for('<meta name="description" content="The only deck there is.">')
+        assert meta["description"] == "The only deck there is."
+
+    def test_either_attribute_order_is_read(self):
+        meta = self.meta_for(
+            '<meta content="Content first, name second." property="og:description">'
+        )
+        assert meta["description"] == "Content first, name second."
+
+    def test_an_empty_declaration_falls_through_to_the_next(self):
+        meta = self.meta_for(
+            '<meta property="og:description" content="   ">'
+            '<meta name="description" content="The deck that says something.">'
+        )
+        assert meta["description"] == "The deck that says something."
+
+    def test_a_page_declaring_no_description_carries_no_field(self):
+        assert "description" not in self.meta_for("<title>A page</title>")
+
+    def test_entities_unescape_and_wrapped_prose_collapses(self):
+        meta = self.meta_for(
+            '<meta property="og:description" content="Ledgers &amp; queues,\n   one line.">'
+        )
+        assert meta["description"] == "Ledgers & queues, one line."
+
+    def test_a_long_deck_is_capped(self):
+        deck = "deck " * 100
+        capped = self.meta_for(f'<meta property="og:description" content="{deck}">')["description"]
+        assert len(capped) == 300
+        assert capped.startswith("deck deck deck")
+
+
 class TestClassifiedFailures:
     def test_403_is_blocked_with_the_wayback_miss_noted(self):
         responses = {
