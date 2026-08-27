@@ -22,7 +22,6 @@ The convention:
 - [Watchers — feeding sources as a first-class layer](watchers.md) — every feeder becomes a watcher writing standard inbox captures; the next thing to design
 - [Self-tuning cadence](self-tuning-cadence.md) — scheduled runs reschedule their own task: hourly while captures flow, daily when quiet
 - [Ingestion pipeline — open ends](ingestion-open-ends.md) — X thread walk-down and engine OCR providers, deferred by the ingestion design
-- [Instagram driver](instagram-driver.md) — shape not agreed; no official API, options mapped
 - [Hosted transcription providers](hosted-transcription.md) — Groq, Fireworks, Deepgram, Workers AI: a documented recommended config
 - [Per-instance tokens in the phone shortcut](shortcut-per-instance-tokens.md) — one token field serves every instance today; cross-org sets cannot work
 - [Per-instance context instructions](per-instance-context.md) — standing content context beyond the scope list, machinery identical
