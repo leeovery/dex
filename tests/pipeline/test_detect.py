@@ -7,7 +7,9 @@ from dex_engine.pipeline.detect import (
     canonical_url,
     detect,
     detect_kind,
+    sniff_document,
     sniff_format,
+    sniff_media_ext,
 )
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Format, Kind
@@ -194,3 +196,131 @@ class TestSniffFormat:
 
     def test_truncated_zip_container_is_unrecognized(self):
         assert sniff_format(b"PK\x03\x04 truncated") is None
+
+
+def ftyp(brand: bytes) -> bytes:
+    """An ISO-BMFF header: box size, ``ftyp``, the major brand, its version."""
+    return b"\x00\x00\x00\x20ftyp" + brand + b"\x00\x00\x00\x00"
+
+
+class TestSniffMediaExt:
+    """What a downloaded body IS — the name its URL claimed decides nothing."""
+
+    @pytest.mark.parametrize(
+        ("data", "ext"),
+        [
+            (b"\xff\xd8\xff\xe0\x00\x10JFIF\x00", "jpg"),
+            (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "png"),
+            (b"GIF87a\x01\x00\x01\x00", "gif"),
+            (b"GIF89a\x01\x00\x01\x00", "gif"),
+            (b"RIFF\x24\x00\x00\x00WEBPVP8 ", "webp"),
+            (b"BM\x36\x00\x00\x00\x00\x00", "bmp"),
+            (b"ID3\x04\x00\x00\x00\x00\x00\x00", "mp3"),
+            (b"\xff\xfb\x90\x00 frame", "mp3"),  # a bare frame, no ID3 tag ahead
+            # Both ends of the sync byte carry all 11 bits.
+            (b"\xff\xe0\x00\x00 frame", "mp3"),
+            (b"\xff\xff\x00\x00 frame", "mp3"),
+            (b"\x1a\x45\xdf\xa3\x9fB\x82\x08matroska", "mkv"),
+            (b"\x1a\x45\xdf\xa3\x9fB\x82\x04webm", "webm"),
+        ],
+    )
+    def test_magic_families(self, data, ext):
+        assert sniff_media_ext(data) == ext
+
+    @pytest.mark.parametrize(
+        ("brand", "ext"),
+        [
+            (b"avif", "avif"),
+            (b"avis", "avif"),
+            (b"heic", "heic"),
+            (b"heix", "heic"),
+            (b"mif1", "heif"),
+            (b"msf1", "heif"),
+            (b"isom", "mp4"),
+            (b"mp42", "mp4"),
+            (b"M4V ", "mp4"),
+            (b"qt  ", "mov"),
+        ],
+    )
+    def test_ftyp_brands_split_stills_from_video(self, brand, ext):
+        # One container holds all of these; only the brand separates an AVIF
+        # still from an MP4 clip.
+        assert sniff_media_ext(ftyp(brand)) == ext
+
+    def test_an_unknown_ftyp_brand_is_unrecognized(self):
+        assert sniff_media_ext(ftyp(b"zzzz")) is None
+
+    @pytest.mark.parametrize(
+        "svg",
+        [
+            b'<svg xmlns="http://www.w3.org/2000/svg"/>',
+            b'<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"/>',
+            b"\xef\xbb\xbf\n  <svg/>",
+            b"<!-- drawn by hand -->\n<svg/>",
+            (
+                b'<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+                b'"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg/>'
+            ),
+        ],
+    )
+    def test_svg_is_media_through_its_preludes(self, svg):
+        assert sniff_media_ext(svg) == "svg"
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"",
+            b"<!doctype html><html><body>not found</body></html>",
+            b'<?xml version="1.0"?><rss version="2.0"><channel/></rss>',
+            b'{"error": "not found"}',
+            b"\x00\x01\x02\x03 some format nobody named",
+            b"RIFF\x24\x00\x00\x00WAVEfmt ",  # RIFF alone is WAV or AVI, never WebP
+            b"<!-- unterminated comment <svg/>",
+        ],
+    )
+    def test_unrecognized_bodies_name_no_extension(self, data):
+        assert sniff_media_ext(data) is None
+
+
+class TestSniffDocument:
+    """A media URL that answered with a page answered the wrong question."""
+
+    @pytest.mark.parametrize(
+        ("data", "shape"),
+        [
+            (b"<!DOCTYPE html>\n<html><body>404</body></html>", "HTML"),
+            (b"\n\n  <HTML><HEAD></HEAD></HTML>", "HTML"),
+            (b"\xef\xbb\xbf<html>", "HTML"),
+            (b"<head><title>a</title></head>", "HTML"),
+            (b"<body>bare</body>", "HTML"),
+            (b'<?xml version="1.0"?><rss version="2.0"><channel/></rss>', "XML"),
+            (b'{"error": "not found"}', "JSON"),
+            (b'  [{"id": 1}]', "JSON"),
+        ],
+    )
+    def test_document_shapes(self, data, shape):
+        assert sniff_document(data) == shape
+
+    @pytest.mark.parametrize(
+        "svg",
+        [
+            b"<svg/>",
+            b'<?xml version="1.0"?><svg/>',
+            b"<!DOCTYPE svg><svg/>",
+        ],
+    )
+    def test_svg_is_never_a_document(self, svg):
+        # Markup by syntax, media by intent: an SVG download is a picture.
+        assert sniff_document(svg) is None
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"",
+            b"\x89PNG\r\n\x1a\n",
+            b"plain text, no markup",
+            b"\x7b\xff\xfe binary that opens like an object",
+        ],
+    )
+    def test_media_and_binary_are_not_documents(self, data):
+        assert sniff_document(data) is None

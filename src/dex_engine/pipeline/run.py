@@ -42,7 +42,15 @@ from .classify import (
     classify_connection,
     scrub,
 )
-from .detect import Sniff, canonical_url, detect, detect_kind, sniff_format
+from .detect import (
+    Sniff,
+    canonical_url,
+    detect,
+    detect_kind,
+    sniff_document,
+    sniff_format,
+    sniff_media_ext,
+)
 from .enrichment import (
     instagram_body,
     mask_fetched,
@@ -1516,18 +1524,47 @@ class _Drain:
             # line over an empty file.
             self._media_failure(entry, Status.BLOCKED, "media URL returned an empty response body")
             return
+        ext = sniff_media_ext(response.body)
+        if ext is None:
+            document = sniff_document(response.body)
+            if document is not None:
+                # A page under a media URL is a 200 that answered the wrong
+                # question — a site's catch-all route serving its own shell,
+                # or an API error body. Blocked, not manual: a bot wall
+                # clears on a later run, and a permanent catch-all escalates
+                # to manual after the attempts run out.
+                self._media_failure(
+                    entry, Status.BLOCKED, f"media URL answered with {document}, not media bytes"
+                )
+                return
+            ext = ext_of(entry.url, default="jpg")
         owner = self.owner_of(entry)
-        out = (
-            self.ctx.instance.enrichment_dir
-            / owner
-            / f"media-{slot}.{ext_of(entry.url, default='jpg')}"
-        )
+        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{ext}"
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_bytes(out, response.body)
+        self._clear_media_slot(out)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(
             entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))
         )
+
+    def _clear_media_slot(self, out: Path) -> None:
+        """Drop whatever else stands in this slot beside the file just written.
+
+        The slot names the file and the bytes name its extension, so a
+        re-download whose format changed (a CDN that answered JPEG last run
+        and PNG this one) writes ``media-0.png`` where ``media-0.jpg``
+        stands. Reruns overwrite, never duplicate — and two files in one
+        slot would spend the item's media cap twice over.
+
+        Swept AFTER the write, so a failed replacement leaves the standing
+        file whole; the unit is then unfinished and the next run's redrain
+        sweeps what it left. ``media-<n>.md`` is never touched: it is the
+        session's description of the capture, not a file in the slot.
+        """
+        for path in out.parent.glob(f"{out.stem}.*"):
+            if path != out and _is_media_file(path):
+                path.unlink()
 
     def _media_oversize_by_head(self, url: str) -> bool:
         """One HEAD before the GET: refuse a declared-oversize body unfetched."""
