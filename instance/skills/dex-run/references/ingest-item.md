@@ -141,8 +141,8 @@ bin/dex enrich item digest --file cache/digest.json
 `signal`, `topics`, `entities` and the facts are the judgment; the fence,
 the field order and the bullets are the engine's, so a digest cannot come
 out malformed. Never hand-write `state/digests/<id>.md`. The item's `date`
-and `media:` are the engine's to fill from the corpus item — passing either
-is refused. Full shape in `state-formats.md` (this directory).
+and `media:` are the engine's to derive from the item and its enrichment —
+passing either is refused. Full shape in `state-formats.md` (this directory).
 
 Each fact carries concrete specifics and reads without the source in front
 of you. No target count: a rich paper earns many bullets and a two-line

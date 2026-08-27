@@ -109,6 +109,7 @@ __all__ = [
     "fetch_urls",
     "head_sniffer",
     "is_drainable",
+    "is_media_file",
     "items_owing_work",
     "mark",
     "never_harvested",
@@ -181,7 +182,7 @@ def _unfetchable_media(url: str) -> str | None:
     return None
 
 
-def _is_media_file(path: Path) -> bool:
+def is_media_file(path: Path) -> bool:
     """Whether ``path`` is one of the item's media-family files.
 
     Downloads (``media-<n>.<ext>``) and extraction assets
@@ -1413,7 +1414,7 @@ class _Drain:
         item_dir = self.ctx.instance.enrichment_dir / item_id
         if not item_dir.is_dir():
             return 0
-        return sum(1 for path in item_dir.iterdir() if _is_media_file(path))
+        return sum(1 for path in item_dir.iterdir() if is_media_file(path))
 
     # -- media stage ------------------------------------------------
 
@@ -1563,7 +1564,7 @@ class _Drain:
         session's description of the capture, not a file in the slot.
         """
         for path in out.parent.glob(f"{out.stem}.*"):
-            if path != out and _is_media_file(path):
+            if path != out and is_media_file(path):
                 path.unlink()
 
     def _media_oversize_by_head(self, url: str) -> bool:
@@ -1610,7 +1611,7 @@ class _Drain:
         owner = self.owner_of(entry)
         slot = self._media_position(entry)
         item_dir = self.ctx.instance.enrichment_dir / owner
-        if any(_is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
+        if any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
             return slot
         if self._media_file_count(owner) >= MEDIA_MAX_FILES:
             return None
