@@ -1,8 +1,9 @@
-"""The drivers' HTTP seam: one urllib GET/HEAD with a browser UA.
+"""The drivers' HTTP seam: one urllib GET/HEAD, under a browser or a bot UA.
 
 Every driver takes a :data:`Transport` in its constructor so tests are
-hermetic; :func:`urllib_transport` is the one real implementation. It
-returns an :class:`HttpResponse` for *any* HTTP-level response — 4xx/5xx
+hermetic; :func:`urllib_transport` and :func:`bot_transport` are the real
+implementations — one fetch (:func:`_urllib_fetch`) under two User-Agents.
+It returns an :class:`HttpResponse` for *any* HTTP-level response — 4xx/5xx
 included, so callers can route status codes through the central classifier —
 and lets connection-level failures (DNS, refused, timeout) propagate as
 ``OSError`` for ``classify_connection``; the fetch-and-classify pairing
@@ -33,10 +34,12 @@ from dataclasses import dataclass
 from typing import Protocol
 
 __all__ = [
+    "BOT_UA",
     "BROWSER_UA",
     "DEFAULT_TIMEOUT",
     "HttpResponse",
     "Transport",
+    "bot_transport",
     "normalize_httplib_errors",
     "urllib_transport",
 ]
@@ -45,6 +48,13 @@ BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
+
+# instagram.com and the Instagram embed proxies serve their OpenGraph
+# metadata to link-preview bots only: a browser UA is redirected to the JS
+# app shell, which carries no metadata at all, so a driver reading those
+# endpoints has to identify as a preview bot deliberately (verified against
+# the live endpoints 2026-08-27).
+BOT_UA = "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
 DEFAULT_TIMEOUT = 30.0
 
 
@@ -221,12 +231,13 @@ def _read_limited(stream: _BodyStream, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def urllib_transport(url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
-    """Fetch ``url`` over urllib with the browser UA.
+def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) -> HttpResponse:
+    """Fetch ``url`` over urllib, identifying as ``user_agent``.
 
     Args:
         url: An absolute http(s) URL.
-        method: ``GET`` (default) or ``HEAD``.
+        user_agent: The User-Agent the request carries.
+        method: ``GET`` or ``HEAD``.
         limit: The caller's body ceiling, when it has one — the body is
             read to at most ``limit + 1`` bytes (:func:`_read_limited`).
 
@@ -243,7 +254,7 @@ def urllib_transport(url: str, *, method: str = "GET", limit: int | None = None)
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"transport fetches http(s) URLs only, got {url!r}")
     request = urllib.request.Request(  # noqa: S310 — scheme checked above
-        _ascii_url(url), headers={"User-Agent": BROWSER_UA}, method=method
+        _ascii_url(url), headers={"User-Agent": user_agent}, method=method
     )
     with normalize_httplib_errors():
         try:
@@ -278,3 +289,13 @@ def urllib_transport(url: str, *, method: str = "GET", limit: int | None = None)
                     e.headers.get("Content-Length") if e.headers else None
                 ),
             )
+
+
+def urllib_transport(url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
+    """Fetch ``url`` under the browser UA; the contract is :func:`_urllib_fetch`'s."""
+    return _urllib_fetch(url, user_agent=BROWSER_UA, method=method, limit=limit)
+
+
+def bot_transport(url: str, *, method: str = "GET", limit: int | None = None) -> HttpResponse:
+    """Fetch ``url`` under :data:`BOT_UA`; the contract is :func:`_urllib_fetch`'s."""
+    return _urllib_fetch(url, user_agent=BOT_UA, method=method, limit=limit)

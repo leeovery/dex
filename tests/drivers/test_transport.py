@@ -12,6 +12,7 @@ import socket
 import threading
 import urllib.request
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Self
 
 import pytest
@@ -21,7 +22,10 @@ from dex_engine.capabilities.transcribe.whisper_api import WhisperApi, urllib_mu
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import (
     _REQUEST_LINE_FORBIDDEN,
+    BOT_UA,
+    BROWSER_UA,
     _ascii_url,
+    bot_transport,
     normalize_httplib_errors,
     urllib_transport,
 )
@@ -30,14 +34,28 @@ from dex_engine.pipeline.types import Kind, Refused, Status
 from tests.drivers.conftest import make_unit, truncating_server
 
 
+@dataclass(frozen=True, slots=True)
+class _RecordedRequest:
+    """One request as the server saw it."""
+
+    line: str
+    headers: dict[str, str]  # field names lowercased, values stripped
+
+
+def _record(head: bytes) -> _RecordedRequest:
+    line, *fields = head.decode("ascii", "replace").split("\r\n")
+    split = (field.partition(":") for field in fields)
+    return _RecordedRequest(line=line, headers={name.lower(): v.strip() for name, _, v in split})
+
+
 @contextlib.contextmanager
-def recording_server() -> Iterator[tuple[str, list[str]]]:
-    """Serve 200 OK, recording each request line. Yields the base URL and the log."""
+def recording_server() -> Iterator[tuple[str, list[_RecordedRequest]]]:
+    """Serve 200 OK, recording each request. Yields the base URL and the log."""
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(8)
     host, port = listener.getsockname()
-    seen: list[str] = []
+    seen: list[_RecordedRequest] = []
 
     def serve() -> None:
         while True:
@@ -52,7 +70,7 @@ def recording_server() -> Iterator[tuple[str, list[str]]]:
                     if not chunk:
                         break
                     data += chunk
-                seen.append(data.split(b"\r\n")[0].decode("ascii", "replace"))
+                seen.append(_record(data.split(b"\r\n\r\n")[0]))
                 conn.sendall(
                     b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                     b"Content-Length: 2\r\nConnection: close\r\n\r\nhi"
@@ -66,6 +84,25 @@ def recording_server() -> Iterator[tuple[str, list[str]]]:
     finally:
         listener.close()
         thread.join(timeout=5)
+
+
+class TestUserAgent:
+    """Which UA reaches the wire — the only difference between the transports.
+
+    The bot UA is load-bearing, not cosmetic: the Instagram embed proxies
+    serve their OpenGraph metadata to link-preview bots and redirect a
+    browser UA to the JS app shell, which carries no metadata at all.
+    """
+
+    @pytest.mark.parametrize(
+        ("transport", "expected"),
+        [(urllib_transport, BROWSER_UA), (bot_transport, BOT_UA)],
+    )
+    def test_each_transport_identifies_as_its_own_agent(self, transport, expected):
+        with recording_server() as (base, seen):
+            response = transport(base + "/p/abc123/")
+        assert response.status == 200
+        assert [request.headers["user-agent"] for request in seen] == [expected]
 
 
 class TestHttplibNormalization:
@@ -163,7 +200,7 @@ class TestNonAsciiUrls:
         with recording_server() as (base, seen):
             response = urllib_transport(base + path)
         assert response.status == 200
-        assert seen == [f"GET {wire} HTTP/1.1"]
+        assert [request.line for request in seen] == [f"GET {wire} HTTP/1.1"]
 
     def test_a_space_in_the_path_reaches_the_wire_encoded(self):
         # http.client rejects [\x00-\x20\x7f] in the request line, not
@@ -174,7 +211,7 @@ class TestNonAsciiUrls:
         with recording_server() as (base, seen):
             response = urllib_transport(base + "/reports/annual report.pdf")
         assert response.status == 200
-        assert seen == ["GET /reports/annual%20report.pdf HTTP/1.1"]
+        assert [request.line for request in seen] == ["GET /reports/annual%20report.pdf HTTP/1.1"]
 
     @pytest.mark.parametrize("char", ["\x00", " ", "\x1f", "\x7f"])
     def test_no_character_the_request_line_forbids_survives_the_encoder(self, char):
