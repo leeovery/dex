@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-08-27
+
+✨ Added
+- Extraction lifts a page's declared description (`og:description` or `description` meta) into the frontmatter — recovers standfirsts/decks that trafilatura drops as header boilerplate, like Substack's post-header sentence.
+- Downloaded media is byte-sniffed and named by what it actually is, not the URL's extension — catches CDNs that content-negotiate a different format than the URL claims (JPEG served from a `.png` URL, AVIF/HEIC/HEIF/MP4/MOV containers, WebM vs MKV, SVG).
+- A media URL that answers with an HTML/XML/JSON page instead of real media bytes is now blocked (and escalates to manual after repeated attempts) instead of silently saving the page as an image file.
+- `dex-lint` gained a `media:` drift advisory — flags a digest whose stated media paths no longer match what's actually on disk, in either direction, without failing the check.
+- Digests now list every media file an item carries, including files the media stage downloaded into `enrichment/<id>/` that never made it into the item's own frontmatter.
+
+🐛 Fixed
+- A heading's permalink icon rendered as a visible glyph character (`#`, `¶`, `§`) no longer swallows the whole heading or leaks the glyph into the heading text.
+- A redownloaded media file that changes format between runs (e.g. a CDN switching from JPEG to PNG) now replaces the old file in its slot instead of leaving both on disk, double-spending the per-item media cap.
+- An interrupted download's leftover temp file is no longer miscounted as a real media file against the per-item cap, and gets swept up when its slot is next written.
+
 ## [0.1.5] - 2026-08-27
 
 ✨ Added
