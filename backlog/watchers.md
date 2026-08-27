@@ -127,9 +127,11 @@ Consequences the owner named:
   one watcher's `available()`, which is the right place for them — user
   token automation is against Discord ToS, a constraint that shapes
   cadence); X bookmarks has a real API but paid-tier; Instagram saved
-  folders have no official API — but note the folder-watch idea reframes
-  the parked Instagram problem from enrichment-side to capture-side, which
-  may be the easier half.
+  folders have no official API — the enrichment side is solved (the
+  instagram driver ships as of v0.1.5, `design/instagram-driver.md`),
+  so what a watcher must deliver is only the saved-collection URLs, and
+  the folder-watch idea (a browser-extension export into a watched
+  folder) remains the path that needs no engine risk at all.
 - Immediate Discord handling (pre-watchers): do nothing clever — manual
   refresh, staleness visible; the watcher design makes it properly
   automatic later.

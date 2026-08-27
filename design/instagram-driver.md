@@ -1,5 +1,13 @@
 # Instagram driver
 
+> **Shipped** — first pass landed 2026-08-27 in engine v0.1.5 (design
+> PR #76; implementation stack #77–#83; post-audit tests #84) and
+> ingested its first field capture the same day. Of §10, the
+> share-token question is still open; the datacenter-IP question has
+> its standing live check; a genuinely mixed video+image carousel
+> remains unobserved. This file stays a snapshot of the design as
+> decided — the code is the authority on current behaviour.
+
 Instagram posts shared to an instance's inbox become corpus items like any
 other source: author, caption, and media, fetched mechanically and digested
 by the session. The driver is **push-only and credential-free** — it fetches
