@@ -117,6 +117,31 @@ _WHITESPACE_RUN_RE = re.compile(r"\s+")
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _MAX_TITLE_CHARS = 200
 
+# A standfirst — the one-sentence deck under the headline — is markup the
+# page HEADER carries, not the article: Substack puts it in `post-header`
+# beside the H1, trafilatura reads that whole block as boilerplate, and the
+# deck leaves the extraction with it. The publisher declares the same
+# sentence here, where extraction cannot reach it. og: leads because a page
+# writing both puts its considered wording there, and the bare
+# `description` is what a page with no og: block has. The value may span
+# newlines, unlike og:image above: a wrapped attribute is prose to collapse,
+# not a truncated URL to refuse.
+_DESCRIPTION_RES = (
+    re.compile(
+        r"<meta[^>]+(?:property|name)=[\"']og:description[\"'][^>]+content=[\"']([^\"']+)[\"']"
+    ),
+    re.compile(
+        r"<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:property|name)=[\"']og:description[\"']"
+    ),
+    re.compile(
+        r"<meta[^>]+(?:property|name)=[\"']description[\"'][^>]+content=[\"']([^\"']+)[\"']"
+    ),
+    re.compile(
+        r"<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:property|name)=[\"']description[\"']"
+    ),
+)
+_MAX_DESCRIPTION_CHARS = 300
+
 
 def trafilatura_extract(html: str) -> str | None:
     """Extract markdown from HTML via trafilatura — extraction ONLY.
@@ -302,7 +327,8 @@ def _extracted(
     if body is None or len(body) < MIN_SUBSTANTIAL_CHARS:
         return None
     media = [image] if allow_media and (image := _og_image(html, base_url)) else []
-    return Content(meta=_title_meta(html), body=body, media=media)
+    meta = {**_title_meta(html), **_description_meta(html)}
+    return Content(meta=meta, body=body, media=media)
 
 
 def _wayback_fallback(
@@ -390,3 +416,14 @@ def _title_meta(html: str) -> dict[str, str | int | None]:
         return {}
     title = " ".join(html_lib.unescape(match.group(1)).split())[:_MAX_TITLE_CHARS]
     return {"title": title} if title else {}
+
+
+def _description_meta(html: str) -> dict[str, str | int | None]:
+    for pattern in _DESCRIPTION_RES:
+        match = pattern.search(html)
+        if match is None:
+            continue
+        description = " ".join(html_lib.unescape(match.group(1)).split())[:_MAX_DESCRIPTION_CHARS]
+        if description:
+            return {"description": description}
+    return {}
