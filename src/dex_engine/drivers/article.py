@@ -20,10 +20,13 @@ That flag has a price, and the page is prepared before extraction to pay
 it: with links on, an anchor carrying no text of its own does not merely
 render as nothing, it swallows the content beside it — heading words after
 a permalink, whole fenced blocks behind mkdocs-material's per-line
-anchors. Extraction therefore runs twice over the prepared page, once
-without comments and once with, because the two settings answer different
-questions: an article's comment section is chrome, and a discussion page's
-comments are the entire artifact.
+anchors. The same permalink wearing a glyph for its text is not empty,
+so it escapes that test and fails both ways: swallowing the heading it
+sits in, or leaking its glyph into the heading line. Extraction therefore
+runs twice over the prepared page, once without comments and once with,
+because the two settings answer different questions: an article's comment
+section is chrome, and a discussion page's comments are the entire
+artifact.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -104,6 +107,11 @@ _OG_IMAGE_RES = (
 # a discussion, and the discussion is what was shared.
 _DISCUSSION_RATIO = 2.0
 
+# What a heading's permalink puts on screen when it puts anything: the
+# hash is the one the field reported, and the pilcrow and the section
+# sign are the other two characters the same chrome is drawn with.
+_PERMALINK_GLYPHS = frozenset({"#", "¶", "§"})
+
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -137,7 +145,7 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
 def _prepare_page(html: str) -> str:
     """Repair the page shapes that break extraction, before trafilatura sees it.
 
-    Two repairs over one parse. First, drop every anchor carrying no text
+    Three repairs over one parse. First, drop every anchor carrying no text
     — permalinks, icon links, line anchors. An anchor with nothing inside
     it is chrome, and with ``include_links`` on it is chrome that eats
     content: a heading whose permalink precedes its words
@@ -150,7 +158,18 @@ def _prepare_page(html: str) -> str:
     same page this recovers 92 fences AND keeps all 42 hyperlinks, which
     neither link setting manages alone.
 
-    Second, flatten the inside of headings: replace ``<br>`` elements with
+    Second, inside headings only, drop the anchors whose text is a bare
+    permalink glyph. They are the first repair's chrome with an icon
+    character for content, non-empty enough to survive it and broken both
+    ways. Wrapped around a span before the words they swallow exactly as
+    an empty anchor does — a cursor.com post came back with every heading
+    a bare ``##`` — and bare they leak the glyph into the heading line
+    instead, ahead of the words on laravel-news.com and behind them on a
+    hugo blog whose anchor trails its heading. Restricting this to
+    headings is what makes it safe: a link reading ``#`` in body prose is
+    not provably chrome, and one inside a heading is.
+
+    Third, flatten the inside of headings: replace ``<br>`` elements with
     a space and collapse whitespace runs to one space. A markdown heading
     is one line by construction, and a heading holding a line break
     (``<h3><span>Use Case: <br></span></h3>`` — Hugging Face model cards)
@@ -183,8 +202,19 @@ def _prepare_page(html: str) -> str:
             anchor.drop_tree()
     for heading in tree.iter("h1", "h2", "h3", "h4", "h5", "h6"):
         if isinstance(heading, HtmlElement):
+            _drop_glyph_anchors(heading)
             _flatten_heading(heading)
     return tostring(tree, encoding="unicode")
+
+
+def _drop_glyph_anchors(heading: "HtmlElement") -> None:
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for anchor in list(heading.iter("a")):
+        if not isinstance(anchor, HtmlElement):
+            continue
+        if anchor.text_content().strip() in _PERMALINK_GLYPHS:
+            anchor.drop_tree()
 
 
 def _flatten_heading(heading: "HtmlElement") -> None:

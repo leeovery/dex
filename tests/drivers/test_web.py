@@ -317,8 +317,8 @@ class TestExtractionFidelity:
     """What `include_links=True` costs unaccompanied, and the page preparation that pays it.
 
     Every fixture here is the reduced shape of a page that lost content in
-    the field on 0.1.0 — reported from an instance, reproduced against the
-    live page, then trimmed to the markup that carries the defect.
+    the field — reported from an instance, reproduced against the live
+    page, then trimmed to the markup that carries the defect.
     """
 
     def test_a_headings_permalink_does_not_swallow_its_words(self):
@@ -342,6 +342,69 @@ class TestExtractionFidelity:
         assert "pip install llama-cpp-python" in body
         assert "from llama_cpp import Llama" in body
         assert body.count("```") >= 2  # at least one fence survived, opened and closed
+
+    def test_a_glyph_permalink_does_not_swallow_its_heading(self):
+        # A cursor.com post: the permalink wraps a `#` in a span, so it is
+        # not empty and the drop above never sees it — and it swallows
+        # like an empty one. Every heading on the page came back a bare
+        # `##`, the words nowhere in the extract.
+        page = fixture_text("web", "glyph-anchored-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert [line for line in body.split("\n") if line.startswith("#")] == [
+            "# Why Git Is Hard",
+            "## What's hard about Git?",
+            "## What we built instead",
+        ]
+
+    def test_a_glyph_permalink_before_the_words_does_not_leak_into_them(self):
+        # laravel-news.com: the same chrome without the span leaks instead
+        # of swallowing, and the heading led with the icon rather than
+        # its subject.
+        page = fixture_text("web", "permalink-glyph-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert [line for line in body.split("\n") if line.startswith("#")] == [
+            "# Column Transformations",
+            "## Column Transformation Strategies",
+            "## Testing The Migration",
+        ]
+
+    def test_a_glyph_permalink_after_the_words_does_not_leak_either(self):
+        # A hugo blog trails its anchor instead, and the glyph landed on
+        # the end of the heading — the same defect, the other side.
+        page = fixture_text("web", "trailing-glyph-headings.html")
+        body = trafilatura_extract(page) or ""
+        assert [line for line in body.split("\n") if line.startswith("#")] == [
+            "# A Stateless Protocol",
+            "## What Changed In The Spec",
+            "## What It Costs",
+        ]
+
+    def test_the_glyph_drop_reaches_nothing_an_author_wrote(self):
+        # The rails on that repair, all three. An anchor with words in it
+        # is a link somebody meant, heading or not; a lone `#` is only
+        # provably an icon INSIDE a heading, so in prose it stays; and a
+        # glyph that is not an anchor at all is subject matter — docs
+        # pages have headings ABOUT `#`.
+        page = (
+            ARTICLE.replace(
+                "<h1>Designing Resilient Ingestion Pipelines</h1>",
+                '<h1><a href="https://example.test/series">Designing</a> Resilient Pipelines</h1>',
+            )
+            .replace(
+                "      <p>Politeness matters",
+                "      <h2>The <code>#</code> Fragment Rule</h2>\n      <p>Politeness matters",
+            )
+            .replace(
+                "    </article>",
+                '      <p>The <a href="https://example.test/rfc#anchors">#</a> convention for'
+                " fragment identifiers is argued at length in that note, and this pipeline"
+                " follows it to the letter.</p>\n    </article>",
+            )
+        )
+        body = trafilatura_extract(page) or ""
+        assert "# [Designing](https://example.test/series) Resilient Pipelines" in body
+        assert "## The `#` Fragment Rule" in body
+        assert "[#](https://example.test/rfc#anchors)" in body
 
     def test_whitespace_padded_heading_text_stays_on_the_heading_line(self):
         # Hugging Face model cards wrap heading text in a <span> padded
