@@ -182,6 +182,63 @@ class TestEnrichReport:
         with pytest.raises(PayloadError, match="drainable"):
             render("status", {"counts": {}, "parked": parked})
 
+    def test_a_cognitive_waiting_row_is_the_readers_work_not_the_engines(self):
+        # The field defect's other half: a unit waiting on the cognitive
+        # floor captioned "retries when a provider appears" and filed under
+        # the engine's retry list, while the same output listed the floor
+        # as the capability's active provider. Nothing will ever appear.
+        parked = [
+            {
+                "item": "a",
+                "url": "https://a.test",
+                "status": "waiting",
+                "reason": "no mechanical OCR provider — the session reads with eyes",
+                "cognitive": True,
+            }
+        ]
+        out = render("status", {"counts": {"waiting": 1}, "parked": parked})
+        assert "Needs you — 1 entry only you can move" in out
+        assert "Waiting on the engine" not in out
+        assert "- **a** · `waiting` · no provider will appear — you read this one" in out
+        assert "retries when a provider appears" not in out
+
+    def test_a_cognitive_row_takes_no_attempt_framing(self):
+        # The engine makes no attempt at a job it hands to the reader, so a
+        # stale attempt count on the line must not caption it "attempt n of m".
+        parked = [
+            {
+                "item": "a",
+                "url": "https://a.test",
+                "status": "waiting",
+                "reason": "r",
+                "attempts": 2,
+                "attempt_cap": 5,
+                "cognitive": True,
+            }
+        ]
+        out = render("status", {"counts": {"waiting": 1}, "parked": parked})
+        assert "no provider will appear — you read this one" in out
+        assert "attempt 2 of 5" not in out
+
+    def test_a_cognitive_value_other_than_true_is_loud(self):
+        parked = [{"item": "i", "url": "u", "status": "waiting", "reason": "r", "cognitive": 1}]
+        with pytest.raises(PayloadError, match="cognitive"):
+            render("status", {"counts": {}, "parked": parked})
+
+    def test_drainable_and_cognitive_together_is_loud(self):
+        parked = [
+            {
+                "item": "i",
+                "url": "u",
+                "status": "waiting",
+                "reason": "r",
+                "drainable": True,
+                "cognitive": True,
+            }
+        ]
+        with pytest.raises(PayloadError, match="exclusive"):
+            render("status", {"counts": {}, "parked": parked})
+
     def test_attempt_cap_without_attempts_is_loud(self):
         parked = [{"item": "a", "url": "u", "status": "blocked", "reason": "r", "attempt_cap": 5}]
         with pytest.raises(PayloadError, match="attempt_cap"):

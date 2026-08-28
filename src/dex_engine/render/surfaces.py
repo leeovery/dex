@@ -245,7 +245,7 @@ def _parked_rows(
             surface,
             entry,
             required=frozenset({"item", "url", "status", "reason"}),
-            optional=frozenset({"attempts", "attempt_cap", "resting", "drainable"}),
+            optional=frozenset({"attempts", "attempt_cap", "resting", "drainable", "cognitive"}),
             where=where,
         )
         status = _status_at(surface, entry, "status", where)
@@ -267,30 +267,53 @@ def _parked_rows(
             if "attempts" not in entry:
                 _fail(surface, f"{where}attempt_cap without attempts says nothing")
             row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
-        if "resting" in entry:
-            if entry["resting"] is not True:
-                _fail(surface, f"{where}resting can only be true — omit the key otherwise")
-            row["resting"] = True
-        if "drainable" in entry:
-            if entry["drainable"] is not True:
-                _fail(surface, f"{where}drainable can only be true — omit the key otherwise")
-            row["drainable"] = True
+        for key in _PARKED_MARKERS:
+            if _marker_at(surface, entry, key, where):
+                row[key] = True
+        if "drainable" in row and "cognitive" in row:
+            _fail(
+                surface,
+                f"{where}drainable and cognitive are exclusive — a unit whose "
+                "capability falls to the cognitive floor has no active provider",
+            )
         rows.append(row)
     return rows
 
 
+# A parked row's classification markers, each present-means-true.
+_PARKED_MARKERS = ("resting", "drainable", "cognitive")
+
+
+def _marker_at(surface: str, entry: Mapping[str, object], key: str, where: str) -> bool:
+    """One marker's value: absent is false, present is true and nothing else.
+
+    ``false`` is refused rather than read: a marker is the builder stating
+    a classification it made, so the absence of the statement is the only
+    way to say it did not.
+    """
+    if key not in entry:
+        return False
+    if entry[key] is not True:
+        _fail(surface, f"{where}{key} can only be true — omit the key otherwise")
+    return True
+
+
 # What the engine will do about a parked entry unasked. `blocked` is absent
 # because its entries carry the concrete attempt count instead, and `manual`
-# because it is the one status where the answer is "nothing". A waiting row
-# the builder marked `drainable` overrides its note: the provider it waits
-# on is active, and "retries when a provider appears" sent a reader hunting
-# for a missing provider the same report listed as active.
+# because it is the one status where the answer is "nothing". Both waiting
+# marks override this note, in opposite directions: `drainable` because the
+# provider it waits on is active, and `cognitive` because no provider will
+# ever appear. Unmarked, the note is left saying what is true of the one
+# waiting row that neither describes — a transcribe park, which has no
+# cognitive floor and does wait for a mechanical provider.
 _RETRY_NOTE = {
     Status.WAITING: "retries when a provider appears",
     Status.ERROR: "retries on the next engine release",
 }
 
 _DRAINABLE_NOTE = "a provider is active — drains on the next run"
+
+_COGNITIVE_NOTE = "no provider will appear — you read this one"
 
 
 def _owner_is_you(row: dict[str, object]) -> bool:
@@ -299,9 +322,12 @@ def _owner_is_you(row: dict[str, object]) -> bool:
     ``manual`` always does; a ``resting`` row does too, whatever its
     status — the builder marked it because the engine will not touch it
     (a media unit deferred under ``media_fetch: none``), so only the
-    owner's own change of config moves it.
+    owner's own change of config moves it. So does a ``cognitive`` one:
+    its capability resolves to the floor, which is the reader's eyes, and
+    filing it under the engine put it on the retry list of a report whose
+    own cognitive section said the engine could not do it.
     """
-    return row["status"] in _OWNER_IS_YOU or bool(row.get("resting"))
+    return row["status"] in _OWNER_IS_YOU or bool(row.get("resting") or row.get("cognitive"))
 
 
 def _parked_section(parked: list[dict[str, object]], *, mine: bool) -> str:
@@ -338,6 +364,11 @@ def _parked_tags(row: dict[str, object]) -> list[str]:
         # No retry note and no attempt framing: nothing here retries, and
         # the row's reason names what unblocks it.
         return tags
+    if row.get("cognitive"):
+        # Attempt framing is as wrong here as retry framing: the engine
+        # makes no attempt at a job it hands to the reader.
+        tags.append(_COGNITIVE_NOTE)
+        return tags
     attempts = row.get("attempts")
     if isinstance(attempts, int):
         cap = row.get("attempt_cap")
@@ -368,6 +399,10 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
                       "status": str, "reason": str,
                       "attempts": int,               # optional: retry state
                       "attempt_cap": int,            #   (blocked entries)
+                      "drainable": true,             # optional: waiting on an
+                                                     #   active provider
+                      "cognitive": true,             # optional: waiting on the
+                                                     #   cognitive floor
                       "resting": true}],             # optional: the engine will
                                                      #   not act; the owner will
           "incomplete": [{"item": str,               # optional: touched items
@@ -387,9 +422,9 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
 
     ``parked`` arrives as one list and renders as two sections, split on who
     owns the next action: ``manual`` is the engine giving up, everything
-    else re-enters the queue by itself — except a row marked ``resting``,
-    which the builder classified as the owner's because the engine will
-    not act on it.
+    else re-enters the queue by itself — except a row marked ``resting``
+    or ``cognitive``, which the builder classified as the owner's because
+    the engine will not act on it.
     """
     surface = "enrich-report"
     _check_keys(
@@ -625,6 +660,10 @@ def _render_status(payload: Mapping[str, object]) -> str:
                       "status": str, "reason": str,   # now, whichever run
                       "attempts": int,               #   parked it
                       "attempt_cap": int,
+                      "drainable": true,        # optional: waiting on an active
+                                                #   provider
+                      "cognitive": true,        # optional: waiting on the
+                                                #   cognitive floor
                       "resting": true}],        # optional: the engine will not
                                                 #   act on it; the owner will
           "orphans": [str],                   # optional: item ids whose
