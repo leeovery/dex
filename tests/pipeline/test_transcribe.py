@@ -863,6 +863,53 @@ class TestInstagramDrain:
         run_mod.run_transcribe(ctx)
         return ctx
 
+    def test_one_run_takes_a_reel_from_fetch_to_transcript(self, instance):
+        # The field defect: the park landed and the run ended with whisper
+        # active, so every reel cost a second run (or a hand-run drain
+        # verb) while the wait reason claimed no provider existed. A park
+        # the run itself can drain re-queues and drains in the same run.
+        write_item(instance, urls=[self.POST_URL])
+        transport = FakeTransport(
+            {
+                self.POST_URL: og_page(caption=self.CAPTION, code=REEL_CODE),
+                **walk(REEL_CODE, "video/mp4"),
+                self.ENCLOSURE: self.video(),
+            }
+        )
+        caps = Capabilities(
+            transcribers=(FakeTranscriber("whisper-local", text="Reel words.", model="medium"),),
+            extractors=(),
+        )
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=[
+                InstagramDriver(
+                    base_url=PROXY_BASE, transport=transport, pace=lambda _seconds: None
+                )
+            ],
+            transport=transport,
+            capabilities=caps,
+            provider_available=caps.available,
+        )
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.DONE
+        fields, body = read_enrichment(instance.root / str(entry.path))
+        assert fields["via"] == "whisper-local"
+        assert "Reel words." in body
+        assert self.CAPTION in body  # the park's caption survives the landing
+        assert "Waiting on the engine" not in report  # nothing survived the session
+        assert audio_files(instance) == []  # the transcript superseded the audio
+
+    def test_a_park_with_no_provider_still_rests_across_the_run(self, instance):
+        # The other side of the re-queue: the drain predicate is the next
+        # run's, so a capability-missing park rests exactly as before.
+        ctx = self.park_via_driver(instance)
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.WAITING
+        assert entry.needs is Need.TRANSCRIBE
+
     def test_drain_gets_the_video_appends_the_transcript_deletes_the_audio(self, instance):
         ctx = self.park_via_driver(instance)
         parked = entry_for(ctx, self.POST_URL)

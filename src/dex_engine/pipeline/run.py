@@ -1227,6 +1227,16 @@ class _Drain:
             # manual.
             self._write_output(entry, needs.meta, needs.body, count=False)
         self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+        # A park the run itself can drain re-queues at once — the drain
+        # predicate is the next run's, asked now. A transcribe park under an
+        # active provider is the case: fetch and transcription are separate
+        # stages by design, but "separate" meant a reel cost a second run
+        # (or a hand-run drain verb) with the capability sitting active. A
+        # capability-missing park fails the predicate and rests as before;
+        # a failed transcription re-parks through its own path, never this
+        # one, so the re-queue cannot loop.
+        if is_drainable(self.entries[entry.hash], self.ctx):
+            self.queue.append(entry.hash)
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
@@ -1739,8 +1749,19 @@ class _Drain:
             self.touched.add(stamped.item)
         if count and stamped.status in _PARKED:
             self.parked.append(
-                _parked_row(stamped, stamped.item, media_fetch=self.ctx.config.media_fetch)
+                _parked_row(
+                    stamped,
+                    stamped.item,
+                    media_fetch=self.ctx.config.media_fetch,
+                    drainable=is_drainable(stamped, self.ctx),
+                )
             )
+        elif count:
+            # The parked section claims what survives the session: a unit
+            # parked earlier in THIS run and then drained past it (a
+            # transcribe park re-queued under an active provider) must
+            # leave the section with the state it no longer has.
+            self.parked = [row for row in self.parked if row["url"] != stamped.url]
         return stamped
 
     def _count_write(self, stamped: LedgerEntry) -> None:
@@ -1985,12 +2006,25 @@ class _Drain:
         ]
 
 
-def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) -> dict[str, object]:
+def _parked_row(
+    entry: LedgerEntry,
+    item_id: str,
+    *,
+    media_fetch: MediaFetch,
+    drainable: bool,
+) -> dict[str, object]:
     """One parked entry as both report surfaces read it.
 
     The run report says what THIS run parked and the standing view says
     what is parked now; they are the same shape read at two moments, so
     they are built here once.
+
+    ``drainable`` is the builder's answer for a waiting row: whether the
+    capability it waits on has an active provider right now. The renderer
+    cannot ask (payloads are self-contained), and without the fact it
+    captioned every waiting row "retries when a provider appears" — sending
+    a reader hunting for a missing provider the same report listed as
+    active.
 
     Built here, with the config in hand, is also where a resting media
     unit is told apart: under ``media_fetch: none`` the drain defers every
@@ -2029,6 +2063,8 @@ def _parked_row(entry: LedgerEntry, item_id: str, *, media_fetch: MediaFetch) ->
         # times" — which only the cap makes readable.
         row["attempts"] = entry.attempts
         row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
+    if entry.status is Status.WAITING and drainable:
+        row["drainable"] = True
     return row
 
 
@@ -2522,6 +2558,7 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
             entry,
             owners.get(entry.hash, (entry.item,))[0],
             media_fetch=ctx.config.media_fetch,
+            drainable=is_drainable(entry, ctx),
         )
         for entry in entries.values()
         if entry.status in _PARKED

@@ -245,7 +245,7 @@ def _parked_rows(
             surface,
             entry,
             required=frozenset({"item", "url", "status", "reason"}),
-            optional=frozenset({"attempts", "attempt_cap", "resting"}),
+            optional=frozenset({"attempts", "attempt_cap", "resting", "drainable"}),
             where=where,
         )
         status = _status_at(surface, entry, "status", where)
@@ -271,17 +271,26 @@ def _parked_rows(
             if entry["resting"] is not True:
                 _fail(surface, f"{where}resting can only be true — omit the key otherwise")
             row["resting"] = True
+        if "drainable" in entry:
+            if entry["drainable"] is not True:
+                _fail(surface, f"{where}drainable can only be true — omit the key otherwise")
+            row["drainable"] = True
         rows.append(row)
     return rows
 
 
 # What the engine will do about a parked entry unasked. `blocked` is absent
 # because its entries carry the concrete attempt count instead, and `manual`
-# because it is the one status where the answer is "nothing".
+# because it is the one status where the answer is "nothing". A waiting row
+# the builder marked `drainable` overrides its note: the provider it waits
+# on is active, and "retries when a provider appears" sent a reader hunting
+# for a missing provider the same report listed as active.
 _RETRY_NOTE = {
     Status.WAITING: "retries when a provider appears",
     Status.ERROR: "retries on the next engine release",
 }
+
+_DRAINABLE_NOTE = "a provider is active — drains on the next run"
 
 
 def _owner_is_you(row: dict[str, object]) -> bool:
@@ -335,6 +344,8 @@ def _parked_tags(row: dict[str, object]) -> list[str]:
         tags.append(
             f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"
         )
+    elif row.get("drainable"):
+        tags.append(_DRAINABLE_NOTE)
     elif status in _RETRY_NOTE:
         tags.append(_RETRY_NOTE[status])
     return tags
