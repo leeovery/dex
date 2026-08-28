@@ -2691,6 +2691,7 @@ class TestVerbs:
             run_mod.mark(ctx, URL, Status.ERROR)
 
     def test_record_pass_appends_with_harvest_rules_version(self, instance):
+        write_item(instance)
         ctx = make_ctx(instance, FakeDriver())
         run_mod.record_pass(ctx, ITEM, "harvest")
         run_mod.record_pass(ctx, ITEM, "digest")
@@ -2711,6 +2712,32 @@ class TestVerbs:
         ctx = make_ctx(instance, FakeDriver())
         with pytest.raises(ValueError, match="stage"):
             run_mod.record_pass(ctx, ITEM, "meditate")
+
+    def test_record_pass_rejects_an_item_that_does_not_exist(self, instance):
+        ctx = make_ctx(instance, FakeDriver())
+        with pytest.raises(ValueError, match="no corpus item"):
+            run_mod.record_pass(ctx, "2026-08-19-typo-ffffff", "digest")
+        assert not instance.passes_path.exists()  # nothing was written
+
+    def test_record_pass_rejects_a_multi_line_blob_of_ids(self, instance):
+        # The field defect: 23 ids pasted as one argument were accepted as
+        # one item and written as one record no item could ever claim —
+        # while the session read every stage as covered.
+        write_item(instance)
+        blob = f"{ITEM}\n2026-08-19-second-aaaaaa\n2026-08-19-third-bbbbbb"
+        ctx = make_ctx(instance, FakeDriver())
+        with pytest.raises(ValueError, match="no corpus item"):
+            run_mod.record_pass(ctx, blob, "digest")
+        assert not instance.passes_path.exists()
+
+    def test_record_pass_error_names_the_blob_on_one_line_and_bounded(self, instance):
+        blob = "\n".join(f"2026-08-19-item-{i:06d}" for i in range(23))
+        ctx = make_ctx(instance, FakeDriver())
+        with pytest.raises(ValueError, match="no corpus item") as excinfo:
+            run_mod.record_pass(ctx, blob, "digest")
+        message = str(excinfo.value)
+        assert "\n" not in message
+        assert len(message) < 200
 
     def test_compact_reports_removed_lines(self, instance):
         write_item(instance)

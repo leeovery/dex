@@ -114,6 +114,9 @@ class TestMain:
 
     def test_pass_records_a_stage(self, instance: Instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
+        item = instance.corpus_dir / "2026" / "2026-08-19-x-55ad7b.md"
+        item.parent.mkdir(parents=True, exist_ok=True)
+        item.write_text("---\nid: 2026-08-19-x-55ad7b\n---\n", encoding="utf-8")
         main(["pass", "2026-08-19-x-55ad7b", "--stage", "harvest"])
         assert "recorded harvest pass" in capsys.readouterr().out
         record = json.loads(instance.passes_path.read_text().split("\n")[0])

@@ -157,6 +157,10 @@ _PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL
 _OUTSTANDING = _PARKED | {Status.QUEUED}
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
+# How much of a rejected pass id the error repeats: enough to recognize a
+# typo, bounded so a whole pasted list reads as one line, not 23.
+_SHOWN_ID_MAX = 60
+
 # Whitespace and control characters anywhere in a URL make the HTTP client
 # refuse the request outright (as a ValueError, outside the
 # connection-failure lifecycle every other fetch failure travels).
@@ -3129,11 +3133,26 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
         A one-line confirmation.
 
     Raises:
-        ValueError: Unknown stage.
+        ValueError: Unknown stage, or no corpus item under ``item_id``.
     """
     if stage not in _PASS_STAGES:
         options = ", ".join(sorted(_PASS_STAGES))
         raise ValueError(f"stage must be one of {options}, got {stage!r}")
+    # The record must bind to a live item, asked exactly as the readers
+    # ask: the trailing-shortid rule (:func:`_dir_owner`), so an id whose
+    # slug a rename rewrote still records — its readers resolve it the
+    # same way. Whitespace is refused BEFORE resolution: a whole pasted
+    # list of ids taken as one argument ends in a real id, so the blob's
+    # trailing shortid resolves and the whole paste lands as one record no
+    # item can ever claim — while the session reads the stage as covered.
+    # Existence is the only claim checked; a corpus file that exists but
+    # cannot be read is seeding's to report, and the pass on it stands.
+    live = {path.stem for path in ctx.instance.corpus_dir.glob("*/*.md")}
+    if any(map(str.isspace, item_id)) or _dir_owner(item_id, live) not in live:
+        shown = " ".join(item_id.split())
+        if len(shown) > _SHOWN_ID_MAX:
+            shown = f"{shown[:_SHOWN_ID_MAX]}…"
+        raise ValueError(f"no corpus item {shown!r} — a pass records a stage for an existing item")
     record: dict[str, str | int] = {
         "stage": stage,
         "item": item_id,
