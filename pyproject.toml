@@ -5,7 +5,7 @@ name = "dex-engine"
 # The rewrite must therefore identify as newer than 0.0.1 even before its first
 # release, or bootstrap would pin v0.0.1 and hand instances back to the old
 # engine. Mint bumps this at release time as usual.
-version = "0.1.7"
+version = "0.1.8"
 description = "Shared pipeline engine for dex knowledge-base instances"
 license = "MIT"
 license-files = ["LICENSE"]
