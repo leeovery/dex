@@ -1364,6 +1364,53 @@ class TestRerun:
         assert "1 rewritten" in report
 
 
+class TestSupersededOutputDrop:
+    """A landing drops the unit's earlier output whatever name it carries."""
+
+    def test_a_hand_named_output_for_the_same_url_leaves_on_the_landing(self, instance):
+        # The field defect: a unit healed by hand pre-migration carried a
+        # name outside the engine's <kind>-<hash6> set; the migration-seeded
+        # rerun landed the engine-named file beside it and the item listed
+        # two views of one unit forever.
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        healed = item_dir / "healed-by-hand.md"
+        healed.write_text(f'---\nurl: "{URL}"\nfetched: "2026-07-01"\n---\n\nthe old view\n')
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        assert not healed.exists()
+        assert sorted(p.name for p in item_dir.glob("*.md")) == [f"web-{work_hash(URL)[:6]}.md"]
+
+    def test_a_neighbours_output_stays_whatever_it_is_named(self, instance):
+        # The URL is the proof of ownership: another unit's file in the same
+        # directory records another URL and is never this landing's to drop.
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        neighbour = item_dir / "web-aaaaaa.md"
+        neighbour.write_text('---\nurl: "https://elsewhere.test/page"\n---\n\ntheir view\n')
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        assert neighbour.exists()
+
+    def test_an_unreadable_candidate_is_left_alone_and_stops_nothing(self, instance):
+        # A file that cannot be read is not proof of anything — it stays,
+        # the landing that met it still completes, and the walk keeps
+        # going: a stale twin sorting AFTER the unreadable file still
+        # leaves (the walk is sorted so the order is a fact, not a fluke).
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        garbled = item_dir / "a-garbled.md"
+        garbled.write_bytes(b"\xff\xfe broken bytes")
+        stale = item_dir / "z-healed-by-hand.md"
+        stale.write_text(f'---\nurl: "{URL}"\n---\n\nthe old view\n')
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert garbled.exists()
+        assert not stale.exists()
+        assert entry_for(ctx).status is Status.DONE
+
+
 class TestIsMediaFile:
     """The one predicate: the cap counts it, the digest lists it, lint compares it."""
 
