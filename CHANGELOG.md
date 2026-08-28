@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-08-28
+
+✨ Added
+- A parked run that waits on transcription now re-queues and drains in the same run instead of needing a second run — a media reel goes from fetch to transcript in one pass when a provider is active.
+- The status report marks a waiting item as drainable when its provider is active, instead of wrongly telling you it's waiting for one to appear.
+
+🔧 Changed
+- `enrich pass` now rejects an item id that doesn't match a live corpus item, catching accidental multi-line pastes of ids that used to silently record as one unclaimed, unresolvable entry.
+- A rerun that returns a much smaller body (e.g. a paywall or login stub) now keeps the previously stored content instead of overwriting it with the stub.
+- Dropping a unit's superseded output file on re-landing now matches any file recording the same URL, not just files following the old naming pattern — so hand-renamed files get cleaned up too.
+
+🐛 Fixed
+- Migration added to remove leftover duplicate output files that a past defect left behind, once per affected item.
+- Migration added to split old pasted-list pass records into correct per-item records.
+- Migration added to restore article bodies that were previously overwritten by a truncated wayback-archive rescue, using the instance's own git history.
+
 ## [0.1.6] - 2026-08-27
 
 ✨ Added
