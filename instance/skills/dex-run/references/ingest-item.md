@@ -237,6 +237,13 @@ A **Needs you** row tagged `resting` is not a manual park and owes no
 heal: `media_fetch: none` parks it, and the engine fetches it again once
 the owner turns media back on. Leave it as it stands.
 
+A row tagged `no provider will appear — you read this one` is the
+cognitive floor: the capability it waits on has no mechanical provider
+for that format, so you are the provider. Read the source, write the
+enrichment file, and close it with `mark done --path` exactly as above.
+Nothing else will ever move it — the run report lists the same units
+under **Read these yourself**.
+
 The ledger must match reality when the session ends — a hand-heal that
 skips `mark` recreates the incident this pipeline was rebuilt to end.
 Never hand-append to any `state/*.jsonl`; the verbs are the only writers.

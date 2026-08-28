@@ -2838,6 +2838,66 @@ class TestStatusReport:
         bare = run_mod.status_report(make_ctx(instance, FakeDriver()))
         assert "retries when a provider appears" in bare  # no provider: the old truth
 
+    def test_a_unit_on_the_cognitive_floor_is_the_readers_work_not_the_engines(self, instance):
+        # The same defect from the other side: the capability report lists
+        # the floor as OCR's active provider while nothing mechanical will
+        # ever appear for the unit, and the standing view captioned it
+        # "retries when a provider appears" under the engine's retry list.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.WAITING,
+                needs=Need.OCR,
+                reason="no mechanical OCR provider",
+                engine="0.2.0",
+                date=TODAY,
+            ),
+        )
+        caps = Capabilities(transcribers=(), extractors=())
+        report = run_mod.status_report(
+            make_ctx(instance, FakeDriver(), capabilities=caps, provider_available=caps.available)
+        )
+        assert "Needs you — 1 entry only you can move" in report
+        assert "no provider will appear — you read this one" in report
+        assert "retries when a provider appears" not in report
+        assert "### ocr — 1 provider" in report  # the floor, still listed active
+
+    def test_a_format_no_extractor_supports_is_cognitive_though_another_is_active(self, instance):
+        # The capability report is a format-blind inventory: with a
+        # CSV-only extractor active, a PDF unit still falls to the floor.
+        # Read as "a provider is active" it captioned the PDF unit a retry.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.FILE,
+                format=Format.PDF,
+                status=Status.WAITING,
+                needs=Need.EXTRACT,
+                reason="no mechanical extractor supports pdf",
+                engine="0.2.0",
+                date=TODAY,
+            ),
+        )
+        caps = Capabilities(
+            transcribers=(),
+            extractors=(FakeExtractor("csv-only", formats=frozenset({Format.CSV})),),
+        )
+        report = run_mod.status_report(
+            make_ctx(instance, FakeDriver(), capabilities=caps, provider_available=caps.available)
+        )
+        assert "**csv-only** · `active`" in report
+        assert "no provider will appear — you read this one" in report
+        assert "retries when a provider appears" not in report
+
     def test_item_view_lists_every_unit_with_provenance(self, instance):
         write_item(instance)
 

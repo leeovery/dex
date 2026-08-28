@@ -22,9 +22,11 @@ directory).
    report names them. **Needs you** holds the entries only you can move,
    each with a stated reason: judge them per the reference's heal
    procedure, which exempts rows tagged `resting` — those owe no heal, and
-   the engine redrains them once the owner turns media back on. **Waiting
-   on the engine** is the engine's own retry queue — read it, act on
-   nothing.
+   the engine redrains them once the owner turns media back on. A row
+   tagged `no provider will appear — you read this one` is a **Read these
+   yourself** job seen from the ledger side; the reference says how to
+   close it. **Waiting on the engine** is the engine's own retry queue —
+   read it, act on nothing.
 
 3. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
    these** is an interrupted previous session: complete its remaining

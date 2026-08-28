@@ -108,6 +108,7 @@ __all__ = [
     "digested_items",
     "fetch_urls",
     "head_sniffer",
+    "is_cognitive_park",
     "is_drainable",
     "is_media_file",
     "items_owing_work",
@@ -344,6 +345,21 @@ def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
             return False
         case _:
             assert_never(entry.status)
+
+
+def is_cognitive_park(entry: LedgerEntry, ctx: RunContext) -> bool:
+    """Whether ``entry`` waits on a capability that resolves to the cognitive floor.
+
+    The complement of :func:`is_drainable` for a waiting unit, and the one
+    place the question is asked: no mechanical provider will ever appear
+    for it, so the reader is the provider. Asked per format, because a
+    format no mechanical extractor supports falls to the floor while
+    another format's provider is active — the capability report is an
+    inventory and cannot make that distinction.
+    """
+    if ctx.capabilities is None or entry.needs is None:
+        return False
+    return ctx.capabilities.is_cognitive(entry.needs, entry.format)
 
 
 # ---------------------------------------------------------------------------
@@ -1758,6 +1774,7 @@ class _Drain:
                     stamped.item,
                     media_fetch=self.ctx.config.media_fetch,
                     drainable=is_drainable(stamped, self.ctx),
+                    cognitive=is_cognitive_park(stamped, self.ctx),
                 )
             )
         elif count:
@@ -1998,15 +2015,12 @@ class _Drain:
         item's stored string sends the session into ``enrichment/<dead-id>/``
         while ``enrich status`` names the live one.
         """
-        capabilities = self.ctx.capabilities
-        if capabilities is None:
-            return []
         return [
             {"item": self.owner_of(entry), "url": entry.url, "need": entry.needs.value}
             for entry in self.entries.values()
             if entry.status is Status.WAITING
             and entry.needs is not None
-            and capabilities.is_cognitive(entry.needs, entry.format)
+            and is_cognitive_park(entry, self.ctx)
         ]
 
 
@@ -2016,6 +2030,7 @@ def _parked_row(
     *,
     media_fetch: MediaFetch,
     drainable: bool,
+    cognitive: bool,
 ) -> dict[str, object]:
     """One parked entry as both report surfaces read it.
 
@@ -2029,6 +2044,14 @@ def _parked_row(
     captioned every waiting row "retries when a provider appears" — sending
     a reader hunting for a missing provider the same report listed as
     active.
+
+    ``cognitive`` is the other half of that answer, and the two are
+    exclusive: the row is not drainable because the capability resolves to
+    the cognitive floor for THIS unit's format. No provider will ever
+    appear for it, so the retry caption was false in the other direction —
+    the reader is the provider, and the row belongs with the work only
+    they can move. Transcription has no floor, so a waiting transcribe row
+    is neither and keeps the retry caption, which is true of it alone.
 
     Built here, with the config in hand, is also where a resting media
     unit is told apart: under ``media_fetch: none`` the drain defers every
@@ -2067,8 +2090,11 @@ def _parked_row(
         # times" — which only the cap makes readable.
         row["attempts"] = entry.attempts
         row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
-    if entry.status is Status.WAITING and drainable:
-        row["drainable"] = True
+    if entry.status is Status.WAITING:
+        if drainable:
+            row["drainable"] = True
+        elif cognitive:
+            row["cognitive"] = True
     return row
 
 
@@ -2563,6 +2589,7 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
             owners.get(entry.hash, (entry.item,))[0],
             media_fetch=ctx.config.media_fetch,
             drainable=is_drainable(entry, ctx),
+            cognitive=is_cognitive_park(entry, ctx),
         )
         for entry in entries.values()
         if entry.status in _PARKED
