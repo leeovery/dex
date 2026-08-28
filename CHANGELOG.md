@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-08-28
+
+🔧 Changed
+- The closing report to the owner at the end of a run is now composed with judgment rather than rendered from a fixed surface — its required content is still fixed, but its shape adapts to what happened.
+- Item receipts render through the surface as before in attended sessions, but in scheduled runs they now stay in the transcript and are summarized in the closing report instead of being emitted verbatim.
+
 ## [0.1.7] - 2026-08-28
 
 ✨ Added
