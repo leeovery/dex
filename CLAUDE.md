@@ -86,7 +86,10 @@ the engine stays unaware of which ones exist.
   deterministically; the ledger is the work queue and the run report is the
   session's work list. Understanding — describing media, digesting,
   placing, writing wiki pages — is Claude's job, specified in the synced
-  skills. Reports render through surfaces, never hand-drawn.
+  skills. State-bearing reports render through surfaces, never
+  hand-drawn; the one hand-composed report is a session's closing
+  summary to the owner — free-form by design, its required content
+  fixed by the dex-run skill.
 - **No server-side machinery in an instance.** An instance runs no Actions and
   no webhooks: the contents-API PUT is the commit, and failures surface in
   sessions where someone can act. This is a rule about the *data* path — no

@@ -40,11 +40,18 @@ instructions apply when its step is reached.
    local-only instance, with no origin remote, commits without pushing:
    the push is skipped, not passed).
 
-5. **Report.** One short summary: what was ingested, what was parked and
-   why, what the health check found, or "nothing to do". Report any
-   failure — auth, network, a command — loudly. Never work around a
-   failure by hand; never leave work half-done silently. A scheduled run
-   never asks the owner questions — it acts or it reports.
+5. **Report.** Close with one report to the owner. Its content is fixed;
+   its form is yours. Cover: what was ingested (full item ids), what was
+   parked and why, what the health check found or why it was not due,
+   any engine defect filed, any config change proposed, and the end
+   state (pushed commit, or clean with nothing to push) — or "nothing to
+   do", which covers every empty section in one line. Shape the rest to
+   the run — prose where there is substance, bullets where there is
+   little — but item ids, URLs, and paths reach the owner whole, never
+   truncated. Report any failure — auth, network, a command — loudly.
+   Never work around a failure by hand; never leave work half-done
+   silently. A scheduled run never asks the owner questions — it acts or
+   it reports.
 
 ## Unattended rules
 
@@ -79,14 +86,20 @@ written. Same motion as rendering, below. `state/taxonomy.json` and
 
 ## Rendering
 
-Never hand-draw a receipt or report — there is a surface for it. Surfaces
-emit markdown: headings, bullets, and identity (item ids, URLs, paths)
-whole and never truncated.
-Write the payload JSON to `cache/`, run
-`bin/dex render --file cache/<name>.json` (the file is
-`{"surface": "<name>", "payload": {...}}`), and emit the output verbatim.
-Engine commands (`enrich run`, `enrich status`, `sync`, `lint`) already
-render their own reports — reproduce those verbatim too.
+A state-bearing report — a receipt, a status view, an enrich or health
+report — renders through its surface, never hand-drawn. Write the
+payload JSON to `cache/`, run `bin/dex render --file cache/<name>.json`
+(the file is `{"surface": "<name>", "payload": {...}}`). Engine commands
+(`enrich run`, `enrich status`, `sync`, `lint`) already render their own
+reports.
+
+Verbatim is scoped to quotation: whenever a surface's or an engine
+command's output is shown — to answer the owner, or because a step says
+to emit it — reproduce it whole, identity (item ids, URLs, paths)
+untruncated, never paraphrased into a new layout. The closing report
+(step 5) is the one report that is not a surface's output: it is
+composed with judgment against step 5's content list, and it summarizes
+surface output rather than pasting it.
 
 ## Backfills (exports in raw/)
 

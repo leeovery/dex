@@ -214,8 +214,11 @@ Render the item's receipt through the surface — never hand-draw it. Write
              "notes": ["..."]}}
 ```
 
-then `bin/dex render --file cache/receipt.json` and emit the output
-verbatim.
+then `bin/dex render --file cache/receipt.json`. In an attended session,
+emit the rendered receipt verbatim — it is the owner's confirmation. In
+a scheduled run the render is the item's record in the transcript; the
+closing report (dex-run step 5) carries the item to the owner in its own
+shape.
 
 ## Healing (manual entries — judgment, closed through the verb)
 

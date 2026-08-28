@@ -283,7 +283,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
-| `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (skills never hand-draw reports) |
+| `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work

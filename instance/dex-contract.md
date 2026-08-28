@@ -84,9 +84,12 @@ never state, never synced.
 - Human corrections live in `wiki/pins.md` (claim + anchor) and must be re-applied
   after any page regeneration.
 - Update pages by rewrite-not-append: a page must always read as if written today.
-- Reports and receipts render through surfaces (`bin/dex render`) — never
-  hand-drawn. Surface output is markdown, and identity in it (item ids,
-  URLs, paths) is always whole: never abbreviate one when quoting a report.
+- State-bearing reports and receipts render through surfaces (`bin/dex
+  render`) — never hand-drawn. The one exception is a session's closing
+  report to the owner: composed with judgment, its required content
+  specified in the dex-run skill. Identity (item ids, URLs, paths) is
+  always whole everywhere: never abbreviate one when quoting a report or
+  writing a summary.
 - Unattended sessions never edit `state/config.json`: proposed changes go in
   the run report; the owner ratifies them in an attended session.
 
