@@ -64,7 +64,7 @@ from dex_engine.pipeline.types import (
     WorkUnit,
 )
 from dex_engine.pipeline.urls import work_hash
-from tests.capabilities.conftest import FakeExtractor, fixture_bytes
+from tests.capabilities.conftest import FakeExtractor, FakeTranscriber, fixture_bytes
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeGh as FakeGhApi
 from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
@@ -2782,6 +2782,34 @@ class TestStatusReport:
         report = run_mod.status_report(make_ctx(instance, FakeDriver()))
         assert "- **2026-08-19-new-slug-55ad7b** · `manual`" in report
         assert "old-slug" not in report
+
+    def test_a_waiting_unit_under_an_active_provider_reads_as_drainable(self, instance):
+        # The field defect: the same output listed whisper as active and
+        # captioned the waiting unit "retries when a provider appears".
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.WAITING,
+                needs=Need.TRANSCRIBE,
+                reason="no captions",
+                engine="0.2.0",
+                date=TODAY,
+            ),
+        )
+        caps = Capabilities(transcribers=(FakeTranscriber(),), extractors=())
+        report = run_mod.status_report(
+            make_ctx(instance, FakeDriver(), capabilities=caps, provider_available=caps.available)
+        )
+        assert "a provider is active — drains on the next run" in report
+        assert "retries when a provider appears" not in report
+
+        bare = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "retries when a provider appears" in bare  # no provider: the old truth
 
     def test_item_view_lists_every_unit_with_provenance(self, instance):
         write_item(instance)

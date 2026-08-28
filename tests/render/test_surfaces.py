@@ -160,6 +160,28 @@ class TestEnrichReport:
         assert "- **a** · `waiting` · retries when a provider appears" in out
         assert "- **b** · `error` · retries on the next engine release" in out
 
+    def test_a_drainable_waiting_row_names_the_active_provider_not_a_missing_one(self):
+        # The field defect: a unit waiting on transcribe captioned "retries
+        # when a provider appears" while the same output listed whisper as
+        # active — sending the reader hunting for a provider that was there.
+        parked = [
+            {
+                "item": "a",
+                "url": "https://a.test",
+                "status": "waiting",
+                "reason": "waiting on transcribe",
+                "drainable": True,
+            }
+        ]
+        out = render("status", {"counts": {"waiting": 1}, "parked": parked})
+        assert "a provider is active — drains on the next run" in out
+        assert "retries when a provider appears" not in out
+
+    def test_a_drainable_value_other_than_true_is_loud(self):
+        parked = [{"item": "i", "url": "u", "status": "waiting", "reason": "r", "drainable": 1}]
+        with pytest.raises(PayloadError, match="drainable"):
+            render("status", {"counts": {}, "parked": parked})
+
     def test_attempt_cap_without_attempts_is_loud(self):
         parked = [{"item": "a", "url": "u", "status": "blocked", "reason": "r", "attempt_cap": 5}]
         with pytest.raises(PayloadError, match="attempt_cap"):
