@@ -2048,23 +2048,30 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     construction, and the stored string is the attribution as of the day
     the line was written, which a rename since leaves naming nothing.
 
-    Candidate names are the closed ``<kind>-<hash6>.md`` set, and each
-    candidate must PROVE it belongs to this unit by the URL it records:
-    ``hash6`` is six hex digits, so two units under one item share one often
-    enough that a real pair was found by hand, and matching on the name
-    alone unlinked the neighbour's enrichment while its ledger line still
-    read ``done``. Nothing is dropped for a replacement that is not on disk
-    — a mistyped ``mark --path`` must not cost the item its enrichment.
+    Candidates are every other markdown beside the replacement, and each
+    must PROVE it belongs to this unit by the URL it records: the URL is
+    the unit's identity (two entries under one URL are one hash), so a
+    match is this unit's own earlier output and nothing else's — matching
+    on names alone once unlinked a hash6 neighbour's enrichment while its
+    ledger line still read ``done``. Names cannot bound the search: a unit
+    healed by hand carries whatever name the healer typed, and a
+    migration-seeded rerun that landed the engine-named file beside it
+    left the item listing two views of one unit. A candidate that cannot
+    be read is left alone — an unreadable file is not proof of anything.
+    Nothing is dropped for a replacement that is not on disk — a mistyped
+    ``mark --path`` must not cost the item its enrichment.
     """
     if not (instance.root / path).is_file():
         return
     item_dir = (instance.root / path).parent
     current = Path(path).name
-    for kind in Kind:
-        stale = item_dir / f"{kind.value}-{entry.hash[:6]}.md"
-        if stale.name == current or not stale.is_file():
+    for stale in sorted(item_dir.glob("*.md")):
+        if stale.name == current:
             continue
-        fields, _body = read_enrichment(stale)
+        try:
+            fields, _body = read_enrichment(stale)
+        except (OSError, UnicodeDecodeError):
+            continue
         if fields.get("url") == entry.url:
             stale.unlink()
 
