@@ -1190,6 +1190,11 @@ class _Drain:
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
         path = None
         if content.body is not None:
+            kept = self._kept_larger_stored(entry, content.body)
+            if kept is not None:
+                path, title = kept
+                self.record_outcome(entry, status=Status.DONE, path=path, title=title)
+                return
             path = self._write_output(entry, content.meta, content.body)
             _drop_superseded_outputs(self.ctx.instance, entry, path)
         title = content.meta.get("title")
@@ -1291,6 +1296,38 @@ class _Drain:
         )
 
     # -- outputs ---------------------------------------------------------
+
+    def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> tuple[str, str | None] | None:
+        """The stored output's (path, title) when it dwarfs a re-fetched body.
+
+        A live page shrinks a little when it is edited; it does not lose
+        half of itself. A re-fetched body under half the stored one is a
+        stub standing where the content used to be — a paywall preview, a
+        login interstitial, an archive snapshot of either — and writing it
+        would trade the article for the stub, reported as new material.
+        The stored body must prove it is this unit's own (the URL it
+        records): a neighbour squatting at this name is not content this
+        guard protects. The title comes off the stored file too — a rerun
+        seed wiped the ledger's, and the stub's must not stand in. If the
+        smaller page really is the truth, deleting the stored file first
+        lets the re-fetch land.
+        """
+        owner = self.owner_of(entry)
+        out = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        if not out.is_file():
+            return None
+        fields, stored = read_enrichment(out)
+        if fields.get("url") != entry.url or len(body) * 2 >= len(stored):
+            return None
+        rel = str(out.relative_to(self.ctx.instance.root))
+        self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
+        self.notes.append(
+            f"kept the stored body for {entry.url}: the re-fetch returned "
+            f"{len(body)} chars against {len(stored)} stored — "
+            f"delete {rel} first if the smaller page is the truth"
+        )
+        title = fields.get("title")
+        return rel, title if isinstance(title, str) else None
 
     def _write_output(
         self,

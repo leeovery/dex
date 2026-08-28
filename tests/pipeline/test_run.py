@@ -1195,6 +1195,66 @@ class TestRerun:
         assert "1 rewritten" in report
         assert "Already stored" not in report
 
+    def test_a_rerun_that_halves_the_stored_body_keeps_the_stored_file(self, instance):
+        # The field defect: a rerun's live fetch was refused, wayback served
+        # the member-only preview, and the run traded a complete article for
+        # the stub — reported as new material.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        done = entry_for(ctx)
+        out = instance.root / done.path
+        before = (out.read_text(), out.stat().st_mtime_ns)
+
+        stub = FakeDriver(fetch_fn=lambda _unit: Content(meta={"title": "s"}, body="preview " * 20))
+        ctx = make_ctx(instance, stub)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert (out.read_text(), out.stat().st_mtime_ns) == before  # stored body stands
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert entry.path == done.path
+        assert entry.title == done.title  # the stub's title never lands either
+        assert "kept the stored body" in report
+        assert "delete " in report  # the way through, if the shrink is the truth
+        assert "rewritten" not in report
+        assert "Already stored" in report  # accounted for, not new material
+
+    def test_a_modest_shrink_is_still_a_rewrite(self, instance):
+        # The guard is for a body that lost half of itself, not for an edit:
+        # a trimmed page must keep landing or every correction parks.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        original = len("substantial body " * 30)
+        trimmed = FakeDriver(
+            fetch_fn=lambda _unit: Content(meta={}, body="x" * (original * 3 // 5))
+        )
+        ctx = make_ctx(instance, trimmed)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert "1 rewritten" in report
+        assert "kept the stored body" not in report
+
+    def test_a_squatting_neighbour_does_not_trigger_the_keep(self, instance):
+        # The stored file must prove it is this unit's own by the URL it
+        # records — a file at this name holding another URL's content is
+        # not content the guard protects, and the write proceeds over it.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        entry_hash = work_hash(ctx.drivers[0].canonical(URL))
+        out = instance.enrichment_dir / ITEM / f"web-{entry_hash[:6]}.md"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            render_enrichment("https://elsewhere.test/other", TODAY, {}, "another page " * 200),
+            encoding="utf-8",
+        )
+        small = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="short but mine " * 5))
+        report = run_mod.run(make_ctx(instance, small))
+        fields, body = read_enrichment(out)
+        assert fields["url"] == URL  # the squatter was overwritten, not kept
+        assert "short but mine" in body
+        assert "kept the stored body" not in report
+
     def test_unchanged_rerun_on_a_later_day_still_compares_equal(self, instance):
         # The fetched: stamp changes every run by definition — the mask must
         # hold across a date change or every rerun would report as changed.
