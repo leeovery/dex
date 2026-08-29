@@ -39,9 +39,10 @@ Checks:
   ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
   least one fact bullet. ``enrich item digest`` writes digests and cannot
   write any of those faults, so this is the backstop for the files that
-  predate the verb and for anything hand-edited since. Plus one advisory
-  on a conforming digest: a ``media:`` listing that no longer names the
-  files the item carries, in either direction.
+  predate the verb and for anything hand-edited since. Plus two advisories:
+  on a conforming digest, a ``media:`` listing that no longer names the
+  files the item carries, in either direction; and, per item, media
+  carried with fewer descriptions written than files to describe.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -82,6 +83,7 @@ from .pipeline.run import (
     HARVEST_RULES_VERSION,
     digest_orphans,
     digested_items,
+    items_owing_descriptions,
     items_owing_work,
     never_harvested,
 )
@@ -223,6 +225,10 @@ def run_lint(
     payload["digests"] = digests.count
     payload["digest_errors"] = digests.errors
     payload["digest_media_drift"] = digests.media_drift
+    # Advisory, like the drift row beside it: writing a description is a
+    # reader's act, and failing the check on work no machine can do would
+    # stop every scheduled run until a human happened to look.
+    payload["undescribed_media"] = items_owing_descriptions(instance)
     if scan.reconciled:
         payload["reconciled"] = scan.reconciled
     if scan.notes:

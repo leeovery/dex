@@ -369,6 +369,34 @@ class TestEnrichReport:
         with pytest.raises(PayloadError, match=r"notes\[0\]"):
             render("enrich-report", {"counts": {}, "items": [], "parked": [], "notes": notes})
 
+    def test_undescribed_media_is_its_own_queue_not_new_material(self):
+        # "Needs writing up" means this run produced material; this section
+        # means media has been sitting there undescribed, however long.
+        payload = {
+            **ENRICH_PAYLOAD,
+            "undescribed_media": [
+                {"item": "2026-08-19-photo-abc123", "binaries": 3, "described": 1}
+            ],
+        }
+        shortfall = (
+            "  ↳ 1 of 3 media files described — view the rest and write "
+            "`enrichment/2026-08-19-photo-abc123/media-<n>.md`"
+        )
+        out = render("enrich-report", payload)
+        lines = out.splitlines()
+        head = lines.index("### Describe these — 1 item carries media nobody has described")
+        assert lines[head + 1 : head + 4] == ["", "- **2026-08-19-photo-abc123**", shortfall]
+        assert_no_trailing_whitespace(out)
+
+    def test_absent_undescribed_media_says_nothing(self):
+        assert "Describe these" not in render("enrich-report", ENRICH_PAYLOAD)
+
+    def test_a_fully_described_row_is_loud(self):
+        covered = [{"item": "i", "binaries": 1, "described": 1}]
+        payload = {**ENRICH_PAYLOAD, "undescribed_media": covered}
+        with pytest.raises(PayloadError, match="not short of binaries"):
+            render("enrich-report", payload)
+
 
 class TestStatusSurface:
     def test_summary_with_waiting_and_orphans(self):
@@ -483,6 +511,24 @@ class TestStatusSurface:
     def test_negative_count_is_loud(self):
         with pytest.raises(PayloadError, match="counts"):
             render("status", {"counts": {"done": -1}})
+
+    def test_the_describe_queue_stands_beside_the_digest_backstop(self):
+        out = render(
+            "status",
+            {
+                "counts": {"done": 2},
+                "undescribed_media": [
+                    {"item": "2026-08-19-photo-abc123", "binaries": 2, "described": 0},
+                    {"item": "2026-08-18-scan-77cc88", "binaries": 1, "described": 0},
+                ],
+                "orphans": ["2026-08-19-example-55ad7b"],
+            },
+        )
+        assert "### Describe these — 2 items carry media nobody has described" in out
+        assert "  ↳ 0 of 2 media files described — view the rest and write" in out
+        assert "  ↳ 0 of 1 media file described — view the rest and write" in out
+        assert "### Digest these — 1 item whose enrichment is newer than its digest" in out
+        assert_no_trailing_whitespace(out)
 
 
 class TestCapabilityReport:
@@ -894,6 +940,23 @@ class TestHealthReport:
             "  - `enrichment/2026-01-08-thread-888888/x-abc123.md` — parent fetch failed "
             "after 3 post(s): fxtwitter says the post is gone"
         ) in out
+
+    def test_undescribed_media_names_the_shortfall_per_item(self):
+        out = render(
+            "health-report",
+            {
+                "summary": {"corpus_items": 1, "pages": 0, "cited": 0},
+                "undescribed_media": [
+                    {"item": "2026-08-19-photo-abc123", "binaries": 3, "described": 1}
+                ],
+            },
+        )
+        assert "- describe these (media carried, no description written) — **1**" in out
+        assert "  - **2026-08-19-photo-abc123** — 1 of 3 described" in out
+
+    def test_no_undescribed_media_reads_as_none(self):
+        out = render("health-report", CLEAN_HEALTH)
+        assert "- describe these (media carried, no description written) — none" in out
 
     def test_malformed_digests_render_loud(self):
         out = render("health-report", HEALTH_PAYLOAD)

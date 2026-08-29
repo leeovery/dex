@@ -382,6 +382,53 @@ def _parked_tags(row: dict[str, object]) -> list[str]:
     return tags
 
 
+def _undescribed_media(surface: str, payload: Mapping[str, object]) -> str:
+    """The describe queue: media on disk that no session has written up.
+
+    One section on two surfaces — the run's own work list and the standing
+    listing — because the answer to "what is still owed a description" is
+    the same question asked at two moments, and two spellings of it would
+    drift apart.
+
+    The counts are all the row can honestly say: descriptions are counted
+    against binaries, never matched to them, so this names the item and
+    the shortfall and leaves the reader to find which file is missing one.
+    """
+    rows = []
+    for i, entry in enumerate(_obj_list_at(surface, payload, "undescribed_media", required=False)):
+        where = f"undescribed_media[{i}]."
+        _check_keys(
+            surface, entry, required=frozenset({"item", "binaries", "described"}), where=where
+        )
+        item = _str_at(surface, entry, "item", where)
+        binaries = _int_at(surface, entry, "binaries", where)
+        described = _int_at(surface, entry, "described", where)
+        if described >= binaries:
+            _fail(
+                surface,
+                f"{where}described ({described}) is not short of binaries ({binaries}) — "
+                "only an item still owing a description belongs here",
+            )
+        shortfall = (
+            f"{described} of {kernel.plural(binaries, 'media file')} described — view the "
+            f"rest and write {kernel.code(f'enrichment/{item}/media-<n>.md')}"
+        )
+        rows.append((item, shortfall))
+    if not rows:
+        return ""
+    lines = [
+        kernel.heading(
+            f"Describe these — {kernel.plural(len(rows), 'item')} "
+            f"{_agree(len(rows), 'carries', 'carry')} media nobody has described",
+            level=3,
+        ),
+        "",
+    ]
+    for item, shortfall in rows:
+        lines += [_entry(item), kernel.detail(shortfall)]
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # enrich-report — the run report
 # ---------------------------------------------------------------------------
@@ -414,6 +461,10 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
                              "count": int}]}],
           "cognitive": [{"item": str, "url": str,
                          "need": str}],              # optional: jobs for the session
+          "undescribed_media": [                     # optional: items carrying
+            {"item": str,                            #   media no session has
+             "binaries": int,                        #   described yet
+             "described": int}],
           "unchanged": [{"id": str,                  # optional: units re-fetched
                          "count": int}],             #   to what was already stored
           "issues_filed": int,                       # optional, default 0
@@ -431,7 +482,16 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"counts", "items", "parked"}),
-        optional=frozenset({"incomplete", "cognitive", "unchanged", "issues_filed", "notes"}),
+        optional=frozenset(
+            {
+                "incomplete",
+                "cognitive",
+                "undescribed_media",
+                "unchanged",
+                "issues_filed",
+                "notes",
+            }
+        ),
     )
     counts = _counts_at(surface, payload, "counts")
     parked = _parked_rows(surface, payload, required=True)
@@ -446,6 +506,7 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
     sections = [
         _enrich_writeups(surface, payload),
         _enrich_cognitive(surface, payload),
+        _undescribed_media(surface, payload),
         _parked_section(parked, mine=True),
         _parked_section(parked, mine=False),
         _enrich_incomplete(surface, payload),
@@ -666,6 +727,10 @@ def _render_status(payload: Mapping[str, object]) -> str:
                                                 #   cognitive floor
                       "resting": true}],        # optional: the engine will not
                                                 #   act on it; the owner will
+          "undescribed_media": [              # optional: items carrying media
+            {"item": str,                     #   no session has described —
+             "binaries": int,                 #   the standing describe queue
+             "described": int}],
           "orphans": [str],                   # optional: item ids whose
                                               #   enrichment is newer than their
                                               #   digest (interrupted-session
@@ -677,7 +742,7 @@ def _render_status(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"counts"}),
-        optional=frozenset({"waiting", "parked", "orphans"}),
+        optional=frozenset({"waiting", "parked", "undescribed_media", "orphans"}),
     )
     counts = _counts_at(surface, payload, "counts")
     orphans = _str_list_at(surface, payload, "orphans")
@@ -700,7 +765,11 @@ def _render_status(payload: Mapping[str, object]) -> str:
         blocks += [
             kernel.bullet(f"{kernel.code(need)} — {count}") for need, count in sorted(waiting)
         ]
-    for section in (_parked_section(parked, mine=True), _parked_section(parked, mine=False)):
+    for section in (
+        _parked_section(parked, mine=True),
+        _parked_section(parked, mine=False),
+        _undescribed_media(surface, payload),
+    ):
         if section:
             blocks += ["", section]
     if orphans:
@@ -1106,6 +1175,7 @@ _HEALTH_OPTIONAL = frozenset(
         "digest_errors",
         "digest_orphans",
         "digest_media_drift",
+        "undescribed_media",
         "reconciled",
         "notes",
     }
@@ -1174,6 +1244,8 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
           "digest_orphans": [str],
           "digest_media_drift": [str],   # stated media: is not the media on disk
+          # media on disk that no session has described
+          "undescribed_media": [{"item": str, "binaries": int, "described": int}],
           # --write outcomes and free notes
           "reconciled": [str],
           "notes": [str],
@@ -1468,6 +1540,16 @@ def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
         payload,
         "digest_media_drift",
         "re-emit these digests (`media:` is not the media on disk)",
+    )
+    undescribed = _health_rows(
+        surface, payload, "undescribed_media", ("item",), int_keys=("binaries", "described")
+    )
+    blocks += _health_listing(
+        "describe these (media carried, no description written)",
+        undescribed,
+        lambda row: (
+            f"{kernel.bold(str(row['item']))} — {row['described']} of {row['binaries']} described"
+        ),
     )
     return blocks
 

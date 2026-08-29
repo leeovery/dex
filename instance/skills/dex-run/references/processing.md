@@ -17,16 +17,22 @@ directory).
    image captures — nothing to fetch, everything to describe and digest),
    and items whose every unit is dead or ruled out (nothing landed, so
    the description and digest come from the owner's note) — plus everything
-   under **Read these yourself**. Items you created
-   this session always get the full per-item procedure whether or not the
-   report names them. **Needs you** holds the entries only you can move,
-   each with a stated reason: judge them per the reference's heal
-   procedure, which exempts rows tagged `resting` — those owe no heal, and
-   the engine redrains them once the owner turns media back on. A row
-   tagged `no provider will appear — you read this one` is a **Read these
-   yourself** job seen from the ledger side; the reference says how to
-   close it. **Waiting on the engine** is the engine's own retry queue —
-   read it, act on nothing.
+   under **Read these yourself**. **Describe these** is a different
+   obligation: every item carrying more media files than descriptions,
+   named again every run until the descriptions land. It is a backlog, not
+   news — an item listed there may be long enriched and already digested —
+   so the section persists, and the only thing that clears a row is writing
+   the missing `enrichment/<id>/media-<n>.md` (per-item reference, step 4).
+   The counts say how many are short; the media itself says what to write.
+   Items you created this session always get the full per-item procedure
+   whether or not the report names them. **Needs you** holds the entries
+   only you can move, each with a stated reason: judge them per the
+   reference's heal procedure, which exempts rows tagged `resting` — those
+   owe no heal, and the engine redrains them once the owner turns media
+   back on. A row tagged `no provider will appear — you read this one` is
+   a **Read these yourself** job seen from the ledger side; the reference
+   says how to close it. **Waiting on the engine** is the engine's own
+   retry queue — read it, act on nothing.
 
 3. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
    these** is an interrupted previous session: complete its remaining
@@ -35,11 +41,12 @@ directory).
    either step, and no surface here would catch a skipped harvest before
    the next health check. Every item listed is digestible; one still
    owing a unit is `raw` and never appears there, however long it stays
-   parked. **Needs you** and **Waiting on the engine** here are the
-   standing view of everything parked in the instance, not just this
-   session's: judge the **Needs you** entries per the reference's heal
-   procedure exactly as on the run report, and act on nothing under
-   **Waiting on the engine**.
+   parked. **Describe these** is the same standing describe queue the run
+   report carries, and clears the same way. **Needs you** and **Waiting on
+   the engine** here are the standing view of everything parked in the
+   instance, not just this session's: judge the **Needs you** entries per
+   the reference's heal procedure exactly as on the run report, and act on
+   nothing under **Waiting on the engine**.
 
 4. **Reconcile.** Before writing the session report, check the run's
    books against what you actually handled. This is a checklist, not

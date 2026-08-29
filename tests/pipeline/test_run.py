@@ -3271,6 +3271,187 @@ class TestClosedWithoutContentItems:
         assert run_mod.digest_orphans(instance) == []
 
 
+PHOTO_ITEM = "2026-08-19-photo-abc123"
+
+
+class TestUndescribedMedia:
+    """Media on disk owes a description — counted per item, never slot-matched."""
+
+    def _item_dir(self, instance, item_id: str = ITEM) -> Path:
+        item_dir = instance.enrichment_dir / item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        return item_dir
+
+    def test_stated_binaries_count_with_no_enrichment_directory(self, instance):
+        row = run_mod.undescribed_media(instance, ITEM, ["media/x/a.jpg", "media/x/b.pdf"])
+        assert row == {"item": ITEM, "binaries": 2, "described": 0}
+
+    def test_a_download_in_the_enrichment_directory_counts_too(self, instance):
+        # A media capture states its path; a downloaded one never reaches
+        # frontmatter, so the directory is the only place it shows.
+        (self._item_dir(instance) / "media-0.jpg").write_bytes(PNG_BYTES)
+        assert run_mod.undescribed_media(instance, ITEM, []) == {
+            "item": ITEM,
+            "binaries": 1,
+            "described": 0,
+        }
+
+    def test_a_stated_markdown_path_owes_a_description_too(self, instance):
+        # Nothing transcribes or extracts an attached document, so the row is
+        # the only thing that ever sends a session to read it.
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/notes.md"]) == {
+            "item": ITEM,
+            "binaries": 1,
+            "described": 0,
+        }
+
+    def test_a_summarized_markdown_path_clears(self, instance):
+        (self._item_dir(instance) / "media-0.md").write_text("what it says\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/notes.md"]) is None
+
+    def test_extraction_assets_owe_no_description(self, instance):
+        # A figure lifted out of an already-extracted document is not a
+        # capture: charging a description for each invents work.
+        (self._item_dir(instance) / "abc123-asset-0.png").write_bytes(PNG_BYTES)
+        assert run_mod.undescribed_media(instance, ITEM, []) is None
+
+    def test_a_half_written_download_is_neither(self, instance):
+        # An interrupted download's temp counted as a binary opens a row no
+        # description could ever close; counted as a description it retires
+        # the row the file beside it is owed.
+        item_dir = self._item_dir(instance)
+        (item_dir / "media-0.jpg").write_bytes(PNG_BYTES)
+        (item_dir / f"media-0.jpg.abc123{atomic.TEMP_SUFFIX}").write_bytes(b"half")
+        assert run_mod.undescribed_media(instance, ITEM, []) == {
+            "item": ITEM,
+            "binaries": 1,
+            "described": 0,
+        }
+
+    def test_the_rest_of_the_enrichment_directory_is_not_counted(self, instance):
+        # Every item with a fetched URL and a media download holds both
+        # kinds of file in one directory, in whatever order it lists them.
+        item_dir = self._item_dir(instance)
+        (item_dir / "web-abc123.md").write_text("the fetched page\n", encoding="utf-8")
+        (item_dir / "media-0.jpg").write_bytes(PNG_BYTES)
+        (item_dir / "media-0.md").write_text("what it depicts\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/a.jpg"]) == {
+            "item": ITEM,
+            "binaries": 2,
+            "described": 1,
+        }
+
+    def test_descriptions_are_counted_until_they_cover_the_media(self, instance):
+        item_dir = self._item_dir(instance)
+        (item_dir / "media-0.jpg").write_bytes(PNG_BYTES)
+        (item_dir / "media-1.jpg").write_bytes(PNG_BYTES)
+        (item_dir / "media-0.md").write_text("what the first depicts\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, []) == {
+            "item": ITEM,
+            "binaries": 2,
+            "described": 1,
+        }
+        (item_dir / "media-1.md").write_text("and the second\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, []) is None
+
+    def _photo_item(self, instance, files: int = 1) -> str:
+        """A media capture whose files are on disk, states them, describes none."""
+        media = [f"media/{PHOTO_ITEM}/photo-{n}.jpg" for n in range(files)]
+        write_item(instance, PHOTO_ITEM, urls=[], kinds=["image"], media=media)
+        for repo_path in media:
+            path = instance.root / repo_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(PNG_BYTES)
+        return PHOTO_ITEM
+
+    def _describe(self, instance, slot: int, item_id: str = PHOTO_ITEM) -> None:
+        item_dir = self._item_dir(instance, item_id)
+        (item_dir / f"media-{slot}.md").write_text("what it depicts\n", encoding="utf-8")
+
+    def test_the_run_report_names_the_item_and_its_counts(self, instance, monkeypatch):
+        self._photo_item(instance, files=3)
+        self._describe(instance, 0)
+        captured: dict[str, dict] = {}
+        rendered = run_mod.surfaces.render
+
+        def spy(surface, payload):
+            captured[surface] = dict(payload)
+            return rendered(surface, payload)
+
+        monkeypatch.setattr(run_mod.surfaces, "render", spy)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert captured["enrich-report"]["undescribed_media"] == [
+            {"item": PHOTO_ITEM, "binaries": 3, "described": 1}
+        ]
+        # The section is the surface's, off that payload — never hand-drawn.
+        assert "### Describe these — 1 item carries media nobody has described" in report
+        assert f"- **{PHOTO_ITEM}**" in report
+        assert "1 of 3 media files described" in report
+        assert f"enrichment/{PHOTO_ITEM}/media-<n>.md" in report
+
+    def test_listed_though_the_item_is_enriched_and_digested(self, instance):
+        # The whole point: an item whose units have all landed leaves the
+        # unit-driven report, which is where its undescribed media hid.
+        path = write_item(
+            instance,
+            PHOTO_ITEM,
+            urls=[],
+            kinds=["image"],
+            media=[f"media/{PHOTO_ITEM}/a.jpg", f"media/{PHOTO_ITEM}/b.jpg"],
+        )
+        self._describe(instance, 0)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{PHOTO_ITEM}.md").write_text("digested\n", encoding="utf-8")
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert corpus.read_item(path).status == "enriched"
+        assert "1 of 2 media files described" in report
+
+    def test_it_persists_across_runs_until_the_description_lands(self, instance):
+        self._photo_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        assert "Describe these" in run_mod.run(ctx)
+        assert "Describe these" in run_mod.run(ctx)
+        self._describe(instance, 0)
+        assert "Describe these" not in run_mod.run(ctx)
+
+    def test_a_described_item_is_never_named(self, instance):
+        self._photo_item(instance)
+        self._describe(instance, 0)
+        assert "Describe these" not in run_mod.run(make_ctx(instance, FakeDriver()))
+
+    def test_an_item_with_no_media_is_never_named(self, instance):
+        write_item(instance)
+        assert "Describe these" not in run_mod.run(make_ctx(instance, FakeDriver()))
+
+    def test_only_the_full_run_carries_the_queue(self, instance):
+        # A transcribe drain or a promotion reports on the units it moved;
+        # the standing queue belongs to the run and to `enrich status`.
+        self._photo_item(instance)
+        report = run_mod.run_transcribe(make_ctx(instance, FakeDriver()))
+        assert "Describe these" not in report
+
+    def test_the_standing_listing_appears_and_clears_on_the_same_rule(self, instance):
+        self._photo_item(instance, files=2)
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.status_report(ctx)
+        assert "### Describe these — 1 item carries media nobody has described" in report
+        assert "0 of 2 media files described" in report
+        self._describe(instance, 0)
+        self._describe(instance, 1)
+        assert "Describe these" not in run_mod.status_report(ctx)
+
+    def test_an_unreadable_corpus_item_makes_no_row_and_stops_nothing(self, instance):
+        # Naming it is seeding's job and lint's; this listing states no
+        # media for a file it could not read — and keeps walking, or one
+        # corrupt item hides every describe row sorting behind it.
+        (instance.corpus_dir / "2026").mkdir(parents=True, exist_ok=True)
+        (instance.corpus_dir / "2026" / "2026-08-19-aaa-000000.md").write_text("not an item\n")
+        self._photo_item(instance)
+        assert run_mod.items_owing_descriptions(instance) == [
+            {"item": PHOTO_ITEM, "binaries": 1, "described": 0}
+        ]
+
+
 ALPHA = "2026-08-19-alpha-111111"
 BRAVO = "2026-08-19-bravo-222222"
 OLD_ITEM = "2026-08-19-old-slug-55ad7b"
