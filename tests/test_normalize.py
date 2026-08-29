@@ -58,6 +58,16 @@ def shortid(msg_id: str, channel: str = CHANNEL) -> str:
     return hashlib.sha1(f"{channel}/{msg_id}".encode()).hexdigest()[:6]  # noqa: S324 — mirrors normalize
 
 
+def attached(path: str) -> dict:
+    return {"url": path, "fileName": path.rsplit("/", 1)[-1] or path}
+
+
+def write_attachment(instance: Instance, path: str, data: bytes, channel: str = CHANNEL) -> None:
+    dest = instance.root / "raw" / "discord" / channel / path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+
+
 def items(instance: Instance) -> dict[str, corpus.CorpusItem]:
     return {path.stem: corpus.read_item(path) for path in instance.corpus_dir.glob("*/*.md")}
 
@@ -210,6 +220,160 @@ class TestNormalize:
     def test_no_exports_is_loud(self, instance):
         with pytest.raises(ValueError, match="no exports found"):
             run_normalize(instance, Config())
+
+
+class TestAttachmentMaterialization:
+    """``media:`` is what the pipeline seeds file work from — attachments land there."""
+
+    def test_an_attachment_is_copied_into_media_and_listed(self, instance):
+        write_attachment(instance, "assets/photo.png", b"png-bytes")
+        write_export(
+            instance, [message("m1", SUBSTANTIAL, attachments=[attached("assets/photo.png")])]
+        )
+        run_normalize(instance, Config())
+        item = next(iter(items(instance).values()))
+        rel = f"media/{shortid('m1')}/photo.png"
+        assert item.media == [rel]
+        assert item.attachments == [f"raw/discord/{CHANNEL}/assets/photo.png"]
+        assert (instance.root / rel).read_bytes() == b"png-bytes"
+
+    def test_an_already_materialized_file_is_not_overwritten(self, instance):
+        write_attachment(instance, "assets/photo.png", b"re-exported-bytes")
+        rel = f"media/{shortid('m1')}/photo.png"
+        dest = instance.root / rel
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"the-ingested-bytes")
+        write_export(
+            instance, [message("m1", SUBSTANTIAL, attachments=[attached("assets/photo.png")])]
+        )
+        run_normalize(instance, Config())
+        assert dest.read_bytes() == b"the-ingested-bytes"
+        assert next(iter(items(instance).values())).media == [rel]
+
+    def test_a_missing_raw_attachment_is_still_listed_and_silent(self, instance):
+        # raw/ is not guaranteed to outlive the corpus it produced: the
+        # entry stands, the pipeline parks the unit that needs the bytes.
+        write_export(
+            instance, [message("m1", SUBSTANTIAL, attachments=[attached("assets/gone.png")])]
+        )
+        lines = run_normalize(instance, Config())
+        assert lines == ["discord/general: 1 items written, 0 clusters skipped"]
+        rel = f"media/{shortid('m1')}/gone.png"
+        assert next(iter(items(instance).values())).media == [rel]
+        assert not (instance.root / rel).exists()
+
+    def test_a_shared_basename_is_disambiguated_deterministically(self, instance):
+        write_attachment(instance, "assets/photo.png", b"first")
+        write_attachment(instance, "other/photo.png", b"second")
+        write_export(
+            instance,
+            [
+                message(
+                    "m1",
+                    SUBSTANTIAL,
+                    attachments=[attached("assets/photo.png"), attached("other/photo.png")],
+                )
+            ],
+        )
+        run_normalize(instance, Config())
+        prefix = hashlib.sha1(b"other/photo.png").hexdigest()[:6]  # noqa: S324 — mirrors normalize
+        media = [
+            f"media/{shortid('m1')}/photo.png",
+            f"media/{shortid('m1')}/{prefix}-photo.png",
+        ]
+        assert next(iter(items(instance).values())).media == media
+        assert (instance.root / media[0]).read_bytes() == b"first"
+        assert (instance.root / media[1]).read_bytes() == b"second"
+        run_normalize(instance, Config())
+        assert next(iter(items(instance).values())).media == media  # same names next run
+
+    @pytest.mark.parametrize(
+        "escape",
+        [
+            "../../../../outside.png",  # raw/discord/<channel>/ is three deep
+            "/etc/passwd",
+        ],
+    )
+    def test_an_attachment_reaching_outside_raw_is_named_and_dropped(self, instance, escape):
+        # The exporter path is data: a converted export can carry an
+        # absolute path or a climb, and neither is read.
+        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(escape)])])
+        lines = run_normalize(instance, Config())
+        assert (
+            f"warn: raw/discord/{CHANNEL}: attachment {escape!r} resolves outside "
+            f"raw/ — no media entry" in lines
+        )
+        item = next(iter(items(instance).values()))
+        assert item.media == []
+        assert item.attachments == [f"raw/discord/{CHANNEL}/{escape}"]  # provenance, verbatim
+        assert not (instance.root / "media").exists()
+
+    def test_an_attachment_climbing_into_the_instance_is_named_and_dropped(self, instance):
+        # A climb that lands back inside the root is still not an export
+        # asset: copying an engine file into media/ would make it
+        # LFS-tracked pipeline input for the item.
+        escape = "../../../state/enrichment-ledger.jsonl"
+        instance.ledger_path.write_text('{"unit": "not an attachment"}\n')
+        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(escape)])])
+        lines = run_normalize(instance, Config())
+        assert (
+            f"warn: raw/discord/{CHANNEL}: attachment {escape!r} resolves outside "
+            f"raw/ — no media entry" in lines
+        )
+        item = next(iter(items(instance).values()))
+        assert item.media == []
+        assert item.attachments == [f"raw/discord/{CHANNEL}/{escape}"]  # provenance, verbatim
+        assert not (instance.root / "media").exists()
+
+    def test_an_attachment_naming_no_file_is_named_and_dropped(self, instance):
+        # A conversion that writes a directory where the exporter writes a
+        # file path: there is no name to materialize it under.
+        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(".")])])
+        lines = run_normalize(instance, Config())
+        assert (
+            f"warn: raw/discord/{CHANNEL}: attachment '.' names no file — no media entry" in lines
+        )
+        item = next(iter(items(instance).values()))
+        assert item.media == []
+        assert item.attachments == [f"raw/discord/{CHANNEL}/."]
+
+    def test_a_dropped_attachment_never_costs_the_item_the_rest(self, instance):
+        write_attachment(instance, "assets/photo.png", b"png-bytes")
+        write_export(
+            instance,
+            [
+                message(
+                    "m1",
+                    SUBSTANTIAL,
+                    attachments=[
+                        attached("."),
+                        attached("../../../../outside.png"),
+                        attached("assets/photo.png"),
+                    ],
+                )
+            ],
+        )
+        lines = run_normalize(instance, Config())
+        assert len([line for line in lines if line.startswith("warn:")]) == 2
+        rel = f"media/{shortid('m1')}/photo.png"
+        assert next(iter(items(instance).values())).media == [rel]
+        assert (instance.root / rel).read_bytes() == b"png-bytes"
+
+    def test_a_hosted_attachment_url_is_neither_provenance_nor_media(self, instance):
+        write_export(
+            instance,
+            [
+                message(
+                    "m1",
+                    "https://example.test/post",
+                    attachments=[attached("https://cdn.test/photo.png")],
+                )
+            ],
+        )
+        run_normalize(instance, Config())
+        item = next(iter(items(instance).values()))
+        assert item.attachments == []
+        assert item.media == []
 
 
 class TestVariantExports:
@@ -575,6 +739,41 @@ class TestRegeneration:
         assert after.status == "enriched"
         assert after.enrichment == ["web-abc123.md"]
         assert "note" in after.body  # regenerated content intact
+
+    def test_materialized_media_is_not_rewritten_on_a_second_run(self, instance):
+        write_attachment(instance, "assets/photo.png", b"png-bytes")
+        write_export(
+            instance, [message("m1", SUBSTANTIAL, attachments=[attached("assets/photo.png")])]
+        )
+        run_normalize(instance, Config())
+        (item_path,) = instance.corpus_dir.glob("*/*.md")
+        media_path = instance.root / f"media/{shortid('m1')}/photo.png"
+        before = (item_path.stat(), media_path.stat())
+        run_normalize(instance, Config())
+        after = (item_path.stat(), media_path.stat())
+        assert [(s.st_ino, s.st_mtime_ns) for s in after] == [
+            (s.st_ino, s.st_mtime_ns) for s in before
+        ]
+
+    def test_a_re_export_that_adds_an_attachment_keeps_enricher_owned_fields(self, instance):
+        write_export(instance, [message("m1", SUBSTANTIAL)])
+        run_normalize(instance, Config())
+        (path,) = instance.corpus_dir.glob("*/*.md")
+        corpus.write_item(
+            path,
+            dataclasses.replace(
+                corpus.read_item(path), status="enriched", enrichment=["text-abc123.md"]
+            ),
+        )
+        write_attachment(instance, "assets/photo.png", b"png-bytes")
+        write_export(
+            instance, [message("m1", SUBSTANTIAL, attachments=[attached("assets/photo.png")])]
+        )
+        run_normalize(instance, Config())
+        after = corpus.read_item(path)
+        assert after.status == "enriched"
+        assert after.enrichment == ["text-abc123.md"]
+        assert after.media == [f"media/{shortid('m1')}/photo.png"]
 
     def test_unparseable_existing_item_warns_and_regenerates(self, instance):
         write_export(instance, [message("m1", "https://example.test/post\nnote")])

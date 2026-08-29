@@ -11,6 +11,11 @@ is authoritative. Regeneration preserves the two enricher-owned frontmatter
 fields (``status``, ``enrichment``) and emits through ``corpus.py``, the one
 frontmatter write point.
 
+A cluster's local attachments are copied out of the export into
+``media/<shortid>/`` and listed in ``media:``. That field is what the
+pipeline seeds file work from; ``attachments:`` is exporter provenance and
+nothing reads it.
+
 Out-of-scope clusters are excluded via ``state/exclusions.tsv`` (id + reason
 per line, tab-separated), curated by the scope-filter pass and matched on
 the item id's trailing shortid so exclusions survive slug changes. See
@@ -24,13 +29,14 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from . import corpus
+from . import atomic, corpus
 from .pipeline.capture import URL_RE, slugify
 from .pipeline.detect import detect_kind
 from .pipeline.registry import default_drivers
 from .pipeline.types import Config, Instance, SourceDriver
+from .pipeline.urls import resolve_repo_path
 
 __all__ = [
     "DISCORD_GAP_MIN",
@@ -251,6 +257,72 @@ def _cluster_body(messages: list[dict], embed_titles: dict[str, str]) -> str:
     return "\n" + "\n".join(lines).rstrip() + "\n"
 
 
+def _copy_once(source: Path, dest: Path) -> None:
+    """Copy a raw attachment to its media path, if it is not there already.
+
+    A copy, never a move: ``raw/`` is append-only and nothing deletes from
+    it. A source that is not there is not an error — ``raw/`` is not
+    guaranteed to outlive the corpus it produced, and the ``media:`` entry
+    stands either way: the pipeline parks the unit that needs the bytes.
+    """
+    if dest.exists() or not source.is_file():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    atomic.write_bytes(dest, source.read_bytes())
+
+
+def _materialize_attachments(
+    attachments: list[str],
+    channel: str,
+    shortid: str,
+    *,
+    instance: Instance,
+    warn: Callable[[str], None],
+) -> list[str]:
+    """Copy a cluster's local attachments into ``media/<shortid>/``.
+
+    Returns the ``media:`` paths, derived from the attachment list alone and
+    never from what is on disk, so an unchanged export regenerates an
+    unchanged item.
+
+    Names are the exporter's basenames: stable as a re-export appends
+    messages to a cluster, where a positional name would not be. Two
+    attachments of one item can carry the same basename from different
+    exporter directories; the later one takes a hashed prefix so the file
+    already materialized under the plain name keeps it.
+
+    An exporter path is untrusted data — a converted export can carry an
+    absolute path or a ``..`` climb — so a source that does not resolve
+    inside ``raw/`` is named and dropped from ``media:``, while
+    ``attachments:`` still records it verbatim. The instance's own files sit
+    on the far side of that line: a climb into ``corpus/`` or ``state/``
+    stays under the root, and copying one into ``media/`` would make an
+    engine file LFS-tracked pipeline input.
+    """
+    media: list[str] = []
+    taken: set[str] = set()
+    raw_root = (instance.root / "raw").resolve()
+    for path in attachments:
+        name = PurePosixPath(path).name
+        if not name:
+            warn(f"warn: raw/discord/{channel}: attachment {path!r} names no file — no media entry")
+            continue
+        if name in taken:
+            name = f"{hashlib.sha1(path.encode()).hexdigest()[:6]}-{name}"  # noqa: S324 — content key, not a security context
+        taken.add(name)
+        source = resolve_repo_path(instance.root, str(PurePosixPath("raw/discord", channel, path)))
+        if source is None or not source.is_relative_to(raw_root):
+            warn(
+                f"warn: raw/discord/{channel}: attachment {path!r} resolves outside "
+                f"raw/ — no media entry"
+            )
+            continue
+        repo_path = f"media/{shortid}/{name}"
+        _copy_once(source, instance.root / repo_path)
+        media.append(repo_path)
+    return media
+
+
 def _emit_cluster(  # noqa: PLR0913 — one keyword per seam: config, warn, registry
     messages: list[dict],
     channel: str,
@@ -304,6 +376,7 @@ def _emit_cluster(  # noqa: PLR0913 — one keyword per seam: config, warn, regi
         kinds=sorted({kind_of(url, drivers) for url in external}) or ["text"],
         reactions=reactions or None,
         attachments=[f"raw/discord/{channel}/{a}" for a in attachments],
+        media=_materialize_attachments(attachments, channel, shortid, instance=instance, warn=warn),
         body=_cluster_body(messages, embed_titles),
     )
     _write_preserving(instance, item, warn)
@@ -479,8 +552,9 @@ def normalize_discord(  # noqa: PLR0913 — one keyword per seam: paths, config,
         ValueError: The file is not readable as an exporter JSON export.
             Nothing has been written when it raises: the read finishes
             before the first item is emitted.
-        OSError: A corpus item could not be written. Items written before
-            it are on disk — this channel is part-normalized.
+        OSError: A corpus item or one of its materialized attachments could
+            not be written. Items written before it are on disk — this
+            channel is part-normalized.
     """
     clusters = _read_channel(chan_dir, channel, warn)
     written, skipped, fault = _emit_clusters(
