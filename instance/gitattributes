@@ -15,12 +15,10 @@ media/** filter=lfs diff=lfs merge=lfs -text
 enrichment/**/media-[0-9]*.* filter=lfs diff=lfs merge=lfs -text
 enrichment/**/*-asset-[0-9]*.* filter=lfs diff=lfs merge=lfs -text
 enrichment/**/*.md !filter !diff !merge !text
-raw/**/*.png filter=lfs diff=lfs merge=lfs -text
-raw/**/*.jpg filter=lfs diff=lfs merge=lfs -text
-raw/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
-raw/**/*.webp filter=lfs diff=lfs merge=lfs -text
-raw/**/*.gif filter=lfs diff=lfs merge=lfs -text
-raw/**/*.pdf filter=lfs diff=lfs merge=lfs -text
-raw/**/*.mov filter=lfs diff=lfs merge=lfs -text
-raw/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
-raw/**/*.heic filter=lfs diff=lfs merge=lfs -text
+# raw exports are LFS wholesale: an exporter names its assets however it
+# likes — any extension or none at all — so no extension list can be
+# right. The text shapes an export legitimately holds are exempted: the
+# export JSON itself and markdown attachments stay plain git.
+raw/** filter=lfs diff=lfs merge=lfs -text
+raw/**/*.json !filter !diff !merge !text
+raw/**/*.md !filter !diff !merge !text

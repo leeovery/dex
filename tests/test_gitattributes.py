@@ -6,7 +6,9 @@ enrichment shapes anchor on the numeric index (``media-<n>.<ext>``,
 ``<hash6>-asset-<n>.<ext>``) so ANY extension the source serves lands in
 LFS, while the markdown that shares the directory — ``media-<n>.md``
 descriptions and ``<kind>-<hash6>.md`` enrichment content — stays plain
-git.
+git. ``raw/`` tracks wholesale — an exporter names assets with any
+extension or none — with only the export JSON and markdown attachments
+staying plain git.
 """
 
 import shutil
@@ -23,7 +25,9 @@ ITEM = "2026-08-19-example-55ad7b"
 HASH6 = "1a2b3c"
 
 # Extensions deliberately OFF any historical allowlist (avif, webm, tar,
-# and a made-up one): the name shape is what tracks them.
+# and a made-up one): the name shape is what tracks them. The raw/ names
+# are the exporter's own — an extensionless embed thumbnail, an .avif, a
+# .jpg_large — which is why raw/ tracks wholesale, never by extension.
 LFS_TRACKED = [
     f"enrichment/{ITEM}/media-0.png",
     f"enrichment/{ITEM}/media-1.webm",
@@ -33,6 +37,10 @@ LFS_TRACKED = [
     f"enrichment/{ITEM}/{HASH6}-asset-3.unknownext",
     "media/owner-shared-file.bin",
     "raw/2026/screenshot.png",
+    "raw/discord/general/messages.json_Files/embed-thumbnail",
+    "raw/discord/general/messages.json_Files/photo.jpg_large",
+    "raw/discord/general/messages.json_Files/clip.avif",
+    "raw/discord/general/messages.json_Files/report.docx",
 ]
 
 # The markdown families that live in the same directories, one per real
@@ -42,6 +50,8 @@ PLAIN_GIT = [f"enrichment/{ITEM}/{kind.value}-{HASH6}.md" for kind in Kind] + [
     f"enrichment/{ITEM}/media-0.md",
     f"corpus/2026/{ITEM}.md",
     "state/enrichment-ledger.jsonl",
+    "raw/discord/general/messages.json",
+    "raw/discord/general/messages.json_Files/notes.md",
 ]
 
 
