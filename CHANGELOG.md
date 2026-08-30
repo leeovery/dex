@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-08-30
+
+✨ Added
+- `dex-serve` and `dex-connect`: reach dex from the Claude desktop app's chat — ask questions, get answers with citations, and save links or notes into an instance's inbox, all without opening a folder session.
+- `dex-serve` exposes `search`, `fetch`, `page`, and `capture` tools plus a `dex-query` prompt over MCP, tagging every result with its source instance.
+- `dex-connect` merges a `dex` server entry into the desktop app's config in one command, launched through an anchor instance's own `bin/dex` so its engine pin stays the version authority.
+- Sync now notices when a machine's desktop app has no dex connected (or is missing one instance) and adds a "Chat connection" line to the report, prompting the session to offer the setup.
+- `docs/connect.md` walks a session through the whole connection setup end to end, and `docs/start.md` now offers it as Step 7 of onboarding a new instance.
+- Backfill guidance for pulling a Discord export via DiscordChatExporter, including token handling and channel discovery.
+
+🔧 Changed
+- Corpus, wiki, inbox, and taxonomy paths on `Instance` are now named properties (`inbox_dir`, `wiki_dir`, `taxonomy_path`) instead of ad hoc path joins.
+- The bundled instance template is now resolved through one shared `template.py` helper instead of being duplicated across `sync.py` and `new.py`.
+
 ## [0.1.9] - 2026-08-30
 
 ✨ Added
