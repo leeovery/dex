@@ -10,7 +10,7 @@ the engine stays unaware of which ones exist.
 - `src/dex_engine/` — the mechanical commands, exposed as entry points in
   `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-exclude`,
   `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`, `dex-issue`,
-  `dex-serve`) and run in instances through the `bin/dex` shim
+  `dex-serve`, `dex-connect`) and run in instances through the `bin/dex` shim
   (`uvx --from` this repo at the pinned tag):
   - `pipeline/` — the ledger-driven core: `types.py` (enums, dataclasses,
     Instance/Config), `ledger.py` (the one serialization boundary),
@@ -35,12 +35,18 @@ the engine stays unaware of which ones exist.
     `surfaces.py` is what they are now.
   - `serve/` — the MCP server (`dex-serve`): `roster.py` (which instances
     one process serves, and the `<instance>/<item-id>` namespace),
-    `library.py` (the reads: search, fetch, page), `server.py` (the tool
-    and resource wiring), `cli.py`. Hands, not an agent — it never calls a
-    model and never judges relevance; the calling model does the searching.
+    `library.py` (the reads: search, fetch, page), `steering.py` (the
+    words: instructions, footers, the dex-query prompt read from the
+    bundled skill), `server.py` (the tool and resource wiring), `cli.py`,
+    and `connect.py` (`dex-connect` — the one merge into a chat client's
+    own config, launching through an anchor instance's shim so no second
+    version pin exists). Hands, not an agent — it never calls a model and
+    never judges relevance; the calling model does the searching.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
+  - `template.py` — the ONE place that knows where the wheel-bundled
+    `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·
     `exclude.py` · `new.py` · `issue.py` — thin argparse CLIs over injected
     Instance/Config; zero import-time state anywhere.
@@ -56,8 +62,9 @@ the engine stays unaware of which ones exist.
   everything shared lives in the synced contract).
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
-  capture), `shortcut.md` (build the phone shortcut), and `capture.md` (the
-  capture protocol any client implements).
+  capture), `shortcut.md` (build the phone shortcut), `capture.md` (the
+  capture protocol any client implements), and `connect.md` (fetched raw the
+  same way: wire this machine's instances into the desktop app's chat).
 - `design/` — one markdown file per fleshed-out design, written when a
   backlog idea has been discussed into a shape worth building. **A design
   file is a locked snapshot, not a living document.** It records what was

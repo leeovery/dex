@@ -11,7 +11,9 @@ visible immediately.
 ``roster`` decides which instances are served and how ids name them,
 ``library`` does the reading and the one write, ``steering`` holds the words
 that keep an impatient caller probing, ``server`` wires them onto MCP, and
-``cli`` is the entry point.
+``cli`` is the entry point. ``connect`` is the other half of the surface: the
+one mechanical write into a chat client's own config, so the client launches
+that entry point itself.
 """
 
 from .roster import Roster, build_roster

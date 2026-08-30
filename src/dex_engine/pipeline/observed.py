@@ -58,6 +58,7 @@ __all__ = [
 # by hand, pinned by test to the real CLI surface (pyproject's
 # [project.scripts] and enrich's argparse tree), so it cannot rot.
 KNOWN_VERBS = (
+    "connect",
     "enrich compact",
     "enrich fetch",
     "enrich item digest",
