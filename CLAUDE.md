@@ -9,9 +9,9 @@ the engine stays unaware of which ones exist.
 
 - `src/dex_engine/` — the mechanical commands, exposed as entry points in
   `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-exclude`,
-  `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`, `dex-issue`) and run in
-  instances through the `bin/dex` shim (`uvx --from` this repo at the pinned
-  tag):
+  `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`, `dex-issue`,
+  `dex-serve`) and run in instances through the `bin/dex` shim
+  (`uvx --from` this repo at the pinned tag):
   - `pipeline/` — the ledger-driven core: `types.py` (enums, dataclasses,
     Instance/Config), `ledger.py` (the one serialization boundary),
     `detect.py`, `registry.py` (explicit ordered driver list), `run.py`
@@ -33,6 +33,11 @@ the engine stays unaware of which ones exist.
     Judgment decides, code renders. `design/ingestion-pipeline.md` §11
     records where the surface vocabulary and layout rules came from;
     `surfaces.py` is what they are now.
+  - `serve/` — the MCP server (`dex-serve`): `roster.py` (which instances
+    one process serves, and the `<instance>/<item-id>` namespace),
+    `library.py` (the reads: search, fetch, page), `server.py` (the tool
+    and resource wiring), `cli.py`. Hands, not an agent — it never calls a
+    model and never judges relevance; the calling model does the searching.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.

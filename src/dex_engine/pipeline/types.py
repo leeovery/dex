@@ -713,6 +713,11 @@ class Instance:
         return self.root / "enrichment"
 
     @property
+    def wiki_dir(self) -> Path:
+        """``wiki/`` — the curated pages: topics, entities, syntheses, index."""
+        return self.root / "wiki"
+
+    @property
     def cache_dir(self) -> Path:
         """``cache/`` — gitignored ephemera: render payloads, in-flight audio."""
         return self.root / "cache"
@@ -731,6 +736,11 @@ class Instance:
     def digests_dir(self) -> Path:
         """``state/digests/`` — per-item fact indexes (the digest step's output)."""
         return self.state_dir / "digests"
+
+    @property
+    def taxonomy_path(self) -> Path:
+        """``state/taxonomy.json`` — the topic and entity namespace."""
+        return self.state_dir / "taxonomy.json"
 
     @property
     def config_path(self) -> Path:

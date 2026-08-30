@@ -190,7 +190,7 @@ def run_lint(
     # Shortid-shaped citations flag everywhere — index included: latent
     # shortids in an index never tripped the old citation check because no
     # page existed to fail against.
-    index_path = instance.root / "wiki" / "index.md"
+    index_path = instance.wiki_dir / "index.md"
     if index_path.exists():
         scan.shortid_citations += [
             {"page": "index", "token": token}
@@ -256,7 +256,7 @@ def _load_taxonomy(instance: Instance) -> tuple[dict[str, object], str | None]:
     ``state/taxonomy.json`` becomes a loud finding — never a crash; the
     wiki checks still run, against the empty taxonomy.
     """
-    path = instance.state_dir / "taxonomy.json"
+    path = instance.taxonomy_path
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -342,7 +342,7 @@ def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
     Rendered through the health-report surface's pre-taxonomy shape like
     every other report — never hand-drawn.
     """
-    if (instance.state_dir / "taxonomy.json").exists():
+    if instance.taxonomy_path.exists():
         return None
     stranded = sorted(path.stem for path in instance.corpus_dir.glob("*/*.md"))
     return LintOutcome(
@@ -352,7 +352,7 @@ def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
 
 
 def _pages(instance: Instance) -> dict[str, Path]:
-    wiki = instance.root / "wiki"
+    wiki = instance.wiki_dir
     pages: dict[str, Path] = {}
     for group in ("topics", "syntheses", "entities"):
         pages |= {path.stem: path for path in wiki.glob(f"{group}/*.md")}
@@ -632,7 +632,7 @@ def _clip(sentence: str, limit: int = 120) -> str:
 def _index_consistency(
     instance: Instance, pages: dict[str, Path], taxonomy: dict[str, object]
 ) -> tuple[list[str], list[str]]:
-    index_path = instance.root / "wiki" / "index.md"
+    index_path = instance.wiki_dir / "index.md"
     index = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
     unindexed = sorted(name for name in pages if f"[[{name}]]" not in index)
     topics = taxonomy.get("topics", {})

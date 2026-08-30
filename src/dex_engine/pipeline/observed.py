@@ -74,6 +74,7 @@ KNOWN_VERBS = (
     "new",
     "normalize",
     "render",
+    "serve",
     "sync",
 )
 
