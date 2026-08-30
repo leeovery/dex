@@ -276,7 +276,7 @@ class TestAttachmentMaterialization:
             ],
         )
         run_normalize(instance, Config())
-        prefix = hashlib.sha1(b"other/photo.png").hexdigest()[:6]  # noqa: S324 — mirrors normalize
+        prefix = hashlib.sha1(f"raw/discord/{CHANNEL}/other/photo.png".encode()).hexdigest()[:6]  # noqa: S324 — mirrors normalize
         media = [
             f"media/{shortid('m1')}/photo.png",
             f"media/{shortid('m1')}/{prefix}-photo.png",
@@ -287,25 +287,17 @@ class TestAttachmentMaterialization:
         run_normalize(instance, Config())
         assert next(iter(items(instance).values())).media == media  # same names next run
 
-    @pytest.mark.parametrize(
-        "escape",
-        [
-            "../../../../outside.png",  # raw/discord/<channel>/ is three deep
-            "/etc/passwd",
-        ],
-    )
-    def test_an_attachment_reaching_outside_raw_is_named_and_dropped(self, instance, escape):
-        # The exporter path is data: a converted export can carry an
-        # absolute path or a climb, and neither is read.
+    def test_an_attachment_reaching_outside_raw_is_named_and_dropped(self, instance):
+        # The exporter path is data: a converted export can carry a climb
+        # out of the channel directory, and it is never read.
+        escape = "../../../../outside.png"  # raw/discord/<channel>/ is three deep
         write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(escape)])])
         lines = run_normalize(instance, Config())
-        assert (
-            f"warn: raw/discord/{CHANNEL}: attachment {escape!r} resolves outside "
-            f"raw/ — no media entry" in lines
-        )
+        repo_path = f"raw/discord/{CHANNEL}/{escape}"
+        assert f"warn: attachment {repo_path!r} resolves outside raw/ — no media entry" in lines
         item = next(iter(items(instance).values()))
         assert item.media == []
-        assert item.attachments == [f"raw/discord/{CHANNEL}/{escape}"]  # provenance, verbatim
+        assert item.attachments == [repo_path]  # provenance, verbatim
         assert not (instance.root / "media").exists()
 
     def test_an_attachment_climbing_into_the_instance_is_named_and_dropped(self, instance):
@@ -316,26 +308,35 @@ class TestAttachmentMaterialization:
         instance.ledger_path.write_text('{"unit": "not an attachment"}\n')
         write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(escape)])])
         lines = run_normalize(instance, Config())
-        assert (
-            f"warn: raw/discord/{CHANNEL}: attachment {escape!r} resolves outside "
-            f"raw/ — no media entry" in lines
-        )
+        repo_path = f"raw/discord/{CHANNEL}/{escape}"
+        assert f"warn: attachment {repo_path!r} resolves outside raw/ — no media entry" in lines
         item = next(iter(items(instance).values()))
         assert item.media == []
-        assert item.attachments == [f"raw/discord/{CHANNEL}/{escape}"]  # provenance, verbatim
+        assert item.attachments == [repo_path]  # provenance, verbatim
         assert not (instance.root / "media").exists()
 
-    def test_an_attachment_naming_no_file_is_named_and_dropped(self, instance):
+    def test_an_absolute_exporter_path_cannot_leave_the_channel_directory(self, instance):
+        # `raw/discord/<channel>/` + `/etc/passwd` is one relative path
+        # under the channel, not the root path it spells — so the containment
+        # check has nothing to refuse and the source is simply not there.
+        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached("/etc/passwd")])])
+        lines = run_normalize(instance, Config())
+        assert not [line for line in lines if line.startswith("warn:")]
+        item = next(iter(items(instance).values()))
+        assert item.media == [f"media/{shortid('m1')}/passwd"]
+        assert not (instance.root / item.media[0]).exists()
+
+    @pytest.mark.parametrize("directory", [".", "..", "assets/"])
+    def test_an_attachment_naming_no_file_is_named_and_dropped(self, instance, directory):
         # A conversion that writes a directory where the exporter writes a
         # file path: there is no name to materialize it under.
-        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(".")])])
+        write_export(instance, [message("m1", SUBSTANTIAL, attachments=[attached(directory)])])
         lines = run_normalize(instance, Config())
-        assert (
-            f"warn: raw/discord/{CHANNEL}: attachment '.' names no file — no media entry" in lines
-        )
+        repo_path = f"raw/discord/{CHANNEL}/{directory}"
+        assert f"warn: attachment {repo_path!r} names no file — no media entry" in lines
         item = next(iter(items(instance).values()))
         assert item.media == []
-        assert item.attachments == [f"raw/discord/{CHANNEL}/."]
+        assert item.attachments == [repo_path]
 
     def test_a_dropped_attachment_never_costs_the_item_the_rest(self, instance):
         write_attachment(instance, "assets/photo.png", b"png-bytes")

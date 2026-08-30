@@ -29,7 +29,7 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from . import atomic, corpus
 from .pipeline.capture import URL_RE, slugify
@@ -44,6 +44,7 @@ __all__ = [
     "kind_of",
     "load_exclusions",
     "main",
+    "materialize_attachments",
     "normalize_discord",
     "run_normalize",
 ]
@@ -271,51 +272,59 @@ def _copy_once(source: Path, dest: Path) -> None:
     atomic.write_bytes(dest, source.read_bytes())
 
 
-def _materialize_attachments(
+def materialize_attachments(
     attachments: list[str],
-    channel: str,
     shortid: str,
     *,
     instance: Instance,
     warn: Callable[[str], None],
 ) -> list[str]:
-    """Copy a cluster's local attachments into ``media/<shortid>/``.
+    """Copy an item's local attachments into ``media/<shortid>/``.
 
-    Returns the ``media:`` paths, derived from the attachment list alone and
-    never from what is on disk, so an unchanged export regenerates an
-    unchanged item.
-
-    Names are the exporter's basenames: stable as a re-export appends
+    Names are the attachment's own basename: stable as a re-export appends
     messages to a cluster, where a positional name would not be. Two
     attachments of one item can carry the same basename from different
-    exporter directories; the later one takes a hashed prefix so the file
+    export directories; the later one takes a hashed prefix so the file
     already materialized under the plain name keeps it.
 
-    An exporter path is untrusted data — a converted export can carry an
+    An attachment path is untrusted data — a converted export can carry an
     absolute path or a ``..`` climb — so a source that does not resolve
     inside ``raw/`` is named and dropped from ``media:``, while
     ``attachments:`` still records it verbatim. The instance's own files sit
     on the far side of that line: a climb into ``corpus/`` or ``state/``
     stays under the root, and copying one into ``media/`` would make an
-    engine file LFS-tracked pipeline input.
+    engine file LFS-tracked pipeline input. A path whose last segment is a
+    directory reference names no file to copy, and is dropped the same way.
+
+    Args:
+        attachments: Repo-relative paths under ``raw/`` — the exact strings
+            ``attachments:`` records.
+        shortid: The item id's trailing shortid, which names the media
+            directory.
+        instance: The instance.
+        warn: Where a dropped attachment is named.
+
+    Returns:
+        The ``media:`` paths, derived from the attachment list alone and
+        never from what is on disk, so an unchanged export regenerates an
+        unchanged item.
     """
     media: list[str] = []
     taken: set[str] = set()
     raw_root = (instance.root / "raw").resolve()
     for path in attachments:
-        name = PurePosixPath(path).name
-        if not name:
-            warn(f"warn: raw/discord/{channel}: attachment {path!r} names no file — no media entry")
+        # The last segment as written: PurePosixPath drops a trailing "."
+        # or "/", which would name the directory above as the file to copy.
+        name = path.rsplit("/", 1)[-1]
+        if name in ("", ".", ".."):
+            warn(f"warn: attachment {path!r} names no file — no media entry")
             continue
         if name in taken:
             name = f"{hashlib.sha1(path.encode()).hexdigest()[:6]}-{name}"  # noqa: S324 — content key, not a security context
         taken.add(name)
-        source = resolve_repo_path(instance.root, str(PurePosixPath("raw/discord", channel, path)))
+        source = resolve_repo_path(instance.root, path)
         if source is None or not source.is_relative_to(raw_root):
-            warn(
-                f"warn: raw/discord/{channel}: attachment {path!r} resolves outside "
-                f"raw/ — no media entry"
-            )
+            warn(f"warn: attachment {path!r} resolves outside raw/ — no media entry")
             continue
         repo_path = f"media/{shortid}/{name}"
         _copy_once(source, instance.root / repo_path)
@@ -366,6 +375,7 @@ def _emit_cluster(  # noqa: PLR0913 — one keyword per seam: config, warn, regi
         for message in messages
         for reaction in message.get("reactions") or []
     )
+    attachment_paths = [f"raw/discord/{channel}/{a}" for a in attachments]
     item = corpus.CorpusItem(
         id=f"{date:%Y-%m-%d}-{slug}-{shortid}",
         source="discord",
@@ -375,8 +385,8 @@ def _emit_cluster(  # noqa: PLR0913 — one keyword per seam: config, warn, regi
         urls=external,
         kinds=sorted({kind_of(url, drivers) for url in external}) or ["text"],
         reactions=reactions or None,
-        attachments=[f"raw/discord/{channel}/{a}" for a in attachments],
-        media=_materialize_attachments(attachments, channel, shortid, instance=instance, warn=warn),
+        attachments=attachment_paths,
+        media=materialize_attachments(attachment_paths, shortid, instance=instance, warn=warn),
         body=_cluster_body(messages, embed_titles),
     )
     _write_preserving(instance, item, warn)
