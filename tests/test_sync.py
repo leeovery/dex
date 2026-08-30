@@ -1,6 +1,8 @@
 """Tests for sync.py: pin flow, re-exec seams, migrations-first, template sync."""
 
 import datetime
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -58,6 +60,17 @@ def make_channel(listing: str = "", *, fail: bool = False):
         repo_url="https://example.test/dex", ls_remote=ls_remote, execute=execute
     )
     return channel, calls
+
+
+@pytest.fixture(autouse=True)
+def _nowhere_near_the_real_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point HOME at the tmp tree for every test in this file.
+
+    The report's chat-connection check reads the desktop app's config
+    through ``Path.home()``; unpinned, a maintainer's own connected mac
+    would decide what these assertions see.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
 
 
 @pytest.fixture
@@ -454,6 +467,57 @@ class TestTemplateSync:
         report, _ = run(inst, channel, template)
         assert "refreshed: bin/dex" in report
         assert "**Machinery changes** — 6" in report
+
+
+class TestChatConnection:
+    """Sync notices the gap between this instance and the desktop app's chat."""
+
+    @staticmethod
+    def desktop_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: dict) -> Path:
+        """A desktop app config where a mac's own would be (HOME is pinned)."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+        config = tmp_path / "Library/Application Support/Claude/claude_desktop_config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+        return config
+
+    def test_no_desktop_app_is_no_line_at_all(self, inst, template):
+        # Sync runs on Linux boxes and cloud runners; there is nothing to
+        # offer where the app cannot be.
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "Chat connection" not in report
+
+    def test_an_app_with_no_dex_reaches_the_owner_through_the_report(
+        self, inst, template, tmp_path, monkeypatch
+    ):
+        self.desktop_config(tmp_path, monkeypatch, {})
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "**Chat connection** — the Claude desktop app is on this machine" in report
+        assert "docs/connect.md" in report
+
+    def test_an_instance_outside_the_roster_is_named_as_such(
+        self, inst, template, tmp_path, monkeypatch
+    ):
+        self.desktop_config(
+            tmp_path,
+            monkeypatch,
+            {"dex": {"args": ["serve", "--instance", str(tmp_path / "somewhere-else")]}},
+        )
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "**Chat connection** — the desktop app's dex serves other instances" in report
+
+    def test_a_connected_instance_is_never_nagged(self, inst, template, tmp_path, monkeypatch):
+        self.desktop_config(
+            tmp_path,
+            monkeypatch,
+            {"dex": {"args": ["serve", "--instance", str(inst.root.resolve())]}},
+        )
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "Chat connection" not in report
 
 
 class TestMain:

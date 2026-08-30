@@ -10,7 +10,8 @@ Flow::
     4. refresh engine-managed machinery from the running — pinned — version's
        bundled template: .claude/skills/dex-*, .claude/dex-contract.md,
        bin/dex, .gitattributes (instance-owned files are never touched)
-    5. render the sync report (one surface)
+    5. render the sync report (one surface), carrying whatever a read of the
+       desktop app's own config says about this instance's reach into chat
 
 ``.dex-engine-pin`` is one line at the instance root, committed,
 instance-owned: sync writes its *value* — it is not a synced-template file.
@@ -42,6 +43,7 @@ from dex_engine import atomic, migrations
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
+from dex_engine.serve.connect import connect_gap
 from dex_engine.template import bundled_template
 from dex_engine.version import engine_version
 
@@ -509,17 +511,19 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         previous=previous_pin,
         applied=applied,
         machinery_changes=len(changed),
+        connect=connect_gap(root),
         notes=notes,
     )
     return surfaces.render("sync-report", payload)
 
 
-def _report_payload(
+def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
     *,
     pin: str | None,
     previous: str | None,
     applied: list[AppliedMigration],
     machinery_changes: int,
+    connect: str | None,
     notes: list[str],
 ) -> dict[str, object]:
     migrations_payload: list[dict[str, object]] = [
@@ -536,6 +540,8 @@ def _report_payload(
         "migrations": migrations_payload,
         "machinery_changes": machinery_changes,
     }
+    if connect is not None:
+        payload["connect"] = connect
     if pin is not None:
         payload["pin"] = pin
         if previous is not None and previous != pin:

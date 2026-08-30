@@ -333,7 +333,10 @@ single home. `dex-connect` writes the client-side half: one `mcpServers.dex`
 entry merged into the desktop app's own config, its command an anchor
 instance's `bin/dex` so the anchor's pin stays the only version authority, and
 its `env.PATH` captured from the installing shell because a GUI-spawned child
-inherits launchd's bare PATH. Setup: `docs/connect.md`.
+inherits launchd's bare PATH. Sync reads that same config — read-only, silent
+wherever the app cannot be — and puts the gap on its report, so a session
+offers the connection rather than the owner having to know it exists. Setup:
+`docs/connect.md`.
 
 Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·
 `.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·

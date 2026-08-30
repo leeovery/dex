@@ -935,6 +935,28 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
 # sync-report
 # ---------------------------------------------------------------------------
 
+# Fetched, never cloned: an instance holds no copy of the engine's docs, so
+# a bare `docs/connect.md` would be a path to nothing on the machine reading
+# this line.
+_CONNECT_DOC = "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md"
+
+# What sync found about the desktop app's chat, as the offer the session
+# reading it makes. Addressed to that session, not to the owner: the owner is
+# asked a question and never handed a command, and the doc is the session's
+# own next move on a yes.
+_CONNECT_OFFERS = {
+    "unconnected": (
+        "the Claude desktop app is on this machine and no dex is connected to its chat "
+        "— ask the owner whether they want to reach this dex from any chat, and on yes "
+        f"read {_CONNECT_DOC} and do the setup yourself"
+    ),
+    "unlisted": (
+        "the desktop app's dex serves other instances but not this one — ask the owner "
+        "whether they want this dex in their chats too, and on yes read "
+        f"{_CONNECT_DOC} and do the setup yourself"
+    ),
+}
+
 
 def _render_sync_report(payload: Mapping[str, object]) -> str:
     """Render the sync report: pin state, migrations applied, machinery changes.
@@ -956,6 +978,8 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
              "anomalies": [str]}                   # optional
           ],
           "machinery_changes": int,   # template files written + retired skills removed
+          "connect": str,             # optional: "unconnected" | "unlisted" —
+                                      #   the chat-connection gap sync saw
           "notes": [str],             # optional
         }
 
@@ -967,7 +991,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "major", "notes"}),
+        optional=frozenset({"pin", "previous", "major", "connect", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
@@ -980,6 +1004,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         _fail(surface, "major requires a pin transition — previous and pin")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
     machinery_changes = _int_at(surface, payload, "machinery_changes")
+    connect = _sync_connect(surface, payload)
     notes = _str_list_at(surface, payload, "notes")
 
     if pin is None:
@@ -1016,8 +1041,21 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     else:
         blocks.append("No migrations to apply — state was already current.")
     blocks += ["", f"{kernel.bold('Machinery changes')} — {machinery_changes}"]
+    if connect:
+        blocks += ["", connect]
     blocks += _note_section("Notes", notes)
     return kernel.document(blocks)
+
+
+def _sync_connect(surface: str, payload: Mapping[str, object]) -> str:
+    """The chat-connection gap as the one line it renders as, or nothing."""
+    if "connect" not in payload:
+        return ""
+    gap = _str_at(surface, payload, "connect")
+    if gap not in _CONNECT_OFFERS:
+        options = ", ".join(sorted(_CONNECT_OFFERS))
+        _fail(surface, f"connect must be one of {options}, got {gap!r}")
+    return f"{kernel.bold('Chat connection')} — {_CONNECT_OFFERS[gap]}"
 
 
 def _sync_migration(surface: str, migration: Mapping[str, object], *, where: str) -> str:
