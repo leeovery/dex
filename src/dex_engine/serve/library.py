@@ -15,6 +15,9 @@ Files that will not read or parse are skipped rather than reported: search
 answers about the instance as it stands, and lint is what tells the owner a
 file is broken.
 
+A read travels back with the one-line next move for it. The words are
+``steering``'s; what is decided here is only which of them a result gets.
+
 The one write is a capture, and it is the file every other capture client
 writes: one markdown file in ``inbox/``, committed where it landed and
 judged by the instance when the next run processes it. Nothing here decides
@@ -30,12 +33,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from dex_engine import corpus
+from dex_engine import corpus, frontmatter
 from dex_engine.pipeline import enrichment
 from dex_engine.pipeline.capture import write_capture
 from dex_engine.pipeline.types import Instance
 from dex_engine.pipeline.urls import resolve_repo_path
 
+from . import steering
 from .roster import NotFoundError, Roster, qualify
 
 __all__ = [
@@ -45,6 +49,7 @@ __all__ = [
     "HitType",
     "Item",
     "Page",
+    "Search",
     "capture",
     "fetch",
     "page",
@@ -56,10 +61,21 @@ __all__ = [
 _SNIPPET_LEAD = 60
 _SNIPPET_TAIL = 120
 
+# How many hits one instance may put in front of the caller. A literal scan of
+# a real instance answers a broad word like "context" with four figures, which
+# is not a result a chat model can read — and the cap is per instance so one
+# noisy corpus cannot crowd the others out of a fan-out. Not a ranking: the
+# rows are already newest-first, so the cut keeps the newest, and the caller is
+# told the whole count either way.
+_HITS_PER_INSTANCE = 25
+
 # `YYYY-MM-DD-<slug>-<shortid>`, the item-id shape the whole system files
 # under. The slug is the only human-readable name every item carries.
 _ITEM_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-(?P<slug>.+)-[0-9a-f]{6}")
 _HEADING_RE = re.compile(r"^# (.+)$", re.MULTILINE)
+# `[[name]]`, and the `[[name|shown as this]]` form a page may be written in
+# — the name is what resolves to a file, the alias is display text.
+_WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
 class HitType(StrEnum):
@@ -69,7 +85,7 @@ class HitType(StrEnum):
     PAGE = "page"
 
 
-# The five result shapes, unslotted unlike every other frozen dataclass in
+# The result shapes, unslotted unlike every other frozen dataclass in
 # this tree: the SDK builds a tool's output schema by asking the class for
 # each field's default, a slot descriptor answers that question, and the
 # schema then fails to build — leaving the tool returning text with no
@@ -85,6 +101,15 @@ class Hit:
     url: str | None
     snippet: str
     instance: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Search:
+    """The hits one query is shown, how many it actually found, and what to do next."""
+
+    hits: list[Hit]
+    total: int
+    next: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -113,13 +138,15 @@ class Item:
 
 @dataclass(frozen=True, kw_only=True)
 class Page:
-    """One wiki page, verbatim."""
+    """One wiki page, verbatim, and the pages it points at."""
 
     name: str
     instance: str
     title: str
     path: str
     text: str
+    wikilinks: list[str]
+    next: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -137,7 +164,7 @@ class Capture:
     detail: str
 
 
-def search(roster: Roster, query: str, *, instance: str | None = None) -> list[Hit]:
+def search(roster: Roster, query: str, *, instance: str | None = None) -> Search:
     """Scan the served instances for ``query`` and return every hit.
 
     Args:
@@ -146,7 +173,9 @@ def search(roster: Roster, query: str, *, instance: str | None = None) -> list[H
         instance: Restrict to one instance; ``None`` fans out across all.
 
     Returns:
-        Hits grouped by instance in roster order, newest first within each.
+        Hits grouped by instance in roster order, newest first within each and
+        the newest ``_HITS_PER_INSTANCE`` of them at most, under the count of
+        everything that matched and the one line saying what to do next.
 
     Raises:
         ValueError: The query is empty.
@@ -156,10 +185,14 @@ def search(roster: Roster, query: str, *, instance: str | None = None) -> list[H
         raise ValueError("search needs a query — an empty one matches everything and says nothing")
     pattern = re.compile(re.escape(query), re.IGNORECASE)
     hits: list[Hit] = []
+    total = 0
     for name, served in roster.select(instance):
-        found = [*_item_hits(name, served, pattern), *_page_hits(name, served, pattern)]
-        hits.extend(_newest_first(found))
-    return hits
+        found = _newest_first(
+            [*_item_hits(name, served, pattern), *_page_hits(name, served, pattern)]
+        )
+        total += len(found)
+        hits.extend(found[:_HITS_PER_INSTANCE])
+    return Search(hits=hits, total=total, next=steering.search_next(shown=len(hits), total=total))
 
 
 def fetch(roster: Roster, item_id: str, *, full: bool) -> Item:
@@ -214,7 +247,7 @@ def page(roster: Roster, name: str, instance: str) -> Page:
         instance: Which instance's wiki to read.
 
     Returns:
-        The page.
+        The page, and the pages its body links to.
 
     Raises:
         NotFoundError: That instance's wiki holds no page of that name.
@@ -238,6 +271,8 @@ def page(roster: Roster, name: str, instance: str) -> Page:
         title=_page_title(text, wanted),
         path=str(path.relative_to(served.root)),
         text=text,
+        wikilinks=_wikilinks(frontmatter.body(text)),
+        next=steering.PAGE_NEXT,
     )
 
 
@@ -365,7 +400,7 @@ def _page_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
     """
     for page_name, path in _pages(instance).items():
         text = _read(path)
-        snippet = _snippet(_page_body(text), pattern)
+        snippet = _snippet(frontmatter.body(text), pattern)
         if snippet is None:
             continue
         yield Hit(
@@ -379,16 +414,14 @@ def _page_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
         )
 
 
-def _page_body(text: str) -> str:
-    """The page below its frontmatter fence, or all of it when there is none.
+def _wikilinks(body: str) -> list[str]:
+    """The pages a body links to, in the order it links them, each named once.
 
-    The FIRST closing fence: a later `---` in the body is a horizontal
-    rule, not a fence, and everything after it is still content.
+    The name only: a `[[name|shown as this]]` link resolves by its name, and
+    the alias is text for a human reader. A link with no name is not one.
     """
-    if not text.startswith("---\n"):
-        return text
-    end = text.find("\n---\n", 3)
-    return text if end == -1 else text[end + len("\n---\n") :].lstrip("\n")
+    names = (match[1].partition("|")[0].strip() for match in _WIKILINK_RE.finditer(body))
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def _pages(instance: Instance) -> dict[str, Path]:

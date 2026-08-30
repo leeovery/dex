@@ -1,7 +1,10 @@
-"""Tests for serve/server.py: the three tools and the map resources, over a real session."""
+"""Tests for serve/server.py: the tools, the maps, the steering, over a real session."""
 
+import datetime
 import json
+from pathlib import Path
 
+from dex_engine.serve.library import _HITS_PER_INSTANCE
 from dex_engine.serve.roster import build_roster
 from dex_engine.serve.server import build_server
 from dex_engine.version import engine_version
@@ -11,18 +14,50 @@ from .conftest import (
     BORGES,
     COFFEE,
     GRINDER,
+    SCOPE,
+    TEMPLATE,
     V60,
     call,
     drive,
+    hits,
     record,
     refusal,
-    rows,
     write,
 )
 
 
 async def _identity(client):
     return client.server_info
+
+
+async def _instructions(client):
+    return client.instructions
+
+
+def flood(root: Path, count: int, word: str) -> list[str]:
+    """`count` items in one instance's corpus, each holding `word`, a day apart.
+
+    Returns the ids it wrote, oldest first — which is the order a search must
+    hand back reversed, and the end of it a cap must be the part that survives.
+    """
+    written = []
+    for n in range(count):
+        day = datetime.date(2026, 6, 1) + datetime.timedelta(days=n)
+        item_id = f"{day}-flood-{n:06d}"
+        write(
+            root / "corpus" / "2026" / f"{item_id}.md",
+            f"---\nid: {item_id}\nsource: inbox\nchannel: inbox\nshared_by: Nat\n"
+            f"date: {day}\nkinds: [text]\nstatus: raw\nenrichment: []\n---\n\n"
+            f"A note about {word}.\n",
+        )
+        written.append(item_id)
+    return written
+
+
+def described(server, name: str) -> str:
+    """One tool's description — what the client holds in context on every call."""
+    listed = drive(server, lambda client: client.list_tools())
+    return next(tool.description for tool in listed.tools if tool.name == name)
 
 
 class TestTools:
@@ -35,10 +70,91 @@ class TestTools:
         info = drive(server, _identity)
         assert (info.name, info.version) == ("dex", engine_version())
 
+    def test_search_says_a_hit_is_a_probe(self, server):
+        said = described(server, "search")
+        assert "rarely the answer" in said
+        assert "reformulate and call again" in said
+
+    def test_fetch_says_it_is_where_a_probe_ends(self, server):
+        assert "Where a probe ends" in described(server, "fetch")
+
+    def test_page_says_to_keep_following_it_outward(self, server):
+        assert "keep following it outward" in described(server, "page")
+
+    def test_capture_says_it_writes_a_suggestion(self, server):
+        assert "A suggestion, not a corpus entry" in described(server, "capture")
+
+
+class TestInstructions:
+    def test_the_doctrine_reaches_the_client_at_connect_time(self, server):
+        said = drive(server, _instructions)
+        assert "never a ranked answer" in said
+        assert "cite the item ids" in said
+
+    def test_every_instance_declares_its_own_scope(self, server):
+        said = drive(server, _instructions)
+        assert SCOPE.strip() in said
+        assert f'<instance name="{BOOKS}">' in said
+
+
+class TestPrompt:
+    def test_the_procedure_is_offered_by_name(self, server):
+        listed = drive(server, lambda client: client.list_prompts())
+        assert [(prompt.name, prompt.title) for prompt in listed.prompts] == [
+            ("dex-query", "Query dex")
+        ]
+        assert all(prompt.description for prompt in listed.prompts)
+
+    def test_the_procedure_is_the_bundled_skill_itself(self, server):
+        # Served from the template, never copied: an edit to the skill has to
+        # reach this surface with no code change at all.
+        got = drive(server, lambda client: client.get_prompt("dex-query"))
+        skill = (TEMPLATE / "skills" / "dex-query" / "SKILL.md").read_text(encoding="utf-8")
+        assert got.messages[0].content.text == skill.split("---\n", 2)[2].lstrip("\n")
+
 
 class TestSearch:
+    def test_hits_travel_with_the_move_that_follows_them(self, server):
+        found = record(server, "search", {"query": "V60"})
+        assert found["hits"]
+        assert found["total"] == len(found["hits"])
+        assert "fetch the promising ids" in found["next"]
+        assert "search again" in found["next"]
+
+    def test_no_hits_travel_with_the_move_that_follows_none(self, server):
+        found = record(server, "search", {"query": "kombucha"})
+        assert found["hits"] == []
+        assert found["total"] == 0
+        assert "another instance" in found["next"]
+
+    def test_a_flood_is_cut_to_the_newest_and_says_it_was(self, server, roots):
+        # A broad word on a real instance matches four figures of items, which
+        # is not something a chat model can be handed.
+        wrote = flood(roots[0], _HITS_PER_INSTANCE + 5, "chartreuse")
+        found = record(server, "search", {"query": "chartreuse"})
+        assert [hit["id"] for hit in found["hits"]] == [
+            f"{COFFEE}/{item_id}" for item_id in reversed(wrote[-_HITS_PER_INSTANCE:])
+        ]
+        assert found["total"] == _HITS_PER_INSTANCE + 5
+        assert f"newest {_HITS_PER_INSTANCE} of {_HITS_PER_INSTANCE + 5} matches" in found["next"]
+        assert "narrow it" in found["next"]
+
+    def test_the_cap_is_per_instance_so_a_fan_out_still_reaches_the_rest(self, server, roots):
+        flood(roots[0], _HITS_PER_INSTANCE + 5, "chartreuse")
+        flood(roots[1], 3, "chartreuse")
+        found = record(server, "search", {"query": "chartreuse"})
+        assert len(found["hits"]) == _HITS_PER_INSTANCE + 3
+        assert found["total"] == _HITS_PER_INSTANCE + 8
+        assert [hit["instance"] for hit in found["hits"][-3:]] == [BOOKS] * 3
+
+    def test_a_search_inside_the_cap_is_not_reported_as_cut(self, server, roots):
+        flood(roots[0], _HITS_PER_INSTANCE, "chartreuse")
+        found = record(server, "search", {"query": "chartreuse"})
+        assert found["total"] == len(found["hits"]) == _HITS_PER_INSTANCE
+        assert "newest" not in found["next"]
+
     def test_matches_the_digest_behind_an_item(self, server):
-        (hit,) = rows(server, "search", {"query": "swirl instead of stir"})
+        (hit,) = hits(server, {"query": "swirl instead of stir"})
         assert hit["id"] == f"{COFFEE}/{V60}"
         assert hit["type"] == "item"
         assert hit["title"] == "james hoffmann v60 technique"
@@ -48,42 +164,42 @@ class TestSearch:
         assert "swirl instead of stir" in hit["snippet"]
 
     def test_matches_a_corpus_note(self, server):
-        (hit,) = rows(server, "search", {"query": "everyone cites"})
+        (hit,) = hits(server, {"query": "everyone cites"})
         assert hit["id"] == f"{COFFEE}/{V60}"
         assert "The V60 technique video everyone cites." in hit["snippet"]
 
     def test_one_row_per_item_when_digest_and_note_both_match(self, server):
         # The digest and the note are two halves of one fetch, so a match in
         # either is the same hit — and the digest is the half shown.
-        found = rows(server, "search", {"query": "V60"})
+        found = hits(server, {"query": "V60"})
         assert [hit["id"] for hit in found] == [f"{COFFEE}/{V60}", f"{COFFEE}/pour-over"]
         assert "signal: high" in found[0]["snippet"]
 
     def test_a_snippet_is_one_line_around_the_match(self, server):
-        (hit,) = rows(server, "search", {"query": "swirl instead of stir"})
+        (hit,) = hits(server, {"query": "swirl instead of stir"})
         assert hit["snippet"].startswith("…")
         assert "\n" not in hit["snippet"]
         assert hit["snippet"].endswith("swirl instead of stir.")
 
     def test_a_snippet_only_marks_the_ends_it_cut(self, server):
         # This one runs off the end of the window but starts at byte zero.
-        (hit,) = rows(server, "search", {"query": "id: 2026-01-15"})
+        (hit,) = hits(server, {"query": "id: 2026-01-15"})
         assert hit["snippet"].startswith("--- id: 2026-01-15")
         assert hit["snippet"].endswith("…")
 
     def test_an_item_that_does_not_parse_is_skipped(self, server, roots):
         broken = roots[0] / "corpus" / "2026" / "2026-01-01-broken-000000.md"
         broken.write_text("this file has no frontmatter at all")
-        (hit,) = rows(server, "search", {"query": "Burr alignment"})
+        (hit,) = hits(server, {"query": "Burr alignment"})
         assert hit["id"] == f"{COFFEE}/{GRINDER}"
 
     def test_an_earlier_item_missing_does_not_stop_the_scan(self, server):
-        (hit,) = rows(server, "search", {"query": "Burr alignment"})
+        (hit,) = hits(server, {"query": "Burr alignment"})
         assert hit["id"] == f"{COFFEE}/{GRINDER}"
 
     def test_a_page_with_no_heading_is_titled_by_its_name(self, server, roots):
         (roots[0] / "wiki" / "topics" / "decaf.md").write_text("Swiss water process only.\n")
-        (hit,) = rows(server, "search", {"query": "Swiss water"})
+        (hit,) = hits(server, {"query": "Swiss water"})
         assert (hit["id"], hit["title"]) == (f"{COFFEE}/decaf", "decaf")
 
     def test_a_frontmatter_id_never_becomes_a_path(self, server, roots, tmp_path):
@@ -93,16 +209,16 @@ class TestSearch:
             "---\nid: ../../../secret\nsource: inbox\nchannel: inbox\nshared_by: Lee\n"
             "date: 2026-05-05\nkinds: [text]\nstatus: raw\nenrichment: []\n---\n\nA note.\n"
         )
-        assert rows(server, "search", {"query": "chartreuse"}) == []
+        assert hits(server, {"query": "chartreuse"}) == []
 
     def test_is_case_insensitive(self, server):
-        assert rows(server, "search", {"query": "HOFFMANN"})
+        assert hits(server, {"query": "HOFFMANN"})
 
     def test_a_miss_is_no_rows(self, server):
-        assert rows(server, "search", {"query": "kombucha"}) == []
+        assert hits(server, {"query": "kombucha"}) == []
 
     def test_wiki_pages_are_their_own_rows(self, server):
-        (hit,) = rows(server, "search", {"query": "post-bloom"})
+        (hit,) = hits(server, {"query": "post-bloom"})
         assert hit["id"] == f"{COFFEE}/pour-over"
         assert hit["type"] == "page"
         assert hit["title"] == "Pour-over"
@@ -111,12 +227,12 @@ class TestSearch:
 
     def test_page_frontmatter_is_not_searched(self, server):
         # `generated:` lives only in page frontmatter — bookkeeping, not content.
-        assert rows(server, "search", {"query": "generated"}) == []
+        assert hits(server, {"query": "generated"}) == []
 
     def test_a_page_snippet_never_drags_frontmatter_in(self, server):
         # The match sits at the very top of the body, where the lead window
         # would otherwise reach back into the frontmatter fence.
-        (hit,) = rows(server, "search", {"query": "starting recipe"})
+        (hit,) = hits(server, {"query": "starting recipe"})
         assert hit["snippet"].startswith("# Pour-over")
         assert "items: 1" not in hit["snippet"]
 
@@ -125,25 +241,25 @@ class TestSearch:
             roots[0] / "wiki" / "topics" / "ruled.md",
             "---\ntopic: ruled\n---\nAbove the rule.\n\n---\n\nBelow the rule.\n",
         )
-        (hit,) = rows(server, "search", {"query": "Below the rule"})
+        (hit,) = hits(server, {"query": "Below the rule"})
         assert hit["id"] == f"{COFFEE}/ruled"
 
     def test_dated_rows_come_newest_first(self, server):
         # `shared_by: Lee` is frontmatter both coffee items carry and neither
         # book does — the corpus scan reads the whole file, frontmatter included.
-        found = rows(server, "search", {"query": "Lee"})
+        found = hits(server, {"query": "Lee"})
         assert [hit["id"] for hit in found] == [f"{COFFEE}/{GRINDER}", f"{COFFEE}/{V60}"]
 
     def test_undated_rows_come_after_dated_ones(self, server):
-        found = rows(server, "search", {"query": "pour-over"})
+        found = hits(server, {"query": "pour-over"})
         assert [hit["type"] for hit in found] == ["item", "page", "page"]
 
     def test_fans_out_across_instances_in_roster_order(self, server):
-        found = rows(server, "search", {"query": "method"})
+        found = hits(server, {"query": "method"})
         assert [hit["instance"] for hit in found] == [COFFEE, BOOKS]
 
     def test_naming_an_instance_restricts_to_it(self, server):
-        found = rows(server, "search", {"query": "method", "instance": BOOKS})
+        found = hits(server, {"query": "method", "instance": BOOKS})
         assert [hit["id"] for hit in found] == [f"{BOOKS}/{BORGES}"]
 
     def test_an_unknown_instance_names_the_served_ones(self, server):
@@ -155,8 +271,8 @@ class TestSearch:
         assert "search needs a query" in refusal(server, "search", {"query": "   "})
 
     def test_a_query_is_plain_text_not_a_pattern(self, server):
-        assert rows(server, "search", {"query": "60g/L"})
-        assert rows(server, "search", {"query": ".*"}) == []
+        assert hits(server, {"query": "60g/L"})
+        assert hits(server, {"query": ".*"}) == []
 
 
 class TestFetch:
@@ -223,6 +339,25 @@ class TestPage:
         assert page["path"] == "wiki/topics/pour-over.md"
         assert page["text"].startswith("---\ntopic: pour-over")
         assert "[[brewing-technique]]" in page["text"]
+
+    def test_lists_the_links_the_body_makes(self, server):
+        page = record(server, "page", {"name": "pour-over", "instance": COFFEE})
+        assert page["wikilinks"] == ["brewing-technique"]
+        assert "page(name, instance)" in page["next"]
+
+    def test_a_link_in_the_frontmatter_is_not_one_of_the_page_s(self, server, roots):
+        write(
+            roots[0] / "wiki" / "topics" / "gear.md",
+            "---\ntopic: gear\nrelated: [[pour-over]]\n---\n# Gear\n\nSee [[grinders]].\n",
+        )
+        page = record(server, "page", {"name": "gear", "instance": COFFEE})
+        assert page["wikilinks"] == ["grinders"]
+
+    def test_the_index_hands_back_the_pages_it_points_at(self, server):
+        # The whole index read as one list of `page` calls to make next.
+        assert record(server, "page", {"name": "index", "instance": COFFEE})["wikilinks"] == [
+            "pour-over"
+        ]
 
     def test_the_md_suffix_is_optional(self, server):
         assert record(server, "page", {"name": "pour-over.md", "instance": COFFEE}) == record(
@@ -293,7 +428,7 @@ class TestResources:
 
 class TestCrossInstanceBoundary:
     def test_every_row_names_the_instance_it_came_from(self, server):
-        for hit in rows(server, "search", {"query": "e"}):
+        for hit in hits(server, {"query": "e"}):
             assert hit["instance"] in {COFFEE, BOOKS}
             assert hit["id"].startswith(f"{hit['instance']}/")
 

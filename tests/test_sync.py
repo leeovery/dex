@@ -460,7 +460,7 @@ class TestMain:
     def test_main_renders_the_report_from_cwd(self, inst, template, monkeypatch, capsys):
         channel, _ = make_channel("")
         monkeypatch.setattr("dex_engine.sync.default_channel", lambda: channel)
-        monkeypatch.setattr("dex_engine.sync._bundled_template", lambda: template)
+        monkeypatch.setattr("dex_engine.sync.bundled_template", lambda: template)
         monkeypatch.chdir(inst.root)
         main([])
         out = capsys.readouterr().out
@@ -471,7 +471,7 @@ class TestMain:
         (inst.root / PIN_FILE).write_text("garbage\n")
         channel, _ = make_channel(listing_for("v0.1.0"))
         monkeypatch.setattr("dex_engine.sync.default_channel", lambda: channel)
-        monkeypatch.setattr("dex_engine.sync._bundled_template", lambda: template)
+        monkeypatch.setattr("dex_engine.sync.bundled_template", lambda: template)
         monkeypatch.chdir(inst.root)
         with pytest.raises(SystemExit, match=r"dex-sync: .*not a release tag"):
             main([])
