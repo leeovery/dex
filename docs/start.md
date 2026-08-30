@@ -176,7 +176,21 @@ Each person captures with their own token. Walk them through, concretely:
 
 ---
 
-## Step 7: Backfill
+## Step 7: Chat Connection
+
+Ask the owner whether they want to reach this dex from the Claude desktop
+app's chat — asking it questions, and saving to it, without opening a
+session on the folder. If they don't, move on; the offer stands whenever
+they change their mind.
+
+If they do, connect it now, in this session. The guide lives in the engine
+repo, which is never cloned, so fetch it raw:
+https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md — then
+follow it end to end. It is one command and a relaunch of the app.
+
+---
+
+## Step 8: Backfill
 
 #### If the owner has exports to ingest
 
@@ -185,7 +199,7 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 
 ---
 
-## Step 8: Hand-Off
+## Step 9: Hand-Off
 
 End your final message with, in a few lines: `{instance}` (where it
 lives), its scope as written, the schedule it runs on, how to save things

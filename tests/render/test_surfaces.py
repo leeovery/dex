@@ -701,6 +701,56 @@ class TestSyncReport:
                 {"pin": "v1", "migrations": [{"number": 1}], "machinery_changes": 0},
             )
 
+    def test_a_desktop_app_with_no_dex_is_an_offer_to_make(self):
+        out = render(
+            "sync-report",
+            {
+                "pin": "v0.3.0",
+                "migrations": [],
+                "machinery_changes": 0,
+                "connect": "unconnected",
+            },
+        )
+        # The offer is one block among the report's own, never in place of it.
+        assert out.startswith("## Sync — engine pinned at v0.3.0")
+        assert "**Machinery changes** — 0" in out
+        assert "\n\n**Chat connection** — the Claude desktop app is on this machine" in out
+        assert "ask the owner" in out
+        # The doc reaches the session as a URL it can fetch: an instance
+        # holds no copy of the engine's docs.
+        assert "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_an_instance_outside_the_chat_roster_says_which_gap_it_is(self):
+        out = render(
+            "sync-report",
+            {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0, "connect": "unlisted"},
+        )
+        assert "**Chat connection** — the desktop app's dex serves other instances" in out
+        assert "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md" in out
+
+    def test_no_gap_is_no_line(self):
+        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0})
+        assert "Chat connection" not in out
+        # Nothing at all, not an empty block: the report ends where it did
+        # before there was an offer to make.
+        assert out.endswith("**Machinery changes** — 0\n")
+
+    def test_an_unknown_connect_gap_is_loud(self):
+        # The refusal names the surface and every gap it knows — a payload
+        # builder reads it and has the whole answer.
+        with pytest.raises(
+            PayloadError, match="sync-report: connect must be one of unconnected, unlisted"
+        ):
+            render(
+                "sync-report",
+                {"migrations": [], "machinery_changes": 0, "connect": "half-connected"},
+            )
+
+    def test_a_non_string_connect_gap_is_loud(self):
+        with pytest.raises(PayloadError, match="sync-report: connect must be a non-empty string"):
+            render("sync-report", {"migrations": [], "machinery_changes": 0, "connect": True})
+
 
 HEALTH_PAYLOAD = {
     "summary": {"corpus_items": 120, "pages": 14, "cited": 118},

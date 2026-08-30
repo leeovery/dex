@@ -22,6 +22,7 @@ holds no Homebrew, so the entry carries the installing shell's PATH or the
 """
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -32,7 +33,15 @@ from dex_engine.atomic import write_text
 
 from .roster import build_roster
 
-__all__ = ["SERVER", "build_parser", "connect", "default_config_path", "main", "server_entry"]
+__all__ = [
+    "SERVER",
+    "build_parser",
+    "connect",
+    "connect_gap",
+    "default_config_path",
+    "main",
+    "server_entry",
+]
 
 # The name the entry is filed under, and the name the owner sees in the app.
 SERVER = "dex"
@@ -147,6 +156,62 @@ def _config(config: Path) -> dict[str, object]:
             f"{config}: expected a JSON object, got {type(data).__name__} — nothing was written"
         )
     return data
+
+
+def connect_gap(root: Path, *, config: Path | None = None) -> str | None:
+    """What stands between the instance at ``root`` and the desktop app's chat.
+
+    A read, never a write, and silent wherever it cannot be certain: this
+    answers a report rather than a command, and it runs wherever sync runs —
+    Linux boxes, cloud runners, machines with no desktop app on them. An
+    unknown config location, an absent file, one that is not JSON or not an
+    object, an ``mcpServers`` that is not one: each is no answer at all. A
+    config this cannot read is a config ``connect`` would refuse, and saying
+    so is ``connect``'s job in front of someone who asked for it, not a
+    sync report's.
+
+    Args:
+        root: The instance root to look for.
+        config: The client config to read; ``None`` resolves the platform's
+            known location.
+
+    Returns:
+        ``"unconnected"`` when the config holds no dex server at all,
+        ``"unlisted"`` when its dex server does not serve ``root``, and
+        ``None`` when there is no gap — or nothing that can be read.
+    """
+    try:
+        # Both the location and the parse refuse with ValueError, and an
+        # unreadable file with OSError. Every one of them means the same
+        # thing here: nothing to say.
+        data = _config(config if config is not None else default_config_path())
+    except (OSError, ValueError):
+        return None
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        return None
+    if SERVER not in servers:
+        return "unconnected"
+    return None if root.resolve() in _served_roots(servers[SERVER]) else "unlisted"
+
+
+def _served_roots(entry: object) -> set[Path]:
+    """The roots an entry serves, read back as :func:`server_entry` writes them.
+
+    The value is whatever stands in a file another application owns, so its
+    shape is checked rather than trusted — and an entry that cannot be read
+    serves no root this can name, which is the honest answer either way.
+    """
+    if not isinstance(entry, dict):
+        return set()
+    args = entry.get("args")
+    if not isinstance(args, list):
+        return set()
+    return {
+        Path(value).resolve()
+        for flag, value in itertools.pairwise(args)
+        if flag == "--instance" and isinstance(value, str)
+    }
 
 
 def _instance_roots(paths: Sequence[Path]) -> list[Path]:

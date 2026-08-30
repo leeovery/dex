@@ -12,7 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.serve.connect import SERVER, connect, default_config_path, main, server_entry
+from dex_engine.serve.connect import (
+    SERVER,
+    connect,
+    connect_gap,
+    default_config_path,
+    main,
+    server_entry,
+)
 
 from .conftest import BOOKS, COFFEE
 
@@ -170,6 +177,92 @@ class TestRefusals:
         with pytest.raises(ValueError, match="'mcpServers' is not a JSON object"):
             connect(config, anchor=anchored[0], roots=anchored, path="/bin")
         assert config.read_text(encoding="utf-8") == '{"mcpServers": []}\n'
+
+
+class TestConnectGap:
+    """The read-only look sync takes: is this instance reachable from chat?
+
+    Silence is the answer everywhere the question does not apply — a Linux
+    box, a cloud runner, a machine with no desktop app — so most of these
+    assert that nothing is said rather than what is said.
+    """
+
+    def test_a_config_with_no_dex_server_is_unconnected(self, config, roots):
+        assert connect_gap(roots[0], config=config) == "unconnected"
+
+    def test_a_config_that_never_grew_the_key_is_unconnected(self, tmp_path, roots):
+        config = tmp_path / "config.json"
+        config.write_text('{"theme": "dark"}\n', encoding="utf-8")
+        assert connect_gap(roots[0], config=config) == "unconnected"
+
+    def test_what_connect_writes_closes_the_gap(self, config, anchored):
+        # The reader reads back exactly what the writer wrote — every root
+        # it served, not only the anchor.
+        connect(config, anchor=anchored[0], roots=anchored, path="/bin")
+        assert connect_gap(anchored[0], config=config) is None
+        assert connect_gap(anchored[1], config=config) is None
+
+    def test_an_instance_the_entry_does_not_serve_is_unlisted(self, config, anchored):
+        connect(config, anchor=anchored[0], roots=[anchored[0]], path="/bin")
+        assert connect_gap(anchored[1], config=config) == "unlisted"
+
+    def test_the_same_directory_spelled_two_ways_is_the_same_instance(
+        self, config, anchored, tmp_path
+    ):
+        # macOS hands out /tmp as a symlink to /private/tmp, so the root a
+        # command runs in and the resolved root the entry holds are the same
+        # directory under two names.
+        connect(config, anchor=anchored[0], roots=anchored, path="/bin")
+        link = tmp_path / "linked"
+        link.symlink_to(anchored[0])
+        assert connect_gap(link, config=config) is None
+
+    def test_only_what_follows_an_instance_flag_counts_as_served(self, tmp_path, roots):
+        # A path is a served root because `--instance` introduced it, not
+        # because it appears in the list: another flag's value naming this
+        # root is not this root being served.
+        config = tmp_path / "config.json"
+        config.write_text(
+            json.dumps({"mcpServers": {SERVER: {"args": ["serve", "--elsewhere", str(roots[0])]}}}),
+            encoding="utf-8",
+        )
+        assert connect_gap(roots[0], config=config) == "unlisted"
+
+    def test_an_entry_whose_args_cannot_be_read_serves_nothing(self, tmp_path, roots):
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"mcpServers": {SERVER: {"args": "serve"}}}), encoding="utf-8")
+        assert connect_gap(roots[0], config=config) == "unlisted"
+
+    def test_a_missing_config_says_nothing(self, tmp_path, roots):
+        assert connect_gap(roots[0], config=tmp_path / "absent.json") is None
+
+    def test_an_unparseable_config_says_nothing(self, tmp_path, roots):
+        config = tmp_path / "config.json"
+        config.write_text('{"mcpServers": {,}\n', encoding="utf-8")
+        assert connect_gap(roots[0], config=config) is None
+
+    def test_a_config_that_is_not_an_object_says_nothing(self, tmp_path, roots):
+        config = tmp_path / "config.json"
+        config.write_text("[]\n", encoding="utf-8")
+        assert connect_gap(roots[0], config=config) is None
+
+    def test_servers_that_are_not_an_object_say_nothing(self, tmp_path, roots):
+        # A config `connect` itself would refuse: its diagnosis belongs to
+        # the command someone asked for, not to a sync report.
+        config = tmp_path / "config.json"
+        config.write_text('{"mcpServers": []}\n', encoding="utf-8")
+        assert connect_gap(roots[0], config=config) is None
+
+    def test_off_macos_no_location_is_guessed_at(self, monkeypatch, roots):
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert connect_gap(roots[0]) is None
+
+    def test_on_macos_the_default_location_is_read(self, tmp_path, monkeypatch, roots):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        config = tmp_path / "Library/Application Support/Claude/claude_desktop_config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        assert connect_gap(roots[0]) == "unconnected"
 
 
 class TestDefaultConfigPath:

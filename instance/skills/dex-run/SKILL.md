@@ -53,6 +53,13 @@ instructions apply when its step is reached.
    silently. A scheduled run never asks the owner questions — it acts or
    it reports.
 
+   While the sync report carries a **Chat connection** line, close with
+   it: one last footnote, in your own words, saying this dex is not
+   reachable from the Claude desktop app's chat (or is not in its
+   roster — whichever sync raised) and offering to connect it. On a yes,
+   read the URL that line names and do the whole setup yourself; the
+   owner never runs anything.
+
 ## Unattended rules
 
 - **Never edit `state/config.json`** (or any owner-editable config) in an
