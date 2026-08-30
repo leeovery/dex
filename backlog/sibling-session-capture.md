@@ -16,7 +16,10 @@ the owner), and how the capture keeps provenance when it arrives from a
 session with no dex context. Whatever the shape, it must not make every
 unrelated session pay a context tax for dex's benefit.
 
-One candidate carrier worth weighing against a CLAUDE.md paragraph or a
-shared skill: a local server of the kind `thin-query-surface.md` describes.
-It costs an unrelated session no standing context — nothing is read until a
-tool is called — which is this entry's own hard constraint.
+The leading carrier is now designed: `design/thin-query-surface.md`'s local
+MCP server, added to a sibling project via `claude mcp add`. It costs an
+unrelated session no standing context — nothing is read until a tool is
+called — which is this entry's own hard constraint. What remains to design
+here is the residue: which projects get it, provenance on captures arriving
+from a session with no dex context, and whether a CLAUDE.md nudge is still
+wanted on top.

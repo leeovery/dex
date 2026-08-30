@@ -18,5 +18,6 @@ correction is itself a capture: a note landing in the inbox, picked up by the
 next run, applied through the existing verbs by the session that already has
 judgment loaded.
 
-Related: `thin-query-surface.md` is the same problem for reads, and whatever
-carries queries probably carries corrections.
+Related: `design/thin-query-surface.md` solved the same problem for reads
+(and captures) with a thin MCP server; its `capture` tool is the likely
+carrier for corrections too.

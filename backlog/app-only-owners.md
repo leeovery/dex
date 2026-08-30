@@ -11,8 +11,9 @@ tasks, Managed Agents) remain the path for owners with no computer —
 they need a clone-first run mode and a stored per-instance PAT; not
 built, not needed yet.
 
-Since written, a better candidate has appeared and should be tried first:
-`thin-query-surface.md` — a read surface for clients with no filesystem,
-which is exactly what this owner is. The Cowork and Project experiments
-below remain worth running, but they are workarounds for the absence of
-that surface rather than answers in their own right.
+Since written, the better candidate has been designed:
+`design/thin-query-surface.md` — a read surface for clients with no
+filesystem, which is exactly what this owner is. Its v1 is local stdio and
+does not reach them; this entry is now effectively the constituency for
+that design's v2 (remote HTTP, GitHub OAuth, contents-API reads). The
+Cowork and Project experiments above remain workarounds in the meantime.

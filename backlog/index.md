@@ -28,7 +28,6 @@ The convention:
 - [Source removal](source-removal.md) — no story yet for removing an entire source after ingestion
 - [Resurfacing and the owner's reading queue](resurfacing-reading-queue.md) — read/intent flags and views so saved things stop vanishing from mind
 - [App-only owner surfaces](app-only-owners.md) — the owner who lives in the Claude app, no computer
-- [Thin query surface](thin-query-surface.md) — a read surface for clients that cannot read files: the Claude app, ChatGPT, a phone
 - [The catalogue](catalogue.md) — one mechanical file holding the whole map of an instance; no embeddings, no BM25
 - [Joining instances — the registry](instance-registry.md) — one question across five instances, without the engine learning they exist
 - [A browsable wiki](browsable-wiki.md) — no surface exists for looking at a dex without asking it a question
