@@ -6,10 +6,14 @@ filter and the id namespace all have something to be wrong about. `dex-books`
 is deliberately younger: no wiki, no taxonomy, one item with no digest.
 
 Every call goes through the SDK's in-memory transport: a real client session
-against a real server, no subprocess and no socket.
+against a real server, no subprocess and no socket. The one exception is
+git: a capture commits, so the `repos` fixture makes the instances real
+repositories and the assertions read real history.
 """
 
 import json
+import shutil
+import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -152,6 +156,34 @@ def roots(tmp_path: Path) -> list[Path]:
     _coffee(tmp_path / COFFEE)
     _books(tmp_path / BOOKS)
     return [tmp_path / COFFEE, tmp_path / BOOKS]
+
+
+def git(root: Path, *args: str) -> str:
+    """One git command in a fixture repo, run by the test itself."""
+    return subprocess.run(  # noqa: S603 — test-built args, no shell
+        ["git", "-C", str(root), *args],  # noqa: S607 — PATH resolution is the dependency contract
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.fixture
+def repos(roots: list[Path]) -> list[Path]:
+    """The same roots, each a repository with the instance already committed."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    for root in roots:
+        git(root, "init", "-q")
+        git(root, "config", "user.name", "Test Owner")
+        git(root, "config", "user.email", "owner@dex.test")
+        # A capture commits as the owner, under whatever git config they
+        # keep — so a maintainer running the suite with global commit
+        # signing on would fail every one of these without this line.
+        git(root, "config", "commit.gpgsign", "false")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "the instance so far")
+    return roots
 
 
 @pytest.fixture

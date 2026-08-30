@@ -1,4 +1,4 @@
-"""Reading an instance from outside: search, fetch, page.
+"""Working an instance from outside: search, fetch, page, capture.
 
 Everything here is mechanical. A search is a plain case-insensitive scan of
 what the instance already curated — digests first, then the corpus item
@@ -14,9 +14,17 @@ order rather than interleaving them.
 Files that will not read or parse are skipped rather than reported: search
 answers about the instance as it stands, and lint is what tells the owner a
 file is broken.
+
+The one write is a capture, and it is the file every other capture client
+writes: one markdown file in ``inbox/``, committed where it landed and
+judged by the instance when the next run processes it. Nothing here decides
+whether a capture belongs in the instance, and nothing here pushes — the
+run that processes the inbox is what carries the commit to the remote.
 """
 
+import datetime
 import re
+import subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,12 +32,24 @@ from pathlib import Path
 
 from dex_engine import corpus
 from dex_engine.pipeline import enrichment
+from dex_engine.pipeline.capture import write_capture
 from dex_engine.pipeline.types import Instance
 from dex_engine.pipeline.urls import resolve_repo_path
 
 from .roster import NotFoundError, Roster, qualify
 
-__all__ = ["Enrichment", "Hit", "HitType", "Item", "Page", "fetch", "page", "search"]
+__all__ = [
+    "Capture",
+    "Enrichment",
+    "Hit",
+    "HitType",
+    "Item",
+    "Page",
+    "capture",
+    "fetch",
+    "page",
+    "search",
+]
 
 # The snippet window around a match: enough of the sentence in front of it to
 # place the hit, more behind it because that is where the claim usually runs.
@@ -49,7 +69,7 @@ class HitType(StrEnum):
     PAGE = "page"
 
 
-# The four result shapes, unslotted unlike every other frozen dataclass in
+# The five result shapes, unslotted unlike every other frozen dataclass in
 # this tree: the SDK builds a tool's output schema by asking the class for
 # each field's default, a slot descriptor answers that question, and the
 # schema then fails to build — leaving the tool returning text with no
@@ -100,6 +120,21 @@ class Page:
     title: str
     path: str
     text: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Capture:
+    """One capture: the file that landed, and whether the commit followed it.
+
+    ``detail`` is empty when it did and carries git's own words when it did
+    not — the file is on disk either way, and a caller told only that the
+    commit failed would have no idea the note survived.
+    """
+
+    path: str
+    instance: str
+    committed: bool
+    detail: str
 
 
 def search(roster: Roster, query: str, *, instance: str | None = None) -> list[Hit]:
@@ -204,6 +239,80 @@ def page(roster: Roster, name: str, instance: str) -> Page:
         path=str(path.relative_to(served.root)),
         text=text,
     )
+
+
+def capture(
+    roster: Roster, *, instance: str, url: str, note: str, now: datetime.datetime
+) -> Capture:
+    """Write one capture into an instance's inbox and commit it there.
+
+    Args:
+        roster: The served instances.
+        instance: Which instance to capture into.
+        url: The URL being captured, or ``""`` for a note-only capture.
+        note: Why it was worth saving, or ``""`` for a bare link.
+        now: The capture moment, stamped into the filename.
+
+    Returns:
+        The capture, saying whether the commit followed the file.
+
+    Raises:
+        NotFoundError: ``instance`` names no served instance.
+        ValueError: There is neither a URL nor a note, or the file could not
+            be written at all — the only outcome where nothing was kept.
+    """
+    served = roster.locate(instance)
+    try:
+        path = write_capture(served, url=url, note=note, now=now)
+    except OSError as e:
+        raise ValueError(f"{instance} cannot write the capture: {e}") from e
+    relative = path.relative_to(served.root).as_posix()
+    failure = _commit(served.root, relative)
+    return Capture(
+        path=relative,
+        instance=instance,
+        committed=failure is None,
+        detail="" if failure is None else f"written, but not committed: {failure}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Committing
+# ---------------------------------------------------------------------------
+
+
+def _commit(root: Path, relative: str) -> str | None:
+    """Commit exactly the capture file; ``None`` when it committed.
+
+    Both calls name the path: the repo is the owner's own working tree, and
+    whatever they had staged when a capture arrived is theirs to commit, not
+    this one's to carry. No author is set either — the capture is the
+    owner's, made under the git identity they already keep here.
+    """
+    staged = _git(root, ["add", "--", relative])
+    if staged is not None:
+        return staged
+    return _git(root, ["commit", "-m", f"capture: {relative}", "--", relative])
+
+
+def _git(root: Path, args: list[str]) -> str | None:
+    """Run one git subcommand in ``root``; ``None`` when it succeeded."""
+    try:
+        done = subprocess.run(  # noqa: S603 — engine-built args, no shell
+            ["git", "-C", str(root), *args],  # noqa: S607 — git resolves via PATH like every dev tool
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if done.returncode == 0:
+        return None
+    # Decoded tolerantly, never text=True: the output may be a failing
+    # hook's, and a hook prints whatever bytes it likes — to stdout as often
+    # as to stderr.
+    said = (done.stderr or done.stdout).decode("utf-8", "replace").strip()
+    return said or f"git {args[0]} exited {done.returncode}"
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,14 @@
-"""Wiring the reads onto MCP: three tools and each instance's map files.
+"""Wiring the library onto MCP: four tools and each instance's map files.
 
 The only thing this layer decides is how a refusal reaches the caller. Only
 a :class:`ToolError`'s text is passed on; every other exception is logged
-here and answered with a generic line, so the reads' anticipated refusals —
-an unknown instance, an id that names nothing — are restated as that type,
-and a genuine crash stays unexplained on purpose.
+here and answered with a generic line, so the library's anticipated
+refusals — an unknown instance, an id that names nothing, a capture with
+nothing in it — are restated as that type, and a genuine crash stays
+unexplained on purpose.
 """
 
+import datetime
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -48,7 +50,7 @@ def build_server(roster: Roster) -> MCPServer:
 
 
 def _add_tools(server: MCPServer, roster: Roster) -> None:
-    """Attach the three read tools, each closing over the roster."""
+    """Attach the three reads and the one write, each closing over the roster."""
 
     @server.tool()
     def search(query: str, instance: str | None = None) -> list[library.Hit]:
@@ -92,6 +94,34 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
             The page, verbatim.
         """
         return _stated(lambda: library.page(roster, name, instance))
+
+    @server.tool()
+    def capture(instance: str, url: str = "", note: str = "") -> library.Capture:
+        """Save a link and/or a note into one instance's inbox, and commit it.
+
+        Args:
+            instance: Which instance to capture into — nothing is guessed
+                here, so name the one whose scope this belongs to.
+            url: The link being saved, if there is one.
+            note: Why it is worth saving, in the owner's own words. Often
+                the more valuable half; pass it verbatim.
+
+        Returns:
+            The capture file's path, and whether the commit followed it.
+        """
+        return _stated(
+            lambda: library.capture(roster, instance=instance, url=url, note=note, now=_now())
+        )
+
+
+def _now() -> datetime.datetime:
+    """The local wall clock the capture stamp is written from.
+
+    Local, where the rest of the engine stamps UTC: this one becomes a
+    filename that every other capture client writes from its own wall clock,
+    and that the processor reads back as the day the owner captured.
+    """
+    return datetime.datetime.now(tz=datetime.UTC).astimezone()
 
 
 def _add_resources(server: MCPServer, roster: Roster) -> None:

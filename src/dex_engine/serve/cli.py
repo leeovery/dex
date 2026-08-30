@@ -19,7 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dex-serve",
         description="Serve dex instances to MCP clients over stdio: mechanical text "
-        "search, item reads and wiki reads. The judgment stays with the caller.",
+        "search, item reads, wiki reads, and capture into an instance's inbox. "
+        "The judgment stays with the caller.",
     )
     parser.add_argument(
         "--instance",

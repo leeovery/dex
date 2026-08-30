@@ -422,7 +422,7 @@ def _report_orphans(reconciler: _Reconcile, repo: str, token: str) -> None:
     if not isinstance(assets, list) or not assets:
         return
     referenced: set[int] = set()
-    inbox_dir = reconciler.instance.root / "inbox"
+    inbox_dir = reconciler.instance.inbox_dir
     for path in inbox_dir.glob("*.md"):
         try:
             text = path.read_text(encoding="utf-8")
@@ -479,7 +479,7 @@ def reconcile(instance: Instance, seams: GithubSeams) -> int:
         The process exit code (1 when anything failed).
     """
     echo = seams.echo
-    inbox_dir = instance.root / "inbox"
+    inbox_dir = instance.inbox_dir
     if not inbox_dir.is_dir():
         echo("no inbox/ here — run from an instance root.")
         return 0
