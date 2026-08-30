@@ -43,6 +43,25 @@ no longer true.
 - Tasks pin to the creating session's launch folder — there is no folder
   parameter, and an in-session re-anchor does not change it.
 
+## Claude Desktop MCP servers (verified 2026-08-30)
+
+- The desktop app's server config is
+  `~/Library/Application Support/Claude/claude_desktop_config.json` on
+  macOS; a fresh install already carries `"mcpServers": {}` alongside
+  unrelated app preferences, so writing a server entry is a merge into a
+  live file, never a file create.
+- GUI-spawned servers inherit launchd's default PATH
+  (`/usr/bin:/bin:/usr/sbin:/sbin`) — `launchctl getenv PATH` is unset on
+  a stock machine and Homebrew's `/opt/homebrew/bin` (where uv/uvx live)
+  is absent. A server entry whose command chain needs uvx must carry an
+  `env.PATH`, captured from the installing shell's PATH at write time.
+- `.mcpb` extension bundles install under
+  `~/Library/Application Support/Claude/Claude Extensions/` — separate
+  from `mcpServers`; the two mechanisms coexist.
+- Not yet verified in-app (pending first live use): whether server
+  `instructions`, resources, and prompts all surface in desktop chat as
+  the MCP spec suggests.
+
 ## Cowork (verified 2026-08-19)
 
 - Cowork scheduled tasks are cloud unless a local folder is declared at
