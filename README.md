@@ -117,7 +117,14 @@ PDF stages the binary outside git, so history stays text only.
 
 **Questions.** Open a Claude Code session on the folder and ask. Answers come
 from the wiki with citations, newest material preferred, and any genuinely new
-synthesis is filed back in so that it compounds instead of evaporating.
+synthesis is filed back in so that it compounds instead of evaporating. Or
+connect your dexes to the desktop app's ordinary chat, where you can ask them —
+and say "save this to my dex" — without opening the folder at all. That is one
+more paste, in a Claude Code session:
+
+```
+Fetch and follow the instructions at https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md.
+```
 
 **Maintenance.** A health check runs on its own whenever the last one is more
 than a week old, and the corrections you make by hand are pinned and reapplied
@@ -286,6 +293,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 | `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item reads and wiki reads, instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
+| `dex-connect --instance <path>` | merge the `dex` server entry into the Claude desktop app's config so its chats reach these instances (`--anchor`, `--config`; repeat the flag per instance, and re-run to change the list) |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
 queue, append-only, last-line-per-unit): drivers per source shape, one central
@@ -309,6 +317,23 @@ at all — no Actions, no webhooks, nothing writing to it but you and your own
 sessions: the PUT is the commit, and the next run moves staged binaries into
 `media/` where LFS applies. Suggestion is untrusted by design, so scope filtering happens at
 processing time, inside the instance. Full protocol: `docs/capture.md`.
+
+Query surface: `dex-serve` is an MCP server — one process serving several
+instances, stateless between calls, every call a fresh read of disk. Four tools
+(`search`, `fetch`, `page`, `capture`), hits tagged with the instance they came
+from and ids namespaced `<instance>/<item-id>`, plus each instance's
+`wiki/index.md` and `state/taxonomy.json` attached as resources. Hands, not an
+agent: no model runs on that side and nothing is ranked, so the calling chat
+does the searching with its own inference. What keeps an impatient caller
+probing is prose rather than machinery (`serve/steering.py`) — connect-time
+instructions carrying the doctrine and every instance's declared scope
+verbatim, one next-move line on each result, and a `dex-query` prompt read from
+the wheel-bundled skill template (`template.py`) so that procedure keeps a
+single home. `dex-connect` writes the client-side half: one `mcpServers.dex`
+entry merged into the desktop app's own config, its command an anchor
+instance's `bin/dex` so the anchor's pin stays the only version authority, and
+its `env.PATH` captured from the installing shell because a GUI-spawned child
+inherits launchd's bare PATH. Setup: `docs/connect.md`.
 
 Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·
 `.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·

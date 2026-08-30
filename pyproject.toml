@@ -38,6 +38,7 @@ dex-inbox = "dex_engine.inbox:main"
 dex-render = "dex_engine.render.cli:main"
 dex-issue = "dex_engine.issue:main"
 dex-serve = "dex_engine.serve.cli:main"
+dex-connect = "dex_engine.serve.connect:main"
 
 [build-system]
 requires = ["hatchling"]
