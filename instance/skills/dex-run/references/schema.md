@@ -17,13 +17,13 @@ urls:
   - https://www.youtube.com/watch?v=...     # capture provenance — what was SHARED, verbatim;
                                             #   immutable after ingest (promoted URLs live in the ledger only)
 kinds: [youtube]                            # youtube | x | instagram | github | paper | podcast | web | file | image | text
-attachments:                                # backfill exports only: repo-relative paths under raw/
-  - raw/discord/general/assets/photo.png
+attachments:                                # backfill exports only: provenance — the exporter's own
+  - raw/discord/general/assets/photo.png    #   paths under raw/, materialized into media/<id>/ by normalize
 reactions: 5                                # backfill exports only: total reaction count, when > 0
 status: raw                                 # raw | enriched — engine-owned
 enrichment: []                              # engine-owned: filenames under enrichment/<id>/
-media:                                      # media captures: repo-relative paths (media/<id>/..., LFS-tracked)
-  - media/a1b2c3/20260818-101530.jpg
+media:                                      # media captures and materialized backfill attachments:
+  - media/a1b2c3/20260818-101530.jpg        #   repo-relative paths (media/<id>/..., LFS-tracked)
 ---
 
 <original message / note text, verbatim>
@@ -56,6 +56,10 @@ media:                                      # media captures: repo-relative path
   After creation these are the ONLY two frontmatter fields that ever change.
 - `urls` is immutable capture provenance. Harvest-promoted URLs are ledger
   entries (`via: harvest`), never frontmatter edits.
+- `media` — the files the item's own work units are seeded from: capture media
+  as `bin/dex inbox` materialized it, and for backfills each local attachment
+  copied out of the export into `media/<item shortid>/<file name>`. Derived at
+  normalize time, so a re-run heals it; `attachments` is provenance only.
 - Threaded replies that add substance are appended to the parent item's body
   with an attribution line, not split into separate items (backfills; for
   X threads the driver's walk-up puts thread context in the enrichment).

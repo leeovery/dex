@@ -205,6 +205,13 @@ A module takes a minute or two. Reading the result is the part that matters:
   the tool finds candidates, you decide.
 - `timeout` — the mutant looped forever. Counts as killed.
 
+One collection trap, hit in the field: a module-glob run can silently omit a
+function — its mutants are generated under `mutants/` but never scheduled, and
+`./mutate results` shows no row for them, which reads as a clean audit. After
+any run, check the results listing names every function you touched; force a
+missing one by explicit name (`./mutate run
+"dex_engine.normalize.x__copy_once__mutmut_*"`).
+
 `mutants/` is a scratch copy of the tree; it is gitignored and safe to delete.
 Two accommodations make a run possible at all, and both are commented where
 they live: three tests are deselected in `[tool.mutmut]`, because mutmut
