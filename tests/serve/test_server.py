@@ -6,7 +6,19 @@ from dex_engine.serve.roster import build_roster
 from dex_engine.serve.server import build_server
 from dex_engine.version import engine_version
 
-from .conftest import BOOKS, BORGES, COFFEE, GRINDER, V60, call, drive, record, refusal, rows
+from .conftest import (
+    BOOKS,
+    BORGES,
+    COFFEE,
+    GRINDER,
+    V60,
+    call,
+    drive,
+    record,
+    refusal,
+    rows,
+    write,
+)
 
 
 async def _identity(client):
@@ -96,6 +108,25 @@ class TestSearch:
         assert hit["title"] == "Pour-over"
         assert hit["date"] is None
         assert hit["url"] is None
+
+    def test_page_frontmatter_is_not_searched(self, server):
+        # `generated:` lives only in page frontmatter — bookkeeping, not content.
+        assert rows(server, "search", {"query": "generated"}) == []
+
+    def test_a_page_snippet_never_drags_frontmatter_in(self, server):
+        # The match sits at the very top of the body, where the lead window
+        # would otherwise reach back into the frontmatter fence.
+        (hit,) = rows(server, "search", {"query": "starting recipe"})
+        assert hit["snippet"].startswith("# Pour-over")
+        assert "items: 1" not in hit["snippet"]
+
+    def test_a_horizontal_rule_in_a_body_is_not_a_fence(self, server, roots):
+        write(
+            roots[0] / "wiki" / "topics" / "ruled.md",
+            "---\ntopic: ruled\n---\nAbove the rule.\n\n---\n\nBelow the rule.\n",
+        )
+        (hit,) = rows(server, "search", {"query": "Below the rule"})
+        assert hit["id"] == f"{COFFEE}/ruled"
 
     def test_dated_rows_come_newest_first(self, server):
         # `shared_by: Lee` is frontmatter both coffee items carry and neither

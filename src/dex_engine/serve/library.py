@@ -247,10 +247,16 @@ def _item_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
 
 
 def _page_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Iterator[Hit]:
-    """Every wiki page holding the pattern; a page carries no share date."""
+    """Every wiki page whose body holds the pattern; a page carries no share date.
+
+    The body, not the file: page frontmatter is `generated:` bookkeeping,
+    and a match near the top of the body must not drag it into the snippet.
+    Corpus files deliberately keep the whole-file scan — their frontmatter
+    holds URLs, and finding an item by its source is a real search.
+    """
     for page_name, path in _pages(instance).items():
         text = _read(path)
-        snippet = _snippet(text, pattern)
+        snippet = _snippet(_page_body(text), pattern)
         if snippet is None:
             continue
         yield Hit(
@@ -262,6 +268,18 @@ def _page_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
             snippet=snippet,
             instance=name,
         )
+
+
+def _page_body(text: str) -> str:
+    """The page below its frontmatter fence, or all of it when there is none.
+
+    The FIRST closing fence: a later `---` in the body is a horizontal
+    rule, not a fence, and everything after it is still content.
+    """
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 3)
+    return text if end == -1 else text[end + len("\n---\n") :].lstrip("\n")
 
 
 def _pages(instance: Instance) -> dict[str, Path]:
