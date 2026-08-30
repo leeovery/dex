@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-08-30
+
+✨ Added
+- Undescribed media are now tracked: any item carrying more media files (or attached markdown/documents) than written descriptions shows up on the run report, `enrich status`, and the health check under a new "Describe these" queue until the descriptions are written.
+- Backfill attachments are now materialized into `media/` automatically — a migration copies existing exports' local attachments out of `raw/` so they finally enter extraction, digests, and the describe queue instead of being silently invisible to the pipeline.
+- Parked units waiting on a capability with no mechanical provider (the "cognitive floor") are now distinguished from ones genuinely waiting on an active provider, both in the ledger and on the run/status reports — captioned "no provider will appear — you read this one" instead of a misleading retry note.
+
+🔧 Changed
+- `raw/` exports are now tracked by Git LFS wholesale instead of by a fixed extension list, so exporter-named assets with unusual or missing extensions no longer slip past LFS tracking.
+
 ## [0.1.8] - 2026-08-28
 
 🔧 Changed
