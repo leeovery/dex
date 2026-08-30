@@ -285,7 +285,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
-| `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item reads and wiki reads, instance-tagged and namespaced (repeat the flag per instance) |
+| `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item reads and wiki reads, instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
 queue, append-only, last-line-per-unit): drivers per source shape, one central

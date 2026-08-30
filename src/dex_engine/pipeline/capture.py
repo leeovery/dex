@@ -16,8 +16,10 @@ Both id paths:
   ``dex inbox`` filed the binary at ``media/<id>/<name>`` — the directory
   name IS the shortid.
 
-``parse_capture`` is the canonical capture-file reader; ``inbox.py``
-imports it from here.
+``parse_capture`` is the canonical capture-file reader (``inbox.py``
+imports it from here) and ``write_capture`` the engine's one writer of the
+same format — the file every capture client produces, whatever the
+transport that carries it.
 """
 
 import datetime
@@ -31,14 +33,20 @@ from dex_engine import corpus
 from .detect import canonical_url, detect_kind, sniff_format
 from .types import Instance, Kind, SourceDriver
 
-__all__ = ["URL_RE", "item_new", "parse_capture", "slugify"]
+__all__ = ["URL_RE", "item_new", "parse_capture", "slugify", "write_capture"]
 
 # The URL-in-prose pattern every corpus-item creator extracts with:
 # `normalize` reads chat exports through the same regex, so one route in
 # cannot see a URL the other misses.
 URL_RE = re.compile(r"https?://[^\s>\)\]]+")
 _STAMP_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-\d{6}$")
+_STAMP_FORMAT = "%Y%m%d-%H%M%S"  # what _STAMP_RE reads back
 _MEDIA_RE = re.compile(r"^media/([0-9a-f]{6})/[^/]+$")
+
+# How far the stamp may walk forward looking for a free second. A capturer
+# is unique per second by the format's own contract, so needing more than a
+# minute of them means something other than a burst of captures.
+_STAMP_ATTEMPTS = 60
 
 
 def parse_capture(text: str) -> tuple[dict[str, str], str]:
@@ -67,6 +75,51 @@ def parse_capture(text: str) -> tuple[dict[str, str], str]:
             key, _, value = line.partition(":")
             frontmatter[key.strip()] = value.strip()
     return frontmatter, "\n".join(lines[end + 1 :]).lstrip("\n")
+
+
+def write_capture(instance: Instance, *, url: str, note: str, now: datetime.datetime) -> Path:
+    """Write one capture into ``inbox/`` — the file every capture client writes.
+
+    Body is the URL, the note, or both with a blank line between them, and
+    nothing else: it becomes the corpus item's body verbatim, so anything
+    added here is something the owner never said.
+
+    Args:
+        instance: The instance to capture into.
+        url: The URL being captured, or ``""`` for a note-only capture.
+        note: Why it was worth saving, or ``""`` for a bare link.
+        now: The capture moment, stamped into the filename — which is where
+            ``item_new`` reads the item's capture date back out of.
+
+    Returns:
+        The capture file's path.
+
+    Raises:
+        ValueError: Neither a URL nor a note was given, or a whole minute of
+            stamps is already taken.
+        OSError: ``inbox/`` or the file itself cannot be written.
+    """
+    body = "\n\n".join(part for part in (url.strip(), note.strip()) if part)
+    if not body:
+        raise ValueError("a capture is a URL, a note, or both — this one is neither")
+    inbox = instance.inbox_dir
+    inbox.mkdir(parents=True, exist_ok=True)
+    for second in range(_STAMP_ATTEMPTS):
+        stamp = now + datetime.timedelta(seconds=second)
+        path = inbox / f"{stamp:{_STAMP_FORMAT}}.md"
+        try:
+            # Exclusive create, and a taken stamp walks forward a second
+            # rather than growing a suffix: the filename IS the capture date
+            # the processor reads back, and only a whole stamp parses.
+            with path.open("x", encoding="utf-8") as file:
+                file.write(body + "\n")
+        except FileExistsError:
+            continue
+        return path
+    raise ValueError(
+        f"{inbox} already holds a capture for every second from "
+        f"{now:{_STAMP_FORMAT}} onwards — this one was not written"
+    )
 
 
 def _capture_date(name: str, today: Callable[[], datetime.date]) -> datetime.date:

@@ -26,9 +26,9 @@ async def _identity(client):
 
 
 class TestTools:
-    def test_the_surface_is_three_read_tools(self, server):
+    def test_the_surface_is_three_reads_and_one_capture(self, server):
         listed = drive(server, lambda client: client.list_tools())
-        assert [tool.name for tool in listed.tools] == ["search", "fetch", "page"]
+        assert [tool.name for tool in listed.tools] == ["search", "fetch", "page", "capture"]
         assert all(tool.description for tool in listed.tools)
 
     def test_the_server_names_itself_and_the_engine_it_runs(self, server):

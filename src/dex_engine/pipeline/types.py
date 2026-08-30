@@ -713,6 +713,11 @@ class Instance:
         return self.root / "enrichment"
 
     @property
+    def inbox_dir(self) -> Path:
+        """``inbox/`` — captures waiting to be processed."""
+        return self.root / "inbox"
+
+    @property
     def wiki_dir(self) -> Path:
         """``wiki/`` — the curated pages: topics, entities, syntheses, index."""
         return self.root / "wiki"

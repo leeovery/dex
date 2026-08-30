@@ -38,6 +38,7 @@ The convention:
 - [Rewrite magnitude](rewrite-magnitude.md) — a re-fetch that halves a stored file reports `1 rewritten`, same as one that doubles it
 - [Claim volatility](claim-volatility.md) — how fast a claim decays is not recorded, so a 2024 model-capability claim reads like a durable finding
 - [HTML entities survive into enrichment text](entity-decode-fetched-text.md) — `&nbsp;` in stored transcripts silently breaks phrase search
+- [A note-only capture opening with --- parses as frontmatter](capture-note-frontmatter-collision.md) — the owner's words silently vanish; a fix is a capture-format decision
 - [Offline instances can't run bin/dex at all](offline-instances.md) — uvx resolves the engine from the network every invocation
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
 - [Pre-rewrite dead ledger entries need healing](dead-entry-healing.md) — per-instance content work during each post-merge sync review
