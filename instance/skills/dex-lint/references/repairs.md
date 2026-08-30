@@ -90,6 +90,17 @@ other repairs need):
   write them as the payload, run `bin/dex enrich item digest --file
   cache/digest.json` — and the engine re-derives `media:` itself. Never
   hand-edit the line in.
+- **Describe these** (media carried, no description written) — an
+  advisory, and it never fails the check. The item holds more media files
+  — its own `media:` paths, plus the `media-<n>.<ext>` files downloaded
+  into `enrichment/<id>/` — than it holds `media-<n>.md` descriptions, and
+  the row says how many of how many are written. Extraction assets
+  (`<hash6>-asset-<n>.<ext>`) are not counted: they are figures out of a
+  document already extracted, and owe nothing. The repair is the work
+  itself — view or read the media and write the missing descriptions per
+  dex-run's `references/ingest-item.md` (step 4), one per file, in the
+  next free slot. Nothing mechanical clears this row; a bulk-ingested
+  backlog stands here until a session looks at it.
 - **Broken wikilinks** — typo → correct it; genuinely missing target →
   create the page if its members justify one, otherwise de-link.
 - **Bad citations** (id not in corpus) — find the right id or remove

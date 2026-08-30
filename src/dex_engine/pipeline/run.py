@@ -111,6 +111,7 @@ __all__ = [
     "is_cognitive_park",
     "is_drainable",
     "is_media_file",
+    "items_owing_descriptions",
     "items_owing_work",
     "mark",
     "never_harvested",
@@ -119,6 +120,7 @@ __all__ = [
     "run",
     "run_transcribe",
     "status_report",
+    "undescribed_media",
 ]
 
 # Re-entry caps: mechanical backstops, not targets. Fires are recorded in
@@ -442,6 +444,10 @@ class _Drain:
     written: dict[str, LedgerEntry] = field(default_factory=dict)
     item_paths: dict[str, Path] = field(default_factory=dict)
     item_status: dict[str, str] = field(default_factory=dict)
+    # What each item's frontmatter states under `media:`, kept from the
+    # seeding walk — the describe queue needs it per item, and the walk is
+    # the run's one full corpus read.
+    stated_media: dict[str, list[str]] = field(default_factory=dict)
     # Unit hashes whose URL some live item's frontmatter shares as http.
     # Canonicalization forces https (identity and hashing are unchanged),
     # so this records that the owner actually shared the source over http
@@ -461,6 +467,10 @@ class _Drain:
     # items, owed description + digest from the owner's note, and derived
     # on demand for the report.
     closed_unenriched_items: list[str] = field(default_factory=list)
+    # Items carrying media no session has described — derived on demand
+    # like the two listings above, and owed by any item however finished
+    # its units are (:func:`undescribed_media`).
+    undescribed_items: list[dict[str, object]] = field(default_factory=list)
     # Items this run wrote an outcome for — the report's incompleteness
     # section covers exactly these (an item nothing happened to this run has
     # nothing new to say; `enrich status` holds the standing view).
@@ -538,6 +548,7 @@ class _Drain:
                 continue
             self.item_paths[item.id] = path
             self.item_status[item.id] = item.status
+            self.stated_media[item.id] = list(item.media)
             for url in item.urls:
                 try:
                     admission = self.admit(item.id, url)
@@ -1916,6 +1927,23 @@ class _Drain:
             if item_id not in digested
         ]
 
+    def derive_undescribed_items(self) -> None:
+        """List the items carrying media no session has described.
+
+        Derived every run and never seeded, like the listings above, but
+        owed by every item rather than by an unfinished one: a description
+        is a file only a reader writes, so the item is named run after run
+        until it lands — enriched, digested and long past the unit-driven
+        report included. That state is exactly where undescribed media
+        was invisible, since an item whose units have all landed leaves
+        the report entirely.
+        """
+        self.undescribed_items = []
+        for item_id, media in sorted(self.stated_media.items()):
+            row = undescribed_media(self.ctx.instance, item_id, media)
+            if row is not None:
+                self.undescribed_items.append(row)
+
     def report_payload(self) -> dict[str, object]:
         items = [
             {"id": item_id, "reason": outcome.reason()}
@@ -1953,6 +1981,8 @@ class _Drain:
         cognitive = self._cognitive_jobs()
         if cognitive:
             payload["cognitive"] = cognitive
+        if self.undescribed_items:
+            payload["undescribed_media"] = list(self.undescribed_items)
         if self.notes:
             payload["notes"] = list(self.notes)
         return payload
@@ -2350,6 +2380,7 @@ def run(ctx: RunContext, *, limit: int | None = None) -> str:
     drain.seed_from_corpus()
     drain.drain(limit=limit)
     drain.derive_no_source_items()
+    drain.derive_undescribed_items()
     return _finish(drain)
 
 
@@ -2550,6 +2581,9 @@ def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
     parked = _parked_units(ctx, entries)
     if parked:
         payload["parked"] = parked
+    undescribed = items_owing_descriptions(ctx.instance)
+    if undescribed:
+        payload["undescribed_media"] = undescribed
     orphans = digest_orphans(ctx.instance)
     if orphans:
         payload["orphans"] = orphans
@@ -2776,6 +2810,66 @@ def digested_items(instance: Instance, live: set[str]) -> set[str]:
     if not instance.digests_dir.is_dir():
         return set()
     return {_dir_owner(path.stem, live) for path in instance.digests_dir.glob("*.md")}
+
+
+def undescribed_media(
+    instance: Instance, item_id: str, media: Sequence[str]
+) -> dict[str, object] | None:
+    """One item's describe row — its media against its descriptions — or None.
+
+    What counts is what the item carries that has not entered the knowledge
+    base in text form: every path its ``media:`` states, plus the
+    ``media-<n>.<ext>`` files the media stage downloaded into
+    ``enrichment/<id>/``. A stated markdown file counts like the rest —
+    nothing transcribes it and nothing extracts it, so without a row here
+    nothing ever sends a session to read it, and its description is a
+    summary of the document. An extraction asset
+    (``<hash6>-asset-<n>.<ext>``) is deliberately not counted — it is a
+    figure lifted out of a document that has already been extracted, and
+    charging a description for each would invent work nobody wants.
+
+    Counted, never paired by slot: a capture's media carries no slot at
+    all, so which description covers which file is not derivable — and the
+    row's job is to send the session to look, not to adjudicate. The two
+    counts say how much of the looking is left.
+    """
+    item_dir = instance.enrichment_dir / item_id
+    # The download family alone: an item's directory also holds the
+    # enrichment its fetched pages wrote, and the assets an extraction
+    # lifted out of a document — neither is a capture owed a description.
+    family = (
+        [path for path in item_dir.iterdir() if path.name.startswith("media-")]
+        if item_dir.is_dir()
+        else []
+    )
+    binaries = len(media) + sum(1 for path in family if is_media_file(path))
+    # An interrupted download's temp wears a media name and describes
+    # nothing; `is_media_file` refuses it as media, and so does this.
+    described = sum(1 for path in family if path.suffix == ".md" and path.is_file())
+    if described >= binaries:
+        return None
+    return {"item": item_id, "binaries": binaries, "described": described}
+
+
+def items_owing_descriptions(instance: Instance) -> list[dict[str, object]]:
+    """Every live item carrying media nobody has described yet, by id.
+
+    The standing reading behind the run report's describe queue, the
+    status listing and the health check's advisory — one derivation, so no
+    two surfaces can disagree about whether an item still owes a
+    description. An unreadable corpus item states no media and makes no
+    row: naming it is seeding's job and lint's, not this listing's.
+    """
+    rows = []
+    for path in sorted(instance.corpus_dir.glob("*/*.md")):
+        try:
+            item = corpus.read_item(path)
+        except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+            continue
+        row = undescribed_media(instance, item.id, item.media)
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 def items_owing_work(

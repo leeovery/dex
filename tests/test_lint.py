@@ -1829,6 +1829,53 @@ class TestDigestMediaDrift:
         assert f"{DRIFT_ROW} — **1**" in outcome.report
 
 
+DESCRIBE_ROW = "describe these (media carried, no description written)"
+
+
+class TestUndescribedMedia:
+    """The advisory: media the item carries against the descriptions written."""
+
+    def _item(
+        self, instance, *, stated: tuple[str, ...] = (), on_disk: tuple[str, ...] = ()
+    ) -> None:
+        write_taxonomy(instance)
+        write_index(instance, "")
+        write_corpus_item(instance, ITEM, urls=["https://example.test/a"], media=list(stated))
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        for name in on_disk:
+            (item_dir / name).write_bytes(b"bytes")
+
+    def test_an_item_short_of_a_description_is_named_with_its_counts(self, instance):
+        self._item(instance, stated=(f"media/{ITEM}/photo.jpg",), on_disk=("media-1.png",))
+        (instance.enrichment_dir / ITEM / "media-0.md").write_text("the photo\n")
+        outcome = lint(instance)
+        assert f"{DESCRIBE_ROW} — **1**" in outcome.report
+        assert f"**{ITEM}** — 1 of 2 described" in outcome.report
+
+    def test_the_row_never_fails_the_check(self, instance):
+        # Writing a description is a reader's act — failing here would stop
+        # every scheduled run on work no machine can do.
+        self._item(instance, stated=(f"media/{ITEM}/photo.jpg",))
+        assert lint(instance).exit_code == 0
+
+    def test_a_fully_described_item_produces_no_finding(self, instance):
+        self._item(instance, stated=(f"media/{ITEM}/photo.jpg",), on_disk=("media-0.png",))
+        for slot in (0, 1):
+            (instance.enrichment_dir / ITEM / f"media-{slot}.md").write_text("described\n")
+        outcome = lint(instance)
+        assert f"{DESCRIBE_ROW} — none" in outcome.report
+        assert outcome.exit_code == 0
+
+    def test_an_item_carrying_no_media_is_never_named(self, instance):
+        self._item(instance)
+        assert f"{DESCRIBE_ROW} — none" in lint(instance).report
+
+    def test_extraction_assets_are_not_media_owed_a_description(self, instance):
+        self._item(instance, on_disk=("abc123-asset-0.png", "abc123-asset-1.png"))
+        assert f"{DESCRIBE_ROW} — none" in lint(instance).report
+
+
 class TestCli:
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True

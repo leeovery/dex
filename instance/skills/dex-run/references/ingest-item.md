@@ -79,6 +79,18 @@ write `enrichment/<id>/media-0.md` — what it depicts, all legible text
 composition, typography, layout. This is the media's "transcript"; make it
 substantive enough to stand in for the media in text-only contexts.
 
+One description per media file — an item carrying three gets three, in
+the next free `media-<n>.md` slot (`media-0.md`, then `media-1.md`, …;
+existing files take their numbers, you take what is left). The slot
+numbers are not a claim about which file each covers — capture media
+carries no slot at all — so name the file you are describing in the
+description's first line. A markdown file the item carries owes one too:
+nothing transcribes or extracts it, so read it and write a summary — the
+read is the point, and the description is what proves it happened. The
+engine counts descriptions against media files and lists any item short of
+one under **Describe these**, on the run report, `bin/dex enrich status`,
+and the health check, until the count is met.
+
 For a cognitive job the report listed (a document no extractor reads, a
 scanned PDF): read the file directly, write the enrichment as
 `enrichment/<id>/<kind>-<hash6>.md` — `hash6` is the first 6 characters
