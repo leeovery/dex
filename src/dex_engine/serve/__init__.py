@@ -9,8 +9,9 @@ conversations never interact and a pull the scheduled task just made is
 visible immediately.
 
 ``roster`` decides which instances are served and how ids name them,
-``library`` does the reading and the one write, ``server`` wires the two
-onto MCP, and ``cli`` is the entry point.
+``library`` does the reading and the one write, ``steering`` holds the words
+that keep an impatient caller probing, ``server`` wires them onto MCP, and
+``cli`` is the entry point.
 """
 
 from .roster import Roster, build_roster

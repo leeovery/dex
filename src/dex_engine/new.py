@@ -12,11 +12,11 @@ import argparse
 import subprocess
 import sys
 from collections.abc import Callable
-from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from .sync import sync
+from .template import bundled_template
 
 __all__ = ["EPHEMERAL", "SEEDS", "TREE", "build_parser", "main", "scaffold"]
 
@@ -84,7 +84,7 @@ def scaffold(
     if root.exists() and any(root.iterdir()):
         raise ValueError(f"{root} exists and is not empty")
     if template is None:
-        template = resources.files("dex_engine") / "instance"
+        template = bundled_template()
     for directory in TREE:
         (root / directory).mkdir(parents=True, exist_ok=True)
         # Empty dirs don't survive git clone — keep the tree shape tracked.

@@ -1,4 +1,4 @@
-"""Frontmatter scalars: THE one unquoting rule every reader shares.
+"""Frontmatter: THE one unquoting rule, and THE one fence, every reader shares.
 
 Two hands write frontmatter in this tree. The pipeline writes it
 canonically, quoting where it must; a session writes digests freehand, and
@@ -13,7 +13,25 @@ Imports nothing from the rest of the package, so any layer may use it.
 import contextlib
 import json
 
-__all__ = ["unquote"]
+__all__ = ["body", "unquote"]
+
+
+def body(text: str) -> str:
+    """The text below the frontmatter fence, or all of it when there is none.
+
+    The FIRST closing fence: a later ``---`` in the body is a horizontal
+    rule, not a fence, and everything after it is still content.
+
+    Args:
+        text: A whole markdown file.
+
+    Returns:
+        The body, with the blank lines under the fence trimmed off.
+    """
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 3)
+    return text if end == -1 else text[end + len("\n---\n") :].lstrip("\n")
 
 
 def unquote(value: str) -> str:

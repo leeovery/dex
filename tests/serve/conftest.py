@@ -1,9 +1,10 @@
 """Fixtures for the serve tests: two toy instances and an in-process client.
 
 The instances are shaped like the repo's `example/` — a corpus item, its
-digest, its enrichment, a wiki page — times two, so fan-out, the instance
-filter and the id namespace all have something to be wrong about. `dex-books`
-is deliberately younger: no wiki, no taxonomy, one item with no digest.
+digest, its enrichment, a wiki page, the CLAUDE.md declaring its scope —
+times two, so fan-out, the instance filter and the id namespace all have
+something to be wrong about. `dex-books` is deliberately younger: no wiki, no
+taxonomy, no CLAUDE.md, one item with no digest.
 
 Every call goes through the SDK's in-memory transport: a real client session
 against a real server, no subprocess and no socket. The one exception is
@@ -28,6 +29,17 @@ from dex_engine.serve.server import build_server
 
 COFFEE = "dex-coffee"
 BOOKS = "dex-books"
+# The tree's own instance/ — the same files the wheel bundles at
+# `dex_engine/instance`, which a source checkout has nowhere else.
+TEMPLATE = Path(__file__).resolve().parents[2] / "instance"
+SCOPE = """\
+# dex-coffee — Coffee Knowledge Base (a dex instance)
+
+## In scope
+
+- brewing technique and recipes
+- grinders and gear
+"""
 V60 = "2026-01-15-james-hoffmann-v60-technique-a1b2c3"
 GRINDER = "2026-02-20-grinder-burr-alignment-b2c3d4"
 BORGES = "2026-03-01-borges-labyrinths-c3d4e5"
@@ -40,6 +52,7 @@ def write(path: Path, text: str) -> Path:
 
 
 def _coffee(root: Path) -> None:
+    write(root / "CLAUDE.md", SCOPE)
     write(
         root / "corpus" / "2026" / f"{V60}.md",
         f"""---
@@ -193,7 +206,7 @@ def roster(roots: list[Path]) -> Roster:
 
 @pytest.fixture
 def server(roster: Roster) -> MCPServer:
-    return build_server(roster)
+    return build_server(roster, template=TEMPLATE)
 
 
 def drive(server: MCPServer, work: Callable[[Client], Awaitable[Any]]) -> Any:
@@ -211,18 +224,16 @@ def call(server: MCPServer, tool: str, arguments: dict[str, Any] | None = None) 
     return drive(server, lambda client: client.call_tool(tool, arguments or {}))
 
 
-def rows(server: MCPServer, tool: str, arguments: dict[str, Any] | None = None) -> list[Any]:
-    """The list a tool returned — the SDK wraps a list result under `result`."""
-    result = call(server, tool, arguments)
-    assert not result.is_error, result.content[0].text
-    return result.structured_content["result"]
-
-
 def record(server: MCPServer, tool: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
     """The object a tool returned."""
     result = call(server, tool, arguments)
     assert not result.is_error, result.content[0].text
     return result.structured_content
+
+
+def hits(server: MCPServer, arguments: dict[str, Any]) -> list[Any]:
+    """The hit rows one search returned, out from under the next line they ride with."""
+    return record(server, "search", arguments)["hits"]
 
 
 def refusal(server: MCPServer, tool: str, arguments: dict[str, Any] | None = None) -> str:

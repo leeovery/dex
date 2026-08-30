@@ -35,7 +35,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
@@ -43,6 +42,7 @@ from dex_engine import atomic, migrations
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
+from dex_engine.template import bundled_template
 from dex_engine.version import engine_version
 
 __all__ = [
@@ -273,10 +273,6 @@ def _reexec_argv(repo_url: str, tag: str, *, previous: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _bundled_template() -> Traversable:
-    return resources.files("dex_engine") / "instance"
-
-
 def _write_if_changed(root: Path, dest: Path, content: str, changed: list[str]) -> None:
     if dest.exists() and dest.read_text(encoding="utf-8") == content:
         return
@@ -357,7 +353,7 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         for entries cleared because the template's shape changed (a file
         where it now ships a directory, or the reverse).
     """
-    tpl = template if template is not None else _bundled_template()
+    tpl = template if template is not None else bundled_template()
     # Ensured here, not only at scaffold: a migrated pre-existing instance
     # never went through dex-new, and the per-item procedure renders every
     # receipt through cache/receipt.json — the session's own write, which

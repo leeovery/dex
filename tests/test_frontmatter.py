@@ -1,4 +1,4 @@
-"""Tests for frontmatter.py: the one unquoting rule every reader shares."""
+"""Tests for frontmatter.py: the one unquoting rule and the one fence."""
 
 import pytest
 
@@ -27,3 +27,30 @@ class TestUnquote:
     def test_a_malformed_quote_stands_as_written(self):
         # A pointer beats a crash: the raw text still names what broke.
         assert frontmatter.unquote('"unterminated') == '"unterminated'
+
+
+class TestBody:
+    """Exact outputs: search snippets are built from this, so the edges are contract."""
+
+    def test_no_frontmatter_is_all_body(self):
+        assert frontmatter.body("# Title\n\nBody.\n") == "# Title\n\nBody.\n"
+
+    def test_frontmatter_is_stripped_to_the_first_fence(self):
+        assert frontmatter.body("---\ntopic: t\n---\n# Title\nBody.\n") == "# Title\nBody.\n"
+
+    def test_a_later_rule_stays_in_the_body(self):
+        text = "---\ntopic: t\n---\nAbove.\n\n---\n\nBelow.\n"
+        assert frontmatter.body(text) == "Above.\n\n---\n\nBelow.\n"
+
+    def test_an_unterminated_fence_returns_the_whole_page(self):
+        text = "---\ntopic: t\nnever closed\n"
+        assert frontmatter.body(text) == text
+
+    def test_empty_frontmatter_still_strips(self):
+        assert frontmatter.body("---\n---\nBody.\n") == "Body.\n"
+
+    def test_only_leading_newlines_are_trimmed(self):
+        assert (
+            frontmatter.body("---\na: b\n---\n\n\n  indented\nX kept\n") == "  indented\nX kept\n"
+        )
+        assert frontmatter.body("---\na: b\n---\nXylophone\n") == "Xylophone\n"

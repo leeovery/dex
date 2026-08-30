@@ -1,4 +1,4 @@
-"""Wiring the library onto MCP: four tools and each instance's map files.
+"""Wiring the library onto MCP: four tools, the maps, the steering, the prompt.
 
 The only thing this layer decides is how a refusal reaches the caller. Only
 a :class:`ToolError`'s text is passed on; every other exception is logged
@@ -6,19 +6,25 @@ here and answered with a generic line, so the library's anticipated
 refusals — an unknown instance, an id that names nothing, a capture with
 nothing in it — are restated as that type, and a genuine crash stays
 unexplained on purpose.
+
+The tool docstrings are the descriptions the client sees on every call, so
+each carries its one steering sentence and stops. The longer prose — the
+connect-time instructions, the next-move footers — is ``steering``'s.
 """
 
 import datetime
 from collections.abc import Callable
+from importlib.resources.abc import Traversable
 from typing import TypeVar
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.resources import FileResource
 
+from dex_engine.template import bundled_template
 from dex_engine.version import engine_version
 
-from . import library
+from . import library, steering
 from .roster import Roster
 
 __all__ = ["build_server"]
@@ -34,18 +40,22 @@ _MAPS = (
 )
 
 
-def build_server(roster: Roster) -> MCPServer:
+def build_server(roster: Roster, *, template: Traversable | None = None) -> MCPServer:
     """Build the MCP server that serves ``roster``.
 
     Args:
         roster: The instances to serve.
+        template: Template override for tests; ``None`` uses the wheel's
+            bundled ``instance/`` tree, which is where the dex-query
+            procedure the prompt serves lives.
 
     Returns:
-        The server, tools and resources attached, not yet listening.
+        The server, tools, resources and prompt attached, not yet listening.
     """
-    server = MCPServer("dex", version=engine_version())
+    server = MCPServer("dex", version=engine_version(), instructions=steering.instructions(roster))
     _add_tools(server, roster)
     _add_resources(server, roster)
+    _add_prompt(server, template if template is not None else bundled_template())
     return server
 
 
@@ -53,8 +63,10 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
     """Attach the three reads and the one write, each closing over the roster."""
 
     @server.tool()
-    def search(query: str, instance: str | None = None) -> list[library.Hit]:
-        """Search dex for text and return the raw hits, never a ranked answer.
+    def search(query: str, instance: str | None = None) -> library.Search:
+        """Search dex for text: candidate probes, rarely the answer.
+
+        Expect to reformulate and call again.
 
         Args:
             query: Plain text, matched case-insensitively and literally
@@ -72,6 +84,9 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
     def fetch(id: str, full: bool = False) -> library.Item:  # noqa: A002, FBT001, FBT002 — the wire contract's own names
         """Read one item: its digest, the owner's verbatim note, and its provenance.
 
+        Where a probe ends: this is material to answer from, and its id is
+        what the answer cites.
+
         Args:
             id: A namespaced item id, as a search states it.
             full: Also return the fetched source text behind the item.
@@ -83,7 +98,9 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
 
     @server.tool()
     def page(name: str, instance: str) -> library.Page:
-        """Read one wiki page's markdown by name.
+        """Read one wiki page's markdown by name: the owner's map of a subject.
+
+        It cites the items it was written from — keep following it outward.
 
         Args:
             name: The page name as it is spelled inside a ``[[wikilink]]``,
@@ -91,13 +108,17 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
             instance: Which instance's wiki holds it.
 
         Returns:
-            The page, verbatim.
+            The page verbatim, and the wikilinks in it, each resolvable by
+            another ``page`` call.
         """
         return _stated(lambda: library.page(roster, name, instance))
 
     @server.tool()
     def capture(instance: str, url: str = "", note: str = "") -> library.Capture:
         """Save a link and/or a note into one instance's inbox, and commit it.
+
+        A suggestion, not a corpus entry: the instance judges it against its
+        own scope when it next processes the inbox.
 
         Args:
             instance: Which instance to capture into — nothing is guessed
@@ -122,6 +143,20 @@ def _now() -> datetime.datetime:
     and that the processor reads back as the day the owner captured.
     """
     return datetime.datetime.now(tz=datetime.UTC).astimezone()
+
+
+def _add_prompt(server: MCPServer, template: Traversable) -> None:
+    """Offer the dex-query procedure itself, for a caller who wants the deep pull.
+
+    Read from the bundled skill at call time, never composed here: the skill
+    is the procedure's one home, and serving its text is what keeps an edit
+    to it arriving on this surface with no code change at all.
+    """
+
+    @server.prompt(name="dex-query", title="Query dex")
+    def dex_query() -> str:
+        """The full procedure a dex session follows to answer from its instance."""
+        return steering.procedure(template)
 
 
 def _add_resources(server: MCPServer, roster: Roster) -> None:
