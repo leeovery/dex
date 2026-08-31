@@ -1275,13 +1275,15 @@ class _Drain:
         The corrected unit has the SAME URL and therefore the same hash — a
         child emission would dedupe against the existing entry and vanish.
         The mechanics are a superseding ledger line instead: same hash,
-        corrected kind (+format), ``status: queued``, ``via: "sniff"`` —
-        last-per-hash means the unit simply BECOMES the corrected kind and
-        drains through its driver in this same run. Once per run: a second
-        correction of the same hash within one run is two drivers
-        re-detecting each other's content — park for judgment, never
-        ping-pong. Across runs a unit may correct again: the world
-        genuinely changes, and ``via`` is provenance history, not a lock.
+        corrected kind (+format, or the ``media`` job for a page URL whose
+        body turned out to be a picture), ``status: queued``,
+        ``via: "sniff"`` — last-per-hash means the unit simply BECOMES the
+        corrected work and drains through its driver, or the media stage,
+        in this same run. Once per run: a second correction of the same
+        hash within one run is two drivers re-detecting each other's
+        content — park for judgment, never ping-pong. Across runs a unit
+        may correct again: the world genuinely changes, and ``via`` is
+        provenance history, not a lock.
 
         The previous kind's output stays on disk until the corrected unit
         lands one of its own (:func:`_drop_superseded_outputs`). Unlinking
@@ -1311,6 +1313,7 @@ class _Drain:
                 http_shared=entry.http_shared,
                 engine="seed",  # stamped in record
                 date=datetime.date.min,
+                job=redetect.job,
                 via="sniff",
                 parent=entry.parent,
                 depth=entry.depth,
@@ -1318,7 +1321,13 @@ class _Drain:
             )
         )
         self.queue.append(entry.hash)
-        corrected = redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
+        # A stage correction leaves the kind alone, so the stage is what
+        # the note has to name — `web → media`, not `web → web`.
+        corrected = (
+            redetect.job.value
+            if redetect.job is not None
+            else redetect.kind.value + (f"/{redetect.format.value}" if redetect.format else "")
+        )
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
     def _apply_blocked(self, entry: LedgerEntry, reason: str, *, needs: Need | None = None) -> None:

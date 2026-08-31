@@ -37,7 +37,10 @@ A 200 whose BODY is a document (magic bytes say PDF/OOXML/…, or the
 content type maps to an extractable format) is neither thin nor article
 work at all: detection's HEAD lied or was inconclusive. The route signals a
 redetection to ``file`` work and the run layer re-routes the unit — never
-``manual`` for content the file driver can read.
+``manual`` for content the file driver can read. A body whose bytes are a
+picture, a video or an audio file redetects the same way, to the media
+stage: the image an owner shared belongs in the item's media, and an
+article driver has nothing to extract from it.
 
 The same mid-fetch discovery carries indie podcast episode pages to the
 ``podcast`` driver, decided on content rather than on URL patterns that
@@ -68,8 +71,8 @@ from dex_engine.pipeline.classify import (
     THIN_EXTRACTION_REASON,
     Classification,
 )
-from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format
-from dex_engine.pipeline.types import Content, Format, Kind, Outcome, Redetected, Unusable
+from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format, sniff_media_ext
+from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redetected, Unusable
 
 from .audio import audio_enclosure
 from .fetch import FetchFailure, fetch_classified
@@ -292,11 +295,9 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
     """
     page = _fetch_page(transport, url)
     if isinstance(page, _Page):
-        fmt = _document_format(page)
-        if fmt is not None:
-            # Detection said web but the body is a document — a HEAD
-            # lied or was inconclusive. Re-route, never thin-unusable.
-            return Redetected(kind=Kind.FILE, format=fmt)
+        redetection = _body_redetection(page)
+        if redetection is not None:
+            return redetection
         enclosure = audio_enclosure(page.html, url)
         if enclosure is not None and enclosure.declared:
             return Redetected(kind=Kind.PODCAST)
@@ -310,6 +311,31 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
             return Redetected(kind=Kind.PODCAST)
         return Unusable(evidence=THIN_EXTRACTION_REASON)
     return _wayback_fallback(transport, extract, url, page)
+
+
+def _body_redetection(page: _Page) -> Redetected | None:
+    """The correction a fetched body calls for, or None for real web content.
+
+    Documents are asked first, and the order is the rule: an extractable
+    body — including the signature-less ones only the declared type can
+    name — is worth reading, and reading it beats filing it as a picture.
+    """
+    fmt = _document_format(page)
+    if fmt is not None:
+        # Detection said web but the body is a document — a HEAD
+        # lied or was inconclusive. Re-route, never thin-unusable.
+        return Redetected(kind=Kind.FILE, format=fmt)
+    if sniff_media_ext(page.body, signatures_only=True) is not None:
+        # The body is a picture, not a page: a bare media URL, or a
+        # short-link that resolved to one. Extraction must never see it —
+        # a megabyte of high-entropy binary decoded with replacement
+        # characters clears the substantial bar and is stored as an
+        # article of garbage. Signature-backed answers only: the bare
+        # MPEG sync-frame range covers the UTF-16 BOM a real page may
+        # open with, and filing that page as an mp3 is worse than
+        # leaving a signature-less audio URL parked thin.
+        return Redetected(kind=Kind.WEB, job=Job.MEDIA)
+    return None
 
 
 def _fetch_page(transport: Transport, url: str) -> _Page | Classification:

@@ -281,6 +281,34 @@ class TestSniffMediaExt:
     def test_unrecognized_bodies_name_no_extension(self, data):
         assert sniff_media_ext(data) is None
 
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"\xff\xfb\x90\x00 frame",  # a real bare frame — unprovable either way
+            b"\xff\xfe<\x00h\x00t\x00m\x00l\x00>\x00",  # a UTF-16-LE page
+        ],
+    )
+    def test_signatures_only_drops_the_bare_sync_frame_reading(self, data):
+        assert sniff_media_ext(data) == "mp3"
+        assert sniff_media_ext(data, signatures_only=True) is None
+
+    @pytest.mark.parametrize(
+        ("data", "ext"),
+        [
+            (b"ID3\x04\x00\x00\x00\x00\x00\x00", "mp3"),  # the tagged mp3 still lands
+            (b"\xff\xd8\xff\xe0\x00\x10JFIF\x00", "jpg"),
+            (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "png"),
+            (b"RIFF\x24\x00\x00\x00WEBPVP8 ", "webp"),
+            (b"\x1a\x45\xdf\xa3\x9fB\x82\x04webm", "webm"),
+            (b'<svg xmlns="http://www.w3.org/2000/svg"/>', "svg"),
+        ],
+    )
+    def test_signatures_only_keeps_every_signature_backed_answer(self, data, ext):
+        assert sniff_media_ext(data, signatures_only=True) == ext
+
+    def test_signatures_only_keeps_the_ftyp_brands(self):
+        assert sniff_media_ext(ftyp(b"avif"), signatures_only=True) == "avif"
+
 
 class TestSniffDocument:
     """A media URL that answered with a page answered the wrong question."""

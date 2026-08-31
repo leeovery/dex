@@ -423,10 +423,17 @@ class Redetected:
     under the corrected identity — same URL, same hash — and the corrected
     kind's driver owns the outputs, so this outcome carries the identity
     and nothing else; the run layer enforces once-only per run.
+
+    ``job`` corrects the STAGE rather than the driver: a page URL whose
+    body is a picture is media work, and the corrected unit drains through
+    the media stage instead of any driver. Media is the only stage a
+    re-detection can name — an asset is lifted out of a document already
+    extracted, never discovered on the wire.
     """
 
     kind: Kind
     format: Format | None = None
+    job: Job | None = None
 
     def __post_init__(self) -> None:
         if self.kind in _NON_WORK_KINDS:
@@ -436,6 +443,10 @@ class Redetected:
             )
         if self.format is not None and self.kind is not Kind.FILE:
             raise ValueError(f"format is file-work only, got re-detected kind {self.kind!r}")
+        if self.job is not None and self.job is not Job.MEDIA:
+            raise ValueError(f"media is the only re-detectable stage, got job {self.job!r}")
+        if self.format is not None and self.job is not None:
+            raise ValueError("format is file-work only and media work carries none")
 
 
 Outcome = Content | Missing | Refused | Unusable | NeedsCapability | Redetected

@@ -195,6 +195,18 @@ class TestOutcomeUnion:
         with pytest.raises(ValueError, match="file-work only"):
             Redetected(kind=Kind.WEB, format=Format.PDF)
 
+    def test_redetected_names_the_media_stage_or_no_stage_at_all(self):
+        assert Redetected(kind=Kind.WEB).job is None
+        assert Redetected(kind=Kind.WEB, job=Job.MEDIA).job is Job.MEDIA
+        # An asset is lifted out of an extracted document — no fetch ever
+        # discovers one, so no re-detection can name it.
+        with pytest.raises(ValueError, match="only re-detectable stage"):
+            Redetected(kind=Kind.WEB, job=Job.ASSET)
+
+    def test_redetected_format_and_job_never_ride_together(self):
+        with pytest.raises(ValueError, match="media work carries none"):
+            Redetected(kind=Kind.FILE, format=Format.PDF, job=Job.MEDIA)
+
     def test_outcomes_are_frozen(self):
         outcome = Missing(evidence="HTTP 404")
         with pytest.raises(dataclasses.FrozenInstanceError):
