@@ -616,9 +616,10 @@ class _Drain:
         """Materialized files feed the pipeline: format detect → extract queue.
 
         Only document formats become work units — images and unknowns are
-        described cognitively at ingest, never queued. An unreadable
-        file (un-pulled LFS) still seeds by its extension so the file
-        driver can park it with the pull hint rather than it vanishing.
+        described cognitively at ingest, never queued. A file on disk that
+        cannot be read for what it is (an un-pulled LFS pointer) still
+        seeds by its extension so the file driver can park it with the pull
+        hint rather than it vanishing.
         """
         work_key = f"file:{repo_path}"
         unit_hash = work_hash(work_key)
@@ -638,6 +639,25 @@ class _Drain:
                     engine="seed",  # stamped in record
                     date=datetime.date.min,
                     reason="media path points outside the instance root — heal the capture",
+                ),
+                count=True,
+            )
+            return
+        if not file_path.is_file():
+            # A stated path naming no file is a bad seed too. Nothing
+            # downstream counts it — the describe queue skips it, the
+            # sniff below reads no bytes — so this line is the only place
+            # the gap is ever said out loud.
+            self.record(
+                LedgerEntry(
+                    hash=unit_hash,
+                    url=work_key,
+                    item=item_id,
+                    kind=Kind.FILE,
+                    status=Status.MANUAL,
+                    engine="seed",  # stamped in record
+                    date=datetime.date.min,
+                    reason="stated media file is not on disk — heal the capture",
                 ),
                 count=True,
             )
@@ -2818,15 +2838,19 @@ def undescribed_media(
     """One item's describe row — its media against its descriptions — or None.
 
     What counts is what the item carries that has not entered the knowledge
-    base in text form: every path its ``media:`` states, plus the
-    ``media-<n>.<ext>`` files the media stage downloaded into
-    ``enrichment/<id>/``. A stated markdown file counts like the rest —
-    nothing transcribes it and nothing extracts it, so without a row here
-    nothing ever sends a session to read it, and its description is a
-    summary of the document. An extraction asset
-    (``<hash6>-asset-<n>.<ext>``) is deliberately not counted — it is a
-    figure lifted out of a document that has already been extracted, and
-    charging a description for each would invent work nobody wants.
+    base in text form: every path its ``media:`` states that is a file
+    under the instance root, plus the ``media-<n>.<ext>`` files the media
+    stage downloaded into ``enrichment/<id>/``. A stated path that escapes
+    the root or names no file on disk counts nothing — no description
+    could ever close a row for a file that is not there, and the gap it
+    names is the manual unit seeding parks, not describe work. A stated
+    markdown file counts like the rest — nothing transcribes it and
+    nothing extracts it, so without a row here nothing ever sends a
+    session to read it, and its description is a summary of the document.
+    An extraction asset (``<hash6>-asset-<n>.<ext>``) is deliberately not
+    counted — it is a figure lifted out of a document that has already been
+    extracted, and charging a description for each would invent work nobody
+    wants.
 
     Counted, never paired by slot: a capture's media carries no slot at
     all, so which description covers which file is not derivable — and the
@@ -2842,7 +2866,10 @@ def undescribed_media(
         if item_dir.is_dir()
         else []
     )
-    binaries = len(media) + sum(1 for path in family if is_media_file(path))
+    stated = [resolve_repo_path(instance.root, repo_path) for repo_path in media]
+    binaries = sum(1 for path in stated if path is not None and path.is_file()) + sum(
+        1 for path in family if is_media_file(path)
+    )
     # An interrupted download's temp wears a media name and describes
     # nothing; `is_media_file` refuses it as media, and so does this.
     described = sum(1 for path in family if path.suffix == ".md" and path.is_file())

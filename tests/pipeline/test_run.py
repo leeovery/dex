@@ -368,6 +368,43 @@ class TestSeedAndDone:
         assert poisoned.kind is Kind.FILE
         assert entries[work_hash(URL)].status is Status.DONE  # the rest proceeded
 
+    def test_missing_media_file_parks_manual_at_seed(self, instance):
+        # A stated path no file answers to (an import wrote the attachment
+        # under a sanitized name and recorded the other one). Nothing
+        # fetches it and nothing describes it, so the parked line is the
+        # only place the gap is ever said out loud.
+        write_item(instance, media=["media/aaaaaa/shot.png"])
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.run(ctx)
+        entry = ledger.load(instance.ledger_path)[work_hash("file:media/aaaaaa/shot.png")]
+        assert entry.status is Status.MANUAL
+        assert entry.kind is Kind.FILE
+        assert "not on disk" in (entry.reason or "")
+        assert "Needs you" in report
+        assert "stated media file is not on disk" in report
+        assert "Describe these" not in report  # never countable describe work
+
+    def test_a_missing_document_path_parks_rather_than_queueing_a_file_unit(self, instance):
+        # A document extension is the one shape that reached the file
+        # driver anyway, seeded off the name alone — a queued unit for a
+        # file nobody can extract. It parks like every other absent path.
+        write_item(instance, media=["media/aaaaaa/report.pdf"])
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        entry = ledger.load(instance.ledger_path)[work_hash("file:media/aaaaaa/report.pdf")]
+        assert entry.status is Status.MANUAL
+        assert entry.format is None
+
+    def test_the_parked_phantom_is_recorded_once(self, instance):
+        # The line is the state: a second run finds the unit already held
+        # and re-records nothing, or every run re-parks what it just parked.
+        write_item(instance, media=["media/aaaaaa/shot.png"])
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        first = ledger.load(instance.ledger_path)[work_hash("file:media/aaaaaa/shot.png")]
+        report = run_mod.run(ctx)
+        assert ledger.load(instance.ledger_path)[work_hash("file:media/aaaaaa/shot.png")] == first
+        assert "not on disk" not in report  # a held unit is not this run's news
+
     def test_unreadable_media_file_is_noted_and_seeding_continues(self, instance, monkeypatch):
         # Seeding's one file read: an unreadable media file (permissions, a
         # vanished LFS object) is judgment work, never fatal to the run.
@@ -410,6 +447,9 @@ class TestFrontmatterRefresh:
         path = write_item(
             instance, item_id, urls=[], kinds=["image"], media=[f"media/{item_id}/photo.jpg"]
         )
+        photo = instance.root / "media" / item_id / "photo.jpg"
+        photo.parent.mkdir(parents=True)
+        photo.write_bytes(PNG_BYTES)
         enrichment = instance.enrichment_dir / item_id / "media-0.md"
         enrichment.parent.mkdir(parents=True)
         enrichment.write_text("what the photo depicts, all legible text\n", encoding="utf-8")
@@ -3282,8 +3322,17 @@ class TestUndescribedMedia:
         item_dir.mkdir(parents=True, exist_ok=True)
         return item_dir
 
+    def _stated(self, instance, *repo_paths: str) -> list[str]:
+        """The stated paths, materialized — only media on disk is countable."""
+        for repo_path in repo_paths:
+            path = instance.root / repo_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"bytes")
+        return list(repo_paths)
+
     def test_stated_binaries_count_with_no_enrichment_directory(self, instance):
-        row = run_mod.undescribed_media(instance, ITEM, ["media/x/a.jpg", "media/x/b.pdf"])
+        media = self._stated(instance, "media/x/a.jpg", "media/x/b.pdf")
+        row = run_mod.undescribed_media(instance, ITEM, media)
         assert row == {"item": ITEM, "binaries": 2, "described": 0}
 
     def test_a_download_in_the_enrichment_directory_counts_too(self, instance):
@@ -3299,7 +3348,8 @@ class TestUndescribedMedia:
     def test_a_stated_markdown_path_owes_a_description_too(self, instance):
         # Nothing transcribes or extracts an attached document, so the row is
         # the only thing that ever sends a session to read it.
-        assert run_mod.undescribed_media(instance, ITEM, ["media/x/notes.md"]) == {
+        media = self._stated(instance, "media/x/notes.md")
+        assert run_mod.undescribed_media(instance, ITEM, media) == {
             "item": ITEM,
             "binaries": 1,
             "described": 0,
@@ -3307,7 +3357,44 @@ class TestUndescribedMedia:
 
     def test_a_summarized_markdown_path_clears(self, instance):
         (self._item_dir(instance) / "media-0.md").write_text("what it says\n", encoding="utf-8")
-        assert run_mod.undescribed_media(instance, ITEM, ["media/x/notes.md"]) is None
+        media = self._stated(instance, "media/x/notes.md")
+        assert run_mod.undescribed_media(instance, ITEM, media) is None
+
+    def test_a_stated_path_naming_no_file_counts_nothing(self, instance):
+        # The phantom: a stated path no file answers to. No description
+        # could ever close a row for it — not one written for something
+        # else in the directory either.
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/gone.jpg"]) is None
+        (self._item_dir(instance) / "media-0.md").write_text("what it says\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/gone.jpg"]) is None
+
+    def test_the_stated_paths_on_disk_are_counted_beside_a_phantom(self, instance):
+        media = [*self._stated(instance, "media/x/a.jpg"), "media/x/gone.jpg"]
+        assert run_mod.undescribed_media(instance, ITEM, media) == {
+            "item": ITEM,
+            "binaries": 1,
+            "described": 0,
+        }
+
+    def test_a_path_escaping_the_root_counts_nothing(self, instance):
+        # It resolves to a real file, which is exactly why it is not
+        # countable: seeding parks it manual and never reads it.
+        outside = instance.root.parent / "secret.pdf"
+        outside.write_bytes(b"%PDF-1.4 not for the corpus")
+        assert run_mod.undescribed_media(instance, ITEM, [str(outside), "../secret.pdf"]) is None
+
+    def test_an_unpulled_lfs_pointer_counts_like_any_stated_file(self, instance):
+        # What counts is presence on disk, never format: the pointer is a
+        # short text file where the image will be, and the description a
+        # session owes it is the same one either way.
+        pointer = instance.root / "media" / "x" / "scan.png"
+        pointer.parent.mkdir(parents=True)
+        pointer.write_text("version https://git-lfs.github.com/spec/v1\n", encoding="utf-8")
+        assert run_mod.undescribed_media(instance, ITEM, ["media/x/scan.png"]) == {
+            "item": ITEM,
+            "binaries": 1,
+            "described": 0,
+        }
 
     def test_extraction_assets_owe_no_description(self, instance):
         # A figure lifted out of an already-extracted document is not a
@@ -3335,7 +3422,8 @@ class TestUndescribedMedia:
         (item_dir / "web-abc123.md").write_text("the fetched page\n", encoding="utf-8")
         (item_dir / "media-0.jpg").write_bytes(PNG_BYTES)
         (item_dir / "media-0.md").write_text("what it depicts\n", encoding="utf-8")
-        assert run_mod.undescribed_media(instance, ITEM, ["media/x/a.jpg"]) == {
+        media = self._stated(instance, "media/x/a.jpg")
+        assert run_mod.undescribed_media(instance, ITEM, media) == {
             "item": ITEM,
             "binaries": 2,
             "described": 1,
@@ -3397,7 +3485,7 @@ class TestUndescribedMedia:
             PHOTO_ITEM,
             urls=[],
             kinds=["image"],
-            media=[f"media/{PHOTO_ITEM}/a.jpg", f"media/{PHOTO_ITEM}/b.jpg"],
+            media=self._stated(instance, f"media/{PHOTO_ITEM}/a.jpg", f"media/{PHOTO_ITEM}/b.jpg"),
         )
         self._describe(instance, 0)
         instance.digests_dir.mkdir(parents=True, exist_ok=True)
