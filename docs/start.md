@@ -178,15 +178,30 @@ Each person captures with their own token. Walk them through, concretely:
 
 ## Step 7: Chat Connection
 
-Ask the owner whether they want to reach this dex from the Claude desktop
-app's chat — asking it questions, and saving to it, without opening a
-session on the folder. If they don't, move on; the offer stands whenever
-they change their mind.
+This dex can be reached from chat clients on this machine without opening a
+session on the folder. There are two, and each is a separate question — ask
+only about the ones that are actually here:
 
-If they do, connect it now, in this session. The guide lives in the engine
-repo, which is never cloned, so fetch it raw:
+```bash
+ls "$HOME/Library/Application Support/Claude/claude_desktop_config.json"  # desktop app
+command -v claude                                                        # Claude Code
+```
+
+- **The desktop app** (its config file exists): "do you want to ask this dex
+  questions, and save to it, from ordinary chat?"
+- **Claude Code** (`claude` is on PATH): "do you want the dex server installed
+  at user level, so every Claude Code session on this machine — in any project
+  — can search and capture into your dexes?"
+
+A client that isn't installed is not mentioned at all. Either can be declined;
+the offer stands whenever they change their mind, and Step 9 tells them how to
+come back to it.
+
+If they say yes to either, connect it now, in this session — both yeses are one
+command, not two. The guide lives in the engine repo, which is never cloned, so
+fetch it raw:
 https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md — then
-follow it end to end. It is one command and a relaunch of the app.
+follow it end to end.
 
 ---
 
@@ -204,6 +219,8 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 End your final message with, in a few lines: `{instance}` (where it
 lives), its scope as written, the schedule it runs on, how to save things
 (the shortcut, or "add this to dex" in a session — either way the save is
-instant and processing happens on the schedule), and how to ask questions.
+instant and processing happens on the schedule), and how to ask questions —
+including, if they declined a chat client in Step 7, that asking for the
+`docs/connect.md` paste again is all it takes to add it later.
 Health checks run themselves on the schedule. The owner never touches the
 machinery.
