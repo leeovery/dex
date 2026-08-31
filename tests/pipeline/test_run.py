@@ -36,6 +36,7 @@ from dex_engine.pipeline.run import (
     MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
+    MEDIA_MAX_FILES_POOLED,
     RunContext,
     _sniff_bytes,
     is_drainable,
@@ -1948,6 +1949,51 @@ class TestMediaStage:
         skipped = [entries[work_hash(url)] for url in urls[MEDIA_MAX_FILES:]]
         assert all(e.status is Status.SKIPPED for e in skipped)
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
+
+    @pytest.mark.parametrize("kind", [Kind.INSTAGRAM, Kind.X])
+    def test_pooled_media_kinds_carry_the_whole_post(self, instance, kind):
+        # An Instagram carousel or an X thread is ONE post split across
+        # files — the tight embedded-extras cap must not truncate it. The
+        # kinds are literals, not POOLED_MEDIA_KINDS: a kind dropped from
+        # the set must fail here, not silently drop its own test case.
+        write_item(instance)
+        urls = [f"https://cdn.example.test/slide-{n}.png" for n in range(MEDIA_MAX_FILES + 4)]
+        responses = {
+            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
+        }
+        ctx = make_ctx(
+            instance,
+            FakeDriver(kind=kind, fetch_fn=self.media_fetch(urls)),
+            transport=FakeTransport(responses),
+        )
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert all(entries[work_hash(url)].status is Status.DONE for url in urls)
+        files = sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*.png"))
+        assert len(files) == len(urls)
+
+    def test_the_pooled_cap_is_a_safety_backstop(self, instance):
+        write_item(instance)
+        urls = [
+            f"https://cdn.example.test/slide-{n}.png" for n in range(MEDIA_MAX_FILES_POOLED + 2)
+        ]
+        responses = {
+            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
+        }
+        ctx = make_ctx(
+            instance,
+            FakeDriver(kind=Kind.INSTAGRAM, fetch_fn=self.media_fetch(urls)),
+            transport=FakeTransport(responses),
+        )
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        files = sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*.png"))
+        assert len(files) == MEDIA_MAX_FILES_POOLED
+        skipped = [entries[work_hash(url)] for url in urls[MEDIA_MAX_FILES_POOLED:]]
+        assert all(e.status is Status.SKIPPED for e in skipped)
+        assert all(
+            e.reason == f"media cap ({MEDIA_MAX_FILES_POOLED} files) reached" for e in skipped
+        )
 
     def test_dead_media_siblings_never_spend_the_file_cap(self, instance):
         # The wild shape: an X thread pooling 6 photos whose first two 404.

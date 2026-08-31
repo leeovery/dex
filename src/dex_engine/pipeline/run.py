@@ -102,6 +102,8 @@ __all__ = [
     "MAX_URLS_PER_ITEM",
     "MEDIA_MAX_BYTES",
     "MEDIA_MAX_FILES",
+    "MEDIA_MAX_FILES_POOLED",
+    "POOLED_MEDIA_KINDS",
     "RERUN_DRAIN_CAP",
     "RunContext",
     "digest_orphans",
@@ -114,6 +116,7 @@ __all__ = [
     "items_owing_descriptions",
     "items_owing_work",
     "mark",
+    "media_cap",
     "never_harvested",
     "no_providers",
     "record_pass",
@@ -146,8 +149,15 @@ MAX_BLOCKED_ATTEMPTS = 5
 # The remainder stays queued and drains across subsequent runs.
 RERUN_DRAIN_CAP = 50
 
-# Media stage.
+# Media stage. Two file caps: MEDIA_MAX_FILES bounds media an item merely
+# points at (embedded images, extraction assets), while the kinds whose
+# media IS the artefact — an Instagram carousel's slides, an X thread's
+# pooled photos, one post split across files — get the pooled cap, a
+# safety backstop only: truncating a carousel at four slides loses content
+# no later stage can see.
 MEDIA_MAX_FILES = 4
+MEDIA_MAX_FILES_POOLED = 100
+POOLED_MEDIA_KINDS = frozenset({Kind.INSTAGRAM, Kind.X})
 MEDIA_MAX_BYTES = 10 * 1024 * 1024
 
 # Bumped when the harvest rules change; recorded in passes.jsonl.
@@ -189,11 +199,16 @@ def _unfetchable_media(url: str) -> str | None:
     return None
 
 
+def media_cap(kind: Kind) -> int:
+    """The media-family file bound for a unit of ``kind``."""
+    return MEDIA_MAX_FILES_POOLED if kind in POOLED_MEDIA_KINDS else MEDIA_MAX_FILES
+
+
 def is_media_file(path: Path) -> bool:
     """Whether ``path`` is one of the item's media-family files.
 
     Downloads (``media-<n>.<ext>``) and extraction assets
-    (``<hash6>-asset-<n>.<ext>``) — the files the 4-per-item cap counts,
+    (``<hash6>-asset-<n>.<ext>``) — the files the media caps count,
     the digest lists, and the health check compares that listing against.
     Two shapes wear a media name and are not one:
 
@@ -1462,8 +1477,11 @@ class _Drain:
         """Write embedded assets under the media caps, ledgered ``job: asset``.
 
         Deterministic names (``<hash6>-asset-<n>.<ext>``) make reruns
-        overwrite, never duplicate; the caps (4 files per item, 10MB per
-        file) are shared with the media stage's downloads.
+        overwrite, never duplicate; the tight caps (4 files per item, 10MB
+        per file) count the same on-disk files as the media stage's
+        downloads — which for the pooled kinds run under the pooled bound
+        instead. Assets themselves are never pooled: they are bytes a
+        document embeds, not the post itself.
 
         ``entry`` is the ``done`` line :meth:`_apply_done` just recorded,
         so its ``item`` is already the owning one — as it is for every
@@ -1611,7 +1629,9 @@ class _Drain:
             # file the cap would refuse. Downloads are synchronous, so
             # the slot stays free until the write below.
             self.record_outcome(
-                entry, status=Status.SKIPPED, reason=f"media cap ({MEDIA_MAX_FILES} files) reached"
+                entry,
+                status=Status.SKIPPED,
+                reason=f"media cap ({media_cap(entry.kind)} files) reached",
             )
             return
         if self._media_oversize_by_head(entry.url):
@@ -1721,11 +1741,12 @@ class _Drain:
         overwrite, never duplicate.
 
         The index NAMES the file; it never decides the cap. The cap counts
-        media-family files that exist — 4 per item, shared with extraction
-        assets, whichever route wrote them — so a unit's parked, dead or
-        skipped siblings spend nothing, and an index past the cap is
-        ordinary (a thread pooling six photos whose first two 404 still
-        lands four files, at ``media-2`` through ``media-5``). Counting
+        media-family files that exist — the kind's bound (:func:`media_cap`),
+        over files shared with extraction assets, whichever route wrote
+        them — so a unit's parked, dead or skipped siblings spend nothing,
+        and an index past the cap is ordinary (a page pooling six photos
+        whose first two 404 still lands four files, at ``media-2`` through
+        ``media-5``). Counting
         positions instead recorded a terminal "media cap reached" on units
         no file had displaced, losing them permanently under a false
         reason. A slot already on disk is this unit's own file, overwritten
@@ -1736,7 +1757,7 @@ class _Drain:
         item_dir = self.ctx.instance.enrichment_dir / owner
         if any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
             return slot
-        if self._media_file_count(owner) >= MEDIA_MAX_FILES:
+        if self._media_file_count(owner) >= media_cap(entry.kind):
             return None
         return slot
 

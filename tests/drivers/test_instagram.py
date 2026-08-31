@@ -7,6 +7,7 @@ from dex_engine.drivers.instagram import (
     InstagramDriver,
 )
 from dex_engine.drivers.transport import HttpResponse
+from dex_engine.pipeline.run import MEDIA_MAX_FILES_POOLED
 from dex_engine.pipeline.types import Content, Kind, Need, Refused, Unusable
 from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import (
@@ -382,9 +383,12 @@ class TestProbeWalk:
         probes = [url for _method, url in transport.calls if "/videos/" in url]
         assert probes == [probe_url(PHOTO_CODE, index) for index in (1, 2, 3)]
 
-    def test_the_walk_truncates_at_five(self):
+    def test_the_walk_truncates_at_the_cap(self):
         transport = FakeTransport(
-            {post_url(PHOTO_CODE): og_page(), **walk(PHOTO_CODE, *(["image/jpeg"] * 6))}
+            {
+                post_url(PHOTO_CODE): og_page(),
+                **walk(PHOTO_CODE, *(["image/jpeg"] * (MAX_MEDIA_PROBES + 1))),
+            }
         )
         result = content_of(
             InstagramDriver(base_url=BASE, transport=transport, pace=lambda _s: None).fetch(
@@ -392,7 +396,15 @@ class TestProbeWalk:
             )
         )
         assert len(result.media) == MAX_MEDIA_PROBES
-        assert len([url for _method, url in transport.calls if "/videos/" in url]) == 5
+        probes = [url for _method, url in transport.calls if "/videos/" in url]
+        assert len(probes) == MAX_MEDIA_PROBES
+
+    def test_the_walk_covers_the_pooled_media_cap(self):
+        # The bound is the run layer's pooled cap plus one — one extra probe
+        # so a post carrying more media than the pipeline will fetch shows
+        # the truncation instead of looking complete. Pinned here because
+        # the driver cannot import it: the run layer imports the drivers.
+        assert MAX_MEDIA_PROBES == MEDIA_MAX_FILES_POOLED + 1
 
     def test_each_probe_reads_one_byte_of_body(self):
         responses = {post_url(PHOTO_CODE): og_page(), **walk(PHOTO_CODE, "video/mp4")}

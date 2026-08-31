@@ -10,7 +10,7 @@ of the same article has the prose and skips the images.
 
 The mechanics are already in place: the driver pools post media into
 `Content.media` and the media stage fetches under its existing caps
-(4 files per item, 10MB per file). The work is mapping `media_entities`
+(the pooled 100-file backstop for x, 10MB per file). The work is mapping `media_entities`
 into that same pool — and deciding whether an `atomic` block should leave
 a positional marker in the body so a figure can be read in context rather
 than as a loose file.

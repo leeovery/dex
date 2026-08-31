@@ -110,15 +110,20 @@ _CANONICAL_LINK_RES = (
 # absent.
 _SHELL_TITLE_RE = re.compile(r"<title>\s*Instagram\s*</title>", re.IGNORECASE)
 
-# The probe walk runs indexes 1..5 — the media stage's 4-file cap plus one,
-# so a post carrying more media than the pipeline will fetch shows the
-# truncation at the cap instead of looking complete.
-MAX_MEDIA_PROBES = 5
+# The probe walk runs to the media stage's pooled cap plus one — carousel
+# slides are the post itself, bounded by the pooled safety backstop, never
+# the tight embedded-extras cap — so a post carrying more media than the
+# pipeline will fetch shows the truncation at the cap instead of looking
+# complete. Kept equal to MEDIA_MAX_FILES_POOLED + 1 by a driver test, not
+# an import: the run layer imports the drivers, so this module cannot
+# import it back. The walk still ends at the first empty body, so a real
+# carousel spends one probe per slide, not the whole bound.
+MAX_MEDIA_PROBES = 101
 
 # Pacing between probes, the X driver's hop courtesy for the same reason:
 # the driver's own politeness (`sleep`) is spent between UNITS, and the walk
-# is up to five requests inside one — unpaced, every carousel goes out as
-# five back-to-back calls to an unmaintained free host.
+# is one request per slide inside one — unpaced, every carousel goes out as
+# back-to-back calls to an unmaintained free host.
 PROBE_SLEEP = 1.0
 
 _PRIVATE_EVIDENCE = "private or unavailable; screenshot it and share that if you want it"
