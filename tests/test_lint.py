@@ -1841,6 +1841,10 @@ class TestUndescribedMedia:
         write_taxonomy(instance)
         write_index(instance, "")
         write_corpus_item(instance, ITEM, urls=["https://example.test/a"], media=list(stated))
+        for repo_path in stated:  # only media really on disk is countable
+            path = instance.root / repo_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"bytes")
         item_dir = instance.enrichment_dir / ITEM
         item_dir.mkdir(parents=True, exist_ok=True)
         for name in on_disk:

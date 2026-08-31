@@ -224,6 +224,12 @@ any run, check the results listing names every function you touched; force a
 missing one by explicit name (`./mutate run
 "dex_engine.normalize.x__copy_once__mutmut_*"`).
 
+A second trap, also hit in the field: mutmut skips every DECORATED class
+outright, so the methods of a `@dataclass` (`_Drain` is one) generate no
+mutants at all — no rows, nothing to schedule, and an explicit run against
+one aborts with "nothing matches". An audit of such a method is hand work:
+apply the operator with an edit, run the suite, revert.
+
 `mutants/` is a scratch copy of the tree; it is gitignored and safe to delete.
 Two accommodations make a run possible at all, and both are commented where
 they live: three tests are deselected in `[tool.mutmut]`, because mutmut
