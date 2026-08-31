@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-08-31
+
+✨ Added
+- Connect Claude Code to your dexes, not just the desktop app — `dex-connect --client code` files the server at user level so every Claude Code session on the machine can search and capture into your dexes.
+- A page URL whose body turns out to be an image, SVG, or other picture now re-detects to the media stage instead of being extracted as garbage text.
+- Sync's report now flags a connected server whose launcher no longer exists on disk ("broken"), separately for each chat client.
+
+🔧 Changed
+- `dex-connect` now writes every chat client found on the machine by default, skipping (and reporting) any that aren't installed rather than failing outright.
+- Sync's chat-connection gap is now reported per client instead of a single combined line, so being connected in one client no longer hides a gap in another.
+- `docs/connect.md` and `docs/start.md` walk through connecting both the desktop app and Claude Code, asking about each one separately.
+
+🐛 Fixed
+- A stated media path that names no file on disk now parks as a manual item instead of vanishing silently or being miscounted as a pending description.
+- MPEG sync-frame detection no longer misidentifies a UTF-16 page body as an MP3 when deciding whether a body IS media.
+
 ## [0.1.10] - 2026-08-30
 
 ✨ Added
