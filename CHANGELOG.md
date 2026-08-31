@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] - 2026-08-31
+
+🔧 Changed
+- Instagram carousels and X threads now pool up to 100 media files instead of truncating at 4, since those files are the post itself, not embedded extras.
+- Extraction assets (embedded images) keep the tight 4-file cap unchanged — only carousel/thread downloads got the pooled bound.
+
+🐛 Fixed
+- A one-time migration reseeds Instagram/X media that the old 4-file cap wrongly refused on existing instances, and re-walks truncated Instagram posts to discover slides that were never even fetched.
+
 ## [0.1.11] - 2026-08-31
 
 ✨ Added
