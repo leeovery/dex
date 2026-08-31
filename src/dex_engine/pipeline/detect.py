@@ -330,11 +330,16 @@ _FTYP_EXTENSIONS: dict[bytes, str] = {
 _SVG_PRELUDES = ((b"<?", b"?>"), (b"<!--", b"-->"), (b"<!doctype", b">"))
 
 
-def sniff_media_ext(data: bytes) -> str | None:
+def sniff_media_ext(data: bytes, *, signatures_only: bool = False) -> str | None:
     """The canonical extension for a media body, or None when unrecognized.
 
     Args:
         data: The leading bytes (the whole body is fine).
+        signatures_only: Drop the bare MPEG sync-frame reading, which is a
+            byte-range guess rather than a signature: any body whose first
+            two bytes land in the sync range reads as ``mp3``, a UTF-16-LE
+            BOM included. A caller deciding what a body IS asks for this;
+            one already holding bytes it only has to NAME does not.
 
     Returns:
         The extension the bytes name, undotted, or None when they carry no
@@ -342,10 +347,10 @@ def sniff_media_ext(data: bytes) -> str | None:
     """
     if _svg_lead(_text_lead(data)):
         return "svg"  # the one media that is text
-    return _binary_media_ext(data)
+    return _binary_media_ext(data, signatures_only=signatures_only)
 
 
-def _binary_media_ext(data: bytes) -> str | None:
+def _binary_media_ext(data: bytes, *, signatures_only: bool) -> str | None:
     for magic, ext in _MEDIA_MAGIC:
         if data.startswith(magic):
             return ext
@@ -359,7 +364,7 @@ def _binary_media_ext(data: bytes) -> str | None:
         return "webm" if b"webm" in data[:_LEAD_BYTES] else "mkv"
     # An MPEG audio frame opens with 11 set sync bits — 0xFF, then a byte of
     # 0xE0 or above, which across two bytes is exactly this range.
-    if b"\xff\xe0" <= data[:2] <= b"\xff\xff":
+    if not signatures_only and b"\xff\xe0" <= data[:2] <= b"\xff\xff":
         return "mp3"
     return None
 

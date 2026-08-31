@@ -4602,6 +4602,75 @@ class TestRedetection:
         ]
         assert "re-detected" in report  # the first correction is still noted
 
+    IMAGE_URL = "https://cdn.example.test/photo.jpg"
+
+    def test_an_image_body_reroutes_web_to_the_media_stage(self, instance):
+        # The bug: a bare image URL fell to the catch-all, extracted
+        # nothing, and parked manual with thin-extraction — the picture
+        # never entered the KB at all.
+        transport = FakeTransport(
+            {self.IMAGE_URL: HttpResponse(status=200, content_type="image/jpeg", body=JPEG_BYTES)}
+        )
+        write_item(instance, urls=[self.IMAGE_URL])
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=self._drivers(instance, transport),
+            transport=transport,
+        )
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.IMAGE_URL)
+        assert entry.status is Status.DONE
+        assert entry.job is Job.MEDIA
+        assert entry.kind is Kind.WEB  # the stage moved, not the kind
+        assert (instance.enrichment_dir / ITEM / "media-0.jpg").is_file()
+        assert entry.path == f"enrichment/{ITEM}/media-0.jpg"
+        assert self._lineage(ctx, self.IMAGE_URL) == [
+            ("web", "queued", None),  # nothing but the catch-all claimed it
+            ("web", "queued", "sniff"),  # corrected on the body's own bytes
+            ("web", "done", "sniff"),  # downloaded in the same run
+        ]
+        assert f"re-detected: {self.IMAGE_URL} — web → media" in " ".join(report.split())
+        # And the picture is now the session's to describe.
+        assert "0 of 1 media file described" in report
+
+    def test_a_depth_zero_media_unit_needs_no_parent(self, instance):
+        # Every media unit until now was a child of the page that named it;
+        # a corrected one is the item's own URL, parentless at depth 0.
+        transport = FakeTransport(
+            {self.IMAGE_URL: HttpResponse(status=200, content_type="image/jpeg", body=JPEG_BYTES)}
+        )
+        write_item(instance, urls=[self.IMAGE_URL])
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=self._drivers(instance, transport),
+            transport=transport,
+        )
+        run_mod.run(ctx)
+        entry = entry_for(ctx, self.IMAGE_URL)
+        assert (entry.parent, entry.depth) == (None, None)
+        assert entry.path == f"enrichment/{ITEM}/media-0.jpg"
+
+    def test_a_corrected_media_line_rests_queued_under_media_fetch_none(self, instance):
+        transport = FakeTransport(
+            {self.IMAGE_URL: HttpResponse(status=200, content_type="image/jpeg", body=JPEG_BYTES)}
+        )
+        write_item(instance, urls=[self.IMAGE_URL])
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=self._drivers(instance, transport),
+            transport=transport,
+            config=Config(media_fetch=MediaFetch.NONE),
+        )
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx, self.IMAGE_URL)
+        assert entry.status is Status.QUEUED  # rests like any media unit
+        assert entry.job is Job.MEDIA
+        assert not list((instance.enrichment_dir / ITEM).glob("media-0.*"))
+        assert "media_fetch is `none`" in report
+
     def test_thin_html_never_false_redetects_end_to_end(self, instance):
         transport = FakeTransport(
             {URL: HttpResponse(status=200, content_type="text/html", body=self.HTML)}

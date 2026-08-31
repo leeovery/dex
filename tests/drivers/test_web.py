@@ -15,6 +15,7 @@ from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import (
     Content,
     Format,
+    Job,
     Kind,
     Missing,
     Redetected,
@@ -36,6 +37,7 @@ from tests.drivers.conftest import (
 URL = "https://example.test/post"
 ARTICLE = fixture_text("web", "article.html")
 THIN = fixture_text("web", "thin.html")
+JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(range(256)) * 8
 
 
 def wayback_lookup_url(url: str) -> str:
@@ -158,6 +160,59 @@ class TestRedetection:
         driver = driver_for({URL: html_response(THIN)}, extract=lambda _html: None)
         result = driver.fetch(make_unit(URL, Kind.WEB))
         assert result == Unusable(evidence="thin-extraction")  # never a Redetected bounce
+
+    def test_an_image_body_signals_media_redetection(self):
+        # The bare media URL an owner shares: the catch-all claims it, and
+        # the bytes are a picture. Identity only — the media stage owns the
+        # file, and the kind does not change.
+        response = HttpResponse(status=200, content_type="image/jpeg", body=JPEG)
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert result == Redetected(kind=Kind.WEB, job=Job.MEDIA)
+
+    def test_an_svg_body_is_media_not_a_page(self):
+        # The one media that is text: extraction would read it as markup.
+        response = HttpResponse(
+            status=200,
+            content_type="image/svg+xml",
+            body=b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>',
+        )
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert result == Redetected(kind=Kind.WEB, job=Job.MEDIA)
+
+    def test_extraction_never_sees_an_image_body(self):
+        # The failure this closes: high-entropy bytes decoded UTF-8-replace
+        # clear the substantial bar and store as an article of garbage.
+        def loud(_html):
+            raise AssertionError("extraction ran on media bytes")
+
+        response = HttpResponse(status=200, content_type="text/html", body=JPEG)
+        result = driver_for({URL: response}, extract=loud).fetch(make_unit(URL, Kind.WEB))
+        assert result == Redetected(kind=Kind.WEB, job=Job.MEDIA)
+
+    def test_a_utf16_page_body_is_never_stolen_as_audio(self):
+        # A UTF-16-LE BOM opens 0xFF 0xFE — inside the MPEG sync range the
+        # bare-frame reading claims. A page filed as an mp3 is the worse
+        # mistake, so only signature-backed media redetects.
+        page = ("<html><body><p>" + "a UTF-16 page " * 40 + "</p></body></html>").encode("utf-16")
+        response = HttpResponse(status=200, content_type="text/html", body=page)
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert isinstance(result, Content)  # never a Redetected bounce
+
+    def test_a_document_body_wins_over_the_media_route(self):
+        # Ordering: the declared type is the only thing that names a
+        # signature-less extractable, and file work reads what it names —
+        # a body two answers fit is extracted, never stored as a picture.
+        response = HttpResponse(status=200, content_type="text/csv", body=JPEG)
+        result = driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB))
+        assert result == Redetected(kind=Kind.FILE, format=Format.CSV)
+
+    def test_no_wayback_lookup_for_a_media_body(self):
+        # A media body arrives on a 200: the correction fires before any
+        # rescue logic, and the archive is never asked.
+        transport = FakeTransport({URL: HttpResponse(status=200, content_type="", body=JPEG)})
+        driver = WebDriver(transport=transport, extract=substantial_extract)
+        assert driver.fetch(make_unit(URL, Kind.WEB)) == Redetected(kind=Kind.WEB, job=Job.MEDIA)
+        assert transport.calls == [("GET", URL)]
 
 
 class TestSuccessfulFetch:
