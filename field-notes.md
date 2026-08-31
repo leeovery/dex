@@ -62,6 +62,35 @@ no longer true.
   `instructions`, resources, and prompts all surface in desktop chat as
   the MCP spec suggests.
 
+## Claude Code MCP servers (verified 2026-08-31)
+
+- Claude Code does NOT read the desktop app's config. Its user-scope
+  servers live at `~/.claude.json` (top-level `mcpServers`), relocatable
+  with `CLAUDE_CONFIG_DIR`, which is also the only safe test seam. The
+  Code tab inside the desktop app is Claude Code and reads that file too:
+  sharing a process with the app buys nothing.
+- `claude mcp add <name>` on a name that ALREADY EXISTS **refuses** — it
+  never replaces: `MCP server <name> already exists in user config`, exit
+  1. A writer that must replace an entry has to `claude mcp remove -s user
+  <name>` first.
+- `claude mcp remove <name>` on a name that is NOT THERE is also an error
+  (`No MCP server named "<name>" in user scope`, exit 1). So a
+  remove-then-add writer must ignore the remove's exit code, or every
+  first-time write fails. Exit codes in full: remove-absent 1,
+  remove-present 0, add-new 0, add-existing 1.
+- Check these with `cmd >/dev/null 2>&1; echo $?` and not through a pipe —
+  `cmd | tail; echo $?` reports the exit of `tail`, which is how the two
+  facts above were first recorded backwards.
+- `~/.claude.json` carries live session and project state (hundreds of
+  project records beside `mcpServers`) and is rewritten by every running
+  session — read it freely, but write it through `claude mcp`, or a
+  concurrent session's write is silently lost.
+- A user-scope server reaches NEW sessions only; an open one has already
+  connected its servers.
+- Claude Code inherits a real user PATH, unlike a GUI-spawned desktop
+  server, so an entry written for it needs no `env.PATH` — freezing an
+  install-day snapshot in would be a downgrade.
+
 ## Cowork (verified 2026-08-19)
 
 - Cowork scheduled tasks are cloud unless a local folder is declared at

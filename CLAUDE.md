@@ -38,8 +38,10 @@ the engine stays unaware of which ones exist.
     `library.py` (the reads: search, fetch, page), `steering.py` (the
     words: instructions, footers, the dex-query prompt read from the
     bundled skill), `server.py` (the tool and resource wiring), `cli.py`,
-    and `connect.py` (`dex-connect` — the one merge into a chat client's
-    own config, launching through an anchor instance's shim so no second
+    and `connect.py` (`dex-connect` — the one write into a chat
+    client's own config, for every client on the machine: the desktop
+    app's file merged in process, Claude Code's through `claude mcp`,
+    both launching through an anchor instance's shim so no second
     version pin exists). Hands, not an agent — it never calls a model and
     never judges relevance; the calling model does the searching.
   - `migrations/` — numbered state migrations, run by sync before anything

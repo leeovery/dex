@@ -940,20 +940,28 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
 # this line.
 _CONNECT_DOC = "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md"
 
-# What sync found about the desktop app's chat, as the offer the session
+# What sync found about this machine's chat clients, as the offer the session
 # reading it makes. Addressed to that session, not to the owner: the owner is
 # asked a question and never handed a command, and the doc is the session's
-# own next move on a yes.
+# own next move on a yes. A client that is not installed never reaches here.
+_CLIENTS = {
+    "desktop": "the Claude desktop app's chat",
+    "code": "Claude Code sessions on this machine",
+}
 _CONNECT_OFFERS = {
     "unconnected": (
-        "the Claude desktop app is on this machine and no dex is connected to its chat "
-        "— ask the owner whether they want to reach this dex from any chat, and on yes "
-        f"read {_CONNECT_DOC} and do the setup yourself"
+        "{where}: no dex is connected — ask the owner whether they want this one "
+        "reachable there, and on yes read {doc} and do the setup yourself"
     ),
     "unlisted": (
-        "the desktop app's dex serves other instances but not this one — ask the owner "
-        "whether they want this dex in their chats too, and on yes read "
-        f"{_CONNECT_DOC} and do the setup yourself"
+        "{where}: the connected dex serves other instances but not this one — ask the "
+        "owner whether they want this dex there too, and on yes read {doc} and do the "
+        "setup yourself"
+    ),
+    "broken": (
+        "{where}: the entry points at a bin/dex that is no longer on disk, so the "
+        "server cannot start and says nothing about it — the anchor instance moved or "
+        "was deleted. Re-run the setup at {doc} against an instance that is still here"
     ),
 }
 
@@ -978,8 +986,10 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
              "anomalies": [str]}                   # optional
           ],
           "machinery_changes": int,   # template files written + retired skills removed
-          "connect": str,             # optional: "unconnected" | "unlisted" —
-                                      #   the chat-connection gap sync saw
+          "connect": [               # optional: one per client with a gap
+             {"client": str,         # "desktop" | "code"
+              "gap": str}            # "unconnected" | "unlisted" | "broken"
+          ],
           "notes": [str],             # optional
         }
 
@@ -1042,20 +1052,33 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         blocks.append("No migrations to apply — state was already current.")
     blocks += ["", f"{kernel.bold('Machinery changes')} — {machinery_changes}"]
     if connect:
-        blocks += ["", connect]
+        blocks += ["", *connect]
     blocks += _note_section("Notes", notes)
     return kernel.document(blocks)
 
 
-def _sync_connect(surface: str, payload: Mapping[str, object]) -> str:
-    """The chat-connection gap as the one line it renders as, or nothing."""
-    if "connect" not in payload:
-        return ""
-    gap = _str_at(surface, payload, "connect")
-    if gap not in _CONNECT_OFFERS:
-        options = ", ".join(sorted(_CONNECT_OFFERS))
-        _fail(surface, f"connect must be one of {options}, got {gap!r}")
-    return f"{kernel.bold('Chat connection')} — {_CONNECT_OFFERS[gap]}"
+def _sync_connect(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The chat-connection gaps, one line per client with something to say."""
+    rows = _obj_list_at(surface, payload, "connect", required=False)
+    lines = []
+    for i, row in enumerate(rows):
+        where = f"connect[{i}]."
+        _check_keys(surface, row, required=frozenset({"client", "gap"}), where=where)
+        client = _str_at(surface, row, "client", where)
+        gap = _str_at(surface, row, "gap", where)
+        if client not in _CLIENTS:
+            _fail(
+                surface,
+                f"connect client must be one of {', '.join(sorted(_CLIENTS))}, got {client!r}",
+            )
+        if gap not in _CONNECT_OFFERS:
+            _fail(
+                surface,
+                f"connect gap must be one of {', '.join(sorted(_CONNECT_OFFERS))}, got {gap!r}",
+            )
+        offer = _CONNECT_OFFERS[gap].format(where=_CLIENTS[client], doc=_CONNECT_DOC)
+        lines.append(f"{kernel.bold('Chat connection')} — {offer}")
+    return lines
 
 
 def _sync_migration(surface: str, migration: Mapping[str, object], *, where: str) -> str:

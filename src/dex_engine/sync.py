@@ -43,7 +43,7 @@ from dex_engine import atomic, migrations
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
-from dex_engine.serve.connect import connect_gap
+from dex_engine.serve.connect import connect_gaps
 from dex_engine.template import bundled_template
 from dex_engine.version import engine_version
 
@@ -511,7 +511,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         previous=previous_pin,
         applied=applied,
         machinery_changes=len(changed),
-        connect=connect_gap(root),
+        connect=connect_gaps(root),
         notes=notes,
     )
     return surfaces.render("sync-report", payload)
@@ -523,7 +523,7 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
     previous: str | None,
     applied: list[AppliedMigration],
     machinery_changes: int,
-    connect: str | None,
+    connect: list[dict[str, str]],
     notes: list[str],
 ) -> dict[str, object]:
     migrations_payload: list[dict[str, object]] = [
@@ -540,7 +540,7 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
         "migrations": migrations_payload,
         "machinery_changes": machinery_changes,
     }
-    if connect is not None:
+    if connect:
         payload["connect"] = connect
     if pin is not None:
         payload["pin"] = pin

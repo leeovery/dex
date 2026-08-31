@@ -182,6 +182,9 @@ goes in `field-notes.md`.
   but it gives any other project `search`/`capture` against the owner's
   dexes with no instance folder in sight. The official mechanism
   `backlog/sibling-session-capture.md` asks for falls out of this design.
+  *(Amended 2026-08-31 — §11. As written this said the server serves the
+  client, and was read as setup wiring it. It did not: `connect` wrote one
+  file. It does now.)*
 - **Cowork local** — the session already has the folder mounted and can
   read it directly; whether host-configured stdio servers are bridged
   into the sandbox at all is unverified and doubtful (a host-side
@@ -283,3 +286,63 @@ instance (the shim changes), then each owner's one-time
 - v2 wholesale: transport, OAuth, the contents-API read path, the
   catalogue's committed-vs-cache decision, ChatGPT's connector contract
   verified on a real client.
+
+## 11. Amendment, 2026-08-31: clients are set up, not merely supported
+
+Shipped in #116 and #118, and wrong in one place. §5 split the setup labour
+for exactly one client, the desktop app, while §6 listed Claude Code as a
+client the server serves — true of the server, and read by everyone
+(including its author, in conversation) as a claim that setup wired it.
+Nothing wired it. The owner who was told "it works in Claude Code" opened
+`/mcp`, saw no dex, and had been given no way to fix it: the two clients read
+different files, and the Code tab inside the desktop app is Claude Code, so
+sharing a process with the app buys nothing.
+
+Nothing about §1's one-process roster or §4's anchor changes. The command is
+still one instance's `bin/dex`, that instance's pin is still the only version
+authority, and both clients get identical argv. What changes is the number of
+files written and who is asked.
+
+**Detection gates the question.** `command -v claude` for Claude Code, the
+config file's existence for the desktop app. A client that is not installed is
+never mentioned — not asked about, not written, not reported as a gap. Absence
+keeps three answers rather than two, because they have three different fixes:
+not installed, never launched, and — off macOS, where no config location is
+verified — not locatable without `--config`.
+
+**Claude Code is written through `claude mcp`, never by merging its config.**
+`~/.claude.json` carries live session and project state and is rewritten by
+every running session; a read-modify-write from here can drop a concurrent
+write. This is the one place where the codebase's "one serialization boundary"
+loses to "another program owns this file and is writing to it right now".
+Reading it is still safe, and the gap check does exactly that. Scope is
+`user` — the point is dex from *any* session, and per-project would mean
+re-running forever, while costing an unrelated session nothing until a tool is
+called, which is `backlog/sibling-session-capture.md`'s own hard constraint.
+
+Three device-verified facts shape that write, and are in `field-notes.md`:
+`add` REFUSES a name that already exists rather than replacing it, so every
+write removes first — and `remove` of an absent name is *itself* an error, so
+that remove's exit code is ignored or every first-time write fails; the entry
+carries no `env.PATH`, because Claude Code inherits a real one and an
+install-day snapshot would be a downgrade; and a user-scope server reaches new
+sessions only.
+
+The first two were recorded backwards on the first pass, from a probe that
+piped the CLI into `tail` and read `tail`'s exit code. The stub in the tests
+encoded the wrong behaviour and the suite passed; running the real command
+against a real machine is what found it.
+
+**A run that reached no client fails.** Two skip lines and a zero exit is how
+an owner ends up believing they are connected.
+
+**The gap check is per client.** It read one config and answered one bit for
+two clients, so the state that produced this amendment — wired into the app,
+not into Claude Code — reported as fine. It also now catches an entry whose
+command has left the machine: listing a root is not the same as being able to
+launch it, and the anchor's shim is checked at write time and never again.
+
+**One paste, whatever changed.** Adding an instance, adding a client declined
+earlier, or repairing a broken entry is the same `docs/connect.md` paste. That
+is stated in the hand-off, not only in the doc, because an owner who declined
+a client will not reread the doc.

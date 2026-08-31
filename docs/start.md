@@ -178,15 +178,16 @@ Each person captures with their own token. Walk them through, concretely:
 
 ## Step 7: Chat Connection
 
-Ask the owner whether they want to reach this dex from the Claude desktop
-app's chat — asking it questions, and saving to it, without opening a
-session on the folder. If they don't, move on; the offer stands whenever
-they change their mind.
+This dex can also be reached from the chat clients on this machine — without
+opening a session on the folder at all. Ask the owner whether they want that.
+If they don't, move on; the offer stands whenever they change their mind, and
+Step 9 tells them how to come back to it.
 
 If they do, connect it now, in this session. The guide lives in the engine
 repo, which is never cloned, so fetch it raw:
 https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md — then
-follow it end to end. It is one command and a relaunch of the app.
+follow it end to end. It works out which clients are actually here, asks about
+each one, and writes them in a single command.
 
 ---
 
@@ -204,6 +205,8 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 End your final message with, in a few lines: `{instance}` (where it
 lives), its scope as written, the schedule it runs on, how to save things
 (the shortcut, or "add this to dex" in a session — either way the save is
-instant and processing happens on the schedule), and how to ask questions.
+instant and processing happens on the schedule), and how to ask questions —
+including, if they declined the chat connection in Step 7, that asking for the
+`docs/connect.md` paste again is all it takes to set it up later.
 Health checks run themselves on the schedule. The owner never touches the
 machinery.

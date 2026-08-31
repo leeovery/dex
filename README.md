@@ -118,9 +118,11 @@ PDF stages the binary outside git, so history stays text only.
 **Questions.** Open a Claude Code session on the folder and ask. Answers come
 from the wiki with citations, newest material preferred, and any genuinely new
 synthesis is filed back in so that it compounds instead of evaporating. Or
-connect your dexes to the desktop app's ordinary chat, where you can ask them —
-and say "save this to my dex" — without opening the folder at all. That is one
-more paste, in a Claude Code session:
+connect your dexes to the chat clients on your machine — the desktop app's
+ordinary chat, and Claude Code at user level so every session in every project
+can reach them — where you can ask them, and say "save this to my dex",
+without opening the folder at all. That is one more paste, in a Claude Code
+session:
 
 ```
 Fetch and follow the instructions at https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md.
@@ -293,7 +295,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 | `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item reads and wiki reads, instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
-| `dex-connect --instance <path>` | merge the `dex` server entry into the Claude desktop app's config so its chats reach these instances (`--anchor`, `--config`; repeat the flag per instance, and re-run to change the list) |
+| `dex-connect --instance <path>` | file the `dex` server with this machine's chat clients — the Claude desktop app and Claude Code — so their sessions reach these instances (`--client`, `--anchor`, `--config`; repeat `--instance` per instance, and re-run to change the list) |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
 queue, append-only, last-line-per-unit): drivers per source shape, one central
@@ -329,13 +331,19 @@ probing is prose rather than machinery (`serve/steering.py`) — connect-time
 instructions carrying the doctrine and every instance's declared scope
 verbatim, one next-move line on each result, and a `dex-query` prompt read from
 the wheel-bundled skill template (`template.py`) so that procedure keeps a
-single home. `dex-connect` writes the client-side half: one `mcpServers.dex`
-entry merged into the desktop app's own config, its command an anchor
-instance's `bin/dex` so the anchor's pin stays the only version authority, and
-its `env.PATH` captured from the installing shell because a GUI-spawned child
-inherits launchd's bare PATH. Sync reads that same config — read-only, silent
-wherever the app cannot be — and puts the gap on its report, so a session
-offers the connection rather than the owner having to know it exists. Setup:
+single home. `dex-connect` writes the client-side half, for every chat
+client on the machine: one `mcpServers.dex` entry per client, the same
+launcher in each — an anchor instance's `bin/dex`, so the anchor's pin stays
+the only version authority. The desktop app's copy is a merge into the JSON
+file it owns, carrying an `env.PATH` captured from the installing shell
+because a GUI-spawned child inherits launchd's bare PATH; Claude Code's is
+written by shelling out to `claude mcp` (remove, then add — an add onto an
+existing name refuses rather than replacing) and carries no PATH, since a session
+already has a real one. A client that is not installed is skipped, never
+guessed at, and a run that reached none of them fails rather than reporting
+success. Sync reads the same configs — read-only, silent wherever a client
+cannot be — and puts each gap on its report separately, so a session offers
+the connection rather than the owner having to know it exists. Setup:
 `docs/connect.md`.
 
 Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·

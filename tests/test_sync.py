@@ -470,7 +470,28 @@ class TestTemplateSync:
 
 
 class TestChatConnection:
-    """Sync notices the gap between this instance and the desktop app's chat."""
+    """Sync notices the gap between this instance and each chat client here."""
+
+    @pytest.fixture(autouse=True)
+    def _only_the_clients_a_test_asks_for(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Put both clients inside the tmp tree, and neither on the machine.
+
+        Without this, a developer who has Claude Code installed gets a second
+        client in every assertion here and their own live config read.
+        """
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        empty = tmp_path / "empty-bin"
+        empty.mkdir()
+        monkeypatch.setenv("PATH", str(empty))
+
+    @staticmethod
+    def code_cli(tmp_path: Path) -> None:
+        """A `claude` on PATH, so the code client counts as installed here."""
+        binary = tmp_path / "empty-bin" / "claude"
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
 
     @staticmethod
     def desktop_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, servers: dict) -> Path:
@@ -481,9 +502,9 @@ class TestChatConnection:
         config.write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
         return config
 
-    def test_no_desktop_app_is_no_line_at_all(self, inst, template):
+    def test_no_client_at_all_is_no_line_at_all(self, inst, template):
         # Sync runs on Linux boxes and cloud runners; there is nothing to
-        # offer where the app cannot be.
+        # offer where no client can be.
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "Chat connection" not in report
@@ -494,7 +515,7 @@ class TestChatConnection:
         self.desktop_config(tmp_path, monkeypatch, {})
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
-        assert "**Chat connection** — the Claude desktop app is on this machine" in report
+        assert "the Claude desktop app's chat: no dex is connected" in report
         assert "docs/connect.md" in report
 
     def test_an_instance_outside_the_roster_is_named_as_such(
@@ -507,14 +528,42 @@ class TestChatConnection:
         )
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
-        assert "**Chat connection** — the desktop app's dex serves other instances" in report
+        assert "the connected dex serves other instances but not this one" in report
+
+    def test_claude_code_is_its_own_offer(self, inst, template, tmp_path, monkeypatch):
+        # The state this check was rewritten for: wired into one client and
+        # not the other, which one bit for two clients reported as connected.
+        self.code_cli(tmp_path)
+        self.desktop_config(
+            tmp_path,
+            monkeypatch,
+            {
+                "dex": {
+                    "command": str(inst.root / "bin" / "dex"),
+                    "args": ["serve", "--instance", str(inst.root.resolve())],
+                }
+            },
+        )
+        (inst.root / "bin").mkdir(parents=True, exist_ok=True)
+        (inst.root / "bin" / "dex").write_text("#!/bin/sh\n", encoding="utf-8")
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert "the Claude desktop app's chat" not in report
+        assert "Claude Code sessions on this machine: no dex is connected" in report
 
     def test_a_connected_instance_is_never_nagged(self, inst, template, tmp_path, monkeypatch):
         self.desktop_config(
             tmp_path,
             monkeypatch,
-            {"dex": {"args": ["serve", "--instance", str(inst.root.resolve())]}},
+            {
+                "dex": {
+                    "command": str(inst.root / "bin" / "dex"),
+                    "args": ["serve", "--instance", str(inst.root.resolve())],
+                }
+            },
         )
+        (inst.root / "bin").mkdir(parents=True, exist_ok=True)
+        (inst.root / "bin" / "dex").write_text("#!/bin/sh\n", encoding="utf-8")
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "Chat connection" not in report
