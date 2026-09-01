@@ -116,7 +116,6 @@ enrichment: []
 Burr alignment matters more than the grinder's price.
 """,
     )
-    write(root / "wiki" / "index.md", "# Index\n\n- [[pour-over]]\n")
     write(
         root / "wiki" / "topics" / "pour-over.md",
         f"""---
@@ -149,7 +148,8 @@ The starting recipe is 60g/L with a post-bloom swirl rather than a stir
     )
     write(root / "state" / "entity-members.json", json.dumps({"james-hoffmann": [V60]}))
     # The compiled map, from the same files the compile always reads — the
-    # serve tools read it back verbatim.
+    # serve tools read it back verbatim. The same call renders
+    # wiki/index.md, exactly as it stands in a live instance.
     write_map(Instance(root=root))
 
 

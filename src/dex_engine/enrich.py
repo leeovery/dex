@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     place_parser = commands.add_parser(
         "place",
         help="apply placement judgment to taxonomy and entity-members from a JSON "
-        "payload, and recompile the map",
+        "payload, and recompile the map and index",
     )
     place_parser.add_argument(
         "--file",

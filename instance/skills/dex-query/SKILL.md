@@ -31,7 +31,9 @@ full fetched source — and summarize from that.
 5. **Compound**: if the answer required real synthesis (not just reading one
    page), file it as `wiki/syntheses/<slug>.md` — frontmatter `type: synthesis`,
    `question:`, `generated:` date; body cites item ids and wikilinks related
-   topics. Add to index, log it, commit and push (a local-only instance
+   topics; open the body with a `#` heading naming the question — the index
+   lists syntheses by it. Run `bin/dex map` (the index is rendered, never
+   hand-edited), log it, commit and push (a local-only instance
    commits without pushing: the push is skipped, not passed). Syntheses are question-shaped, dated
    snapshots; no mechanical check refreshes one — a check cannot tell a
    stale synthesis from a deliberately time-scoped one. Refreshing is

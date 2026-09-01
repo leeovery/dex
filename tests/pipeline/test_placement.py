@@ -62,7 +62,7 @@ class TestBootstrap:
         assert summary == (
             "wrote state/taxonomy.json + state/entity-members.json "
             "(1 topics defined, 0 entities defined, 1 placed, 0 unplaced, 0 dropped) "
-            "· map recompiled"
+            "· map and index recompiled"
         )
         assert taxonomy(instance) == {
             "topics": {

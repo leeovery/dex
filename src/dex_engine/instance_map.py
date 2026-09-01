@@ -1,7 +1,7 @@
-"""dex-map: compile the instance map — ``state/map.json``, cached and mechanical.
+"""dex-map: compile the instance map — ``state/map.json`` and ``wiki/index.md``.
 
 One compile reads ``state/taxonomy.json``, ``state/entity-members.json``,
-the corpus and the wiki, and writes the one cached artifact that answers
+the corpus and the wiki, and writes the cached artifact that answers
 "what does this instance hold" without call-time derivation:
 
   topics — every taxonomy topic except ``uncategorized-shares`` (a ledger,
@@ -20,13 +20,21 @@ the corpus and the wiki, and writes the one cached artifact that answers
   zero-weight pairs omitted, each pair stored once with the smaller name
   first.
 
-The output is deterministic to the byte — sorted names, sorted member ids,
-a fixed edge order — so recompiling unchanged inputs reproduces the file
+The same compile renders ``wiki/index.md`` — the catalog page a query
+session reads first: topics with their descriptions and counts, entities,
+and the syntheses on disk, each line a ``[[wikilink]]``. Judgment decides
+the values (descriptions and membership, in the taxonomy); code renders
+them, so the index is regenerated whole at every compile and never
+hand-edited. One trigger, two artifacts, and they cannot drift apart.
+
+Both outputs are deterministic to the byte — sorted names, sorted member
+ids, a fixed edge order — so recompiling unchanged inputs reproduces them
 exactly, which is what lets a freshness check diff a recompile against
 what is on disk.
 
-A missing taxonomy or entity-members file compiles an honestly empty map:
-a young instance has a map, truthfully empty. A malformed one is refused
+A missing taxonomy or entity-members file compiles an honestly empty map
+and an honestly empty index: a young instance has both, truthfully empty.
+A malformed one is refused
 loudly with nothing written — a map compiled from a file that cannot be
 honestly read would state the corpus wrong with nothing saying so. An
 individual corpus or wiki file that will not read or parse contributes
@@ -42,6 +50,7 @@ from pathlib import Path
 
 from . import atomic, corpus, frontmatter, wikitext
 from .pipeline.types import Instance
+from .render import kernel
 
 __all__ = [
     "CompiledMap",
@@ -64,9 +73,10 @@ UNCATEGORIZED = "uncategorized-shares"
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CompiledMap:
-    """One compiled map: the JSON payload, and the counts the summary states."""
+    """One compiled map: the JSON payload, the rendered index, and the summary counts."""
 
     payload: dict[str, object]
+    index: str
     topics: int
     entities: int
     edges: int
@@ -105,7 +115,8 @@ def compile_map(instance: Instance) -> CompiledMap:
     """
     topics, entities = load_taxonomy(instance.taxonomy_path)
     members = load_entity_members(instance.entity_members_path)
-    pages = _pages(instance)
+    wiki_paths = sorted(instance.wiki_dir.rglob("*.md"))
+    pages = _pages(wiki_paths)
     dates = _share_dates(instance)
     topic_items = {
         name: set(topic.items) for name, topic in topics.items() if name != UNCATEGORIZED
@@ -138,8 +149,18 @@ def compile_map(instance: Instance) -> CompiledMap:
         },
         "graph": graph,
     }
+    index = _render_index(
+        topics={name: topics[name] for name in sorted(topic_items)},
+        entities=entities,
+        entity_items=entity_items,
+        syntheses=_syntheses(instance, wiki_paths),
+    )
     return CompiledMap(
-        payload=payload, topics=len(topic_items), entities=len(entities), edges=len(graph)
+        payload=payload,
+        index=index,
+        topics=len(topic_items),
+        entities=len(entities),
+        edges=len(graph),
     )
 
 
@@ -149,7 +170,7 @@ def serialize_map(payload: dict[str, object]) -> str:
 
 
 def write_map(instance: Instance) -> CompiledMap:
-    """Compile and write ``state/map.json`` atomically.
+    """Compile and write ``state/map.json`` and ``wiki/index.md``, each atomically.
 
     Args:
         instance: The instance.
@@ -159,22 +180,25 @@ def write_map(instance: Instance) -> CompiledMap:
 
     Raises:
         ValueError: A malformed input file (:func:`compile_map`); nothing
-            is written, and an existing map stands untouched.
+            is written, and both existing artifacts stand untouched.
     """
     compiled = compile_map(instance)
     instance.map_path.parent.mkdir(exist_ok=True)
     atomic.write_text(instance.map_path, serialize_map(compiled.payload))
+    instance.wiki_dir.mkdir(exist_ok=True)
+    atomic.write_text(instance.index_path, compiled.index)
     return compiled
 
 
 def recompile(instance: Instance, summary: str) -> CompiledMap:
     """Recompile the map after a verb changed one of its inputs.
 
-    The map is derived state, so a verb that rewrote an input recompiles
-    it as its last act — and a compile failure then must not un-report
-    work that already landed. The failure rides the verb's own summary
-    into its error exit: the message states what stood, why the map is
-    stale, and the recompile command that heals it.
+    The map and the index are derived state, so a verb that rewrote an
+    input recompiles both as its last act — and a compile failure then
+    must not un-report work that already landed. The failure rides the
+    verb's own summary into its error exit: the message states what
+    stood, why the artifacts are stale, and the recompile command that
+    heals them.
 
     Args:
         instance: The instance.
@@ -184,14 +208,14 @@ def recompile(instance: Instance, summary: str) -> CompiledMap:
         The compiled map, as written.
 
     Raises:
-        ValueError: The compile or write failed; the message carries
+        ValueError: The compile or a write failed; the message carries
             ``summary``.
     """
     try:
         return write_map(instance)
     except (OSError, ValueError) as e:
         raise ValueError(
-            f"{summary}; state/map.json did not recompile — {e} "
+            f"{summary}; the map did not recompile — {e} "
             "(the writes stand; `bin/dex map` recompiles once the cause is fixed)"
         ) from e
 
@@ -336,14 +360,15 @@ def _newest(item_ids: list[str], dates: dict[str, datetime.date]) -> str | None:
     return max(stamped).isoformat() if stamped else None
 
 
-def _pages(instance: Instance) -> dict[str, Path]:
+def _pages(wiki_paths: list[Path]) -> dict[str, Path]:
     """Every wiki page by stem — the has-page answer, and where edges read from.
 
-    Anywhere under ``wiki/``, sorted so a stem held by two files (lint's
-    finding, not this one's) resolves to the same file on every compile.
+    ``wiki_paths`` is the compile's one sorted walk of ``wiki/``, so a stem
+    held by two files (lint's finding, not this one's) resolves to the same
+    file on every compile.
     """
     pages: dict[str, Path] = {}
-    for path in sorted(instance.wiki_dir.rglob("*.md")):
+    for path in wiki_paths:
         pages.setdefault(path.stem, path)
     return pages
 
@@ -419,6 +444,97 @@ def _shared_edges(
 
 
 # ---------------------------------------------------------------------------
+# The index: the same compile, rendered as the wiki's catalog page
+# ---------------------------------------------------------------------------
+
+_INDEX_PREAMBLE = (
+    "Rendered by `bin/dex map` — every compile regenerates this file whole "
+    "from the taxonomy, the entity members and the wiki, so a hand edit does "
+    "not survive the next one and the health check flags a stale copy. The "
+    "judgment lives upstream: descriptions and membership go in through "
+    "`bin/dex enrich place`."
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Synthesis:
+    """One wiki synthesis: the page's stem, and its first ``#`` heading if any."""
+
+    stem: str
+    title: str | None
+
+
+def _syntheses(instance: Instance, wiki_paths: list[Path]) -> list[_Synthesis]:
+    """Every page directly under ``wiki/syntheses/``, with its own heading.
+
+    The stem is the filename's fact, so a page whose heading will not read
+    — no ``#`` line, or a file no decoder accepts — still lists, bare: the
+    page exists, and the index saying otherwise would hide it.
+    """
+    directory = instance.wiki_dir / "syntheses"
+    return [
+        _Synthesis(stem=path.stem, title=_first_heading(path))
+        for path in wiki_paths
+        if path.parent == directory
+    ]
+
+
+def _first_heading(path: Path) -> str | None:
+    """The text of the page body's first ``#`` heading, or None."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in frontmatter.body(text).split("\n"):
+        if line.startswith("# "):
+            return " ".join(line[2:].split()) or None
+    return None
+
+
+def _render_index(
+    *,
+    topics: dict[str, Topic],
+    entities: dict[str, Entity],
+    entity_items: dict[str, set[str]],
+    syntheses: list[_Synthesis],
+) -> str:
+    """The index markdown: header, preamble, and one section per non-empty group.
+
+    Judgment text (descriptions, kinds, headings) is flattened to one line
+    where it renders — the values are the session's, the layout is not.
+    """
+    blocks = [kernel.heading("Index", level=1), "", _INDEX_PREAMBLE]
+    if topics:
+        blocks += ["", kernel.heading("Topics"), ""]
+        blocks += [_topic_line(name, topic) for name, topic in topics.items()]
+    if entities:
+        blocks += ["", kernel.heading("Entities"), ""]
+        blocks += [
+            _entity_line(name, entities[name], len(entity_items[name])) for name in sorted(entities)
+        ]
+    if syntheses:
+        blocks += ["", kernel.heading("Syntheses"), ""]
+        blocks += [_synthesis_line(synthesis) for synthesis in syntheses]
+    return kernel.document(blocks)
+
+
+def _topic_line(name: str, topic: Topic) -> str:
+    description = " ".join(topic.description.split())
+    label = f"[[{name}]] — {description}" if description else f"[[{name}]]"
+    return kernel.bullet(f"{label} ({kernel.plural(len(topic.items), 'item')})")
+
+
+def _entity_line(name: str, entity: Entity, count: int) -> str:
+    parts = [part for part in (" ".join(entity.kind.split()), kernel.plural(count, "item")) if part]
+    return kernel.bullet(f"[[{name}]] ({', '.join(parts)})")
+
+
+def _synthesis_line(synthesis: _Synthesis) -> str:
+    label = f"[[{synthesis.stem}]]"
+    return kernel.bullet(f"{label} — {synthesis.title}" if synthesis.title else label)
+
+
+# ---------------------------------------------------------------------------
 # CLI — parse, build, call; zero business logic
 # ---------------------------------------------------------------------------
 
@@ -428,7 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="dex-map",
         description="Compile the instance map — topics, entities and their relation "
-        "graph — into state/map.json.",
+        "graph — into state/map.json, and render wiki/index.md from it.",
     )
 
 
@@ -442,7 +558,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(f"dex-map: {e}")
     sys.stdout.write(
         f"map compiled: {compiled.topics} topics, {compiled.entities} entities, "
-        f"{compiled.edges} edges -> state/map.json\n"
+        f"{compiled.edges} edges -> state/map.json + wiki/index.md\n"
     )
 
 

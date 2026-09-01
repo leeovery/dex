@@ -56,8 +56,9 @@ one entry (:func:`_deduplicated`) and the summary states how many, because
 applied twice they wrote the permanent record twice and reported the second
 pass as an item already gone.
 
-A successful purge recompiles ``state/map.json`` — the corpus and digests
-it deletes are compile inputs. A recompile failure rides the summary into
+A successful purge recompiles ``state/map.json`` and re-renders
+``wiki/index.md`` — the corpus and digests it deletes are compile inputs.
+A recompile failure rides the summary into
 the command's error exit (:func:`dex_engine.instance_map.recompile`)
 rather than un-reporting deletions that already happened.
 """
@@ -147,7 +148,7 @@ def run_exclude(
     # The purge changed the map's inputs — the corpus, the digests — so
     # the last act is the recompile, on every summary path.
     instance_map.recompile(instance, summary)
-    return f"{summary}; map recompiled"
+    return f"{summary}; map and index recompiled"
 
 
 def _excluded(

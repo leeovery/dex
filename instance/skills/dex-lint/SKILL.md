@@ -36,12 +36,16 @@ reference at the step that names it, not before.
 
 6. **Coarse-topic check**: when a topic has grown unwieldy or a coherent
    sub-cluster has formed inside it, split it — create the finer-grained
-   topic(s), reassign members from their digests, rewrite the affected
-   pages with cross-links, and update the index. The taxonomy is flat; a
+   topic(s), reassign members from their digests through `bin/dex enrich
+   place`, and rewrite the affected pages with cross-links. The index
+   needs nothing: the place verb recompiles it. The taxonomy is flat; a
    "subtopic" is just a sharper topic.
 
 7. **Re-apply `wiki/pins.md`** (the owner's hand-corrections) after any
-   regeneration — pins always win.
+   page regeneration — pins always win. Pins target pages' claims only:
+   `wiki/index.md` is rendered by `bin/dex map` and is unpinnable — a
+   correction to the catalog is a correction to the taxonomy, made
+   through `bin/dex enrich place`.
 
 8. **Compact.** `bin/dex enrich compact` — the ledger is append-only,
    so compact is what settles superseded lines and union merges, and

@@ -1213,8 +1213,7 @@ _HEALTH_OPTIONAL = frozenset(
         "orphans",
         "unplaced",
         "ghost_members",
-        "unindexed",
-        "ghost_index",
+        "stale_map",
         "stale_pages",
         "count_drift",
         "restated",
@@ -1236,6 +1235,7 @@ _HEALTH_OPTIONAL = frozenset(
         "digest_errors",
         "digest_orphans",
         "digest_media_drift",
+        "unrecorded_topics",
         "undescribed_media",
         "reconciled",
         "notes",
@@ -1277,14 +1277,15 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           # a taxonomy topic's or entity's member id with no corpus file —
           # `where` names the list holding it
           "ghost_members": [{"item": str, "where": str}],
-          "unindexed": [str],
-          "ghost_index": [str],
           "stale_pages": [{"page": str, "newer": int}],
           "count_drift": [{"page": str, "recorded": str, "actual": int}],  # actual = member count
           "restated": [{"page": str, "first": str, "second": str}],
           "taxonomy_error": str,        # malformed taxonomy — renders loud
           "entity_members_error": str,  # malformed entity-members — renders loud
           # state checks
+          # a rendered artifact (state/map.json, wiki/index.md) missing or
+          # not what a recompile renders — `why` is "missing" or "stale"
+          "stale_map": [{"artifact": str, "why": str}],
           "ledger_entries": int,
           "ledger_error": str,          # schema failure — renders loud
           "passes_error": str,          # torn/unparseable pass record — renders loud
@@ -1305,6 +1306,9 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
           "digest_errors": [{"item": str, "why": str}],   # shape failure — renders loud
           "digest_orphans": [str],
           "digest_media_drift": [str],   # stated media: is not the media on disk
+          # a digest's canonical topic name the taxonomy does not record
+          # the id under — placement miss or rename residue, judged
+          "unrecorded_topics": [{"item": str, "topic": str}],
           # media on disk that no session has described
           "undescribed_media": [{"item": str, "binaries": int, "described": int}],
           # --write outcomes and free notes
@@ -1440,8 +1444,6 @@ def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> lis
         ("item", "where"),
         lambda i, w: f"{kernel.bold(i)} — in {w}",
     )
-    blocks += _health_names(surface, payload, "unindexed", "pages missing from index")
-    blocks += _health_names(surface, payload, "ghost_index", "ghost index entries")
     stale = _health_rows(surface, payload, "stale_pages", ("page",), int_keys=("newer",))
     blocks += _health_listing(
         "stale pages (members newer than the page)",
@@ -1509,6 +1511,14 @@ def _health_state(surface: str, payload: Mapping[str, object]) -> list[str]:
                 f"ledger — {kernel.bold(kernel.plural(entries, 'entry', 'entries'))}, schema valid"
             )
         )
+    blocks += _health_pairs(
+        surface,
+        payload,
+        "stale_map",
+        "map artifacts stale or missing (rerun `bin/dex map`)",
+        ("artifact", "why"),
+        lambda a, w: f"`{a}` — {w}",
+    )
     ghost = _health_rows(surface, payload, "ghost_items", ("item", "why"), int_keys=("entries",))
     blocks += _health_listing(
         "ledger items with no corpus file",
@@ -1601,6 +1611,14 @@ def _health_digests(surface: str, payload: Mapping[str, object]) -> list[str]:
         payload,
         "digest_media_drift",
         "re-emit these digests (`media:` is not the media on disk)",
+    )
+    blocks += _health_pairs(
+        surface,
+        payload,
+        "unrecorded_topics",
+        "digests naming a canonical topic that does not record them (miss or rename — judge)",
+        ("item", "topic"),
+        lambda i, t: f"{kernel.bold(i)} → `{t}`",
     )
     undescribed = _health_rows(
         surface, payload, "undescribed_media", ("item",), int_keys=("binaries", "described")

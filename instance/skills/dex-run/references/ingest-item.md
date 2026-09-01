@@ -215,8 +215,9 @@ refuses — in `state-formats.md` (this directory).
 
 Splice cited sentence(s) into affected pages — rewrite-not-append when
 "current state" changes. Pages citing a media item should usually embed it
-(relative image links). Update `wiki/index.md`; append a `wiki/log.md`
-line. Then `bin/dex enrich pass <item-id> --stage wiki`.
+(relative image links). `wiki/index.md` needs nothing — it is rendered by
+the engine, and step 7's `place` already recompiled it. Append a
+`wiki/log.md` line. Then `bin/dex enrich pass <item-id> --stage wiki`.
 
 Citation rules:
 

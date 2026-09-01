@@ -304,8 +304,10 @@ class TestSearch:
         assert [hit["type"] for hit in found] == ["item", "page"]
 
     def test_fans_out_across_instances_in_roster_order(self, server):
+        # Coffee answers twice — a digest, and the rendered index carrying a
+        # topic description — and both still come before every books hit.
         found = hits(server, {"query": "method"})
-        assert [hit["instance"] for hit in found] == [COFFEE, BOOKS]
+        assert [hit["instance"] for hit in found] == [COFFEE, COFFEE, BOOKS]
 
     def test_naming_an_instance_restricts_to_it(self, server):
         found = hits(server, {"query": "method", "instance": BOOKS})
@@ -464,9 +466,12 @@ class TestPage:
         assert page["wikilinks"] == ["grinders"]
 
     def test_the_index_hands_back_the_pages_it_points_at(self, server):
-        # The whole index read as one list of `page` calls to make next.
+        # The whole index — rendered by the compile — read as one list of
+        # `page` calls to make next.
         assert record(server, "page", {"name": "index", "instance": COFFEE})["wikilinks"] == [
-            "pour-over"
+            "brewing-technique",
+            "pour-over",
+            "james-hoffmann",
         ]
 
     def test_the_md_suffix_is_optional(self, server):

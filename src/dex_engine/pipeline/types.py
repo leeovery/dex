@@ -769,6 +769,11 @@ class Instance:
         return self.state_dir / "map.json"
 
     @property
+    def index_path(self) -> Path:
+        """``wiki/index.md`` — the rendered catalog (``dex-map``'s other artifact)."""
+        return self.wiki_dir / "index.md"
+
+    @property
     def config_path(self) -> Path:
         """``state/config.json`` — instance config."""
         return self.state_dir / "config.json"

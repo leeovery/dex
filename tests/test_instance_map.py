@@ -1,10 +1,10 @@
-"""Tests for instance_map.py: the map compiler."""
+"""Tests for instance_map.py: the map compiler and the index it renders."""
 
 import json
 
 import pytest
 
-from dex_engine.instance_map import compile_map, main, serialize_map, write_map
+from dex_engine.instance_map import _INDEX_PREAMBLE, compile_map, main, serialize_map, write_map
 from dex_engine.pipeline.types import Instance
 
 A = "2026-01-05-alpha-aaaaaa"
@@ -38,6 +38,16 @@ def write_page(instance: Instance, name: str, body: str = "", group: str = "topi
     path = instance.wiki_dir / group / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\ntopic: {name}\ngenerated: 2026-08-01\n---\n{body}")
+
+
+def write_synthesis(instance: Instance, name: str, text: str) -> None:
+    path = instance.wiki_dir / "syntheses" / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def index_of(instance: Instance) -> str:
+    return compile_map(instance).index
 
 
 def seed(instance: Instance) -> None:
@@ -394,6 +404,176 @@ class TestDeterminism:
         ]
 
 
+class TestIndex:
+    """The same compile's other artifact: wiki/index.md, rendered whole."""
+
+    def test_the_index_is_written_beside_the_map(self, instance):
+        seed(instance)
+        compiled = write_map(instance)
+        assert instance.index_path.read_text(encoding="utf-8") == compiled.index
+
+    def test_the_header_states_what_the_file_is(self, instance):
+        seed(instance)
+        index = index_of(instance)
+        assert index.startswith("# Index\n\n")
+        # The standing preamble: rendered, regenerated, never hand-edited.
+        assert "`bin/dex map`" in index
+        assert "hand edit does not survive" in index
+
+    def test_topics_render_with_description_and_count(self, instance):
+        seed(instance)
+        index = index_of(instance)
+        assert "## Topics\n" in index
+        assert "- [[brewing]] — Brew technique. (2 items)\n" in index
+        assert "- [[grinders]] — Grinder gear. (2 items)\n" in index
+
+    def test_topics_are_sorted_as_the_map_is(self, instance):
+        seed(instance)
+        index = index_of(instance)
+        assert index.index("[[brewing]]") < index.index("[[grinders]]")
+
+    def test_a_topic_without_a_description_drops_the_dash(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": [A]}})
+        assert "- [[brewing]] (1 item)\n" in index_of(instance)
+
+    def test_uncategorized_shares_is_off_the_index(self, instance):
+        seed(instance)
+        assert "uncategorized-shares" not in index_of(instance)
+
+    def test_entities_render_with_kind_and_count(self, instance):
+        seed(instance)
+        index = index_of(instance)
+        assert "## Entities\n" in index
+        assert "- [[hoffmann]] (person, 2 items)\n" in index
+
+    def test_an_entity_without_a_kind_drops_it(self, instance):
+        write_taxonomy(instance, entities={"v60": {"raw": []}})
+        assert "- [[v60]] (0 items)\n" in index_of(instance)
+
+    def test_a_synthesis_renders_with_its_first_heading(self, instance):
+        write_taxonomy(instance)
+        write_synthesis(
+            instance,
+            "whisper-locally",
+            "---\ntype: synthesis\ngenerated: 2026-08-01\n---\n\n"
+            "# Can whisper run locally?\n\nYes.\n",
+        )
+        index = index_of(instance)
+        assert "## Syntheses\n" in index
+        assert "- [[whisper-locally]] — Can whisper run locally?\n" in index
+
+    def test_a_synthesis_without_a_heading_lists_bare(self, instance):
+        write_taxonomy(instance)
+        write_synthesis(instance, "notes", "---\ntype: synthesis\n---\nprose only\n")
+        assert "- [[notes]]\n" in index_of(instance)
+
+    def test_an_unreadable_synthesis_still_lists(self, instance):
+        # The stem is the filename's fact — the page exists, and the index
+        # saying otherwise would hide it.
+        write_taxonomy(instance)
+        path = instance.wiki_dir / "syntheses" / "broken.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xff\xfe# not utf-8")
+        assert "- [[broken]]\n" in index_of(instance)
+
+    def test_a_frontmatter_comment_is_not_the_heading(self, instance):
+        write_taxonomy(instance)
+        write_synthesis(
+            instance,
+            "commented",
+            "---\ntype: synthesis\n# a yaml comment\n---\n# The real heading\n",
+        )
+        assert "- [[commented]] — The real heading\n" in index_of(instance)
+
+    def test_syntheses_are_sorted_by_stem(self, instance):
+        write_taxonomy(instance)
+        write_synthesis(instance, "zzz", "# Z\n")
+        write_synthesis(instance, "aaa", "# A\n")
+        index = index_of(instance)
+        assert index.index("[[aaa]]") < index.index("[[zzz]]")
+
+    def test_empty_sections_are_omitted(self, instance):
+        write_taxonomy(instance)
+        index = index_of(instance)
+        assert index.startswith("# Index\n")
+        assert "## Topics" not in index
+        assert "## Entities" not in index
+        assert "## Syntheses" not in index
+
+    def test_only_the_non_empty_sections_render(self, instance):
+        write_taxonomy(instance)
+        write_synthesis(instance, "one", "# One\n")
+        index = index_of(instance)
+        assert "## Syntheses\n" in index
+        assert "## Topics" not in index
+        assert "## Entities" not in index
+
+    def test_a_bare_root_gets_an_honestly_empty_index(self, tmp_path):
+        write_map(Instance(root=tmp_path))
+        index = (tmp_path / "wiki" / "index.md").read_text(encoding="utf-8")
+        assert index.startswith("# Index\n")
+        assert "## Topics" not in index
+
+    def test_a_multiline_description_renders_on_one_line(self, instance):
+        # The description is the session's; the layout is not — a newline
+        # in judgment text must never invent index lines.
+        write_taxonomy(instance, topics={"brewing": {"description": "one\ntwo", "items": []}})
+        assert "- [[brewing]] — one two (0 items)\n" in index_of(instance)
+
+    def test_a_multiline_kind_renders_on_one_line(self, instance):
+        write_taxonomy(instance, entities={"v60": {"kind": "brew\ntool", "raw": []}})
+        assert "- [[v60]] (brew tool, 0 items)\n" in index_of(instance)
+
+    def test_the_canonical_byte_form_is_pinned(self, instance):
+        """The exact bytes matter: the freshness check diffs a recompile against them."""
+        write_taxonomy(
+            instance,
+            topics={"brewing": {"description": "d", "items": [A]}},
+            entities={"v60": {"kind": "tool", "raw": []}},
+        )
+        write_synthesis(instance, "why-v60", "# Why V60?\n")
+        write_item(instance, A, date="2026-01-05")
+        write_map(instance)
+        assert instance.index_path.read_text(encoding="utf-8") == (
+            "# Index\n"
+            "\n"
+            f"{_INDEX_PREAMBLE}\n"
+            "\n"
+            "## Topics\n"
+            "\n"
+            "- [[brewing]] — d (1 item)\n"
+            "\n"
+            "## Entities\n"
+            "\n"
+            "- [[v60]] (tool, 0 items)\n"
+            "\n"
+            "## Syntheses\n"
+            "\n"
+            "- [[why-v60]] — Why V60?\n"
+        )
+
+    def test_the_write_leaves_no_temp_file(self, instance):
+        seed(instance)
+        write_map(instance)
+        assert list(instance.wiki_dir.glob("index.md.*")) == []
+
+    def test_recompiling_unchanged_inputs_is_byte_identical(self, instance):
+        seed(instance)
+        write_map(instance)
+        once = instance.index_path.read_bytes()
+        write_map(instance)
+        assert instance.index_path.read_bytes() == once
+
+    def test_a_refusal_leaves_the_standing_index_untouched(self, instance):
+        seed(instance)
+        write_map(instance)
+        standing = instance.index_path.read_bytes()
+        instance.taxonomy_path.write_text("{not json")
+        with pytest.raises(ValueError, match="invalid JSON"):
+            write_map(instance)
+        assert instance.index_path.read_bytes() == standing
+
+
 class TestMissingInputs:
     def test_a_missing_taxonomy_compiles_an_honestly_empty_map(self, instance):
         compiled = write_map(instance)
@@ -546,8 +726,11 @@ class TestCli:
         seed(instance)
         main([])
         out = capsys.readouterr().out
-        assert out == "map compiled: 2 topics, 1 entities, 5 edges -> state/map.json\n"
+        assert out == (
+            "map compiled: 2 topics, 1 entities, 5 edges -> state/map.json + wiki/index.md\n"
+        )
         assert instance.map_path.exists()
+        assert instance.index_path.exists()
 
     def test_an_empty_instance_still_gets_a_map(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
