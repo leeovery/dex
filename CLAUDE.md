@@ -230,10 +230,15 @@ A module takes a minute or two. Reading the result is the part that matters:
 
 One collection trap, hit in the field: a module-glob run can silently omit a
 function — its mutants are generated under `mutants/` but never scheduled, and
-`./mutate results` shows no row for them, which reads as a clean audit. After
-any run, check the results listing names every function you touched; force a
-missing one by explicit name (`./mutate run
-"dex_engine.normalize.x__copy_once__mutmut_*"`).
+`./mutate results` shows no row for them, which reads as a clean audit. And
+the results listing drops fully-killed functions too, so absence there proves
+nothing either way: verify scheduling by grepping the generated `mutants/`
+tree for each function you touched, and force a missing one by explicit name
+(`./mutate run "dex_engine.normalize.x__copy_once__mutmut_*"`).
+
+Start every audit with `rm -rf mutants`: a tree left over from a previous run
+lies after a rename — mutants of the renamed function all report "survived"
+without any test executing, including obviously fatal ones.
 
 A second trap, also hit in the field: mutmut skips every DECORATED class
 outright, so the methods of a `@dataclass` (`_Drain` is one) generate no
@@ -278,8 +283,9 @@ that as two executors. Neither weakens an ordinary run.
   arrival, and even in-repo it rots. This file and the backlog are the only
   places that may name the design doc.
 - **Commands** (add / rename / change behavior): update the `pyproject.toml`
-  entry points, the `instance/dex` usage line, and the README command table
-  together.
+  entry points, the `instance/dex` usage line, the README command table, and
+  `KNOWN_VERBS` in `pipeline/observed.py` together — a test pins that tuple
+  to pyproject's scripts, so the fourth place fails loudly if forgotten.
 - **Capture format or flow**: `docs/capture.md`, `docs/shortcut.md`,
   `instance/skills/dex-capture/`, `instance/skills/dex-run/` (SKILL.md +
   references), and `src/dex_engine/inbox.py` describe one design — change
