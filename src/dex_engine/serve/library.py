@@ -1,4 +1,4 @@
-"""Working an instance from outside: search, fetch, page, capture.
+"""Working an instance from outside: search, fetch, page, the maps, capture.
 
 Everything here is mechanical. A search is a plain case-insensitive scan of
 what the instance already curated — digests first, then the corpus item
@@ -6,6 +6,14 @@ behind each one, then the wiki pages — and what comes back is raw hits in a
 stated order, never a ranked answer. Judgment about which of them matter is
 the caller's; the curation that makes dumb probes land somewhere structured
 was spent at write time.
+
+The three map reads — ``topics``, ``entities``, ``graph`` — read
+``state/map.json``, the artifact the map compile already derived: counts
+and typed edges reshaped onto the wire, member id lists left in the file,
+nothing recomputed at call time. The graph read defaults to the
+topic↔topic core under a cap — a real map holds more edges than a chat
+model can read — and its parameters open the rest. A young instance has no
+map yet, and the refusal says which command grows one.
 
 Instance boundaries survive the read: every row is instance-tagged, every id
 is namespaced, and a fan-out concatenates per-instance results in roster
@@ -26,12 +34,14 @@ run that processes the inbox is what carries the commit to the remote.
 """
 
 import datetime
+import json
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, TypeVar
 
 from dex_engine import corpus, frontmatter
 from dex_engine.pipeline import enrichment
@@ -45,17 +55,28 @@ from .roster import NotFoundError, Roster, qualify
 
 __all__ = [
     "Capture",
+    "Edge",
     "Enrichment",
+    "Entities",
+    "Entity",
+    "Graph",
     "Hit",
     "HitType",
     "Item",
     "Page",
     "Search",
+    "Topic",
+    "Topics",
     "capture",
+    "entities",
     "fetch",
+    "graph",
     "page",
     "search",
+    "topics",
 ]
+
+_Rows = TypeVar("_Rows")
 
 # The snippet window around a match: enough of the sentence in front of it to
 # place the hit, more behind it because that is where the claim usually runs.
@@ -69,6 +90,16 @@ _SNIPPET_TAIL = 120
 # rows are already newest-first, so the cut keeps the newest, and the caller is
 # told the whole count either way.
 _HITS_PER_INSTANCE = 25
+
+# How many edges the default graph view may put in front of the caller. A
+# real instance's compiled map holds five figures of edges — a megabyte-plus
+# on the wire — which is not a result a chat model can read, and most of it
+# is weight-1 shared-items noise; even the topic↔topic core lands around
+# four thousand there. The cut keeps every wikilink edge — each one a page
+# curated by hand — and fills what room is left with the heaviest
+# shared-items ones, and the caller is told the whole count either way,
+# with `around`, `min_weight` and `full` opening the rest on request.
+_EDGE_CAP = 2000
 
 # `YYYY-MM-DD-<slug>-<shortid>`, the item-id shape the whole system files
 # under. The slug is the only human-readable name every item carries.
@@ -130,13 +161,14 @@ class Item:
     shared_by: str
     urls: list[str]
     note: str
+    signal: str | None
     digest: str | None
     enrichment: list[Enrichment] | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class Page:
-    """One wiki page, verbatim, and the pages it points at."""
+    """One wiki page's body, and the pages it points at."""
 
     name: str
     instance: str
@@ -144,6 +176,66 @@ class Page:
     path: str
     text: str
     wikilinks: list[str]
+    next: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Topic:
+    """One topic as the map states it: the judgment, its size, and where it maps."""
+
+    name: str
+    description: str
+    count: int
+    has_page: bool
+    newest: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class Topics:
+    """Every topic one instance files under, and what to do with the list."""
+
+    topics: list[Topic]
+    instance: str
+    next: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Entity:
+    """One entity as the map states it: what kind of thing, its other names, its reach."""
+
+    name: str
+    kind: str
+    aliases: list[str]
+    count: int
+    has_page: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class Entities:
+    """Every entity one instance tracks, and what to do with the list."""
+
+    entities: list[Entity]
+    instance: str
+    next: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Edge:
+    """One typed relation: directed ``wikilink``, or weighted undirected ``shared-items``."""
+
+    type: str
+    source: str
+    target: str
+    weight: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class Graph:
+    """The edges one graph read serves, under the count of every edge in the map."""
+
+    edges: list[Edge]
+    total: int
+    instance: str
     next: str
 
 
@@ -222,6 +314,11 @@ def fetch(roster: Roster, item_id: str, *, full: bool) -> Item:
         item = corpus.read_item(path)
     except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError) as e:
         raise ValueError(f"item {item_id!r} does not parse: {e}") from e
+    # The digest's frontmatter is its classification at digest time — stale
+    # by design once the taxonomy moves, so it never reads as the item's
+    # current topics. What surfaces is the judgment still current (`signal`)
+    # and the fact body.
+    digest = _read(instance.digests_dir / f"{bare}.md")
     # `bare`, never the frontmatter's `id:` — see _item_hits.
     return Item(
         id=qualify(name, bare),
@@ -231,7 +328,8 @@ def fetch(roster: Roster, item_id: str, *, full: bool) -> Item:
         shared_by=item.shared_by,
         urls=list(item.urls),
         note=item.body.strip(),
-        digest=_read(instance.digests_dir / f"{bare}.md") or None,
+        signal=_signal(digest),
+        digest=frontmatter.body(digest).strip() or None,
         enrichment=_enrichment(instance, bare) if full else None,
     )
 
@@ -245,7 +343,8 @@ def page(roster: Roster, name: str, instance: str) -> Page:
         instance: Which instance's wiki to read.
 
     Returns:
-        The page, and the pages its body links to.
+        The page's body — its frontmatter is ``generated:`` bookkeeping, not
+        content — and the pages that body links to.
 
     Raises:
         NotFoundError: That instance's wiki holds no page of that name.
@@ -260,17 +359,162 @@ def page(roster: Roster, name: str, instance: str) -> Page:
             "taxonomy's kebab-case names, spelled as they are inside [[wikilinks]]"
         )
     try:
-        text = path.read_text(encoding="utf-8")
+        content = frontmatter.body(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as e:
         raise ValueError(f"{instance} cannot read wiki page {wanted!r}: {e}") from e
     return Page(
         name=wanted,
         instance=instance,
-        title=_page_title(text, wanted),
+        title=_page_title(content, wanted),
         path=str(path.relative_to(served.root)),
-        text=text,
-        wikilinks=_wikilinks(frontmatter.body(text)),
+        text=content,
+        wikilinks=_wikilinks(content),
         next=steering.PAGE_NEXT,
+    )
+
+
+def topics(roster: Roster, instance: str) -> Topics:
+    """Every topic one instance files under, as its compiled map states them.
+
+    Args:
+        roster: The served instances.
+        instance: Which instance's map to read.
+
+    Returns:
+        The topics in the map's own order — counts on the wire, member id
+        lists left in the artifact — and the one line saying what to do next.
+
+    Raises:
+        NotFoundError: ``instance`` names no served instance, or its map has
+            not been compiled yet.
+        ValueError: The map is there but will not parse.
+    """
+    payload = _compiled(instance, roster.locate(instance))
+    return Topics(
+        topics=_shaped(
+            instance,
+            lambda: [
+                Topic(
+                    name=name,
+                    description=entry["description"],
+                    count=entry["count"],
+                    has_page=entry["has_page"],
+                    newest=entry["newest"],
+                )
+                for name, entry in payload["topics"].items()
+            ],
+        ),
+        instance=instance,
+        next=steering.TOPICS_NEXT,
+    )
+
+
+def entities(roster: Roster, instance: str) -> Entities:
+    """Every entity one instance tracks, as its compiled map states them.
+
+    Args:
+        roster: The served instances.
+        instance: Which instance's map to read.
+
+    Returns:
+        The entities in the map's own order — counts on the wire, member id
+        lists left in the artifact — and the one line saying what to do next.
+
+    Raises:
+        NotFoundError: ``instance`` names no served instance, or its map has
+            not been compiled yet.
+        ValueError: The map is there but will not parse.
+    """
+    payload = _compiled(instance, roster.locate(instance))
+    return Entities(
+        entities=_shaped(
+            instance,
+            lambda: [
+                Entity(
+                    name=name,
+                    kind=entry["kind"],
+                    aliases=entry["aliases"],
+                    count=entry["count"],
+                    has_page=entry["has_page"],
+                )
+                for name, entry in payload["entities"].items()
+            ],
+        ),
+        instance=instance,
+        next=steering.ENTITIES_NEXT,
+    )
+
+
+def graph(
+    roster: Roster,
+    instance: str,
+    *,
+    around: str | None = None,
+    min_weight: int | None = None,
+    full: bool,
+) -> Graph:
+    """How one instance's topics and entities relate, as its compiled map states it.
+
+    Args:
+        roster: The served instances.
+        instance: Which instance's map to read.
+        around: Serve every edge touching this name — all types, all
+            endpoints, all weights, uncapped. The name must be one the
+            map's topics or entities state.
+        min_weight: Drop ``shared-items`` edges lighter than this;
+            ``wikilink`` edges carry no weight and always pass.
+        full: Serve every edge in the map, uncapped. Stated at every call
+            rather than defaulted here — the tool signature is where the
+            caller's default belongs.
+
+    Returns:
+        The served edges in the map's own order — ``wikilink`` directed,
+        ``shared-items`` undirected and stored smaller name first — under
+        the count of every edge the map holds. The bare call is the
+        topic↔topic view, and past ``_EDGE_CAP`` it keeps every wikilink
+        edge and the heaviest shared-items ones; the one line then says how
+        to widen.
+
+    Raises:
+        NotFoundError: ``instance`` names no served instance, its map has
+            not been compiled yet, or ``around`` names nothing it maps.
+        ValueError: The map is there but will not parse, or ``around`` and
+            ``full`` were asked for together.
+    """
+    if full and around is not None:
+        raise ValueError(
+            "around and full contradict — around is one name's neighborhood, "
+            "full is every edge in the map; ask for one or the other"
+        )
+    payload = _compiled(instance, roster.locate(instance))
+    edges = _shaped(
+        instance,
+        lambda: [
+            Edge(
+                type=entry["type"],
+                source=entry["source"],
+                target=entry["target"],
+                weight=entry.get("weight"),
+            )
+            for entry in payload["graph"]
+        ],
+    )
+    if around is not None and not _shaped(
+        instance, lambda: around in payload["topics"] or around in payload["entities"]
+    ):
+        raise NotFoundError(
+            f"{instance} maps no name {around!r} — `topics(instance)` and "
+            "`entities(instance)` list the names the graph relates"
+        )
+    served = _shaped(
+        instance,
+        lambda: _view(payload, edges, around=around, min_weight=min_weight, full=full),
+    )
+    return Graph(
+        edges=served,
+        total=len(edges),
+        instance=instance,
+        next=steering.graph_next(shown=len(served), total=len(edges)),
     )
 
 
@@ -349,17 +593,108 @@ def _git(root: Path, args: list[str]) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# The compiled map
+# ---------------------------------------------------------------------------
+
+
+def _compiled(name: str, instance: Instance) -> dict[str, Any]:
+    """One instance's ``state/map.json``, parsed and nothing more.
+
+    Raises:
+        NotFoundError: The map has not been compiled yet.
+        ValueError: The file is there but will not read or parse.
+    """
+    path = instance.map_path
+    if not path.is_file():
+        raise NotFoundError(
+            f"{name} has no compiled map — `bin/dex map` (or the instance's next "
+            "sync) writes state/map.json"
+        )
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError(_recompile(name, e)) from e
+    if not isinstance(parsed, dict):
+        raise ValueError(_recompile(name, f"expected a JSON object, got {type(parsed).__name__}"))
+    return parsed
+
+
+def _shaped(name: str, reshape: Callable[[], _Rows]) -> _Rows:
+    """Reshape the parsed map onto the wire, or refuse it as unparseable.
+
+    The map is compiled, never hand-written, so a shape these reads cannot
+    take rows from is a file that was not honestly compiled — and the heal
+    is the same recompile as for one that is not JSON at all.
+    """
+    try:
+        return reshape()
+    except (AttributeError, KeyError, TypeError) as e:
+        raise ValueError(_recompile(name, e)) from e
+
+
+def _recompile(name: str, cause: object) -> str:
+    """The one wording for a map that cannot be honestly served."""
+    return f"{name}'s state/map.json does not parse: {cause} — `bin/dex map` recompiles it"
+
+
+def _view(
+    payload: dict[str, Any],
+    edges: list[Edge],
+    *,
+    around: str | None,
+    min_weight: int | None,
+    full: bool,
+) -> list[Edge]:
+    """The edges one call's parameters select, in the order they came.
+
+    The bare view is the topic↔topic core under ``_EDGE_CAP``; ``around``
+    and ``full`` lift both the restriction and the cap, and ``min_weight``
+    composes with either.
+    """
+    if around is not None:
+        edges = [edge for edge in edges if around in (edge.source, edge.target)]
+    if min_weight is not None:
+        edges = [
+            edge
+            for edge in edges
+            if edge.type != "shared-items" or (edge.weight or 0) >= min_weight
+        ]
+    if full or around is not None:
+        return edges
+    topics = payload["topics"]
+    return _clipped([edge for edge in edges if edge.source in topics and edge.target in topics])
+
+
+def _clipped(edges: list[Edge]) -> list[Edge]:
+    """The default view cut to ``_EDGE_CAP``, in the order the edges came.
+
+    Every wikilink edge survives, and the heaviest shared-items edges fill
+    what room is left — a stable take, so equal weights keep the map's own
+    deterministic order.
+    """
+    if len(edges) <= _EDGE_CAP:
+        return edges
+    shared = [i for i, edge in enumerate(edges) if edge.type == "shared-items"]
+    room = _EDGE_CAP - (len(edges) - len(shared))
+    kept = set(sorted(shared, key=lambda i: -(edges[i].weight or 0))[: max(room, 0)])
+    return [edge for i, edge in enumerate(edges) if edge.type != "shared-items" or i in kept]
+
+
+# ---------------------------------------------------------------------------
 # Scanning
 # ---------------------------------------------------------------------------
 
 
 def _item_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Iterator[Hit]:
-    """Every item whose digest or corpus file holds the pattern.
+    """Every item whose digest body or corpus file holds the pattern.
 
     One row per item, not one per file that matched: the digest and the
     corpus item are two halves of what ``fetch`` returns together, so a
     match in either is the same hit. The digest is tried first because a
-    match in the curated facts is the more useful thing to show.
+    match in the curated facts is the more useful thing to show — and only
+    its body: the frontmatter is the classification made at digest time,
+    stale by design once the taxonomy moves, so a candidate topic name
+    living only there must neither hit nor snippet.
     """
     for path in sorted(instance.corpus_dir.glob("*/*.md")):
         text = _read(path)
@@ -372,9 +707,9 @@ def _item_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
         # digest, and it is the id a caller can hand back to `fetch` — while
         # frontmatter is authored text that must never become a path.
         item_id = path.stem
-        snippet = _snippet(_read(instance.digests_dir / f"{item_id}.md"), pattern) or _snippet(
-            text, pattern
-        )
+        snippet = _snippet(
+            frontmatter.body(_read(instance.digests_dir / f"{item_id}.md")), pattern
+        ) or _snippet(text, pattern)
         if snippet is None:
             continue
         yield Hit(
@@ -471,6 +806,25 @@ def _parse(text: str) -> corpus.CorpusItem | None:
         return corpus.parse(text)
     except corpus.CorpusSchemaError:
         return None
+
+
+def _signal(digest: str) -> str | None:
+    """The ``signal:`` judgment in a digest's frontmatter, or ``None`` without one.
+
+    A one-key read, tolerant the way every digest reader is: a digest that
+    predates the verb may carry a quoted value, and the quotes come off
+    through the one shared rule.
+    """
+    if not digest.startswith("---\n"):
+        return None
+    end = digest.find("\n---\n", 3)
+    if end == -1:
+        return None
+    for line in digest[len("---\n") : end].split("\n"):
+        key, colon, value = line.partition(":")
+        if colon and key.strip() == "signal":
+            return frontmatter.unquote(value.strip()) or None
+    return None
 
 
 def _enrichment(instance: Instance, item_id: str) -> list[Enrichment]:

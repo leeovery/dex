@@ -323,10 +323,13 @@ sessions: the PUT is the commit, and the next run moves staged binaries into
 processing time, inside the instance. Full protocol: `docs/capture.md`.
 
 Query surface: `dex-serve` is an MCP server — one process serving several
-instances, stateless between calls, every call a fresh read of disk. Four tools
-(`search`, `fetch`, `page`, `capture`), hits tagged with the instance they came
-from and ids namespaced `<instance>/<item-id>`, plus each instance's
-`wiki/index.md` and `state/taxonomy.json` attached as resources. Hands, not an
+instances, stateless between calls, every call a fresh read of disk. Seven
+tools — `search`, `fetch`, `page`, the three map reads (`topics`, `entities`,
+`graph` — the graph trimmed to a readable default, opened up by `around`,
+`min_weight` and `full`), and `capture` — hits tagged with the instance they
+came from and ids namespaced `<instance>/<item-id>`, plus each instance's
+`wiki/index.md`, `state/taxonomy.json` and compiled `state/map.json` attached
+as resources. Hands, not an
 agent: no model runs on that side and nothing is ranked, so the calling chat
 does the searching with its own inference. What keeps an impatient caller
 probing is prose rather than machinery (`serve/steering.py`) — connect-time
