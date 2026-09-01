@@ -65,6 +65,7 @@ KNOWN_VERBS = (
     "enrich item new",
     "enrich mark",
     "enrich pass",
+    "enrich place",
     "enrich run",
     "enrich status",
     "enrich transcribe",

@@ -759,6 +759,11 @@ class Instance:
         return self.state_dir / "taxonomy.json"
 
     @property
+    def entity_members_path(self) -> Path:
+        """``state/entity-members.json`` — entity → member item ids."""
+        return self.state_dir / "entity-members.json"
+
+    @property
     def map_path(self) -> Path:
         """``state/map.json`` — the compiled instance map (``dex-map``'s output)."""
         return self.state_dir / "map.json"

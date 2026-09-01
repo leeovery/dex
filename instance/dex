@@ -1,6 +1,6 @@
 #!/bin/sh
 # dex engine dispatcher — run from the instance root.
-#   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass|item] | lint [--write] | map | exclude <file.json> | inbox [ensure] | sync | render --file <payload> | new <name> | issue --file <payload.json> | serve --instance <path> | connect --instance <path> [--client <name>]
+#   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass|place|item] | lint [--write] | map | exclude <file.json> | inbox [ensure] | sync | render --file <payload> | new <name> | issue --file <payload.json> | serve --instance <path> | connect --instance <path> [--client <name>]
 # Runs the release pinned in .dex-engine-pin (one line, written by sync);
 # falls back to tracking main until the first tag-aware sync pins one.
 # The usage check comes BEFORE the shift: shift is a POSIX special builtin,

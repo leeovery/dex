@@ -1,9 +1,10 @@
 # Instance state formats
 
 Everything under `state/` that the pipeline reads or writes, plus the
-ephemeral `cache/`. All ids are corpus item ids. The files you write
-(taxonomy, entity members) and the digests the verb writes follow these
-shapes exactly — lint and the wiki layer depend on them. The standing rule: state you reason over is
+ephemeral `cache/`. All ids are corpus item ids. Judgment supplies the
+values; the verbs write the files — digests, taxonomy and entity members
+all land through their verbs and follow these shapes exactly — lint and
+the wiki layer depend on them. The standing rule: state you reason over is
 markdown; state machinery processes is JSONL/JSON; nothing binary in
 `state/`.
 
@@ -125,18 +126,53 @@ defaults to "out of scope". The batch is validated whole and refused
 whole — an id must be a corpus item id, never a path — and one id twice
 collapses to one entry with the count stated. The verb records each
 exclusion in `state/exclusions.tsv` (below), removes the corpus file,
-`enrichment/<id>/` and `state/digests/<id>.md`, and purges the item's
-ledger entries except the work another live item still claims; the
-summary line states every count. What the purge leaves is the item's
-entry in `state/taxonomy.json` and any membership in
-`state/entity-members.json` — those two files are yours to write, so
-lint's ghost-members row names each leftover id and its list, and the
-removal is the session's.
+`enrichment/<id>/` and `state/digests/<id>.md`, purges the item's
+ledger entries except the work another live item still claims, and
+recompiles `state/map.json`; the summary line states every count. What
+the purge leaves is the item's entry in `state/taxonomy.json` and any
+membership in `state/entity-members.json` — placement ids are never
+checked against the corpus, so lint's ghost-members row names each
+leftover id and its list, and the removal is the session's: an `unplace`
+payload through `bin/dex enrich place` (below).
 
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a
 `[[name]]` is valid only if it exists here or as a wiki page.
+
+**Never hand-write this file.** Placement is the judgment — what to file
+where, when a topic exists at all — and it goes in as JSON:
+
+```json
+{"topics":   [{"name": "agent-architecture", "description": "One-sentence scope."}],
+ "entities": [{"name": "claude-code", "kind": "tool", "raw": ["claude-md"]}],
+ "place":    [{"id": "<item-id>", "topics": ["agent-architecture"],
+               "entities": ["claude-code"]}],
+ "unplace":  [{"id": "<item-id>", "topics": ["uncategorized-shares"]}],
+ "drop":     {"topics": ["a-folded-away-topic"], "entities": []}}
+```
+
+then `bin/dex enrich place --file cache/placement.json`. Every key is
+optional and the sections apply in that order: `topics`/`entities` upsert
+definitions (create, or redescribe/redefine — a redefined topic keeps its
+members, and an entity's `raw` always folds its canonical name in),
+`place` adds memberships, `unplace` removes them (a sweep or split move
+is place plus unplace in one payload), `drop` removes a whole definition
+with its memberships. A topic's `items` is **not yours to pass** in a
+definition — membership moves only through `place`/`unplace`. The payload
+is validated whole and refused whole: an unknown key, a wrong type, a
+name that is not kebab-case, placing into a topic or entity that neither
+exists nor is defined in the same payload, unplacing what is not placed,
+dropping what does not exist, or dropping `uncategorized-shares` — a
+refusal writes nothing and names the field. Item ids are checked for
+shape only, never against the corpus: placement may precede or follow
+the item's other work, and ghost members are lint's finding. A
+successful run rewrites this file and `state/entity-members.json`
+deterministically — sorted names, sorted unique member ids and aliases —
+and recompiles `state/map.json`. On the first placement of a fresh
+instance the verb creates the files.
+
+What it writes:
 
 ```json
 {
@@ -165,13 +201,32 @@ Topic and entity names are kebab-case and define the wikilink namespace: a
 - `entities.<name>.kind`: tool | company | person | model | concept (extend
   with judgment). `raw` lists the aliases folded into the canonical name.
 
+A digest's `topics:`/`entities:` and a taxonomy topic's `items` answer
+different questions, and their disagreement is expected, permanent, and
+load-bearing. The digest frontmatter is the classification made at digest
+time, in the vocabulary available then — candidate names explicitly
+allowed — and it is never rewritten when the taxonomy changes; the only
+legitimate rewrite is re-running the digest verb because the *item* was
+re-read. That staleness is the feature: topic sweeps and splits find
+members by reading digests for names finer-grained than the current
+taxonomy, and the taxonomy stays rebuildable from digests only because
+classification lives in the permanent record. Taxonomy's `items` lists
+are where each item is filed *today*. So the two records drifting apart
+is not drift and never a repair — and stale-by-design digest frontmatter
+is pipeline plumbing: never present it to the owner or an answering
+agent as an item's current topics. The taxonomy is that answer.
+
 ## `state/entity-members.json` — entity → items
 
 ```json
 { "<entity-name>": ["<item-id>", "..."] }
 ```
 
-Which items mention each entity; feeds entity pages.
+Which items mention each entity; feeds entity pages. **Never hand-write
+this file** — it is the other half of what `bin/dex enrich place` (above)
+rewrites: `place`/`unplace` records with an `entities` list move the
+memberships, dropping an entity removes its list, and an entity holds a
+key only while it has members.
 
 ## Wiki page frontmatter — derived fields, lint-repaired
 

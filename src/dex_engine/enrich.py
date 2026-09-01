@@ -13,6 +13,7 @@ from pathlib import Path
 from .capabilities import Capabilities
 from .pipeline.capture import item_new
 from .pipeline.digest import item_digest
+from .pipeline.placement import place
 from .pipeline.registry import build_drivers
 from .pipeline.run import (
     RunContext,
@@ -32,7 +33,7 @@ __all__ = ["build_parser", "engine_version", "main"]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The argparse tree: run · status · transcribe · fetch · compact · mark · pass · item."""
+    """Argparse tree: run · status · transcribe · fetch · compact · mark · pass · place · item."""
     parser = argparse.ArgumentParser(
         prog="dex-enrich",
         description="Fetch the full content behind every captured URL, ledger-driven.",
@@ -111,6 +112,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--stage", required=True, help="the completed stage (harvest / digest / wiki)"
     )
 
+    place_parser = commands.add_parser(
+        "place",
+        help="apply placement judgment to taxonomy and entity-members from a JSON "
+        "payload, and recompile the map",
+    )
+    place_parser.add_argument(
+        "--file",
+        required=True,
+        type=Path,
+        help="the JSON payload file (conventionally under cache/): any of "
+        '{"topics", "entities", "place", "unplace", "drop"}, applied in that order',
+    )
+
     item_parser = commands.add_parser(
         "item", help="per-item file writes — code writes the shape, judgment supplies the values"
     )
@@ -146,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR0911 — one return per verb
+def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR0911, C901 — one return and one branch per verb
     match args.command:
         case "run":
             return run(ctx, limit=args.limit)
@@ -169,6 +183,8 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             )
         case "pass":
             return record_pass(ctx, args.item, args.stage)
+        case "place":
+            return place(args.file, instance=ctx.instance)
         case "item" if args.item_command == "digest":
             return item_digest(args.file, ctx=ctx)
         case "item":

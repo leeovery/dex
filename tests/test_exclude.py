@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from dex_engine.exclude import main, run_exclude
+from dex_engine.instance_map import compile_map, serialize_map
 from dex_engine.normalize import load_exclusions
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
@@ -74,7 +75,7 @@ class TestRunExclude:
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert summary == (
             "excluded 1: removed 1 items (0 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims)"
+            "dropped, 0 kept (work another live corpus item still claims); map recompiled"
         )
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
         assert not enrichment.exists()
@@ -117,7 +118,7 @@ class TestRunExclude:
         summary = run_exclude(instance, [{"id": ITEM}])
         assert summary == (
             "excluded 1: removed 0 items (1 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims)"
+            "dropped, 0 kept (work another live corpus item still claims); map recompiled"
         )
 
     def test_re_excluding_never_duplicates_the_record(self, instance):
@@ -435,6 +436,8 @@ class TestStrandedLandings:
         assert entry.item == OTHER  # the item that claims the work, not the purged one
         assert entry.path is None
         assert entry.title is None
+        # The clause rides the purge summary; it must never replace it.
+        assert "excluded 1" in summary
         assert "1 re-queued (enrichment went with the item that produced it)" in summary
 
     def test_the_re_queue_is_this_commands_verdict_and_stamps(self, instance):
@@ -634,7 +637,7 @@ class TestADuplicateIdInsideOneBatch:
         assert summary == (
             "excluded 1 (1 duplicate id(s) collapsed): removed 1 items (0 already gone), "
             "0 digests, 0 ledger entries dropped, 0 kept (work another live corpus item "
-            "still claims)"
+            "still claims); map recompiled"
         )
 
     def test_a_genuinely_absent_item_is_still_counted_gone(self, instance):
@@ -699,7 +702,7 @@ class TestUnreadableCorpusFiles:
         ledger_entry(instance, shared, ITEM, url=SHARED_URL)
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert set(ledger.load(instance.ledger_path)) == {shared}
-        assert "0 ledger entries dropped" in summary
+        assert "0 ledger entries dropped, 0 kept" in summary
         assert "1 corpus file(s) could not be read" in summary
 
     def test_a_readable_corpus_still_purges(self, instance):
@@ -736,3 +739,52 @@ class TestCli:
     def test_file_argument_is_required(self):
         with pytest.raises(SystemExit):
             main([])
+
+
+class TestMapRecompile:
+    """The purge changes the map's inputs, so a successful one recompiles it."""
+
+    def _taxonomy(self, instance, items):
+        instance.taxonomy_path.write_text(
+            json.dumps({"topics": {"brewing": {"description": "d", "items": items}}})
+        )
+
+    def test_a_purge_leaves_a_fresh_map(self, instance):
+        write_item_stub(instance)
+        self._taxonomy(instance, [ITEM])
+        instance.map_path.write_text("stale")
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert summary.endswith("; map recompiled")
+        assert instance.map_path.read_text(encoding="utf-8") == (
+            serialize_map(compile_map(instance).payload)
+        )
+
+    def test_every_summary_path_recompiles(self, instance):
+        # The unreadable-corpus early exit still deleted the item, so the
+        # map's inputs changed on that path too.
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        (instance.corpus_dir / OTHER[:4] / f"{OTHER}.md").write_text("no frontmatter")
+        ledger_entry(instance, "aaaaaaaaaa", ITEM)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert "could not be read" in summary
+        assert summary.endswith("; map recompiled")
+        assert instance.map_path.exists()
+
+    def test_a_failed_recompile_reports_but_the_purge_stands(self, instance):
+        # A malformed taxonomy is a real trigger here: the purge never reads
+        # the file, so nothing refused earlier — and the deletions that
+        # landed must not be un-reported by the compile refusing.
+        write_item_stub(instance)
+        instance.taxonomy_path.write_text("{not json")
+        with pytest.raises(ValueError, match="did not recompile") as excinfo:
+            run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert "excluded 1: removed 1 items" in str(excinfo.value)
+        assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert f"{ITEM}\tmeme\n" in (instance.state_dir / "exclusions.tsv").read_text()
+        assert not instance.map_path.exists()
+
+    def test_a_refused_batch_compiles_nothing(self, instance):
+        with pytest.raises(ValueError, match="no id"):
+            run_exclude(instance, [{"reason": "meme"}])
+        assert not instance.map_path.exists()
