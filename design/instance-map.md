@@ -148,10 +148,25 @@ Three new tools, each a verbatim read of `state/map.json`:
   has-page, newest date.
 - `entities(instance)` — every entity: name, kind, aliases, item count,
   has-page.
-- `graph(instance)` — nodes and typed, weighted edges.
+- `graph(instance, around=None, min_weight=None, full=False)` — typed,
+  weighted edges. Amended 2026-09-01 after driving the compile against a
+  copy of the owner's production instance: the full graph there is 14,142
+  edges — 1.3MB, roughly 350k tokens — which no chat model can hold, and
+  a third of it is weight-1 shared-items noise. The limit is a default,
+  never a ceiling: the bare call serves the topic↔topic core under an
+  edge cap (every wikilink edge kept, the heaviest shared-items filling
+  the room, the whole count always stated with the widening knobs named);
+  `around=<name>` is one name's neighborhood, all types and weights,
+  uncapped (~280 edges / 23KB there); `min_weight` drops light
+  shared-items ties; `full=true` is the whole graph, uncapped, for the
+  caller who insists. The untrimmed artifact's real consumers are code,
+  not a model's context — a Code session reads `state/map.json` directly
+  (e.g. to embed the data in a visualization artifact), so the file also
+  ships as a third MCP resource.
 
-Tools, not resources, because of client reality (Why, item 1). The two
-existing resources stay for clients that can read them.
+Tools, not resources, because of client reality (Why, item 1). The three
+resources — index, taxonomy, and now the compiled map — serve the
+clients that can read them.
 
 **Exposure hygiene** — one rule: judgment content and provenance
 surface; pipeline bookkeeping and stale-by-design frontmatter never do.
