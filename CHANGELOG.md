@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-09-01
+
+✨ Added
+- New `dex-map` command compiles a topic/entity/relation map into `state/map.json` and renders `wiki/index.md` from it, replacing the hand-maintained index.
+- New `dex-enrich place` command writes taxonomy and entity-membership changes from a JSON payload instead of hand-edited files, validated whole and refused whole on any error.
+- MCP server gains `topics`, `entities` and `graph` tools for reading the compiled map, plus `state/map.json` as an attached resource.
+- Lint gains a placement advisory: flags digests naming a canonical topic the taxonomy doesn't record the item under.
+- Migration 10 compiles `state/map.json` and `wiki/index.md` for existing instances at sync time.
+
+🔧 Changed
+- Lint's index checks (pages missing from index, ghost index entries) are replaced by a single map/index freshness check — a byte diff against a recompile.
+- `dex-serve`'s `fetch` and `page` tools now return only page/digest bodies, never frontmatter, and `fetch` surfaces a digest's `signal` separately from its facts.
+- `dex-serve` search snippets and hits no longer match against digest frontmatter, only the fact body.
+- The MCP `graph` tool's default view is capped to keep responses readable, with `around`, `min_weight` and `full` to widen it.
+
+🐛 Fixed
+- `dex-exclude` now recompiles the map and index after purging items, so stale entries no longer linger in derived artifacts.
+
 ## [0.1.12] - 2026-08-31
 
 🔧 Changed
