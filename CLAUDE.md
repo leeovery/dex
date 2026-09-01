@@ -104,6 +104,18 @@ the engine stays unaware of which ones exist.
   hand-drawn; the one hand-composed report is a session's closing
   summary to the owner — free-form by design, its required content
   fixed by the dex-run skill.
+- **Digest classification is a moment; taxonomy placement is current.** A
+  digest's `topics:`/`entities:` frontmatter records the classification made
+  at digest time, in the vocabulary available then — candidate names
+  allowed — and is never rewritten when the taxonomy changes; the only
+  legitimate rewrite is re-running the digest verb because the item was
+  re-read. The staleness is load-bearing, not drift: topic sweeps and
+  splits find members by reading digests for names finer-grained than the
+  current taxonomy, and taxonomy is rebuildable from digests only because
+  classification lives there. `state/taxonomy.json` alone says where an
+  item is filed today, so the two files disagreeing is expected. Treat
+  that frontmatter as pipeline plumbing: never present it to a human or an
+  answering agent as an item's current topics.
 - **No server-side machinery in an instance.** An instance runs no Actions and
   no webhooks: the contents-API PUT is the commit, and failures surface in
   sessions where someone can act. This is a rule about the *data* path — no
