@@ -179,21 +179,37 @@ report says so ("dead or ruled out" covers the mixed case), and the
 report and the digest backstop name the item until its digest pass is
 recorded; recording that pass is what clears it.
 
-## 7. Place (judgment)
+## 7. Place (judgment — the values ARE the judgment; the verb writes it)
 
-Placement always writes `state/taxonomy.json`. On the first placement
-pass of a fresh instance, create the file (shape in `state-formats.md`,
-this directory) and place the item in it: early items may land in
-`uncategorized-shares` until pages are justified. A corpus with no
-taxonomy is the state lint reads as BROKEN MID-INGEST and fails on, so
-the file exists from the first placed item onward.
+Placement is stated as JSON and applied by the engine — never by editing
+`state/taxonomy.json` or `state/entity-members.json` by hand:
 
-Taxonomy exists → append the id to each matching topic's `items`. Create a
-new topic only once several items justify a page; the several-items rule
-governs page creation, never taxonomy existence. When you do create one,
-sweep the existing digests (`state/digests/`) for items that belong to
-it — including `uncategorized-shares` — and move them in: a new topic
+```json
+{"place": [{"id": "<item-id>", "topics": ["agent-architecture"],
+            "entities": ["claude-code"]}]}
+```
+
+```
+bin/dex enrich place --file cache/placement.json
+```
+
+The judgment is unchanged — what to place where, and when a topic exists
+at all; the fence between you and the engine moved, exactly as it did
+for digests. On the first placement pass of a fresh instance the verb
+creates the file: define `uncategorized-shares` and any first topics in
+the same payload's `topics` section and place the item — early items may
+land in `uncategorized-shares` until pages are justified. A corpus with
+no taxonomy is the state lint reads as BROKEN MID-INGEST and fails on,
+so the file exists from the first placed item onward.
+
+Create a new topic only once several items justify a page; the
+several-items rule governs page creation, never taxonomy existence. When
+you do create one, sweep the existing digests (`state/digests/`) for
+items that belong to it — including `uncategorized-shares` — and move
+them in with `place` plus `unplace` in the one payload: a new topic
 usually reveals items that were previously overlooked or coarsely filed.
+Full payload shape — definitions, moves, drops, and what the verb
+refuses — in `state-formats.md` (this directory).
 
 ## 8. Wiki (judgment — synthesis is the point)
 

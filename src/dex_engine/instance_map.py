@@ -43,7 +43,19 @@ from pathlib import Path
 from . import atomic, corpus, frontmatter, wikitext
 from .pipeline.types import Instance
 
-__all__ = ["CompiledMap", "build_parser", "compile_map", "main", "serialize_map", "write_map"]
+__all__ = [
+    "CompiledMap",
+    "Entity",
+    "Topic",
+    "build_parser",
+    "compile_map",
+    "load_entity_members",
+    "load_taxonomy",
+    "main",
+    "recompile",
+    "serialize_map",
+    "write_map",
+]
 
 # A ledger for low-signal items, not a classification — it is a taxonomy
 # key for the coverage invariant's sake, and no map consumer's topic.
@@ -61,7 +73,7 @@ class CompiledMap:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _Topic:
+class Topic:
     """One taxonomy topic, validated: description and sorted unique member ids."""
 
     description: str
@@ -69,7 +81,7 @@ class _Topic:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _Entity:
+class Entity:
     """One taxonomy entity, validated: kind and sorted unique aliases."""
 
     kind: str
@@ -91,8 +103,8 @@ def compile_map(instance: Instance) -> CompiledMap:
             forbids. The two judgment files are the only inputs that can
             refuse; broken corpus and wiki files contribute nothing.
     """
-    topics, entities = _taxonomy(instance.taxonomy_path)
-    members = _entity_members(instance.state_dir / "entity-members.json")
+    topics, entities = load_taxonomy(instance.taxonomy_path)
+    members = load_entity_members(instance.entity_members_path)
     pages = _pages(instance)
     dates = _share_dates(instance)
     topic_items = {
@@ -155,17 +167,46 @@ def write_map(instance: Instance) -> CompiledMap:
     return compiled
 
 
+def recompile(instance: Instance, summary: str) -> CompiledMap:
+    """Recompile the map after a verb changed one of its inputs.
+
+    The map is derived state, so a verb that rewrote an input recompiles
+    it as its last act — and a compile failure then must not un-report
+    work that already landed. The failure rides the verb's own summary
+    into its error exit: the message states what stood, why the map is
+    stale, and the recompile command that heals it.
+
+    Args:
+        instance: The instance.
+        summary: The verb's success summary — what already landed.
+
+    Returns:
+        The compiled map, as written.
+
+    Raises:
+        ValueError: The compile or write failed; the message carries
+            ``summary``.
+    """
+    try:
+        return write_map(instance)
+    except (OSError, ValueError) as e:
+        raise ValueError(
+            f"{summary}; state/map.json did not recompile — {e} "
+            "(the writes stand; `bin/dex map` recompiles once the cause is fixed)"
+        ) from e
+
+
 # ---------------------------------------------------------------------------
 # The judgment inputs: taxonomy and entity-members, validated loudly
 # ---------------------------------------------------------------------------
 
 
-def _taxonomy(path: Path) -> tuple[dict[str, _Topic], dict[str, _Entity]]:
+def load_taxonomy(path: Path) -> tuple[dict[str, Topic], dict[str, Entity]]:
     """The parsed topics and entities, both empty when the file is missing.
 
     Absence and wrong type part ways here: a missing key is a young or
     sparse file and reads as empty, a wrong-typed value is a malformed one
-    and refuses — silently defaulting it would compile a map that states
+    and refuses — silently defaulting it would hand every reader
     memberships the file never held.
 
     Raises:
@@ -186,29 +227,29 @@ def _taxonomy(path: Path) -> tuple[dict[str, _Topic], dict[str, _Entity]]:
     return topics, entities
 
 
-def _topic(path: Path, name: str, value: object) -> _Topic:
+def _topic(path: Path, name: str, value: object) -> Topic:
     if not isinstance(value, dict):
         raise ValueError(
             f"{path.name}: topic {name!r} must be an object, got {type(value).__name__}"
         )
-    return _Topic(
+    return Topic(
         description=_str_field(path, f"topic {name!r}", value, "description"),
         items=sorted(set(_str_list_field(path, f"topic {name!r}", value, "items"))),
     )
 
 
-def _entity(path: Path, name: str, value: object) -> _Entity:
+def _entity(path: Path, name: str, value: object) -> Entity:
     if not isinstance(value, dict):
         raise ValueError(
             f"{path.name}: entity {name!r} must be an object, got {type(value).__name__}"
         )
-    return _Entity(
+    return Entity(
         kind=_str_field(path, f"entity {name!r}", value, "kind"),
         aliases=sorted(set(_str_list_field(path, f"entity {name!r}", value, "raw"))),
     )
 
 
-def _entity_members(path: Path) -> dict[str, set[str]]:
+def load_entity_members(path: Path) -> dict[str, set[str]]:
     """Entity name -> member item ids; empty when the file is missing.
 
     The whole documented shape — an object of string -> list of item-id

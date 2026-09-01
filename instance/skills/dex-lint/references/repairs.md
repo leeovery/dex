@@ -18,9 +18,12 @@ other repairs need):
   half-written line is not a record, so removing it is healing, not
   hand-writing state. The sanction is that narrow — the named TORN line
   only, never an intact record and never a rewrite. A malformed
-  `state/entity-members.json` is different: that file is one of the two
-  you write directly, so repair it by rewriting it to the shape in
-  dex-run's `references/state-formats.md`.
+  `state/taxonomy.json` or `state/entity-members.json` takes its own
+  narrow sanction: the placement verb refuses to build on a file it
+  cannot read, so hand-repair the file to the shape in dex-run's
+  `references/state-formats.md` — restoring a readable shape is healing,
+  not hand-writing state — and every write after that goes through
+  `bin/dex enrich place`.
 - **Ledger items with no corpus file** — one row per item and cause;
   the row's parenthesis says which of three, and they want different
   things. **Excluded on record** — ruled out on purpose: write the id as
@@ -109,26 +112,28 @@ other repairs need):
   citations are full item ids, always: resolve each to its full id or
   remove the claim.
 - **Items no page cites and the taxonomy does not record** — read the
-  digest: cite it on
-  the best existing page, or ledger it into `uncategorized-shares` in
-  `state/taxonomy.json` if genuinely low-signal. The row exempts an
+  digest: cite it on the best existing page, or ledger it into
+  `uncategorized-shares` if genuinely low-signal — a `place` record
+  through `bin/dex enrich place` (payload shape in dex-run's
+  `references/state-formats.md`), never a hand-edit of
+  `state/taxonomy.json`. The row exempts an
   item still parked short of its digest — units non-terminal, no
   digest owed yet: coverage is owed once the item is digestible, not
   while it waits.
 - **Items a page cites but no taxonomy topic records** — the other face
   of the coverage invariant: a citation is not a placement. Read the
-  digest and append the id to each matching topic's `items` in
-  `state/taxonomy.json`, or ledger it into `uncategorized-shares` if
-  genuinely low-signal.
+  digest and place the id into each matching topic through `bin/dex
+  enrich place`, or ledger it into `uncategorized-shares` if genuinely
+  low-signal.
 - **Ghost members** (a topic or an entity lists an id no live corpus
   item answers) — exclusion's leftover: the purge removes the corpus
   file, enrichment, digest and ledger entries, and leaves the id
   wherever `state/taxonomy.json` or `state/entity-members.json` lists
-  it, because those two files are yours to write. The row names the
-  list; remove the id from it — for an excluded item, that is the
-  whole repair.
-  Remove the id from each topic's `items`; `lint --write` reconciles
-  the page counts after.
+  it, because placement ids are never checked against the corpus. The
+  row names the list; remove the id with an `unplace` payload through
+  `bin/dex enrich place` (shape in dex-run's
+  `references/state-formats.md`) — for an excluded item, that is the
+  whole repair; `lint --write` reconciles the page counts after.
 - **Pages missing from index** / **ghost index entries** — regenerate
   the affected `wiki/index.md` entries.
 - **Stale pages** (members newer than the page) — fold the newer items

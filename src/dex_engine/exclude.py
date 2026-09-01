@@ -55,6 +55,11 @@ the second copy asks for what the first already did. The copies collapse to
 one entry (:func:`_deduplicated`) and the summary states how many, because
 applied twice they wrote the permanent record twice and reported the second
 pass as an item already gone.
+
+A successful purge recompiles ``state/map.json`` — the corpus and digests
+it deletes are compile inputs. A recompile failure rides the summary into
+the command's error exit (:func:`dex_engine.instance_map.recompile`)
+rather than un-reporting deletions that already happened.
 """
 
 import argparse
@@ -68,7 +73,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import corpus
+from . import corpus, instance_map
 from .pipeline import ledger
 from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
@@ -133,8 +138,27 @@ def run_exclude(
         ValueError: An entry is not an object, has no ``id``, has an ``id``
             that is not a corpus item id or resolves outside the instance,
             or has a non-string ``reason``. The whole batch is refused
-            before anything is written or deleted.
+            before anything is written or deleted. Also raised when the
+            purge landed and the map then failed to recompile — the
+            message carries the summary, so the deletions that happened
+            are never un-reported.
     """
+    summary = _excluded(instance, entries, today=today, now=now, version=version)
+    # The purge changed the map's inputs — the corpus, the digests — so
+    # the last act is the recompile, on every summary path.
+    instance_map.recompile(instance, summary)
+    return f"{summary}; map recompiled"
+
+
+def _excluded(
+    instance: Instance,
+    entries: list[dict[str, object]],
+    *,
+    today: Callable[[], datetime.date],
+    now: Callable[[], datetime.datetime],
+    version: Callable[[], str],
+) -> str:
+    """The purge itself: record, remove, sweep the ledger, re-queue strands."""
     validated = _deduplicated([_validated(instance, entry) for entry in entries])
     removed, missing, digests = _record_and_remove(instance, validated)
     # One rewrite for the whole batch, after the TSV record lands: an

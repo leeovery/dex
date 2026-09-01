@@ -75,6 +75,15 @@ class TestParser:
         assert (args.command, args.item_command) == ("item", "digest")
         assert str(args.file) == "cache/digest.json"
 
+    def test_place_takes_a_payload_file(self):
+        args = build_parser().parse_args(["place", "--file", "cache/placement.json"])
+        assert args.command == "place"
+        assert str(args.file) == "cache/placement.json"
+
+    def test_place_requires_the_payload_file(self):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["place"])
+
     def test_item_digest_requires_the_payload_file(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["item", "digest"])
@@ -160,6 +169,33 @@ class TestMain:
         with pytest.raises(SystemExit) as excinfo:
             main(["item", "digest", "--file", str(payload)])
         assert "missing required key(s) ['facts', 'topics']" in str(excinfo.value)
+
+    def test_place_writes_the_state_files_and_the_map(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        payload = instance.cache_dir / "placement.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "topics": [{"name": "brewing", "description": "Brew technique."}],
+                    "place": [{"id": "2026-08-19-x-55ad7b", "topics": ["brewing"]}],
+                }
+            )
+        )
+        main(["place", "--file", str(payload)])
+        out = capsys.readouterr().out
+        assert out.startswith("wrote state/taxonomy.json + state/entity-members.json")
+        assert out.rstrip().endswith("· map recompiled")
+        assert "brewing" in json.loads(instance.taxonomy_path.read_text())["topics"]
+        assert instance.map_path.exists()
+
+    def test_a_refused_placement_payload_exits_with_a_stated_line(self, instance, monkeypatch):
+        monkeypatch.chdir(instance.root)
+        payload = instance.cache_dir / "placement.json"
+        payload.write_text('{"drop": {"topics": ["ghost"]}}')
+        with pytest.raises(SystemExit) as excinfo:
+            main(["place", "--file", str(payload)])
+        assert "topic 'ghost' does not exist" in str(excinfo.value)
+        assert not instance.taxonomy_path.exists()
 
     def test_compact_prints_the_result(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
