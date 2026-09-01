@@ -297,7 +297,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
-| `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item reads and wiki reads, instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
+| `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item and wiki reads, the compiled-map reads (topics, entities, relation graph), instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
 | `dex-connect --instance <path>` | file the `dex` server with this machine's chat clients — the Claude desktop app and Claude Code — so their sessions reach these instances (`--client`, `--anchor`, `--config`; repeat `--instance` per instance, and re-run to change the list) |
 
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
@@ -357,8 +357,8 @@ Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) �
 `inbox/` (pending captures) · `raw/` (verbatim exports) · `corpus/`
 (append-only items) · `enrichment/` · `media/` (captured binaries, LFS) ·
 `wiki/` (topics/entities/syntheses plus index, log, pins) · `state/` (digests,
-taxonomy, the ledger and other append-only JSONL, config.json) · `cache/`
-(gitignored ephemera) · `.dex-engine-pin` (the engine release this instance
-runs).
+taxonomy, the compiled map, the ledger and other append-only JSONL,
+config.json) · `cache/` (gitignored ephemera) · `.dex-engine-pin` (the engine
+release this instance runs).
 
 </details>

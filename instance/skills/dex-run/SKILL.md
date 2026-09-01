@@ -31,16 +31,21 @@ instructions apply when its step is reached.
    enrich status` backstop. It dispatches the per-item cognitive work —
    scope check through receipt — to `references/ingest-item.md`.
 
-3. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
+3. **Compile the map.** Run `bin/dex map`. The placement and exclusion
+   verbs recompile on their own writes, but wiki pages are edited
+   directly — this closes the gap the session's page edits open, before
+   the health check diffs the artifacts.
+
+4. **Health check.** Log lines are `## [YYYY-MM-DD] <op> | <title>`, so a
    health check reads `## [<date>] lint | …`. If `wiki/log.md` holds no such
    line dated within the past 7 days, run the dex-lint skill
    (`.claude/skills/dex-lint`) — including when the inbox was empty.
 
-4. **Verify.** Working tree clean, everything committed and pushed (a
+5. **Verify.** Working tree clean, everything committed and pushed (a
    local-only instance, with no origin remote, commits without pushing:
    the push is skipped, not passed).
 
-5. **Report.** Close with one report to the owner. Its content is fixed;
+6. **Report.** Close with one report to the owner. Its content is fixed;
    its form is yours. Cover: what was ingested (full item ids), what was
    parked and why, what the health check found or why it was not due,
    any engine defect filed, any config change proposed, and the end
@@ -86,10 +91,10 @@ Where a state file has a verb, the verb writes it and you never do:
 corpus items come from `enrich item new`, digests from `enrich item digest
 --file cache/digest.json` (which records the digest pass itself), ledger
 lines from `enrich mark` and the run itself, harvest and wiki stage
-records from `enrich pass`. You supply the judgment as JSON
-or arguments; the engine decides the shape, so a malformed file cannot be
-written. Same motion as rendering, below. `state/taxonomy.json` and
-`state/entity-members.json` are the ones you still write directly.
+records from `enrich pass`, taxonomy and entity members from `enrich
+place`. You supply the judgment as JSON or arguments; the engine decides
+the shape, so a malformed file cannot be written. Same motion as
+rendering, below.
 
 ## Rendering
 
@@ -104,8 +109,8 @@ Verbatim is scoped to quotation: whenever a surface's or an engine
 command's output is shown — to answer the owner, or because a step says
 to emit it — reproduce it whole, identity (item ids, URLs, paths)
 untruncated, never paraphrased into a new layout. The closing report
-(step 5) is the one report that is not a surface's output: it is
-composed with judgment against step 5's content list, and it summarizes
+(step 6) is the one report that is not a surface's output: it is
+composed with judgment against step 6's content list, and it summarizes
 surface output rather than pasting it.
 
 ## Backfills (exports in raw/)
