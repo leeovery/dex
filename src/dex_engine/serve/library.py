@@ -7,11 +7,13 @@ stated order, never a ranked answer. Judgment about which of them matter is
 the caller's; the curation that makes dumb probes land somewhere structured
 was spent at write time.
 
-The three map reads — ``topics``, ``entities``, ``graph`` — are verbatim
-reads of ``state/map.json``, the artifact the map compile already derived:
-counts and typed edges reshaped onto the wire, member id lists left in the
-file, nothing recomputed at call time. A young instance has no map yet, and
-the refusal says which command grows one.
+The three map reads — ``topics``, ``entities``, ``graph`` — read
+``state/map.json``, the artifact the map compile already derived: counts
+and typed edges reshaped onto the wire, member id lists left in the file,
+nothing recomputed at call time. The graph read defaults to the
+topic↔topic core under a cap — a real map holds more edges than a chat
+model can read — and its parameters open the rest. A young instance has no
+map yet, and the refusal says which command grows one.
 
 Instance boundaries survive the read: every row is instance-tagged, every id
 is namespaced, and a fan-out concatenates per-instance results in roster
@@ -88,6 +90,16 @@ _SNIPPET_TAIL = 120
 # rows are already newest-first, so the cut keeps the newest, and the caller is
 # told the whole count either way.
 _HITS_PER_INSTANCE = 25
+
+# How many edges the default graph view may put in front of the caller. A
+# real instance's compiled map holds five figures of edges — a megabyte-plus
+# on the wire — which is not a result a chat model can read, and most of it
+# is weight-1 shared-items noise; even the topic↔topic core lands around
+# four thousand there. The cut keeps every wikilink edge — each one a page
+# curated by hand — and fills what room is left with the heaviest
+# shared-items ones, and the caller is told the whole count either way,
+# with `around`, `min_weight` and `full` opening the rest on request.
+_EDGE_CAP = 2000
 
 # `YYYY-MM-DD-<slug>-<shortid>`, the item-id shape the whole system files
 # under. The slug is the only human-readable name every item carries.
@@ -219,9 +231,10 @@ class Edge:
 
 @dataclass(frozen=True, kw_only=True)
 class Graph:
-    """The typed edges between one instance's topics and entities."""
+    """The edges one graph read serves, under the count of every edge in the map."""
 
     edges: list[Edge]
+    total: int
     instance: str
     next: str
 
@@ -432,39 +445,76 @@ def entities(roster: Roster, instance: str) -> Entities:
     )
 
 
-def graph(roster: Roster, instance: str) -> Graph:
+def graph(
+    roster: Roster,
+    instance: str,
+    *,
+    around: str | None = None,
+    min_weight: int | None = None,
+    full: bool,
+) -> Graph:
     """How one instance's topics and entities relate, as its compiled map states it.
 
     Args:
         roster: The served instances.
         instance: Which instance's map to read.
+        around: Serve every edge touching this name — all types, all
+            endpoints, all weights, uncapped. The name must be one the
+            map's topics or entities state.
+        min_weight: Drop ``shared-items`` edges lighter than this;
+            ``wikilink`` edges carry no weight and always pass.
+        full: Serve every edge in the map, uncapped. Stated at every call
+            rather than defaulted here — the tool signature is where the
+            caller's default belongs.
 
     Returns:
-        The typed edges in the map's own order — ``wikilink`` directed,
-        ``shared-items`` undirected and stored smaller name first — and the
-        one line saying what to do next.
+        The served edges in the map's own order — ``wikilink`` directed,
+        ``shared-items`` undirected and stored smaller name first — under
+        the count of every edge the map holds. The bare call is the
+        topic↔topic view, and past ``_EDGE_CAP`` it keeps every wikilink
+        edge and the heaviest shared-items ones; the one line then says how
+        to widen.
 
     Raises:
-        NotFoundError: ``instance`` names no served instance, or its map has
-            not been compiled yet.
-        ValueError: The map is there but will not parse.
+        NotFoundError: ``instance`` names no served instance, its map has
+            not been compiled yet, or ``around`` names nothing it maps.
+        ValueError: The map is there but will not parse, or ``around`` and
+            ``full`` were asked for together.
     """
+    if full and around is not None:
+        raise ValueError(
+            "around and full contradict — around is one name's neighborhood, "
+            "full is every edge in the map; ask for one or the other"
+        )
     payload = _compiled(instance, roster.locate(instance))
+    edges = _shaped(
+        instance,
+        lambda: [
+            Edge(
+                type=entry["type"],
+                source=entry["source"],
+                target=entry["target"],
+                weight=entry.get("weight"),
+            )
+            for entry in payload["graph"]
+        ],
+    )
+    if around is not None and not _shaped(
+        instance, lambda: around in payload["topics"] or around in payload["entities"]
+    ):
+        raise NotFoundError(
+            f"{instance} maps no name {around!r} — `topics(instance)` and "
+            "`entities(instance)` list the names the graph relates"
+        )
+    served = _shaped(
+        instance,
+        lambda: _view(payload, edges, around=around, min_weight=min_weight, full=full),
+    )
     return Graph(
-        edges=_shaped(
-            instance,
-            lambda: [
-                Edge(
-                    type=entry["type"],
-                    source=entry["source"],
-                    target=entry["target"],
-                    weight=entry.get("weight"),
-                )
-                for entry in payload["graph"]
-            ],
-        ),
+        edges=served,
+        total=len(edges),
         instance=instance,
-        next=steering.GRAPH_NEXT,
+        next=steering.graph_next(shown=len(served), total=len(edges)),
     )
 
 
@@ -585,6 +635,49 @@ def _shaped(name: str, reshape: Callable[[], _Rows]) -> _Rows:
 def _recompile(name: str, cause: object) -> str:
     """The one wording for a map that cannot be honestly served."""
     return f"{name}'s state/map.json does not parse: {cause} — `bin/dex map` recompiles it"
+
+
+def _view(
+    payload: dict[str, Any],
+    edges: list[Edge],
+    *,
+    around: str | None,
+    min_weight: int | None,
+    full: bool,
+) -> list[Edge]:
+    """The edges one call's parameters select, in the order they came.
+
+    The bare view is the topic↔topic core under ``_EDGE_CAP``; ``around``
+    and ``full`` lift both the restriction and the cap, and ``min_weight``
+    composes with either.
+    """
+    if around is not None:
+        edges = [edge for edge in edges if around in (edge.source, edge.target)]
+    if min_weight is not None:
+        edges = [
+            edge
+            for edge in edges
+            if edge.type != "shared-items" or (edge.weight or 0) >= min_weight
+        ]
+    if full or around is not None:
+        return edges
+    topics = payload["topics"]
+    return _clipped([edge for edge in edges if edge.source in topics and edge.target in topics])
+
+
+def _clipped(edges: list[Edge]) -> list[Edge]:
+    """The default view cut to ``_EDGE_CAP``, in the order the edges came.
+
+    Every wikilink edge survives, and the heaviest shared-items edges fill
+    what room is left — a stable take, so equal weights keep the map's own
+    deterministic order.
+    """
+    if len(edges) <= _EDGE_CAP:
+        return edges
+    shared = [i for i, edge in enumerate(edges) if edge.type == "shared-items"]
+    room = _EDGE_CAP - (len(edges) - len(shared))
+    kept = set(sorted(shared, key=lambda i: -(edges[i].weight or 0))[: max(room, 0)])
+    return [edge for i, edge in enumerate(edges) if edge.type != "shared-items" or i in kept]
 
 
 # ---------------------------------------------------------------------------

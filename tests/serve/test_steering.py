@@ -118,13 +118,26 @@ class TestNextMove:
         assert "\n" not in steering.PAGE_NEXT
 
     def test_a_map_read_is_pointed_back_at_pages_and_search(self):
+        whole = steering.graph_next(shown=4, total=4)
         assert "page(name, instance)" in steering.TOPICS_NEXT
         assert "search" in steering.TOPICS_NEXT
         assert "search" in steering.ENTITIES_NEXT
-        assert "wikilink" in steering.GRAPH_NEXT
-        assert "shared-items" in steering.GRAPH_NEXT
-        for said in (steering.TOPICS_NEXT, steering.ENTITIES_NEXT, steering.GRAPH_NEXT):
+        assert "wikilink" in whole
+        assert "shared-items" in whole
+        for said in (steering.TOPICS_NEXT, steering.ENTITIES_NEXT, whole):
             assert "\n" not in said
+
+    def test_a_trimmed_graph_states_the_cut_and_the_knobs(self):
+        said = steering.graph_next(shown=2000, total=14142)
+        assert "2000 of the map's 14142 edges" in said
+        assert "around" in said
+        assert "min_weight" in said
+        assert "full" in said
+        assert "\n" not in said
+
+    def test_a_graph_served_whole_is_not_reported_as_trimmed(self):
+        assert steering.graph_next(shown=7, total=7) == steering.graph_next(shown=1, total=1)
+        assert "Showing" not in steering.graph_next(shown=7, total=7)
 
     def test_a_footer_does_not_restate_the_doctrine(self, instructions):
         # Every result carries one; the connection carries the doctrine once.
@@ -133,7 +146,8 @@ class TestNextMove:
             steering.PAGE_NEXT,
             steering.TOPICS_NEXT,
             steering.ENTITIES_NEXT,
-            steering.GRAPH_NEXT,
+            steering.graph_next(shown=4, total=4),
+            steering.graph_next(shown=1, total=9),
         ):
             assert said not in instructions
 

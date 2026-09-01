@@ -31,12 +31,14 @@ __all__ = ["build_server"]
 
 _Read = TypeVar("_Read")
 
-# The two files that hold an instance's map. Attached per instance so a
+# The three files that hold an instance's map. Attached per instance so a
 # model starts a conversation holding the shape of the corpus rather than
-# probing for it.
+# probing for it — and so a resource-capable client can pull the whole
+# compiled artifact without it transiting the graph tool's trimmed view.
 _MAPS = (
     ("wiki/index.md", "text/markdown", "the wiki's index of pages"),
     ("state/taxonomy.json", "application/json", "the topic and entity namespace"),
+    ("state/map.json", "application/json", "the compiled map: every topic, entity and edge"),
 )
 
 
@@ -145,7 +147,12 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
         return _stated(lambda: library.entities(roster, instance))
 
     @server.tool()
-    def graph(instance: str) -> library.Graph:
+    def graph(
+        instance: str,
+        around: str | None = None,
+        min_weight: int | None = None,
+        full: bool = False,  # noqa: FBT001, FBT002 — the wire contract's own names
+    ) -> library.Graph:
         """Read how one instance's topics and entities relate, from its compiled map.
 
         `wikilink` edges are curated pointers between pages; a `shared-items`
@@ -153,12 +160,22 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
 
         Args:
             instance: Which instance's map to read.
+            around: A name from `topics` or `entities`: every edge touching
+                it, all types and weights, uncapped.
+            min_weight: Drop `shared-items` edges lighter than this;
+                `wikilink` edges carry no weight and always pass.
+            full: Every edge in the map, uncapped — not alongside `around`.
 
         Returns:
             The typed edges: `wikilink` directed, `shared-items` undirected
-            and weighted.
+            and weighted. The bare call is the topic-to-topic view, trimmed
+            to every wikilink edge and the heaviest shared-items ones when
+            the map is large; `total` counts the whole map, and `next` says
+            how to widen.
         """
-        return _stated(lambda: library.graph(roster, instance))
+        return _stated(
+            lambda: library.graph(roster, instance, around=around, min_weight=min_weight, full=full)
+        )
 
     @server.tool()
     def capture(instance: str, url: str = "", note: str = "") -> library.Capture:

@@ -24,9 +24,9 @@ from .roster import Roster
 
 __all__ = [
     "ENTITIES_NEXT",
-    "GRAPH_NEXT",
     "PAGE_NEXT",
     "TOPICS_NEXT",
+    "graph_next",
     "instructions",
     "procedure",
     "search_next",
@@ -38,8 +38,8 @@ wiki pages written from it. These tools are hands, not an answer service — the
 searching is yours to do, the way you would do it over a folder of files.
 
 - "What does this instance hold?" opens with the maps: `topics(instance)`, \
-`entities(instance)` and `graph(instance)` state the whole catalog in one \
-call each, and a name with a page opens via `page(name, instance)`.
+`entities(instance)` and `graph(instance)` state the catalog in one call \
+each, and a name with a page opens via `page(name, instance)`.
 - `search` returns raw hits in the instance's own order, never a ranked \
 answer. Read a hit as a probe, not as the answer.
 - Open what looks promising: `fetch(id)` for an item, `page(name, instance)` \
@@ -103,10 +103,16 @@ ENTITIES_NEXT = (
     "`page(name, instance)`."
 )
 
-GRAPH_NEXT = (
+_GRAPH_NEXT = (
     "Edges are leads, not answers: follow a `wikilink` edge with "
     "`page(name, instance)`, and read a `shared-items` weight as how many "
     "items two names file together."
+)
+
+_GRAPH_TRIMMED = (
+    "Showing {shown} of the map's {total} edges — `around=<name>` pulls every "
+    "edge touching one name, `min_weight=N` drops `shared-items` ties below N, "
+    "and `full=true` is the whole graph."
 )
 
 
@@ -137,6 +143,21 @@ def search_next(*, shown: int, total: int) -> str:
     if shown < total:
         return _SEARCH_CAPPED.format(shown=shown, total=total)
     return _SEARCH_NEXT
+
+
+def graph_next(*, shown: int, total: int) -> str:
+    """The move that follows a graph read: work the edges shown, or widen the view.
+
+    Args:
+        shown: How many edges the caller is holding.
+        total: How many the whole map holds.
+
+    Returns:
+        The one line for the case this read landed in.
+    """
+    if shown < total:
+        return _GRAPH_TRIMMED.format(shown=shown, total=total)
+    return _GRAPH_NEXT
 
 
 def procedure(template: Traversable) -> str:
