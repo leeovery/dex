@@ -125,6 +125,16 @@ the engine stays unaware of which ones exist.
   item is filed today, so the two files disagreeing is expected. Treat
   that frontmatter as pipeline plumbing: never present it to a human or an
   answering agent as an item's current topics.
+- **Judgment files have verb custody; derived files are compiled.** Every
+  state file a session once hand-wrote now lands through a verb — digests
+  via `enrich item digest`, taxonomy and entity members via `enrich
+  place` — the session supplies the values, the engine owns the bytes.
+  What derives from them — `state/map.json` and `wiki/index.md` — is
+  compiled by `dex-map`, triggered by the writing verbs and by the run
+  flow's closing step, and deterministic to the byte, so lint's freshness
+  check is a recompile and a diff. Nothing derived is ever hand-edited,
+  and the index is unpinnable: a catalog correction is a taxonomy
+  correction, made through the verb.
 - **No server-side machinery in an instance.** An instance runs no Actions and
   no webhooks: the contents-API PUT is the commit, and failures surface in
   sessions where someone can act. This is a rule about the *data* path — no
