@@ -288,6 +288,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-enrich item digest` | write an item's digest from a JSON payload — signal, topics and facts are the judgment, the file's shape is the engine's; the digest pass is recorded in the same call |
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
 | `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape and media drift, pass records (`--write` reconciles derived wiki frontmatter) |
+| `dex-map` | compile the instance map into `state/map.json`: every topic and entity with counts, members and has-page, plus the typed relation graph (directed wikilink edges, weighted shared-member edges) — deterministic to the byte, from taxonomy, entity-members, corpus and wiki |
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |

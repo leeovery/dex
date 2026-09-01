@@ -72,6 +72,7 @@ KNOWN_VERBS = (
     "inbox",
     "issue",
     "lint",
+    "map",
     "new",
     "normalize",
     "render",

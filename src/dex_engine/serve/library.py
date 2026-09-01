@@ -38,6 +38,7 @@ from dex_engine.pipeline import enrichment
 from dex_engine.pipeline.capture import write_capture
 from dex_engine.pipeline.types import Instance
 from dex_engine.pipeline.urls import resolve_repo_path
+from dex_engine.wikitext import wikilinks as _wikilinks
 
 from . import steering
 from .roster import NotFoundError, Roster, qualify
@@ -73,9 +74,6 @@ _HITS_PER_INSTANCE = 25
 # under. The slug is the only human-readable name every item carries.
 _ITEM_ID_RE = re.compile(r"\d{4}-\d{2}-\d{2}-(?P<slug>.+)-[0-9a-f]{6}")
 _HEADING_RE = re.compile(r"^# (.+)$", re.MULTILINE)
-# `[[name]]`, and the `[[name|shown as this]]` form a page may be written in
-# — the name is what resolves to a file, the alias is display text.
-_WIKILINK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
 class HitType(StrEnum):
@@ -412,16 +410,6 @@ def _page_hits(name: str, instance: Instance, pattern: re.Pattern[str]) -> Itera
             snippet=snippet,
             instance=name,
         )
-
-
-def _wikilinks(body: str) -> list[str]:
-    """The pages a body links to, in the order it links them, each named once.
-
-    The name only: a `[[name|shown as this]]` link resolves by its name, and
-    the alias is text for a human reader. A link with no name is not one.
-    """
-    names = (match[1].partition("|")[0].strip() for match in _WIKILINK_RE.finditer(body))
-    return list(dict.fromkeys(name for name in names if name))
 
 
 def _pages(instance: Instance) -> dict[str, Path]:

@@ -8,9 +8,9 @@ the engine stays unaware of which ones exist.
 ## Structure
 
 - `src/dex_engine/` — the mechanical commands, exposed as entry points in
-  `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-exclude`,
-  `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`, `dex-issue`,
-  `dex-serve`, `dex-connect`) and run in instances through the `bin/dex` shim
+  `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-map`,
+  `dex-exclude`, `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`,
+  `dex-issue`, `dex-serve`, `dex-connect`) and run in instances through the `bin/dex` shim
   (`uvx --from` this repo at the pinned tag):
   - `pipeline/` — the ledger-driven core: `types.py` (enums, dataclasses,
     Instance/Config), `ledger.py` (the one serialization boundary),
@@ -47,6 +47,11 @@ the engine stays unaware of which ones exist.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
+  - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
+    and the map compiler share it).
+  - `instance_map.py` — `dex-map`: compiles `state/map.json` (topics,
+    entities, typed relation graph) deterministically from taxonomy,
+    entity-members, corpus and wiki.
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·

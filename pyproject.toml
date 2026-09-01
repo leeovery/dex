@@ -31,6 +31,7 @@ dependencies = [
 dex-normalize = "dex_engine.normalize:main"
 dex-enrich = "dex_engine.enrich:main"
 dex-lint = "dex_engine.lint:main"
+dex-map = "dex_engine.instance_map:main"
 dex-exclude = "dex_engine.exclude:main"
 dex-sync = "dex_engine.sync:main"
 dex-new = "dex_engine.new:main"
