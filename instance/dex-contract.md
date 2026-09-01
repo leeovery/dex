@@ -14,8 +14,8 @@ Four operations. Detailed procedures live in skills — load them, don't improvi
 - **run** (`.claude/skills/dex-run`) — the one route through: sync →
   migrations reviewed → pull → inbox → items → `enrich run` → per-item
   cognitive work for everything its report names (harvest → digest → place →
-  wiki) → health check when due → push. Covers scheduled runs, "process
-  now", and "process the inbox" alike.
+  wiki) → `bin/dex map` → health check when due → push. Covers scheduled
+  runs, "process now", and "process the inbox" alike.
 - **query** (`.claude/skills/dex-query`) — answer from the wiki: `wiki/index.md`
   first, follow [[wikilinks]], prefer newest, cite item ids. File real syntheses
   back under `wiki/syntheses/`.
@@ -44,7 +44,9 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
 state/ also holds: passes.jsonl (stage records) · migrations.jsonl (applied
 migrations) · issue-reports.jsonl (engine-defect reports, filed upstream or
 held locally — the gate or the per-run cap) · config.json
-(owner-editable) · entity-members.json (entity → items) · exclusions.tsv
+(owner-editable) · entity-members.json (entity → items) · map.json (the
+compiled instance map — derived, rewritten with wiki/index.md by
+`bin/dex map`) · exclusions.tsv
 cache/ is ephemeral and gitignored (render payloads, in-flight audio) —
 never state, never synced.
 ```

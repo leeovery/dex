@@ -63,17 +63,19 @@ in order:
      conflict markers remain in them; if any do, the union driver did
      not run, and the resolution is still the union: keep both sides'
      lines, markers removed.
-   - `state/taxonomy.json` and `state/entity-members.json` are the two
-     files sessions write directly, so merge them by judgment: the
-     union of both sides' topics, entities and member lists,
-     deduplicated.
+   - A conflicted `state/taxonomy.json` or `state/entity-members.json`
+     merges by judgment — the union of both sides' topics, entities and
+     member lists — but the verb is the writer: keep either side whole,
+     then move the other side's missing definitions and memberships in
+     through a `bin/dex enrich place` payload.
    - A conflicted `state/digests/<id>.md` is re-derived, never
      hand-spliced: the verb is the writer, so read both sides, write
      the merged judgment as the payload, and run `bin/dex enrich item
      digest --file cache/digest.json`.
    - `wiki/*` is a build artifact: rewrite each conflicted page whole
      from the merged state (digests and taxonomy), rather than splicing
-     around markers.
+     around markers — except `wiki/index.md`, which is rendered:
+     `bin/dex map` recompiles it.
    - A conflicted corpus file is two machines' engine refreshes
      deriving different `status`/`enrichment:` fields. The body is
      verbatim forever and identical on both sides; keep either side's

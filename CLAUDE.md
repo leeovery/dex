@@ -36,7 +36,8 @@ the engine stays unaware of which ones exist.
     `surfaces.py` is what they are now.
   - `serve/` — the MCP server (`dex-serve`): `roster.py` (which instances
     one process serves, and the `<instance>/<item-id>` namespace),
-    `library.py` (the reads: search, fetch, page), `steering.py` (the
+    `library.py` (the reads: search, fetch, page, and the map reads
+    topics/entities/graph off `state/map.json`), `steering.py` (the
     words: instructions, footers, the dex-query prompt read from the
     bundled skill), `server.py` (the tool and resource wiring), `cli.py`,
     and `connect.py` (`dex-connect` — the one write into a chat
