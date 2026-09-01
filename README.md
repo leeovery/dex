@@ -249,7 +249,8 @@ Three things sit on top of that, and they are where the real work happens:
   run. That closes the loop: a bug files an issue, the fix ships in a release,
   sync picks it up, and the work that failed runs again and succeeds.
 - **The wiki is checked mechanically.** Broken wikilinks, citations that do not
-  resolve to a real corpus item, uncited orphans, index drift, pages older than
+  resolve to a real corpus item, uncited orphans, a map or index out of step
+  with its inputs, pages older than
   their own sources, restated facts and ledger schema violations. Judgment
   repairs whatever the check finds.
 
@@ -286,10 +287,10 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
 | `dex-enrich item new` | create a corpus item from a capture file (id rules and provenance; code writes frontmatter) |
 | `dex-enrich item digest` | write an item's digest from a JSON payload — signal, topics and facts are the judgment, the file's shape is the engine's; the digest pass is recorded in the same call |
-| `dex-enrich place` | apply placement judgment to `state/taxonomy.json` and `state/entity-members.json` from a JSON payload — define topics and entities, place/unplace items, drop fold-aways; validated whole and refused whole, both files rewritten deterministically, the map recompiled |
+| `dex-enrich place` | apply placement judgment to `state/taxonomy.json` and `state/entity-members.json` from a JSON payload — define topics and entities, place/unplace items, drop fold-aways; validated whole and refused whole, both files rewritten deterministically, the map and index recompiled |
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
-| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, index drift, stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape and media drift, pass records (`--write` reconciles derived wiki frontmatter) |
-| `dex-map` | compile the instance map into `state/map.json`: every topic and entity with counts, members and has-page, plus the typed relation graph (directed wikilink edges, weighted shared-member edges) — deterministic to the byte, from taxonomy, entity-members, corpus and wiki |
+| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, map and index freshness (a byte diff against an in-memory recompile), stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, media drift and placement advisories, pass records (`--write` reconciles derived wiki frontmatter) |
+| `dex-map` | compile the instance map into `state/map.json` — every topic and entity with counts, members and has-page, plus the typed relation graph (directed wikilink edges, weighted shared-member edges) — and render `wiki/index.md` from the same compile; both deterministic to the byte, from taxonomy, entity-members, corpus and wiki |
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |

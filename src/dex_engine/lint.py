@@ -8,13 +8,15 @@ Checks:
   complement (items pages cite that no taxonomy topic records), ghost
   members (a taxonomy topic's or entity's member id with no corpus file —
   ``exclude`` never edits the session-owned lists, so the id lingers),
-  index consistency,
   stale pages, page item-count drift (frontmatter ``items:`` vs the page's
   MEMBER count — its taxonomy topic's items, or its entity-members list;
   never its citation count), and difflib sentence similarity ("possible restated
   fact — merge?").
 
-  state — ledger schema validation (via ``ledger.load``), ledger↔tree
+  state — map freshness (``state/map.json`` and ``wiki/index.md`` against
+  an in-memory recompile: the compiler is deterministic to the byte, so
+  equality is the whole check and ``bin/dex map`` is the whole repair),
+  ledger schema validation (via ``ledger.load``), ledger↔tree
   referential integrity (items with no corpus file, one row per finding
   with its entry count — excluded-on-record told apart from renamed and
   from unclaimed; ``done`` entries whose output is nowhere on disk, and
@@ -39,10 +41,13 @@ Checks:
   ``id``, ``date``, a ``signal`` of high|medium|low, and ``topics``, and at
   least one fact bullet. ``enrich item digest`` writes digests and cannot
   write any of those faults, so this is the backstop for the files that
-  predate the verb and for anything hand-edited since. Plus two advisories:
-  on a conforming digest, a ``media:`` listing that no longer names the
-  files the item carries, in either direction; and, per item, media
-  carried with fewer descriptions written than files to describe.
+  predate the verb and for anything hand-edited since. Plus three
+  advisories: on a conforming digest, a ``media:`` listing that no longer
+  names the files the item carries, in either direction; per item, media
+  carried with fewer descriptions written than files to describe; and, on
+  a conforming digest, a canonical taxonomy topic its ``topics:`` names
+  whose ``items`` do not record the id — a placement miss or a rename
+  residue, and which one is session judgment.
 
 ``--write`` reconciles derived wiki frontmatter mechanically: ``items:``
 counts are set to the derived member count, and a page that cites items
@@ -70,7 +75,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import corpus, frontmatter
+from . import corpus, frontmatter, instance_map
 from .capabilities import Capabilities
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
@@ -173,6 +178,16 @@ def run_lint(
         return special
     taxonomy, taxonomy_error = _load_taxonomy(instance)
     entity_members, entity_members_error = _entity_members(instance)
+    stale_map: list[dict[str, str]] = []
+    if taxonomy_error is None and entity_members_error is None:
+        stale_map, refusal = _map_freshness(instance)
+        if refusal is not None:
+            # The compiler's loaders validate shapes the tolerant reads
+            # above let through (a topic mapped to a string, a wrong-typed
+            # items list), and the entity-members read above already checks
+            # the compiler's whole shape — so the residual refusals are all
+            # the taxonomy's, and the message names the file and the spot.
+            taxonomy_error = refusal
     corpus_ids = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     pages = _pages(instance)
     scan = _scan_wiki(pages, taxonomy, entity_members, corpus_ids, write=write, today=today)
@@ -186,15 +201,15 @@ def run_lint(
     # asks about the uncited. The cited set is the wiki scan's; the
     # placed set is the taxonomy's own listing.
     unplaced = sorted(scan.cited - _placed_items(taxonomy))
-    unindexed, ghost_index = _index_consistency(instance, pages, taxonomy)
-    # Shortid-shaped citations flag everywhere — index included: latent
-    # shortids in an index never tripped the old citation check because no
-    # page existed to fail against.
-    index_path = instance.wiki_dir / "index.md"
-    if index_path.exists():
+    # Shortid-shaped citations flag everywhere — index included: the index
+    # renders taxonomy descriptions, so a shortid a session wrote into one
+    # surfaces here, and no page scan reaches wiki/index.md.
+    if instance.index_path.exists():
         scan.shortid_citations += [
             {"page": "index", "token": token}
-            for token in sorted(set(SHORTID_RE.findall(index_path.read_text(encoding="utf-8"))))
+            for token in sorted(
+                set(SHORTID_RE.findall(instance.index_path.read_text(encoding="utf-8")))
+            )
         ]
 
     payload: dict[str, object] = {
@@ -210,8 +225,7 @@ def run_lint(
         "orphans": orphans,
         "unplaced": unplaced,
         "ghost_members": ghost_members,
-        "unindexed": unindexed,
-        "ghost_index": ghost_index,
+        "stale_map": stale_map,
         "stale_pages": scan.stale_pages,
         "count_drift": scan.count_drift,
         "restated": scan.restated,
@@ -221,10 +235,11 @@ def run_lint(
     if entity_members_error is not None:
         payload["entity_members_error"] = entity_members_error
     ledger_error = _state_checks(instance, payload, is_cognitive, corpus_ids, notes=scan.notes)
-    digests = _digest_checks(instance)
+    digests = _digest_checks(instance, _topic_members(taxonomy))
     payload["digests"] = digests.count
     payload["digest_errors"] = digests.errors
     payload["digest_media_drift"] = digests.media_drift
+    payload["unrecorded_topics"] = digests.unrecorded
     # Advisory, like the drift row beside it: writing a description is a
     # reader's act, and failing the check on work no machine can do would
     # stop every scheduled run until a human happened to look.
@@ -334,6 +349,26 @@ def _placed_items(taxonomy: dict[str, object]) -> set[str]:
         if isinstance(items, list):
             placed |= {item for item in items if isinstance(item, str)}
     return placed
+
+
+def _topic_members(taxonomy: dict[str, object]) -> dict[str, set[str]]:
+    """Each canonical topic's recorded member ids, uncategorized-shares included.
+
+    The placement advisory's answer key: a digest topic name outside this
+    mapping is a candidate name, not canonical, and never a finding. A
+    malformed topic entry contributes no key — the mangle is its own loud
+    finding, and an advisory against a list that cannot be read would sit
+    on top of it saying nothing.
+    """
+    topics = taxonomy.get("topics", {})
+    if not isinstance(topics, dict):
+        return {}
+    members: dict[str, set[str]] = {}
+    for name, topic in topics.items():
+        items = topic.get("items", []) if isinstance(topic, dict) else None
+        if isinstance(items, list):
+            members[name] = {item for item in items if isinstance(item, str)}
+    return members
 
 
 def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
@@ -629,25 +664,36 @@ def _clip(sentence: str, limit: int = 120) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
-def _index_consistency(
-    instance: Instance, pages: dict[str, Path], taxonomy: dict[str, object]
-) -> tuple[list[str], list[str]]:
-    index_path = instance.wiki_dir / "index.md"
-    index = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-    unindexed = sorted(name for name in pages if f"[[{name}]]" not in index)
-    topics = taxonomy.get("topics", {})
-    entities = taxonomy.get("entities", {})
-    valid_targets = (
-        set(topics if isinstance(topics, dict) else ())
-        | set(entities if isinstance(entities, dict) else ())
-        | set(pages)
+def _map_freshness(instance: Instance) -> tuple[list[dict[str, str]], str | None]:
+    """``state/map.json`` and ``wiki/index.md`` against an in-memory recompile.
+
+    The compiler is deterministic to the byte, so equality is the whole
+    check: a missing or differing artifact is one row, and ``bin/dex map``
+    is the whole repair. A finding, not a failure — both files are derived
+    state, and every session wiki edit legitimately leaves them stale
+    until the next compile. This diff is also what retired the per-entry
+    index checks (unindexed pages, ghost index entries): a rendered index
+    cannot drift page-by-page, it can only be stale whole.
+
+    The second value is the compiler's refusal, when its strict loaders
+    reject a state file — no rows then: the repair is the file's, not the
+    artifacts', and ``bin/dex map`` would refuse the same way.
+    """
+    try:
+        compiled = instance_map.compile_map(instance)
+    except ValueError as e:
+        return [], " ".join(str(e).split())
+    rows: list[dict[str, str]] = []
+    artifacts = (
+        (instance.map_path, instance_map.serialize_map(compiled.payload)),
+        (instance.index_path, compiled.index),
     )
-    ghost = sorted(
-        target
-        for target in set(LINK_RE.findall(index))
-        if target not in pages and target not in valid_targets
-    )
-    return unindexed, ghost
+    for path, rendered in artifacts:
+        if not path.exists():
+            rows.append({"artifact": str(path.relative_to(instance.root)), "why": "missing"})
+        elif path.read_bytes() != rendered.encode("utf-8"):
+            rows.append({"artifact": str(path.relative_to(instance.root)), "why": "stale"})
+    return rows, None
 
 
 # ---------------------------------------------------------------------------
@@ -1080,10 +1126,11 @@ class _DigestScan:
     count: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
     media_drift: list[str] = field(default_factory=list)
+    unrecorded: list[dict[str, str]] = field(default_factory=list)
 
 
-def _digest_checks(instance: Instance) -> _DigestScan:
-    """How many digests there are, the ones that do not conform, and media drift.
+def _digest_checks(instance: Instance, topic_members: dict[str, set[str]]) -> _DigestScan:
+    """How many digests there are, the ones that do not conform, and the advisories.
 
     Shape first. How MANY facts a digest states is the source's business —
     two lines of tweet yield two facts and no honest digest can invent a
@@ -1094,9 +1141,10 @@ def _digest_checks(instance: Instance) -> _DigestScan:
     The count comes back with the findings because the section's heading
     states its scale, and this pass is the one that walks the directory.
 
-    Media drift is asked only of a digest whose shape holds: a malformed
-    one already carries the same repair (rewrite it through the verb), and
-    a second row about the same file would say nothing the first did not.
+    Media drift and the placement advisory are asked only of a digest
+    whose shape holds: a malformed one already carries the same repair
+    (rewrite it through the verb), and a second row about the same file
+    would say nothing the first did not.
     """
     scan = _DigestScan()
     for path in sorted(instance.digests_dir.glob("*.md")):
@@ -1114,9 +1162,35 @@ def _digest_checks(instance: Instance) -> _DigestScan:
         why = _digest_frontmatter_fault(item, fields) or _digest_body_fault(body)
         if why is not None:
             scan.errors.append({"item": item, "why": why})
-        elif _media_drifted(instance, item, fields):
+            continue
+        if _media_drifted(instance, item, fields):
             scan.media_drift.append(item)
+        scan.unrecorded += _unrecorded_topics(item, fields, topic_members)
     return scan
+
+
+def _unrecorded_topics(
+    item: str, fields: dict[str, str | list[str]], topic_members: dict[str, set[str]]
+) -> list[dict[str, str]]:
+    """The digest's canonical topic names whose ``items`` do not record it.
+
+    The two records answer different questions and their disagreement is
+    expected: a digest's ``topics:`` is the classification made at digest
+    time, in that day's vocabulary — candidate names allowed, and never
+    rewritten when the taxonomy moves on — while the taxonomy's ``items``
+    is where the item is filed today. So a name off the taxonomy is
+    silent, and only a CANONICAL name the taxonomy does not record the id
+    under surfaces: that pair is a placement miss or a topic-rename
+    residue, and which one is the session's call — an advisory, never a
+    failure.
+    """
+    stated = fields.get("topics", [])
+    names = [stated] if isinstance(stated, str) else stated
+    return [
+        {"item": item, "topic": name}
+        for name in dict.fromkeys(names)
+        if name in topic_members and item not in topic_members[name]
+    ]
 
 
 def _media_drifted(instance: Instance, item_id: str, fields: dict[str, str | list[str]]) -> bool:

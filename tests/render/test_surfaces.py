@@ -815,8 +815,10 @@ HEALTH_PAYLOAD = {
     "bad_citations": [{"page": "pour-over", "id": "2026-01-01-gone-aaaaaa"}],
     "shortid_citations": [{"page": "index", "token": "a1b2c3"}],
     "orphans": ["2026-01-02-orphan-bbbbbb"],
-    "unindexed": ["new-page"],
-    "ghost_index": ["deleted-page"],
+    "stale_map": [
+        {"artifact": "state/map.json", "why": "missing"},
+        {"artifact": "wiki/index.md", "why": "stale"},
+    ],
     "stale_pages": [{"page": "pour-over", "newer": 2}],
     "count_drift": [{"page": "pour-over", "recorded": "3", "actual": 5}],
     "restated": [
@@ -856,6 +858,7 @@ HEALTH_PAYLOAD = {
     ],
     "digest_errors": [{"item": "2026-01-09-broken-777777", "why": "frontmatter missing topics"}],
     "digest_orphans": ["2026-01-05-undigested-eeeeee"],
+    "unrecorded_topics": [{"item": "2026-01-10-mislaid-666666", "topic": "brewing"}],
     "reconciled": ["pour-over: items: 3 -> 5"],
     "notes": ["one free note"],
 }
@@ -958,8 +961,6 @@ class TestHealthReport:
         assert "- shortid-shaped citations (citations are full item ids, always) — **1**" in out
         assert "  - **index** → `a1b2c3`" in out
         assert "- items no page cites and the taxonomy does not record — **1**" in out
-        assert "- pages missing from index — **1**" in out
-        assert "- ghost index entries — **1**" in out
         assert "- stale pages (members newer than the page) — **1**" in out
         assert "  - **pour-over** — 2 newer items" in out
         assert "- item-count drift (frontmatter `items:` vs members) — **1**" in out
@@ -967,11 +968,19 @@ class TestHealthReport:
         assert "- possible restated facts (same page, merge?) — **1**" in out
         assert "### State — 42 ledger entries" in out
         assert "- ledger — **42 entries**, schema valid" in out
+        assert "- map artifacts stale or missing (rerun `bin/dex map`) — **2**" in out
+        assert "  - `state/map.json` — missing" in out
+        assert "  - `wiki/index.md` — stale" in out
         assert "- waiting on a capability — `transcribe` 3" in out
         assert "- read these yourself (the engine cannot do them) — **1**" in out
         assert "- harvest passes under old rules (re-judge) — **1**" in out
         assert "### Digests — 7 digests" in out
         assert "- digest these (enrichment newer than digest) — **1**" in out
+        assert (
+            "- digests naming a canonical topic that does not record them "
+            "(miss or rename — judge) — **1**"
+        ) in out
+        assert "  - **2026-01-10-mislaid-666666** → `brewing`" in out
         assert "### Reconciled by `--write` — 1 repair" in out
         assert "### Notes — 1 note" in out
         assert_no_trailing_whitespace(out)
@@ -1093,8 +1102,13 @@ class TestHealthReport:
         # and the proof the check ran.
         out = render("health-report", CLEAN_HEALTH)
         assert "- broken wikilinks — none" in out
+        assert "- map artifacts stale or missing (rerun `bin/dex map`) — none" in out
         assert "- waiting on a capability — none" in out
         assert "- MALFORMED DIGESTS (the wiki layer reads these) — none" in out
+        assert (
+            "- digests naming a canonical topic that does not record them "
+            "(miss or rename — judge) — none"
+        ) in out
         assert "- reserved/unbuilt links (informational) — none" in out
         assert "Reconciled by" not in out
 

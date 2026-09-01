@@ -29,9 +29,10 @@ Both files are serialized before either write, taxonomy first — it is
 the namespace the member file hangs off. The write canonicalizes: only
 the documented shape survives (nothing reads anything else), and an
 entity holds an ``entity-members.json`` key only while it has members.
-A successful write recompiles ``state/map.json`` — membership is a map
-input — and a recompile failure rides the summary into the command's
-error exit rather than un-reporting writes that already landed.
+A successful write recompiles ``state/map.json`` and re-renders
+``wiki/index.md`` — membership is a map input, and the index is the map's
+other rendering — and a recompile failure rides the summary into the
+command's error exit rather than un-reporting writes that already landed.
 """
 
 import json
@@ -148,7 +149,7 @@ def place(payload_path: Path, *, instance: Instance) -> str:
     atomic.write_text(instance.entity_members_path, members_text)
     summary = f"wrote state/taxonomy.json + state/entity-members.json ({tally})"
     instance_map.recompile(instance, summary)
-    return f"{summary} · map recompiled"
+    return f"{summary} · map and index recompiled"
 
 
 def _loaded(instance: Instance) -> _State:

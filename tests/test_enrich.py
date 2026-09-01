@@ -184,7 +184,7 @@ class TestMain:
         main(["place", "--file", str(payload)])
         out = capsys.readouterr().out
         assert out.startswith("wrote state/taxonomy.json + state/entity-members.json")
-        assert out.rstrip().endswith("· map recompiled")
+        assert out.rstrip().endswith("· map and index recompiled")
         assert "brewing" in json.loads(instance.taxonomy_path.read_text())["topics"]
         assert instance.map_path.exists()
 

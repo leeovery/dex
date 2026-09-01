@@ -128,7 +128,8 @@ collapses to one entry with the count stated. The verb records each
 exclusion in `state/exclusions.tsv` (below), removes the corpus file,
 `enrichment/<id>/` and `state/digests/<id>.md`, purges the item's
 ledger entries except the work another live item still claims, and
-recompiles `state/map.json`; the summary line states every count. What
+recompiles `state/map.json` and `wiki/index.md`; the summary line states
+every count. What
 the purge leaves is the item's entry in `state/taxonomy.json` and any
 membership in `state/entity-members.json` — placement ids are never
 checked against the corpus, so lint's ghost-members row names each
@@ -169,8 +170,8 @@ shape only, never against the corpus: placement may precede or follow
 the item's other work, and ghost members are lint's finding. A
 successful run rewrites this file and `state/entity-members.json`
 deterministically — sorted names, sorted unique member ids and aliases —
-and recompiles `state/map.json`. On the first placement of a fresh
-instance the verb creates the files.
+and recompiles `state/map.json` and `wiki/index.md`. On the first
+placement of a fresh instance the verb creates the files.
 
 What it writes:
 

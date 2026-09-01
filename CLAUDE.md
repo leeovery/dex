@@ -51,8 +51,10 @@ the engine stays unaware of which ones exist.
   - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
     and the map compiler share it).
   - `instance_map.py` — `dex-map`: compiles `state/map.json` (topics,
-    entities, typed relation graph) deterministically from taxonomy,
-    entity-members, corpus and wiki.
+    entities, typed relation graph) and renders `wiki/index.md` from the
+    same compile, both deterministic to the byte, from taxonomy,
+    entity-members, corpus and wiki. The index is a rendered surface —
+    regenerated whole at every compile, never hand-edited, unpinnable.
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·

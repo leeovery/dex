@@ -93,6 +93,19 @@ other repairs need):
   write them as the payload, run `bin/dex enrich item digest --file
   cache/digest.json` — and the engine re-derives `media:` itself. Never
   hand-edit the line in.
+- **Digests naming a canonical topic that does not record them** — an
+  advisory, and it never fails the check. A digest's `topics:` is the
+  classification made at digest time, in that day's vocabulary, and is
+  never rewritten when the taxonomy moves on — so most disagreement is
+  expected and stays silent. What surfaces is narrower: the digest names
+  a topic the taxonomy DOES define, and that topic's `items` does not
+  record the id. Read the digest and judge which of two it is: a
+  placement miss — the reading still holds, the filing never happened —
+  repaired with a `place` record through `bin/dex enrich place`; or a
+  rename residue / a reading placement has since overruled — the item
+  now lives under a different name, and the digest is the permanent
+  record of what it was called then — which repairs nothing: leave it,
+  and it stands on the report as a known reading.
 - **Describe these** (media carried, no description written) — an
   advisory, and it never fails the check. The item holds more media files
   — its own `media:` paths, plus the `media-<n>.<ext>` files downloaded
@@ -134,8 +147,11 @@ other repairs need):
   `bin/dex enrich place` (shape in dex-run's
   `references/state-formats.md`) — for an excluded item, that is the
   whole repair; `lint --write` reconciles the page counts after.
-- **Pages missing from index** / **ghost index entries** — regenerate
-  the affected `wiki/index.md` entries.
+- **Map artifacts stale or missing** — `state/map.json` or `wiki/index.md`
+  is not what a recompile renders (a wiki edit since the last compile
+  does this legitimately). The whole repair is `bin/dex map`; never
+  hand-edit the index — it is rendered, and a hand edit is exactly what
+  this row flags at the next check.
 - **Stale pages** (members newer than the page) — fold the newer items
   in via rewrite-not-append; if the new material supersedes old claims,
   move them to the history section marked superseded, never silently

@@ -75,7 +75,7 @@ class TestRunExclude:
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert summary == (
             "excluded 1: removed 1 items (0 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims); map recompiled"
+            "dropped, 0 kept (work another live corpus item still claims); map and index recompiled"
         )
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
         assert not enrichment.exists()
@@ -118,7 +118,7 @@ class TestRunExclude:
         summary = run_exclude(instance, [{"id": ITEM}])
         assert summary == (
             "excluded 1: removed 0 items (1 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims); map recompiled"
+            "dropped, 0 kept (work another live corpus item still claims); map and index recompiled"
         )
 
     def test_re_excluding_never_duplicates_the_record(self, instance):
@@ -637,7 +637,7 @@ class TestADuplicateIdInsideOneBatch:
         assert summary == (
             "excluded 1 (1 duplicate id(s) collapsed): removed 1 items (0 already gone), "
             "0 digests, 0 ledger entries dropped, 0 kept (work another live corpus item "
-            "still claims); map recompiled"
+            "still claims); map and index recompiled"
         )
 
     def test_a_genuinely_absent_item_is_still_counted_gone(self, instance):
@@ -754,7 +754,7 @@ class TestMapRecompile:
         self._taxonomy(instance, [ITEM])
         instance.map_path.write_text("stale")
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
-        assert summary.endswith("; map recompiled")
+        assert summary.endswith("; map and index recompiled")
         assert instance.map_path.read_text(encoding="utf-8") == (
             serialize_map(compile_map(instance).payload)
         )
@@ -768,7 +768,7 @@ class TestMapRecompile:
         ledger_entry(instance, "aaaaaaaaaa", ITEM)
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
         assert "could not be read" in summary
-        assert summary.endswith("; map recompiled")
+        assert summary.endswith("; map and index recompiled")
         assert instance.map_path.exists()
 
     def test_a_failed_recompile_reports_but_the_purge_stands(self, instance):

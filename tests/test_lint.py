@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from dex_engine.drivers.x import MAX_HOPS
+from dex_engine.instance_map import write_map
 from dex_engine.lint import LintOutcome, build_parser, main, run_lint
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline.ownership import work_identity
@@ -138,6 +139,9 @@ class TestMalformedEntityMembers:
         assert outcome.exit_code == 1
         assert "Health check" in outcome.report  # the report rendered
         assert "ENTITY MEMBERS FAILURE" in outcome.report
+        # The freshness check skips on the broken file rather than running
+        # the compiler into it and misfiling the refusal as the taxonomy's.
+        assert "TAXONOMY FAILURE" not in outcome.report
         assert "entity-members.json" in outcome.report
         assert "invalid JSON" in outcome.report
 
@@ -306,11 +310,12 @@ class TestWikiChecks:
         write_taxonomy(instance, topics={"brewing": {"items": [ITEM]}})
         write_corpus_stub(instance)
         write_page(instance, "brewing", page_text(body=f"A fact `{ITEM}`.\n"))
-        write_index(instance, "[[brewing]]\n")
+        write_map(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 0
         assert "1 corpus item · 1 page · 1 cited" in outcome.report
         assert "broken wikilinks — none" in outcome.report
+        assert "map artifacts stale or missing (rerun `bin/dex map`) — none" in outcome.report
 
     def test_broken_vs_reserved_wikilinks(self, instance):
         write_taxonomy(instance, topics={"brewing": {"items": []}, "grinders": {"items": []}})
@@ -394,15 +399,6 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert "items a page cites but no taxonomy topic records — none" in outcome.report
-
-    def test_index_consistency(self, instance):
-        write_taxonomy(instance, topics={"brewing": {"items": []}})
-        write_page(instance, "brewing", page_text(items=None, body="text\n"))
-        write_index(instance, "[[ghost-page]]\n")  # brewing missing, ghost present
-        outcome = lint(instance)
-        assert "pages missing from index — **1**" in outcome.report
-        assert "ghost index entries — **1**" in outcome.report
-        assert "ghost-page" in outcome.report
 
     def test_stale_pages_count_newer_members(self, instance):
         newer = "2026-08-19-newer-cccccc"
@@ -492,6 +488,103 @@ class TestWikiChecks:
         write_index(instance, "[[brewing]]\n")
         outcome = lint(instance)
         assert "possible restated facts (same page, merge?) — none" in outcome.report
+
+
+STALE_MAP_ROW = "map artifacts stale or missing (rerun `bin/dex map`)"
+
+
+class TestMapFreshness:
+    """The rendered artifacts against an in-memory recompile — byte equality."""
+
+    def test_fresh_artifacts_are_quiet(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_map(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"{STALE_MAP_ROW} — none" in outcome.report
+
+    def test_missing_artifacts_are_rows_not_failures(self, instance):
+        write_taxonomy(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"{STALE_MAP_ROW} — **2**" in outcome.report
+        assert "`state/map.json` — missing" in outcome.report
+        assert "`wiki/index.md` — missing" in outcome.report
+
+    def test_a_doctored_map_is_stale(self, instance):
+        write_taxonomy(instance)
+        write_map(instance)
+        instance.map_path.write_text(instance.map_path.read_text() + " ")
+        outcome = lint(instance)
+        assert f"{STALE_MAP_ROW} — **1**" in outcome.report
+        assert "`state/map.json` — stale" in outcome.report
+        assert "`wiki/index.md`" not in outcome.report
+
+    def test_a_hand_edited_index_is_stale(self, instance):
+        write_taxonomy(instance)
+        write_map(instance)
+        with instance.index_path.open("a") as index:
+            index.write("\n- [[a-hand-added-line]]\n")
+        outcome = lint(instance)
+        assert f"{STALE_MAP_ROW} — **1**" in outcome.report
+        assert "`wiki/index.md` — stale" in outcome.report
+        assert "`state/map.json`" not in outcome.report
+
+    def test_a_topic_page_added_since_the_compile_stales_the_map_only(self, instance):
+        # has_page is a map fact the index does not render, so the two
+        # artifacts go stale independently.
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_map(instance)
+        write_page(instance, "brewing", page_text(items=None, body="text\n"))
+        outcome = lint(instance)
+        assert "`state/map.json` — stale" in outcome.report
+        assert "`wiki/index.md` — stale" not in outcome.report
+
+    def test_a_synthesis_added_since_the_compile_stales_the_index_only(self, instance):
+        write_taxonomy(instance)
+        write_map(instance)
+        write_page(instance, "brew-notes", "---\ntype: synthesis\n---\n# Q\n", group="syntheses")
+        outcome = lint(instance)
+        assert "`wiki/index.md` — stale" in outcome.report
+        assert "`state/map.json` — stale" not in outcome.report
+
+    def test_the_per_entry_index_rows_are_retired(self, instance):
+        # A rendered index cannot drift page-by-page: an unindexed page or
+        # a ghost entry is a stale index, one row, one repair.
+        write_taxonomy(instance, topics={"brewing": {"items": []}})
+        write_page(instance, "brewing", page_text(items=None, body="text\n"))
+        write_index(instance, "[[ghost-page]]\n")
+        outcome = lint(instance)
+        assert "pages missing from index" not in outcome.report
+        assert "ghost index entries" not in outcome.report
+        assert "`wiki/index.md` — stale" in outcome.report
+
+    def test_the_pre_taxonomy_state_keeps_its_own_outcome(self, instance):
+        # BROKEN MID-INGEST travels alone — no freshness row on top of it.
+        write_corpus_stub(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "BROKEN MID-INGEST" in outcome.report
+        assert STALE_MAP_ROW not in outcome.report
+
+    def test_a_malformed_taxonomy_is_not_also_a_freshness_row(self, instance):
+        (instance.state_dir / "taxonomy.json").write_text("{not json")
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "TAXONOMY FAILURE" in outcome.report
+        assert f"{STALE_MAP_ROW} — none" in outcome.report
+
+    def test_a_shape_the_compiler_refuses_is_a_taxonomy_failure(self, instance):
+        # The tolerant reads above the freshness check pass this shape; the
+        # compiler's strict loaders are what refuse it, and the refusal
+        # surfaces as the malformed-taxonomy failure it is — never a crash,
+        # and never a stale row whose repair would refuse the same way.
+        write_taxonomy(instance, topics={"brewing": "mangled"})
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "TAXONOMY FAILURE" in outcome.report
+        assert "topic 'brewing' must be an object" in outcome.report
+        assert "— stale" not in outcome.report
 
 
 class TestWrite:
@@ -1878,6 +1971,118 @@ class TestUndescribedMedia:
     def test_extraction_assets_are_not_media_owed_a_description(self, instance):
         self._item(instance, on_disk=("abc123-asset-0.png", "abc123-asset-1.png"))
         assert f"{DESCRIBE_ROW} — none" in lint(instance).report
+
+
+UNRECORDED_ROW = (
+    "digests naming a canonical topic that does not record them (miss or rename — judge)"
+)
+
+
+class TestUnrecordedTopics:
+    """The placement advisory: a digest's canonical topic vs the taxonomy's items.
+
+    Digest frontmatter is the classification made at digest time and is
+    never rewritten, so most disagreement with today's filing is expected
+    — only a CANONICAL name the taxonomy does not record the id under
+    surfaces, as a placement miss or a rename residue for the session.
+    """
+
+    def test_a_canonical_topic_that_does_not_record_the_digest_fires(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_corpus_stub(instance)
+        write_digest(instance, ITEM, digest_text())  # topics: [brewing]
+        outcome = lint(instance)
+        assert f"{UNRECORDED_ROW} — **1**" in outcome.report
+        assert f"**{ITEM}** → `brewing`" in outcome.report
+
+    def test_a_candidate_name_stays_silent(self, instance):
+        # A name off the taxonomy is digest-time vocabulary — the raw
+        # material future topics are built from, never a finding.
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_digest(instance, ITEM, digest_text(topics="[espresso-machines]"))
+        assert f"{UNRECORDED_ROW} — none" in lint(instance).report
+
+    def test_a_recorded_placement_stays_silent(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": [ITEM]}})
+        write_corpus_stub(instance)
+        write_digest(instance, ITEM, digest_text())
+        assert f"{UNRECORDED_ROW} — none" in lint(instance).report
+
+    def test_the_advisory_never_fails_the_check(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_corpus_stub(instance)
+        write_digest(instance, ITEM, digest_text())
+        assert lint(instance).exit_code == 0
+
+    def test_a_malformed_digest_is_not_asked(self, instance):
+        # One file, one repair — the rewrite the shape failure names.
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_digest(instance, ITEM, digest_text(signal="urgent"))
+        outcome = lint(instance)
+        assert "signal must be one of" in outcome.report
+        assert f"{UNRECORDED_ROW} — none" in outcome.report
+
+    def test_a_scalar_topics_value_is_read(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_digest(instance, ITEM, digest_text(topics="brewing"))
+        assert f"{UNRECORDED_ROW} — **1**" in lint(instance).report
+
+    def test_block_form_topics_are_read(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_digest(
+            instance,
+            ITEM,
+            f"---\nid: {ITEM}\ndate: 2026-08-19\nsignal: high\ntopics:\n  - brewing\n"
+            "---\n- fact number 0 with concrete specifics.\n",
+        )
+        assert f"{UNRECORDED_ROW} — **1**" in lint(instance).report
+
+    def test_uncategorized_shares_is_canonical_too(self, instance):
+        # The ledger is a taxonomy key like any other to this check: a
+        # digest that judged the item low-signal, off a ledger that does
+        # not record it, is the same miss-or-moved question.
+        write_taxonomy(instance, topics={"uncategorized-shares": {"items": []}})
+        write_digest(instance, ITEM, digest_text(topics="[uncategorized-shares]"))
+        assert f"{UNRECORDED_ROW} — **1**" in lint(instance).report
+
+    def test_a_name_stated_twice_is_one_row(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        write_digest(instance, ITEM, digest_text(topics="[brewing, brewing]"))
+        assert f"{UNRECORDED_ROW} — **1**" in lint(instance).report
+
+    def test_a_mangled_topic_entry_contributes_nothing(self, instance):
+        # The mangle is its own loud finding; an advisory against a list
+        # that cannot be read would sit on top of it saying nothing.
+        write_taxonomy(instance, topics={"brewing": "mangled"})
+        write_digest(instance, ITEM, digest_text())
+        outcome = lint(instance)
+        assert "TAXONOMY FAILURE" in outcome.report
+        assert f"{UNRECORDED_ROW} — none" in outcome.report
+
+    def test_a_topic_defined_without_an_items_list_records_nothing(self, instance):
+        # Absence reads as empty, the same reading the compiler applies —
+        # a canonical topic with nothing recorded does not record this id.
+        write_taxonomy(instance, topics={"brewing": {"description": "d"}})
+        write_digest(instance, ITEM, digest_text())
+        assert f"{UNRECORDED_ROW} — **1**" in lint(instance).report
+
+    def test_an_earlier_malformed_digest_never_ends_the_scan(self, instance):
+        # The shape findings and this advisory come off one walk of the
+        # directory, and the bad file sorts first.
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        bad = "2026-08-19-aaa-aaaaaa"
+        write_digest(instance, bad, digest_text(item=bad, signal="urgent"))
+        write_digest(instance, ITEM, digest_text())
+        outcome = lint(instance)
+        assert "signal must be one of" in outcome.report
+        assert f"{UNRECORDED_ROW} — **1**" in outcome.report
+
+    def test_rows_accumulate_across_digests(self, instance):
+        write_taxonomy(instance, topics={"brewing": {"description": "d", "items": []}})
+        second = "2026-08-19-second-bbbbbb"
+        write_digest(instance, ITEM, digest_text())
+        write_digest(instance, second, digest_text(item=second))
+        assert f"{UNRECORDED_ROW} — **2**" in lint(instance).report
 
 
 class TestCli:
