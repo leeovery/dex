@@ -32,6 +32,12 @@ class TestDoctrine:
         assert "raw hits" in instructions
         assert "never a ranked answer" in instructions
 
+    def test_names_the_maps_as_the_opening_move(self, instructions):
+        assert "What does this instance hold?" in instructions
+        assert "topics(instance)" in instructions
+        assert "entities(instance)" in instructions
+        assert "graph(instance)" in instructions
+
     def test_says_to_follow_wikilinks(self, instructions):
         assert "[[wikilinks]]" in instructions
 
@@ -111,9 +117,24 @@ class TestNextMove:
         assert "fetch" in steering.PAGE_NEXT
         assert "\n" not in steering.PAGE_NEXT
 
+    def test_a_map_read_is_pointed_back_at_pages_and_search(self):
+        assert "page(name, instance)" in steering.TOPICS_NEXT
+        assert "search" in steering.TOPICS_NEXT
+        assert "search" in steering.ENTITIES_NEXT
+        assert "wikilink" in steering.GRAPH_NEXT
+        assert "shared-items" in steering.GRAPH_NEXT
+        for said in (steering.TOPICS_NEXT, steering.ENTITIES_NEXT, steering.GRAPH_NEXT):
+            assert "\n" not in said
+
     def test_a_footer_does_not_restate_the_doctrine(self, instructions):
         # Every result carries one; the connection carries the doctrine once.
-        for said in (steering.search_next(shown=4, total=4), steering.PAGE_NEXT):
+        for said in (
+            steering.search_next(shown=4, total=4),
+            steering.PAGE_NEXT,
+            steering.TOPICS_NEXT,
+            steering.ENTITIES_NEXT,
+            steering.GRAPH_NEXT,
+        ):
             assert said not in instructions
 
 

@@ -1,10 +1,11 @@
 """Fixtures for the serve tests: two toy instances and an in-process client.
 
 The instances are shaped like the repo's `example/` — a corpus item, its
-digest, its enrichment, a wiki page, the CLAUDE.md declaring its scope —
-times two, so fan-out, the instance filter and the id namespace all have
-something to be wrong about. `dex-books` is deliberately younger: no wiki, no
-taxonomy, no CLAUDE.md, one item with no digest.
+digest, its enrichment, a wiki page, the CLAUDE.md declaring its scope, the
+taxonomy and its compiled map — times two, so fan-out, the instance filter
+and the id namespace all have something to be wrong about. `dex-books` is
+deliberately younger: no wiki, no taxonomy, no compiled map, no CLAUDE.md,
+one item and its digest.
 
 Every call goes through the SDK's in-memory transport: a real client session
 against a real server, no subprocess and no socket. The one exception is
@@ -24,6 +25,8 @@ import pytest
 from mcp.client import Client
 from mcp.server.mcpserver import MCPServer
 
+from dex_engine.instance_map import write_map
+from dex_engine.pipeline.types import Instance
 from dex_engine.serve.roster import Roster, build_roster
 from dex_engine.serve.server import build_server
 
@@ -129,8 +132,25 @@ The starting recipe is 60g/L with a post-bloom swirl rather than a stir
     )
     write(
         root / "state" / "taxonomy.json",
-        json.dumps({"topics": {"pour-over": {"description": "Filter brewing.", "items": [V60]}}}),
+        json.dumps(
+            {
+                "topics": {
+                    "pour-over": {"description": "Filter brewing.", "items": [V60]},
+                    "brewing-technique": {
+                        "description": "Method across brew styles.",
+                        "items": [V60, GRINDER],
+                    },
+                },
+                "entities": {
+                    "james-hoffmann": {"kind": "person", "raw": ["James Hoffmann", "Hoffmann"]}
+                },
+            }
+        ),
     )
+    write(root / "state" / "entity-members.json", json.dumps({"james-hoffmann": [V60]}))
+    # The compiled map, from the same files the compile always reads — the
+    # serve tools read it back verbatim.
+    write_map(Instance(root=root))
 
 
 def _books(root: Path) -> None:

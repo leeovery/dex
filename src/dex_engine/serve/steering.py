@@ -22,13 +22,24 @@ from dex_engine.pipeline.types import Instance
 
 from .roster import Roster
 
-__all__ = ["PAGE_NEXT", "instructions", "procedure", "search_next"]
+__all__ = [
+    "ENTITIES_NEXT",
+    "GRAPH_NEXT",
+    "PAGE_NEXT",
+    "TOPICS_NEXT",
+    "instructions",
+    "procedure",
+    "search_next",
+]
 
 _DOCTRINE = """\
 dex is this owner's own knowledge base: what they saved, plus the digests and \
 wiki pages written from it. These tools are hands, not an answer service — the \
 searching is yours to do, the way you would do it over a folder of files.
 
+- "What does this instance hold?" opens with the maps: `topics(instance)`, \
+`entities(instance)` and `graph(instance)` state the whole catalog in one \
+call each, and a name with a page opens via `page(name, instance)`.
 - `search` returns raw hits in the instance's own order, never a ranked \
 answer. Read a hit as a probe, not as the answer.
 - Open what looks promising: `fetch(id)` for an item, `page(name, instance)` \
@@ -78,6 +89,24 @@ PAGE_NEXT = (
     "A page is a map, not a source: resolve its `wikilinks` with "
     "`page(name, instance)` and open the item ids it cites with `fetch` — the "
     "items are what an answer cites."
+)
+
+TOPICS_NEXT = (
+    "A catalog, not content: open a topic that has a page with "
+    "`page(name, instance)` — the page cites its member items — and `search` "
+    "the names that have none."
+)
+
+ENTITIES_NEXT = (
+    "A catalog, not content: an entity's aliases are the owner's own "
+    "spellings — ready-made `search` terms — and one with a page opens with "
+    "`page(name, instance)`."
+)
+
+GRAPH_NEXT = (
+    "Edges are leads, not answers: follow a `wikilink` edge with "
+    "`page(name, instance)`, and read a `shared-items` weight as how many "
+    "items two names file together."
 )
 
 

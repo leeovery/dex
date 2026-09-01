@@ -1,4 +1,4 @@
-"""Wiring the library onto MCP: four tools, the maps, the steering, the prompt.
+"""Wiring the library onto MCP: seven tools, the map resources, the steering, the prompt.
 
 The only thing this layer decides is how a refusal reaches the caller. Only
 a :class:`ToolError`'s text is passed on; every other exception is logged
@@ -60,7 +60,7 @@ def build_server(roster: Roster, *, template: Traversable | None = None) -> MCPS
 
 
 def _add_tools(server: MCPServer, roster: Roster) -> None:
-    """Attach the three reads and the one write, each closing over the roster."""
+    """Attach the six reads and the one write, each closing over the roster."""
 
     @server.tool()
     def search(query: str, instance: str | None = None) -> library.Search:
@@ -108,10 +108,57 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
             instance: Which instance's wiki holds it.
 
         Returns:
-            The page verbatim, and the wikilinks in it, each resolvable by
+            The page's body, and the wikilinks in it, each resolvable by
             another ``page`` call.
         """
         return _stated(lambda: library.page(roster, name, instance))
+
+    @server.tool()
+    def topics(instance: str) -> library.Topics:
+        """List every topic one instance files under, from its compiled map.
+
+        The opening move for "what does this instance hold" — a topic with
+        a page opens with `page(name, instance)`.
+
+        Args:
+            instance: Which instance's map to read.
+
+        Returns:
+            Every topic: its description, how many items it files, whether
+            a wiki page maps it, and its newest member's share date.
+        """
+        return _stated(lambda: library.topics(roster, instance))
+
+    @server.tool()
+    def entities(instance: str) -> library.Entities:
+        """List every entity one instance tracks, from its compiled map.
+
+        Aliases are the owner's own spellings — ready-made `search` terms.
+
+        Args:
+            instance: Which instance's map to read.
+
+        Returns:
+            Every entity: its kind, its aliases, how many items it reaches,
+            and whether a wiki page maps it.
+        """
+        return _stated(lambda: library.entities(roster, instance))
+
+    @server.tool()
+    def graph(instance: str) -> library.Graph:
+        """Read how one instance's topics and entities relate, from its compiled map.
+
+        `wikilink` edges are curated pointers between pages; a `shared-items`
+        weight counts the items two names file together.
+
+        Args:
+            instance: Which instance's map to read.
+
+        Returns:
+            The typed edges: `wikilink` directed, `shared-items` undirected
+            and weighted.
+        """
+        return _stated(lambda: library.graph(roster, instance))
 
     @server.tool()
     def capture(instance: str, url: str = "", note: str = "") -> library.Capture:
