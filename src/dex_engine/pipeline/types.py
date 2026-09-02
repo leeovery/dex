@@ -404,13 +404,18 @@ class NeedsCapability:
     ``meta``/``body`` are the partial content already in hand — a video's
     description, an episode's show notes and enclosure pointer — which the
     run layer writes now rather than holding hostage to a capability
-    backlog; the drain completes the same file. ``reason`` states the park
-    for the report.
+    backlog; the drain completes the same file. ``media`` is what the unit
+    carries BESIDE the artefact the capability will produce — the stills
+    of a carousel whose one video is off to be transcribed — and feeds the
+    media stage exactly as :class:`Content`'s does; a park that drops them
+    loses them, because nothing downstream ever sees the URLs again.
+    ``reason`` states the park for the report.
     """
 
     need: Need
     meta: dict[str, str | int | None] = field(default_factory=dict)
     body: str | None = None
+    media: list[str] = field(default_factory=list)
     reason: str | None = None
 
 

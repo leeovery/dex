@@ -22,9 +22,10 @@ what an anonymous link preview does.
 
 Media is enumerated by probing those endpoints one index at a time,
 because nothing that claims to describe a post's media tells the truth
-about it. Video wins over images and transcribes; images are kept as proxy
-URLs, never the signed CDN URLs they redirect to — those expire, and a
-ledger identity must not.
+about it. A video transcribes and its binary is dropped; images are kept
+in either shape of post — a stills-only carousel, and the stills standing
+beside a carousel's video — as proxy URLs, never the signed CDN URLs they
+redirect to: those expire, and a ledger identity must not.
 
 The driver owns the whole instagram.com host, post URLs and everything
 else alike, because the alternative is the web catch-all fetching
@@ -277,6 +278,7 @@ class InstagramDriver:
         }
         videos = _indexes(items, _Item.VIDEO)
         images = _indexes(items, _Item.IMAGE)
+        image_urls = [self._media_url("images", post.code, index) for index in images]
         if videos:
             # `enclosure` is the key the transcribe acquisition reads back
             # out of the park file's frontmatter — and the condition under
@@ -284,15 +286,11 @@ class InstagramDriver:
             # reel spelling it any other way would park with nothing on disk
             # and loop manual on its absence.
             meta["enclosure"] = self._media_url("videos", post.code, videos[0])
-            # One fetch is one outcome and a capability park carries no
-            # media, so a post holding any video transcribes and its stills
-            # are dropped — counted here so judgment can rescue them.
-            if images:
-                meta["images_dropped"] = len(images)
             return NeedsCapability(
                 need=Need.TRANSCRIBE,
                 meta=meta,
                 body=_attributed(post) if post.caption else None,
+                media=image_urls,
                 reason=_PARK_REASON,
             )
         if not post.caption and not images:
@@ -300,7 +298,7 @@ class InstagramDriver:
         return Content(
             meta=meta,
             body=_attributed(post, stand_in="(image post)" if images else None),
-            media=[self._media_url("images", post.code, index) for index in images],
+            media=image_urls,
         )
 
     def _media_url(self, family: str, code: str, index: int) -> str:

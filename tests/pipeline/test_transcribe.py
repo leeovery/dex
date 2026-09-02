@@ -59,7 +59,14 @@ from tests.drivers.conftest import (
     truncating_server,
 )
 from tests.drivers.test_instagram import BASE as PROXY_BASE
-from tests.drivers.test_instagram import REEL_CODE, og_page, post_url, probe_url, walk
+from tests.drivers.test_instagram import (
+    REEL_CODE,
+    image_url,
+    og_page,
+    post_url,
+    probe_url,
+    walk,
+)
 from tests.pipeline.test_run import ITEM, TODAY, entry_for, make_ctx, write_item
 
 VIDEO_URL = "https://youtube.com/watch?v=abc123"
@@ -901,6 +908,55 @@ class TestInstagramDrain:
         assert self.CAPTION in body  # the park's caption survives the landing
         assert "Waiting on the engine" not in report  # nothing survived the session
         assert audio_files(instance) == []  # the transcript superseded the audio
+
+    def test_a_mixed_carousel_lands_its_stills_beside_its_transcript(self, instance):
+        # The field defect: an 8-slide post with one video had its seven
+        # stills dropped at the park, and the item was digested on the
+        # caption and the transcript alone. Both halves land in one run now.
+        write_item(instance, urls=[self.POST_URL])
+        stills = {
+            image_url(REEL_CODE, index): HttpResponse(
+                status=200, content_type="image/jpeg", body=f"still-{index}".encode()
+            )
+            for index in (1, 3)
+        }
+        transport = FakeTransport(
+            {
+                self.POST_URL: og_page(caption=self.CAPTION, code=REEL_CODE),
+                **walk(REEL_CODE, "image/jpeg", "video/mp4", "image/jpeg"),
+                probe_url(REEL_CODE, 2): self.video(),
+                **stills,
+            }
+        )
+        caps = Capabilities(
+            transcribers=(FakeTranscriber("whisper-local", text="Reel words.", model="medium"),),
+            extractors=(),
+        )
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=[
+                InstagramDriver(
+                    base_url=PROXY_BASE, transport=transport, pace=lambda _seconds: None
+                )
+            ],
+            transport=transport,
+            capabilities=caps,
+            provider_available=caps.available,
+        )
+        run_mod.run(ctx)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(self.POST_URL)].status is Status.DONE
+        landed = {
+            url: entries[work_hash(url)].path for url in (image_url(REEL_CODE, i) for i in (1, 3))
+        }
+        assert landed == {
+            image_url(REEL_CODE, 1): f"enrichment/{ITEM}/media-0.jpg",
+            image_url(REEL_CODE, 3): f"enrichment/{ITEM}/media-1.jpg",
+        }
+        assert (instance.root / f"enrichment/{ITEM}/media-1.jpg").read_bytes() == b"still-3"
+        _fields, body = read_enrichment(instance.root / str(entries[work_hash(self.POST_URL)].path))
+        assert "Reel words." in body
 
     def test_a_park_with_no_provider_still_rests_across_the_run(self, instance):
         # The other side of the re-queue: the drain predicate is the next

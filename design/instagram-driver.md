@@ -194,6 +194,9 @@ Mapped onto `Content`:
   the media, and `images_dropped: n` when §5's video-wins rule dropped
   any. Engagement counts stay unrecorded, per the standing rule — they
   are snapshot noise, and the parse that finds the handle discards them.
+  **Amended 2026-09-02:** `images_dropped` is retired — nothing ever read
+  it, and the stills it counted now ride the park as media (§5's
+  amendment).
 
 ## 5. Media policy: video transcribes, images are kept
 
@@ -254,6 +257,21 @@ all-image carousel that *claims* to be video **(§3, verified
 2026-08-27)** probes as images and keeps them all. Whether a genuinely
 mixed carousel occurs in the wild is still unobserved; the rule covers it
 either way.
+
+**Amendment, 2026-09-02: the park carries the stills.** The mixed carousel
+was observed in the field — an 8-slide post, one video on slide 3 and
+seven JPEGs around it. All seven were discarded, and the item went on to
+be digested and cited on the strength of the caption and the transcript
+alone; the `images_dropped: 7` this section prescribed sat in the park
+file's frontmatter, read by no report, no lint and no skill, so the
+judgment that was supposed to rescue them was never shown that there was
+anything to rescue. "`NeedsCapability` carries no media" was a property of
+the type, not a truth about the world: the type now carries `media`, the
+run layer ledgers it at the park exactly as it does a `Content` emit, and
+a mixed carousel transcribes its video AND downloads its stills in the
+same run. `images_dropped` is retired. Posts already damaged by the old
+rule are reseeded by a migration (12), so the stills land without anyone
+re-sharing the post.
 
 ## 6. Failure: private accounts are out of scope, and say so
 

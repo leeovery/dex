@@ -349,7 +349,10 @@ class TestProbeWalk:
         assert result.reason == "post resolved — video awaits transcription"
         assert body_of(result).endswith("a caption")
 
-    def test_video_wins_a_mixed_carousel_and_the_dropped_stills_are_counted(self):
+    def test_a_mixed_carousel_transcribes_the_video_and_keeps_the_stills(self):
+        # The observed shape: one video among stills. The park carries the
+        # images as media — a park that dropped them lost them, since the
+        # proxy URLs never reach any later stage.
         result = needs_of(
             fetch(
                 {
@@ -360,16 +363,16 @@ class TestProbeWalk:
             )
         )
         assert result.meta["enclosure"] == probe_url(PHOTO_CODE, 2)
-        assert result.meta["images_dropped"] == 2
+        assert result.media == [image_url(PHOTO_CODE, 1), image_url(PHOTO_CODE, 3)]
 
-    def test_an_all_image_post_records_no_dropped_images(self):
-        result = content_of(
+    def test_a_video_only_post_parks_with_no_media(self):
+        result = needs_of(
             fetch(
-                {post_url(PHOTO_CODE): og_page(), **walk(PHOTO_CODE, "image/jpeg")},
+                {post_url(PHOTO_CODE): og_page(), **walk(PHOTO_CODE, "video/mp4")},
                 post_url(PHOTO_CODE),
             )
         )
-        assert "images_dropped" not in result.meta
+        assert result.media == []
 
     def test_the_walk_stops_at_the_zero_byte_answer(self):
         # Out-of-range is a 200, never a 404 — only the body can terminate

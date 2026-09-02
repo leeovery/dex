@@ -154,13 +154,17 @@ class TestOutcomeUnion:
         assert content.media == []
         assert content.assets == []
 
-    def test_outputs_ride_content_only(self):
+    def test_outputs_ride_the_variants_that_can_hold_them(self):
         # The flat Result admitted media on any status and validated assets
-        # done-only by hand; on the union, no other variant has the fields.
+        # done-only by hand; on the union, an outcome that found nothing has
+        # no field to carry outputs on. A capability park is the exception
+        # for media alone: it resolved, and what it holds beside the
+        # artefact the drain will produce still has to reach the disk.
         for variant in (Missing, Refused, Unusable):
             assert not hasattr(variant(evidence="e"), "media")
             assert not hasattr(variant(evidence="e"), "assets")
-        assert not hasattr(NeedsCapability(need=Need.OCR), "media")
+        assert not hasattr(NeedsCapability(need=Need.OCR), "assets")
+        assert NeedsCapability(need=Need.OCR).media == []
         assert not hasattr(Redetected(kind=Kind.WEB), "body")
 
     @pytest.mark.parametrize("variant", [Missing, Refused, Unusable])
@@ -186,6 +190,11 @@ class TestOutcomeUnion:
         )
         assert park.body is None
         assert park.meta["enclosure"] == "https://cdn.test/a.mp3"
+
+    def test_a_park_carries_the_media_the_capability_will_not_produce(self):
+        stills = ["https://proxy.test/images/abc/1", "https://proxy.test/images/abc/3"]
+        park = NeedsCapability(need=Need.TRANSCRIBE, media=stills, reason="resolved")
+        assert park.media == stills
 
     def test_redetected_non_work_kinds_are_rejected(self):
         with pytest.raises(ValueError, match="never becomes a work unit"):
