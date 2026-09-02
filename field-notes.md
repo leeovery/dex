@@ -103,3 +103,18 @@ no longer true.
 - Cowork cloud containers have full network and git/git-lfs/uv/ffmpeg —
   the engine builds and runs there via uvx — but no gh; auth would need a
   stored per-instance PAT.
+
+## Google Chat Takeout export (verified 2026-09-02)
+
+- `raw/gspace/<channel>/messages.json` disambiguates colliding attachment
+  names on disk but NOT in the manifest: files land as `File-image.png`,
+  `File-image(1).png`, `File-image(2).png`…, while every one of their
+  records carries the same bare `export_name: "File-image.png"`. A reader
+  that trusts `export_name` gives most of those messages the first file's
+  bytes.
+- The disk name is recoverable from the manifest alone: count occurrences
+  of an `export_name` in message order across the whole channel, and in
+  list order within a message's `attached_files`; occurrence k ≥ 1 inserts
+  `(k)` before the LAST dot (`File-a.b.png` → `File-a.b(1).png`), a name
+  with no dot takes it appended, and k = 0 keeps the bare name. Verified
+  visually against the real files at five independent points.

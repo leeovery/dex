@@ -206,7 +206,7 @@ class TestRecording:
     def test_recorded_in_the_log_and_never_rerun(self, tmp_path):
         seed(tmp_path)
         path = log_path(tmp_path)
-        for number in range(1, 10):
+        for number in (*range(1, 10), 11):  # every shipped migration but this one
             append_applied(path, number=number, engine="0.1.12", date=TODAY)
         applied = run_pending(
             tmp_path, today=lambda: TODAY, now=lambda: NOW, engine_version="0.2.0"
