@@ -168,10 +168,10 @@ class DroppedStillsReseed:
 def _consequences(item: str, dropped: str) -> str:
     """What the owner is agreeing to by letting this post re-walk."""
     return (
-        f"{item}: {dropped} still(s) return — the re-fetch rewrites the enrichment file "
-        "from the caption and transcribes the video again (a silent reel re-parks manual "
-        "and wants closing with `enrich mark`); an existing media-N.md in "
-        f"enrichment/{item}/ now pairs with reseeded slide N — check it describes that slide"
+        f"{item}: the park dropped {dropped} still(s); the re-walk recovers them, rewrites "
+        "the enrichment file from the caption and transcribes the video again (a silent "
+        "reel re-parks manual and wants closing with `enrich mark`); an existing media-N.md "
+        f"in enrichment/{item}/ now pairs with reseeded slide N — check it describes that slide"
     )
 
 

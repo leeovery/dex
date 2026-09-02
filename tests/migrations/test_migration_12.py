@@ -172,7 +172,7 @@ class TestApply:
         report = migration.apply(tmp_path)
         assert len(report.actions) == 2
         line = report.actions[1]
-        assert line.startswith(f"{ITEM}: 7 still(s) return")
+        assert line.startswith(f"{ITEM}: the park dropped 7 still(s); the re-walk recovers them")
         assert "transcribes the video again" in line
         assert "`enrich mark`" in line
         assert f"enrichment/{ITEM}/" in line
@@ -276,7 +276,7 @@ class TestApply:
         assert post.status is Status.QUEUED
         assert post.item == renamed
         assert report.skipped == []
-        assert report.actions[1].startswith(f"{renamed}: 2 still(s)")
+        assert report.actions[1].startswith(f"{renamed}: the park dropped 2 still(s)")
 
     def test_a_purged_item_is_never_reseeded(self, tmp_path, migration):
         # No corpus file and an exclusion on the record: the owner ruled
