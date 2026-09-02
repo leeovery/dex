@@ -92,7 +92,12 @@ other repairs need):
   rewrite the file through the verb — read the facts it already states,
   write them as the payload, run `bin/dex enrich item digest --file
   cache/digest.json` — and the engine re-derives `media:` itself. Never
-  hand-edit the line in.
+  hand-edit the line in. One exception to reusing the facts: when the
+  stated path names a file since gone and a different file now stands in
+  its place, the evidence the digest was read from has changed — re-read
+  the item against the file it carries now and digest it fresh, carrying
+  none of the old facts forward. The path drifting is the symptom; a
+  digest describing a file the item no longer holds is the defect.
 - **Digests naming a canonical topic that does not record them** — an
   advisory, and it never fails the check. A digest's `topics:` is the
   classification made at digest time, in that day's vocabulary, and is
