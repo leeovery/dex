@@ -3759,6 +3759,21 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
 
+    def test_a_content_emits_media_children_are_born_on_the_live_item(self, instance):
+        # Same question the outputs answer, asked of the children a done
+        # unit spawns: the drained line still spells the dead id, so the
+        # emit reads the line the outcome just wrote.
+        self._renamed(instance, status=Status.QUEUED)
+        photo = "https://cdn.example.test/photo.png"
+        transport = FakeTransport(
+            {photo: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="b" * 400, media=[photo]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        child = ledger.load(instance.ledger_path)[work_hash(photo)]
+        assert child.item == NEW_ITEM
+        assert child.status is Status.DONE
+
     def test_a_parks_media_children_are_born_on_the_live_item(self, instance):
         # The park's media stage reads the line the outcome just wrote, not
         # the drained one: the drained line still spells the dead id, and a
