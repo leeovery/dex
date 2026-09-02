@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from dex_engine.pipeline import ledger
@@ -694,7 +694,7 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     parent, depth = provenance if provenance is not None else (None, None)
     path = draw(st.none() | st.text(min_size=1)) if status is Status.DONE else None
     # Reasons and work keys are single-line by schema — every writer normalizes.
-    single_line = st.text(min_size=1).filter(lambda s: "\n" not in s and "\r" not in s)
+    single_line = st.text(alphabet=st.characters(exclude_characters="\r\n"), min_size=1)
     if status in (Status.MANUAL, Status.SKIPPED):
         reason = draw(single_line)
     elif status in _REASON_OPTIONAL:
@@ -735,6 +735,10 @@ def entries(draw: st.DrawFn) -> LedgerEntry:
     )
 
 
+# Twenty entries of several unicode strings each is heavy generation, and
+# hypothesis's too_slow check measures generation time, not the claim: on a
+# loaded machine it fails these two properties while the round trip holds.
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(sequence=st.lists(entries(), max_size=20))
 def test_entries_round_trip_through_the_serialization_boundary(sequence: list[LedgerEntry]):
     for e in sequence:
@@ -744,6 +748,7 @@ def test_entries_round_trip_through_the_serialization_boundary(sequence: list[Le
 _OLDEST = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 
 
+@settings(suppress_health_check=[HealthCheck.too_slow])
 @given(sequence=st.lists(entries(), max_size=20))
 def test_compact_preserves_latest_per_hash_and_round_trips(
     sequence: list[LedgerEntry], tmp_path_factory: pytest.TempPathFactory
