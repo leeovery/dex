@@ -1594,6 +1594,67 @@ class TestMediaStage:
         assert drained.status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
 
+    def park_fetch(self, urls):
+        def fetch(_unit):
+            return NeedsCapability(
+                need=Need.TRANSCRIBE,
+                meta={"enclosure": "https://cdn.example.test/reel.mp4"},
+                media=list(urls),
+                reason="post resolved — video awaits transcription",
+            )
+
+        return fetch
+
+    def test_a_capability_park_ledgers_and_downloads_the_media_it_carries(self, instance):
+        # The mixed carousel: the video leaves for the transcribe drain and
+        # the stills ride the park, or nothing downstream ever sees them —
+        # a park records no outputs of its own to hold them.
+        write_item(instance)
+        transport = FakeTransport(
+            {
+                self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png"),
+                self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=b"jpg"),
+            }
+        )
+        driver = FakeDriver(kind=Kind.INSTAGRAM, fetch_fn=self.park_fetch([self.IMG1, self.IMG2]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        entries = ledger.load(instance.ledger_path)
+        assert entries[work_hash(URL)].status is Status.WAITING
+        still = entries[work_hash(self.IMG1)]
+        assert still.job is Job.MEDIA
+        assert still.kind is Kind.INSTAGRAM  # the parent's kind
+        assert still.parent == work_hash(URL)
+        assert still.depth == 1
+        assert still.status is Status.DONE
+        assert still.path == f"enrichment/{ITEM}/media-0.png"
+        assert (instance.root / still.path).read_bytes() == b"png"
+        assert entries[work_hash(self.IMG2)].path == f"enrichment/{ITEM}/media-1.jpg"
+
+    def test_a_capability_park_carrying_no_media_ledgers_no_children(self, instance):
+        write_item(instance)
+        driver = FakeDriver(kind=Kind.INSTAGRAM, fetch_fn=self.park_fetch([]))
+        run_mod.run(make_ctx(instance, driver))
+        assert list(ledger.load(instance.ledger_path)) == [work_hash(URL)]
+
+    def test_a_parks_media_rests_ledgered_under_media_config_none(self, instance):
+        write_item(instance)
+        driver = FakeDriver(kind=Kind.INSTAGRAM, fetch_fn=self.park_fetch([self.IMG1]))
+        transport = FakeTransport(
+            {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        run_mod.run(
+            make_ctx(
+                instance, driver, config=Config(media_fetch=MediaFetch.NONE), transport=transport
+            )
+        )
+        resting = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
+        assert resting.job is Job.MEDIA
+        assert resting.status is Status.QUEUED
+        assert resting.attempts is None
+        assert resting.parent == work_hash(URL)
+        assert ("GET", self.IMG1) not in transport.calls
+        assert not (instance.root / f"enrichment/{ITEM}/media-0.png").exists()
+
     def test_media_config_none_gates_the_redrain_too(self, instance):
         # Run 1 under `lead`: the download 503s and the media unit parks
         # blocked, an ordinary ledgered unit now.
@@ -3697,6 +3758,41 @@ class TestOwnershipIsTheCorpusAnswer:
         assert entry.item == NEW_ITEM
         assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
         assert not (instance.enrichment_dir / OLD_ITEM).exists()
+
+    def test_a_content_emits_media_children_are_born_on_the_live_item(self, instance):
+        # Same question the outputs answer, asked of the children a done
+        # unit spawns: the drained line still spells the dead id, so the
+        # emit reads the line the outcome just wrote.
+        self._renamed(instance, status=Status.QUEUED)
+        photo = "https://cdn.example.test/photo.png"
+        transport = FakeTransport(
+            {photo: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="b" * 400, media=[photo]))
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        child = ledger.load(instance.ledger_path)[work_hash(photo)]
+        assert child.item == NEW_ITEM
+        assert child.status is Status.DONE
+
+    def test_a_parks_media_children_are_born_on_the_live_item(self, instance):
+        # The park's media stage reads the line the outcome just wrote, not
+        # the drained one: the drained line still spells the dead id, and a
+        # child born from it would carry the rename's casualty onto a unit
+        # written this run.
+        self._renamed(instance, status=Status.QUEUED)
+        still = "https://cdn.example.test/still.png"
+        transport = FakeTransport(
+            {still: HttpResponse(status=200, content_type="image/png", body=b"png")}
+        )
+        driver = FakeDriver(
+            fetch_fn=lambda _unit: NeedsCapability(
+                need=Need.TRANSCRIBE, media=[still], reason="video awaits transcription"
+            )
+        )
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        child = ledger.load(instance.ledger_path)[work_hash(still)]
+        assert child.item == NEW_ITEM
+        assert child.status is Status.DONE
 
     def test_a_child_promoted_under_a_stale_parent_lands_on_the_live_item(self, instance):
         # A promotion names its parent by hash, and that line still spells

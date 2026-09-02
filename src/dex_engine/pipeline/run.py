@@ -1293,6 +1293,12 @@ class _Drain:
             # manual.
             self._write_output(entry, needs.meta, needs.body, count=False)
         self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+        if needs.media:
+            # Ledgered at emit whatever `media_fetch` says, exactly as a
+            # Content emit is: the config gates the download alone
+            # (`_process`), so under `none` the child rests queued rather
+            # than being dropped with no line, no note and no recovery.
+            self._media_stage(self.entries[entry.hash], needs.media)
         # A park the run itself can drain re-queues at once — the drain
         # predicate is the next run's, asked now. A transcribe park under an
         # active provider is the case: fetch and transcription are separate
