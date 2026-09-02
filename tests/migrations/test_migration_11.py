@@ -236,6 +236,18 @@ class TestRewrite:
         assert report.skipped == []
         assert report.anomalies == []
 
+    def test_the_closing_line_names_the_digest_follow_up(self, tmp_path, migration):
+        # The rewrite lands under standing digests: they still list the old
+        # media path, and what was described was described from the wrong file.
+        seed_export(tmp_path)
+        seed_items(tmp_path)
+        report = migration.apply(tmp_path)
+        assert report.actions[-1].endswith(
+            "A standing digest still lists the old media path, so every rewritten item "
+            "reads as media drift until `enrich item digest` re-emits it, and any media "
+            "description written against the old copy describes the wrong file — re-read those"
+        )
+
     def test_each_channel_counts_on_its_own(self, tmp_path, migration):
         seed_export(tmp_path)
         seed_items(tmp_path)

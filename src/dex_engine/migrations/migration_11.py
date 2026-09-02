@@ -57,7 +57,10 @@ INTENT = (
 _WHY = (
     "the export named every colliding attachment File-image.png in its manifest while "
     "writing them to disk as File-image(1).png, File-image(2).png… — each rewritten item "
-    "now attaches the file its own message carried"
+    "now attaches the file its own message carried. A standing digest still lists the old "
+    "media path, so every rewritten item reads as media drift until `enrich item digest` "
+    "re-emits it, and any media description written against the old copy describes the "
+    "wrong file — re-read those"
 )
 
 
