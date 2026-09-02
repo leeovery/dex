@@ -47,7 +47,7 @@ class FakeMigration:
 class TestDiscover:
     def test_shipped_migrations_in_numeric_order(self):
         migrations = discover(today=fixed_today, now=fixed_now, engine_version=ENGINE)
-        assert [m.number for m in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        assert [m.number for m in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
     def test_intents_are_single_line_and_stated(self):
         # The sync-report surface requires single-line intents.
@@ -205,5 +205,5 @@ class TestRunPending:
 
     def test_default_discovery_runs_shipped_migrations_on_a_fresh_instance(self, tmp_path):
         applied = run_pending(tmp_path, today=fixed_today, now=fixed_now, engine_version=ENGINE)
-        assert [a.number for a in applied] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-        assert read_applied(log_path(tmp_path)) == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+        assert [a.number for a in applied] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        assert read_applied(log_path(tmp_path)) == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
