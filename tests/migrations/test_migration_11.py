@@ -7,7 +7,7 @@ import json
 import pytest
 
 from dex_engine import corpus
-from dex_engine.migrations.migration_11 import _WHY, build
+from dex_engine.migrations.migration_11 import _WHY, _re_read, build
 
 TODAY = datetime.date(2026, 9, 2)
 NOW = datetime.datetime(2026, 9, 2, 9, 0, 0, 500000, tzinfo=datetime.UTC)
@@ -232,9 +232,32 @@ class TestRewrite:
         seed_export(tmp_path)
         seed_items(tmp_path)
         report = migration.apply(tmp_path)
-        assert report.actions == [ROOM_REWRITTEN, _WHY]
+        assert report.actions == [
+            ROOM_REWRITTEN,
+            _re_read(item_id("bravo")),
+            _re_read(item_id("charlie")),
+            _WHY,
+        ]
         assert report.skipped == []
         assert report.anomalies == []
+
+    def test_each_rewritten_item_is_told_to_re_digest_from_a_fresh_reading(
+        self, tmp_path, migration
+    ):
+        # The health check will keep naming these as media drift, but the
+        # generic drift repair carries the stated facts forward — and these
+        # were read from the wrong file. Only the rewritten items are named:
+        # the first occurrence never carried the wrong bytes.
+        seed_export(tmp_path)
+        seed_items(tmp_path)
+        report = migration.apply(tmp_path)
+        named = [line for line in report.actions if line.startswith("re-digest ")]
+        assert named == [_re_read(item_id("bravo")), _re_read(item_id("charlie"))]
+        assert item_id("alpha") not in " ".join(report.actions)
+        assert named[0] == (
+            f"re-digest {item_id('bravo')} from a fresh reading — its standing digest was "
+            "written against the wrong file, so carry none of its facts forward"
+        )
 
     def test_the_closing_line_names_the_digest_follow_up(self, tmp_path, migration):
         # The rewrite lands under standing digests: they still list the old
@@ -274,13 +297,14 @@ class TestRewrite:
             ),
         )
         report = migration.apply(tmp_path)
-        assert report.actions[:2] == [
+        assert [line for line in report.actions if "item(s) rewritten" in line] == [
             (
                 "raw/gspace/lounge: 1 item(s) rewritten, 1 file(s) copied out of raw/, "
                 "1 stale media file(s) deleted"
             ),
             ROOM_REWRITTEN,
         ]
+        assert report.actions[1] == _re_read(identifier)
 
 
 class TestDiskNames:

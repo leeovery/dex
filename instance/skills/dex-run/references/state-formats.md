@@ -69,7 +69,9 @@ the check on it would stop every scheduled run.
 A digest that went through the verb cannot fail any of that, and cannot
 drift the moment it lands — the check is a backstop for files that predate
 the verb or were edited by hand, and the repair for every one of them is to
-rewrite it through the verb.
+rewrite it through the verb — from a fresh reading of the item when the file
+behind a stated path has been replaced, since the digest was read from
+evidence the item no longer carries.
 
 ## `bin/dex issue` — session-observed engine bug reports
 

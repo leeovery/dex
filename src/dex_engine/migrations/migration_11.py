@@ -143,7 +143,8 @@ class _ChannelRepair:
         self._instance = instance
         self._items = items
         self._report = report
-        self._rewritten = self._copied = self._removed = 0
+        self._rewritten: list[str] = []
+        self._copied = self._removed = 0
 
     def topic(self, topic_id: str, collision: _Collision) -> None:
         """Rewrite the topic's item, or report why it was left alone."""
@@ -195,14 +196,21 @@ class _ChannelRepair:
         self._rewrite(path, item, collision.corrected, shortid)
 
     def finish(self) -> None:
-        """Record what the channel's rewrites did, when they did anything."""
+        """Record what the channel's rewrites did, when they did anything.
+
+        One line per rewritten item, because the item's standing digest is
+        a reading of the wrong file: the health check will keep naming it
+        as media drift, but the generic repair for drift carries the
+        stated facts forward, and these facts must not be.
+        """
         if not self._rewritten:
             return
         self._report.actions.append(
-            f"raw/gspace/{self._channel}: {self._rewritten} item(s) rewritten, "
+            f"raw/gspace/{self._channel}: {len(self._rewritten)} item(s) rewritten, "
             f"{self._copied} file(s) copied out of raw/, {self._removed} stale "
             "media file(s) deleted"
         )
+        self._report.actions.extend(_re_read(item) for item in self._rewritten)
 
     def _rewrite(
         self, path: Path, item: corpus.CorpusItem, corrected: list[str], shortid: str
@@ -223,7 +231,15 @@ class _ChannelRepair:
         # whole repair — where the reverse order would strand them forever.
         self._removed += _remove_stale(root, shortid, old=item.media, new=media)
         corpus.write_item(path, dataclasses.replace(item, attachments=corrected, media=media))
-        self._rewritten += 1
+        self._rewritten.append(item.id)
+
+
+def _re_read(item: str) -> str:
+    """The owed repair for one rewritten item, stated so it cannot be done the easy way."""
+    return (
+        f"re-digest {item} from a fresh reading — its standing digest was written against "
+        "the wrong file, so carry none of its facts forward"
+    )
 
 
 def _collisions(manifest: Path, channel: str) -> dict[str, _Collision]:
