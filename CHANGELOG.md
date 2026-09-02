@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-09-02
+
+✨ Added
+- Instagram carousels that mix a video with images now keep the stills — they land as media alongside the transcript instead of being silently dropped.
+- Migration 12 re-walks every previously-fetched instagram post whose images were dropped by the old parking behaviour, recovering the lost stills.
+- Migration 11 repairs Google Chat (gspace) items that collided on an exported attachment filename — each affected item now points at its own file's bytes instead of a copy of a different attachment.
+
+🐛 Fixed
+- Capability-parked units (e.g. a post waiting on transcription) that carry media no longer risk losing it — that media is now ledgered and downloaded like any other content.
+
 ## [0.1.13] - 2026-09-01
 
 ✨ Added
