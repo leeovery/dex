@@ -92,7 +92,8 @@ asset (`<hash6>-asset-<n>.<ext>`) is refused: it owes nothing. The text is
 the judgment; the `enrichment/<id>/media-<n>.md` slot, the first line
 naming the file, and the item's `enrichment:`/`status` refresh are the
 engine's. Never hand-write `media-<n>.md`: a hand-written description
-leaves the item reading as undescribed and `raw` until the next run.
+leaves the item's derived frontmatter — its `enrichment:` listing and
+`status` — stale until the next verb touches the item.
 
 One description per media file — an item carrying three gets three, and
 the verb takes the next free slot each time (slots are counted, never

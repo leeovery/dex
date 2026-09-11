@@ -7,8 +7,8 @@ hand. The reading is the judgment; the rest is plumbing this module owns:
 the ``media-<n>.md`` slot the file takes, the first line that names the
 file it covers, and the item's derived ``enrichment:``/``status``, which
 refresh in the same call. Hand-written, a description for the standing
-describe queue was followed by no verb, so its item read as undescribed
-and ``raw`` until the next run's sweep.
+describe queue was followed by no verb, so its item's derived
+``enrichment:`` and ``status`` stayed stale until the next run's sweep.
 
 Only a file the item carries can be described, read exactly as the
 describe queue counts them: a path the item's ``media:`` states that is a

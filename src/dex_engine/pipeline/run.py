@@ -3361,8 +3361,9 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
         raise ValueError(f"stage must be one of {options}, got {stage!r}")
     # The record names the id as given, not the item it resolves to: a
     # pass on a pre-rename id still records, and its readers resolve it
-    # the same way the check here did.
-    live_item(ctx.instance, item_id, claim="a pass records a stage for an existing item")
+    # the same way the check here did. The refresh goes to the live item
+    # — the id as given may name no corpus file at all.
+    live = live_item(ctx.instance, item_id, claim="a pass records a stage for an existing item")
     record: dict[str, str | int] = {
         "stage": stage,
         "item": item_id,
@@ -3374,7 +3375,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    refresh_item_frontmatter(ctx.instance, item_id)
+    refresh_item_frontmatter(ctx.instance, live)
     return f"recorded {stage} pass for {item_id}"
 
 
