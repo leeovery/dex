@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] - 2026-09-11
+
+🐛 Fixed
+
+- Descriptions of media files migration 13 renamed or deleted are now re-pointed or retired instead of left orphaned — a rewritten reading no longer stacks a second description beside a stale one that nothing finds again.
+- New migration 14 repairs instances that already ran migration 13, re-pointing descriptions of renamed files and retiring descriptions of deleted ones to `discarded-media-<n>.md`.
+- The describe verb now finds a description to rewrite by the file name in its first line rather than an exact header match, so pre-verb descriptions with their own trailing prose are matched instead of duplicated.
+
 ## [Unreleased]
 
 🐛 Fixed
