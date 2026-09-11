@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-09-11
+
+✨ Added
+- `dex-enrich item describe` writes a media file's description from a text file, taking the next free slot and refreshing the item's frontmatter in one call — no more hand-writing `media-<n>.md`.
+- Migration 13 repairs media files kept by the old unchecked download path: empty or HTML/XML/JSON bodies saved as "done" media are requeued for re-fetch, and files whose bytes don't match their extension (e.g. AVIF saved as `.png`) are renamed and their digests re-pointed automatically.
+
 ## [0.1.14] - 2026-09-02
 
 ✨ Added
