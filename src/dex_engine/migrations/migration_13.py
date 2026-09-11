@@ -24,12 +24,27 @@ names a regular file under the instance root. The leading bytes decide:
 - **Bytes naming a format other than the file's suffix**
   (``sniff_media_ext``, signatures only; a suffix is read case-blind and
   through the one alias the field spells, ``jpeg`` for ``jpg``) — the
-  file is renamed in place to ``media-<n>.<sniffed>`` and a done line
+  file is renamed in place to ``media-<n>.<sniffed>``, a done line
   identical to the live one but for ``path``, ``item`` (the live owner)
-  and ``via: migration-13`` is appended. Renamed BEFORE the append: an
-  apply interrupted between the two leaves a done line naming a file
-  that no longer exists, which the health check's missing-output finding
-  reports and ``enrich mark <url> done --path <new>`` heals; the
+  and ``via: migration-13`` is appended, and the item's digest has its
+  ``media:`` entry re-pointed. The done line keeps the live line's
+  ``date``: it records the same landing under a new name, and the
+  digest-staleness backstop reads a done line's date as the day the
+  enrichment landed, so a re-stamped date would order a re-digest of
+  every renamed item. The digest re-point rewrites a derived spelling
+  inside the frontmatter block alone — the exact old repo path becomes
+  the new one, the body is never touched — atomically, and re-reads the
+  block to verify it; a block that still names the old path, or has lost
+  the new one, is an anomaly line. On a real instance roughly one media
+  file in eighteen was misnamed by the pre-0.1.6 path, so a repair that
+  hands each one to the session is a repair nobody completes: a rename
+  owes the session nothing and gets no report line of its own — the
+  ``via: migration-13`` done lines are the record. Renamed BEFORE the
+  append, and the digest last: an apply interrupted after the rename
+  leaves a done line naming a file that no longer exists, which the
+  health check's missing-output finding reports and ``enrich mark <url>
+  done --path <new>`` heals; one interrupted before the digest leaves
+  its media-drift finding, which ``enrich item digest`` clears. The
   re-apply itself finds no member there, because the live line's
   ``path`` names a file that is gone, and a line over no file is never a
   member.
@@ -37,10 +52,10 @@ names a regular file under the instance root. The leading bytes decide:
   suffix that already names the format — is left alone.
 
 ``media-<n>.md``, the session's description of the slot, is never
-touched. Where one stands beside a repaired file the unit's report line
-says so: a requeued unit's description was written against the
-discarded bytes, and because the describe count still reads as met,
-nothing else will ever name it.
+touched. Where one stands beside a requeued unit's file the report line
+says so: the description was written against the discarded bytes, and
+because the describe count still reads as met, nothing else will ever
+name it.
 
 Which live item a line writes under follows migration 9's rule: the
 stored ``item`` answers where its corpus file still exists; a renamed
@@ -60,6 +75,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dex_engine import atomic
 from dex_engine.pipeline.detect import sniff_document, sniff_media_ext
 from dex_engine.pipeline.ledger import (
     LedgerSchemaError,
@@ -160,10 +176,11 @@ class MediaBytesRepair:
             root: The instance root.
 
         Returns:
-            The report: a summary action with both counts, one action per
-            repaired unit stating what its file held and what the repair
-            leaves for the session, and a skip for every repair no live
-            item claims.
+            The report: a summary action with the three counts, one action
+            per requeued unit stating what its file held and what the
+            re-fetch leaves for the session, a skip for every repair no
+            live item claims, and an anomaly for every digest whose
+            re-point did not verify.
         """
         skipped: list[Skipped] = []
         path = root / "state" / "enrichment-ledger.jsonl"
@@ -188,7 +205,8 @@ class MediaBytesRepair:
         )
         exclusions = _exclusions(root)
         actions: list[str] = []
-        requeued = renamed = 0
+        anomalies: list[str] = []
+        requeued = renamed = repointed = 0
         for member, verdict in repairs:
             item = _live_item(member.entry, root=root, owners=owners)
             if item is None:
@@ -199,16 +217,19 @@ class MediaBytesRepair:
                     actions.append(self._requeue(path, member, item, held))
                     requeued += 1
                 case _Rename(ext=ext):
-                    actions.append(self._rename(path, member, item, ext))
+                    new_path = self._rename(path, member, item, ext)
                     renamed += 1
-        if not actions:
+                    if _repoint_digest(root, item, member.repo_path, new_path, anomalies):
+                        repointed += 1
+        if not requeued and not renamed:
             return MigrationReport(skipped=skipped)
         summary = (
-            f"requeued {requeued} media unit(s) whose file held no media and renamed {renamed} "
-            "whose bytes named another format — the pre-0.1.6 download path kept whatever a "
-            "media URL answered with, unread"
+            f"requeued {requeued} media unit(s) whose file held no media, renamed {renamed} "
+            f"whose bytes named another format and re-pointed {repointed} digest(s) to the new "
+            "name(s) — the pre-0.1.6 download path kept whatever a media URL answered with, "
+            "unread"
         )
-        return MigrationReport(actions=[summary, *actions], skipped=skipped)
+        return MigrationReport(actions=[summary, *actions], skipped=skipped, anomalies=anomalies)
 
     def _requeue(self, path: Path, member: _Member, item: str, held: str) -> str:
         """Seed the unit's requeue, then drop the file — never the other way round."""
@@ -217,13 +238,19 @@ class MediaBytesRepair:
         return _requeue_action(member, item, held)
 
     def _rename(self, path: Path, member: _Member, item: str, ext: str) -> str:
-        """Rename the file to what its bytes are, then re-point the done line."""
+        """Rename the file to what its bytes are, then re-point the done line to it.
+
+        Returns:
+            The renamed file's ledger spelling.
+        """
+        new_path = _repointed(member.repo_path, ext)
         member.file.rename(member.file.with_suffix(f".{ext}"))
-        repointed = replace(
-            member.entry, item=item, path=_repointed(member.repo_path, ext), via=_VIA
-        )
-        append(path, self._stamped(repointed))
-        return _rename_action(member, item, ext)
+        repointed = self._stamped(replace(member.entry, item=item, path=new_path, via=_VIA))
+        # The one field the stamp must not touch here: the line records the
+        # same landing under a new name, and the digest-staleness backstop
+        # reads a done line's date as the day the enrichment landed.
+        append(path, replace(repointed, date=member.entry.date))
+        return new_path
 
     def _stamped(self, entry: LedgerEntry) -> LedgerEntry:
         return stamp(entry, today=self._today, now=self._now, engine_version=self._engine_version)
@@ -298,18 +325,39 @@ def _requeue_action(member: _Member, item: str, held: str) -> str:
     )
 
 
-def _rename_action(member: _Member, item: str, ext: str) -> str:
-    """What the rename changed, and what still names the old filename."""
-    text = (
-        f"{item}: {member.repo_path} holds {ext.upper()} bytes; renamed to "
-        f"{_repointed(member.repo_path, ext)} and the done line re-pointed — the item's "
-        "digest, where one stands, lists the old path, so the health check names it stale "
-        "and its media drifted until `enrich item digest` re-emits it"
-    )
-    description = _description(member)
-    if description is None:
-        return text
-    return f"{text}; {description} may still name the old filename on its first line"
+def _repoint_digest(root: Path, item: str, old: str, new: str, anomalies: list[str]) -> bool:
+    """Re-spell ``old`` as ``new`` in the item's digest frontmatter; True when it did.
+
+    The frontmatter alone: a path in the fact body is prose the session
+    wrote. The write counts only once it is read back — a block still
+    naming the old path, or without the new one, is the session's to
+    re-emit, and the anomaly says so.
+    """
+    relative = f"state/digests/{item}.md"
+    digest = root / relative
+    if not digest.is_file():
+        return False
+    text = digest.read_text(encoding="utf-8")
+    block = _frontmatter(text)
+    if block is None or old not in block:
+        return False
+    atomic.write_text(digest, "---\n" + block.replace(old, new) + text[4 + len(block) :])
+    written = _frontmatter(digest.read_text(encoding="utf-8"))
+    if written is None or new not in written or old in written:
+        anomalies.append(
+            f"{relative}: media: still names {old} after the re-point to {new} — re-emit the "
+            "digest with `enrich item digest`"
+        )
+        return False
+    return True
+
+
+def _frontmatter(text: str) -> str | None:
+    """The frontmatter block's inner text, or None without a complete fence."""
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 3)
+    return None if end == -1 else text[4:end]
 
 
 def _description(member: _Member) -> str | None:

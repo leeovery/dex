@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from dex_engine import corpus
 from dex_engine.migrations import migration_13
 from dex_engine.migrations.migration_13 import build
 from dex_engine.pipeline import ledger
-from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Status
+from dex_engine.pipeline.digest import item_media
+from dex_engine.pipeline.types import Instance, Job, Kind, LedgerEntry, Status
 from dex_engine.pipeline.urls import work_hash
 
 TODAY = datetime.date(2026, 9, 11)
@@ -83,6 +85,26 @@ def write_description(root, slot=1, item=ITEM):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"media-{slot}.png: this file is zero bytes\n", encoding="utf-8")
     return path
+
+
+def write_digest(root, media, item=ITEM, *, flow=False, body="- a fact about the post\n"):
+    """A standing digest: the verb's block form, or a legacy digest's flow form."""
+    path = root / "state" / "digests" / f"{item}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    listing = (
+        f"media: [{', '.join(media)}]\n"
+        if flow
+        else "media:\n" + "".join(f"  - {entry}\n" for entry in media)
+    )
+    head = f"---\nid: {item}\ndate: 2026-08-31\nsignal: keep\ntopics: [instagram]\n"
+    path.write_text(f"{head}{listing}---\n{body}", encoding="utf-8")
+    return path
+
+
+def stated_media(path):
+    """The block-form media listing a digest states."""
+    block = path.read_text().split("\n---\n", 1)[0]
+    return {line[4:] for line in block.split("\n") if line.startswith("  - ")}
 
 
 def page_entry(*, url=POST_URL, item=ITEM, at=NOW, path=None):
@@ -167,9 +189,9 @@ class TestRequeue:
         assert report.skipped == []
         assert report.anomalies == []
         assert report.actions[0] == (
-            "requeued 1 media unit(s) whose file held no media and renamed 0 whose bytes "
-            "named another format — the pre-0.1.6 download path kept whatever a media URL "
-            "answered with, unread"
+            "requeued 1 media unit(s) whose file held no media, renamed 0 whose bytes named "
+            "another format and re-pointed 0 digest(s) to the new name(s) — the pre-0.1.6 "
+            "download path kept whatever a media URL answered with, unread"
         )
         assert report.actions[1].startswith(
             f"{ITEM}: enrichment/{ITEM}/media-1.png held no bytes at all (written by engine 0.1.4)"
@@ -276,22 +298,18 @@ class TestRename:
         assert live.parent == POST_HASH
         assert live.depth == 1
         assert live.engine == ENGINE
-        assert live.date == TODAY
         assert live.at == NOW
+        assert live.date == FETCHED  # the same landing under a new name, not a new one
         assert len(lines_for(path)) == 2  # the old done line and the re-pointed one
         assert report.skipped == []
-        assert report.actions[0].startswith(
-            "requeued 0 media unit(s) whose file held no media and renamed 1 whose bytes "
-            "named another format"
-        )
-        line = report.actions[1]
-        assert line.startswith(
-            f"{ITEM}: enrichment/{ITEM}/media-1.png holds AVIF bytes; renamed to "
-            f"enrichment/{ITEM}/media-1.avif and the done line re-pointed"
-        )
-        assert "media drifted until `enrich item digest` re-emits it" in line
-        assert "media-1.md" not in line
-        assert len(report.actions) == 2
+        assert report.anomalies == []
+        assert report.actions == [
+            (
+                "requeued 0 media unit(s) whose file held no media, renamed 1 whose bytes named "
+                "another format and re-pointed 0 digest(s) to the new name(s) — the pre-0.1.6 "
+                "download path kept whatever a media URL answered with, unread"
+            )
+        ]
 
     def test_svg_under_a_png_name_is_media_and_renamed(self, tmp_path, migration):
         # SVG is the one markup body that IS media: the document check
@@ -321,15 +339,18 @@ class TestRename:
         assert not file.exists()
         assert file.with_suffix(f".{ext}").read_bytes() == data
         assert ledger.load(path)[MEDIA_HASH].path == f"enrichment/{ITEM}/media-1.{ext}"
-        assert f"holds {ext.upper()} bytes" in report.actions[1]
+        assert "renamed 1 whose" in report.actions[0]
 
     def test_the_file_moves_before_the_line_is_written(self, tmp_path, migration, monkeypatch):
         # An apply killed between the two leaves a done line naming a file
         # that is gone — the health check's missing-output finding, healed
         # by `enrich mark` — and never a re-pointed line over a file still
-        # under its old name.
+        # under its old name. The digest moves last of all, so it is still
+        # exactly as it was.
         write_corpus_item(tmp_path)
         file = write_media(tmp_path, AVIF)
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"])
+        before = digest.read_text()
         path = write_ledger(tmp_path, page_entry(), media_entry())
 
         def killed(_path, _entry):
@@ -341,8 +362,12 @@ class TestRename:
         assert file.with_suffix(".avif").exists()
         assert not file.exists()
         assert ledger.load(path)[MEDIA_HASH].path == f"enrichment/{ITEM}/media-1.png"
+        assert digest.read_text() == before
 
-    def test_a_standing_description_is_named_on_the_rename_line(self, tmp_path, migration):
+    def test_a_rename_owes_the_session_nothing_and_says_nothing(self, tmp_path, migration):
+        # The ledger's via: migration-13 done line is the record; a standing
+        # description is neither touched nor named, and no per-unit line
+        # asks anyone to look.
         write_corpus_item(tmp_path)
         write_media(tmp_path, AVIF)
         description = write_description(tmp_path)
@@ -350,9 +375,8 @@ class TestRename:
         write_ledger(tmp_path, page_entry(), media_entry())
         report = migration.apply(tmp_path)
         assert description.read_text() == before
-        assert report.actions[1].endswith(
-            f"; enrichment/{ITEM}/media-1.md may still name the old filename on its first line"
-        )
+        assert len(report.actions) == 1
+        assert "media-1" not in report.actions[0]
 
     def test_a_renamed_line_keeps_what_the_live_line_carried(self, tmp_path, migration):
         # Identical but for path, item and via: a title, a rerun flag and
@@ -385,6 +409,182 @@ class TestRename:
         assert live.title == "slide one"
         assert live.via == "migration-13"
         assert live.path == f"enrichment/{ITEM}/media-1.avif"
+        assert live.date == FETCHED
+        assert live.at == NOW
+        assert live.engine == ENGINE
+
+
+class TestDigest:
+    def test_a_block_form_listing_is_repointed_and_no_longer_drifts(self, tmp_path, migration):
+        # The verb's own form. The path spelling is a derived fact, so the
+        # rewrite is mechanical — and afterwards the digest states exactly
+        # what the item carries, which is what the health check compares.
+        corpus_path = write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        write_media(tmp_path, JPEG, name="media-2.jpg")
+        digest = write_digest(
+            tmp_path, [f"enrichment/{ITEM}/media-1.png", f"enrichment/{ITEM}/media-2.jpg"]
+        )
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert report.anomalies == []
+        assert "re-pointed 1 digest(s)" in report.actions[0]
+        assert stated_media(digest) == {
+            f"enrichment/{ITEM}/media-1.avif",
+            f"enrichment/{ITEM}/media-2.jpg",
+        }
+        carried = item_media(Instance(root=tmp_path), corpus.read_item(corpus_path))
+        assert stated_media(digest) == set(carried)
+        assert digest.read_text().endswith("---\n- a fact about the post\n")
+
+    def test_a_flow_form_listing_is_repointed(self, tmp_path, migration):
+        # Legacy digests wrote the flow form; the exact path is what moves.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        digest = write_digest(
+            tmp_path,
+            [f"enrichment/{ITEM}/media-1.png", f"enrichment/{ITEM}/media-2.jpg"],
+            flow=True,
+        )
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        text = digest.read_text()
+        assert f"media: [enrichment/{ITEM}/media-1.avif, enrichment/{ITEM}/media-2.jpg]\n" in text
+        assert "media-1.png" not in text
+        assert "re-pointed 1 digest(s)" in report.actions[0]
+
+    def test_the_body_is_never_touched(self, tmp_path, migration):
+        # A fact naming the old path is prose the session wrote — and a
+        # rule further down the body is not a second fence.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        body = f"- the still at enrichment/{ITEM}/media-1.png shows a receipt\n\n---\n\n- more\n"
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"], body=body)
+        write_ledger(tmp_path, page_entry(), media_entry())
+        migration.apply(tmp_path)
+        assert digest.read_text().endswith(f"---\n{body}")
+        assert stated_media(digest) == {f"enrichment/{ITEM}/media-1.avif"}
+
+    def test_no_digest_is_nothing_to_do(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert "re-pointed 0 digest(s)" in report.actions[0]
+        assert report.anomalies == []
+        assert not (tmp_path / "state" / "digests").exists()
+
+    def test_a_digest_naming_only_other_paths_is_untouched(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-2.jpg"])
+        before = digest.read_text()
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert digest.read_text() == before
+        assert "re-pointed 0 digest(s)" in report.actions[0]
+        assert report.anomalies == []
+
+    def test_a_digest_without_a_closing_fence_is_untouched(self, tmp_path, migration):
+        # No block to rewrite inside: the file is left exactly as found —
+        # the malformed digest is lint's finding, not this migration's.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"])
+        digest.write_text(f"---\nid: {ITEM}\nmedia:\n  - enrichment/{ITEM}/media-1.png\n")
+        before = digest.read_text()
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert digest.read_text() == before
+        assert report.anomalies == []
+        assert "re-pointed 0 digest(s)" in report.actions[0]
+
+    def test_a_repoint_that_does_not_read_back_is_an_anomaly(
+        self, tmp_path, migration, monkeypatch
+    ):
+        # The write is verified, never assumed: a block still naming the
+        # old path is the session's to re-emit, and it is told so — while
+        # the file and the ledger line, already moved, stay moved.
+        write_corpus_item(tmp_path)
+        file = write_media(tmp_path, AVIF)
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"])
+        path = write_ledger(tmp_path, page_entry(), media_entry())
+        monkeypatch.setattr(migration_13.atomic, "write_text", lambda _path, _text: None)
+        report = migration.apply(tmp_path)
+        assert file.with_suffix(".avif").exists()
+        assert ledger.load(path)[MEDIA_HASH].path == f"enrichment/{ITEM}/media-1.avif"
+        assert stated_media(digest) == {f"enrichment/{ITEM}/media-1.png"}
+        assert "re-pointed 0 digest(s)" in report.actions[0]
+        assert len(report.anomalies) == 1
+        assert report.anomalies[0].startswith(f"state/digests/{ITEM}.md: media: still names")
+        assert f"enrichment/{ITEM}/media-1.png" in report.anomalies[0]
+        assert "`enrich item digest`" in report.anomalies[0]
+
+    @pytest.mark.parametrize(
+        "corrupt",
+        [
+            # The listing lost outright: neither name survives the write.
+            lambda text: text.replace(f"enrichment/{ITEM}/media-1.avif", "nothing"),
+            # The old name still listed beside the new one.
+            lambda text: text.replace("\n---\n", f"\n  - enrichment/{ITEM}/media-1.png\n---\n", 1),
+        ],
+    )
+    def test_the_read_back_must_name_the_new_path_and_not_the_old(
+        self, tmp_path, migration, monkeypatch, corrupt
+    ):
+        # Both halves of the verification stand on their own.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"])
+        write_ledger(tmp_path, page_entry(), media_entry())
+        monkeypatch.setattr(
+            migration_13.atomic,
+            "write_text",
+            lambda path, text: Path.write_text(path, corrupt(text), encoding="utf-8"),
+        )
+        report = migration.apply(tmp_path)
+        assert "re-pointed 0 digest(s)" in report.actions[0]
+        assert len(report.anomalies) == 1
+
+    def test_every_renamed_items_digest_is_repointed_and_counted(self, tmp_path, migration):
+        other = "2026-08-30-second-def456"
+        other_url = "https://www.instagram.com/p/DSecondOne/"
+        other_media = "https://uuinstagram.com/images/DSecondOne/1"
+        write_corpus_item(tmp_path)
+        write_corpus_item(tmp_path, item_id=other, urls=(other_url,))
+        write_media(tmp_path, AVIF)
+        write_media(tmp_path, PNG, name="media-1.jpg", item=other)
+        first = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"])
+        second = write_digest(tmp_path, [f"enrichment/{other}/media-1.jpg"], item=other)
+        write_ledger(
+            tmp_path,
+            page_entry(),
+            media_entry(),
+            page_entry(url=other_url, item=other),
+            media_entry(
+                url=other_media,
+                parent=work_hash(other_url),
+                item=other,
+                path=f"enrichment/{other}/media-1.jpg",
+            ),
+        )
+        report = migration.apply(tmp_path)
+        assert (
+            "renamed 2 whose bytes named another format and re-pointed 2 digest(s)"
+            in (report.actions[0])
+        )
+        assert stated_media(first) == {f"enrichment/{ITEM}/media-1.avif"}
+        assert stated_media(second) == {f"enrichment/{other}/media-1.png"}
+
+    def test_a_renamed_items_digest_is_found_under_the_live_id(self, tmp_path, migration):
+        renamed = "2026-08-31-carousel-renamed-abc123"
+        write_corpus_item(tmp_path, item_id=renamed)
+        write_media(tmp_path, AVIF)
+        digest = write_digest(tmp_path, [f"enrichment/{ITEM}/media-1.png"], item=renamed)
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert stated_media(digest) == {f"enrichment/{ITEM}/media-1.avif"}
+        assert "re-pointed 1 digest(s)" in report.actions[0]
 
 
 class TestUntouched:
@@ -651,7 +851,7 @@ class TestIdempotency:
         assert report.skipped == []
         assert report.anomalies == []
 
-    def test_the_summary_leads_and_the_units_follow_in_ledger_order(self, tmp_path, migration):
+    def test_the_summary_leads_and_only_requeues_follow(self, tmp_path, migration):
         write_corpus_item(tmp_path)
         write_media(tmp_path, AVIF, name="media-1.png")
         write_media(tmp_path, HTML, name="media-2.png")
@@ -663,11 +863,10 @@ class TestIdempotency:
             media_entry(url=second, path=f"enrichment/{ITEM}/media-2.png"),
         )
         report = migration.apply(tmp_path)
-        assert len(report.actions) == 3
+        assert len(report.actions) == 2
         assert report.actions[0].startswith("requeued 1 media unit(s)")
         assert "renamed 1 whose" in report.actions[0]
-        assert "media-1.png holds AVIF bytes" in report.actions[1]
-        assert "media-2.png held HTML" in report.actions[2]
+        assert "media-2.png held HTML" in report.actions[1]
 
     def test_the_summary_counts_every_unit_of_each_kind(self, tmp_path, migration):
         write_corpus_item(tmp_path)
@@ -683,9 +882,10 @@ class TestIdempotency:
         write_ledger(tmp_path, *entries)
         report = migration.apply(tmp_path)
         assert report.actions[0].startswith(
-            "requeued 2 media unit(s) whose file held no media and renamed 2 whose bytes"
+            "requeued 2 media unit(s) whose file held no media, renamed 2 whose bytes named "
+            "another format and re-pointed 0 digest(s)"
         )
-        assert len(report.actions) == 5
+        assert len(report.actions) == 3
 
 
 class TestTolerance:
