@@ -107,6 +107,15 @@ against media files and lists any item short of one under **Describe
 these**, on the run report, `bin/dex enrich status`, and the health check,
 until the count is met.
 
+`discarded-media-<n>.md` in an enrichment directory is a retired
+description: the file it described is gone (a migration found the bytes
+were never media and deleted them), so it was renamed out of the family
+the describe row counts, text untouched. It is a record of what a URL
+once answered with, not a description of anything the item carries —
+never cite it as one, and leave it alone. If media later lands in that
+slot, the describe row reappears and you write a fresh description the
+ordinary way.
+
 For a cognitive job the report listed (a document no extractor reads, a
 scanned PDF): read the file directly, write the enrichment as
 `enrichment/<id>/<kind>-<hash6>.md` — `hash6` is the first 6 characters

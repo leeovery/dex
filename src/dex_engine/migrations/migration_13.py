@@ -51,11 +51,17 @@ names a regular file under the instance root. The leading bytes decide:
 - Anything else — bytes carrying no signature this engine knows, or a
   suffix that already names the format — is left alone.
 
-``media-<n>.md``, the session's description of the slot, is never
-touched. Where one stands beside a requeued unit's file the report line
-says so: the description was written against the discarded bytes, and
-because the describe count still reads as met, nothing else will ever
-name it.
+Where a requeued unit's slot carries the session's ``media-<n>.md``,
+the description is retired with the bytes it describes: renamed to
+``discarded-media-<n>.md``, text untouched, out of the family the
+describe row counts and the describe verb searches. Left in place it
+could be neither rewritten (the verb takes only a file the item still
+carries) nor seen (the row compares counts, and zero media beside one
+description reads as met), and a file landing in the slot later would
+silently inherit a reading of bytes that are gone. A rename's slot is
+re-pointed rather than retired: those bytes are the same landing under a
+truer name, so the reading still holds and only the name in its first
+line has to move with the file.
 
 Which live item a line writes under follows migration 9's rule: the
 stored ``item`` answers where its corpus file still exists; a renamed
@@ -71,6 +77,7 @@ members.
 """
 
 import datetime
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -115,6 +122,10 @@ _LEAD_BYTES = 4096
 # costs the item a digest re-emit. jpeg is the one alias the field
 # carries — heic and heif are distinct brands, never aliases.
 _SUFFIX_ALIASES = {"jpeg": "jpg"}
+
+# The name a description's first line carries — the one tie between a
+# description and the file it covers, and what a rename has to move too.
+_BACKTICKED_RE = re.compile(r"`[^`]+`")
 
 
 def build(
@@ -232,19 +243,33 @@ class MediaBytesRepair:
         return MigrationReport(actions=[summary, *actions], skipped=skipped, anomalies=anomalies)
 
     def _requeue(self, path: Path, member: _Member, item: str, held: str) -> str:
-        """Seed the unit's requeue, then drop the file — never the other way round."""
+        """Seed the unit's requeue, drop the file, retire its description — in that order.
+
+        The description goes last because it is the only step that can be
+        skipped safely: an apply interrupted before it leaves a
+        description over a hole, which migration 14 retires.
+        """
         append(path, self._stamped(_requeue_seed(member.entry, item)))
         member.file.unlink()
-        return _requeue_action(member, item, held)
+        return _requeue_action(member, item, held, _retire_description(member))
 
     def _rename(self, path: Path, member: _Member, item: str, ext: str) -> str:
         """Rename the file to what its bytes are, then re-point the done line to it.
+
+        The slot's description is re-pointed with it: the name in its
+        first line is the only tie between a description and the file it
+        covers, so a rename that moved the file and not the name would
+        leave the reading unreachable — ``describe`` would no longer find
+        it, and a session revising the reading would write a second
+        description into a fresh slot beside the stale one.
 
         Returns:
             The renamed file's ledger spelling.
         """
         new_path = _repointed(member.repo_path, ext)
-        member.file.rename(member.file.with_suffix(f".{ext}"))
+        landed = member.file.with_suffix(f".{ext}")
+        member.file.rename(landed)
+        _repoint_description(member, landed.name)
         repointed = self._stamped(replace(member.entry, item=item, path=new_path, via=_VIA))
         # The one field the stamp must not touch here: the line records the
         # same landing under a new name, and the digest-staleness backstop
@@ -307,22 +332,48 @@ def _repointed(repo_path: str, ext: str) -> str:
     return str(Path(repo_path).with_suffix(f".{ext}"))
 
 
-def _requeue_action(member: _Member, item: str, held: str) -> str:
-    """What the re-fetch does, and what it leaves the session where a description stands."""
+def _requeue_action(member: _Member, item: str, held: str, retired: str | None) -> str:
+    """What the re-fetch does, and what became of any description of the discarded bytes."""
     text = (
         f"{item}: {member.repo_path} held {held} (written by engine {member.entry.engine}); "
         "requeued as {queued, rerun, via: migration-13} and the file deleted — the drain "
         "re-fetches it under the fixed rules, and parks it blocked where the URL still "
         "answers with no media"
     )
-    description = _description(member)
-    if description is None:
+    if retired is None:
         return text
     return (
-        f"{text}; {description} describes the discarded bytes, and the describe count still "
-        "reads as met so nothing else will ever name it — rewrite or remove it once the "
-        "re-fetch lands or parks"
+        f"{text}; its description of the discarded bytes is retired to {retired}, text "
+        "untouched — out of the family the describe row counts, so a file landing in that "
+        "slot is described afresh instead of inheriting a reading of bytes that are gone"
     )
+
+
+def _repoint_description(member: _Member, name: str) -> None:
+    """Re-spell the slot description's backticked name; every other byte stands."""
+    description = member.file.with_suffix(".md")
+    if not description.is_file():
+        return
+    first, sep, rest = description.read_text(encoding="utf-8").partition("\n")
+    atomic.write_text(description, _BACKTICKED_RE.sub(f"`{name}`", first, count=1) + sep + rest)
+
+
+def _retire_description(member: _Member) -> str | None:
+    """Rename the slot's description out of the counted family; its new repo spelling.
+
+    None where the slot carries no description, and where the retired
+    name is already taken — two descriptions of one slot is a state this
+    migration did not create and must not resolve, and migration 14
+    reports it.
+    """
+    description = member.file.with_suffix(".md")
+    if not description.is_file():
+        return None
+    target = description.with_name(f"discarded-{description.name}")
+    if target.exists():
+        return None
+    description.rename(target)
+    return str(Path(member.repo_path).with_name(target.name))
 
 
 def _repoint_digest(root: Path, item: str, old: str, new: str, anomalies: list[str]) -> bool:
@@ -358,13 +409,6 @@ def _frontmatter(text: str) -> str | None:
         return None
     end = text.find("\n---\n", 3)
     return None if end == -1 else text[4:end]
-
-
-def _description(member: _Member) -> str | None:
-    """The slot's ``media-<n>.md``, repo-relative, where a session has written one."""
-    if not member.file.with_suffix(".md").is_file():
-        return None
-    return str(Path(member.repo_path).with_suffix(".md"))
 
 
 def _latest_per_hash(

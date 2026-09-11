@@ -246,21 +246,47 @@ class TestRequeue:
         assert file.exists()
         assert ledger.load(path)[MEDIA_HASH].status is Status.QUEUED
 
-    def test_a_standing_description_is_named_on_the_requeue_line(self, tmp_path, migration):
-        # A session closed the describe row by describing the empty file;
-        # the count reads as met, so nothing else will ever send anyone
-        # back to it. The line says so, and the file is never touched.
+    def test_a_standing_description_is_retired_with_the_bytes_it_describes(
+        self, tmp_path, migration
+    ):
+        # A session closed the describe row by describing the empty file.
+        # Left in the counted family it can be neither rewritten (the verb
+        # takes only a carried file) nor seen (the row compares counts), and
+        # a file landing in the slot would inherit it. Renamed, not deleted:
+        # the text is the only record of what the URL answered with.
         write_corpus_item(tmp_path)
         write_media(tmp_path, b"")
         description = write_description(tmp_path)
         before = description.read_text()
         write_ledger(tmp_path, page_entry(), media_entry())
         report = migration.apply(tmp_path)
-        assert description.read_text() == before
+        retired = description.with_name("discarded-media-1.md")
+        assert not description.exists()
+        assert retired.read_text() == before
         line = report.actions[1]
-        assert f"; enrichment/{ITEM}/media-1.md describes the discarded bytes" in line
-        assert "rewrite or remove it once the re-fetch lands or parks" in line
-        assert "describe count still reads as met" in line
+        assert f"retired to enrichment/{ITEM}/discarded-media-1.md" in line
+        assert "text untouched" in line
+
+    def test_a_slot_with_no_description_says_nothing_about_one(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, b"")
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert "retired" not in report.actions[1]
+
+    def test_a_taken_retired_name_leaves_the_description_alone(self, tmp_path, migration):
+        # Two descriptions of one slot is a state this migration did not
+        # create; overwriting either would destroy a session's writing.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, b"")
+        description = write_description(tmp_path)
+        standing = description.with_name("discarded-media-1.md")
+        standing.write_text("an earlier retirement\n", encoding="utf-8")
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert description.exists()
+        assert standing.read_text() == "an earlier retirement\n"
+        assert "retired" not in report.actions[1]
 
     def test_a_requeue_keeps_the_units_lineage(self, tmp_path, migration):
         # parent and depth travel together — the seed carries both, or the
@@ -365,18 +391,47 @@ class TestRename:
         assert digest.read_text() == before
 
     def test_a_rename_owes_the_session_nothing_and_says_nothing(self, tmp_path, migration):
-        # The ledger's via: migration-13 done line is the record; a standing
-        # description is neither touched nor named, and no per-unit line
-        # asks anyone to look.
+        # The ledger's via: migration-13 done line is the record; no per-unit
+        # line asks anyone to look. A rename keeps the bytes, so a standing
+        # description still covers them — only a requeue retires one.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        write_description(tmp_path)
+        write_ledger(tmp_path, page_entry(), media_entry())
+        report = migration.apply(tmp_path)
+        assert not (tmp_path / "enrichment" / ITEM / "discarded-media-1.md").exists()
+        assert len(report.actions) == 1
+        assert "media-1" not in report.actions[0]
+
+    def test_a_rename_moves_the_description_name_with_the_file(self, tmp_path, migration):
+        # The name in the first line is the only tie between a description
+        # and the file it covers. Moved the file and not the name, describe
+        # stops finding it and a revised reading lands in a second slot
+        # with the stale one still counted beside it.
+        write_corpus_item(tmp_path)
+        write_media(tmp_path, AVIF)
+        description = write_description(tmp_path)
+        description.write_text(
+            "Describes `media-1.png` — the diagram from `notes.md`.\n\nthe `media-1.png` shot\n",
+            encoding="utf-8",
+        )
+        write_ledger(tmp_path, page_entry(), media_entry())
+        migration.apply(tmp_path)
+        # Only the name, and only on the first line: the rest is the
+        # session's prose about the same bytes.
+        assert description.read_text() == (
+            "Describes `media-1.avif` — the diagram from `notes.md`.\n\nthe `media-1.png` shot\n"
+        )
+
+    def test_a_rename_leaves_a_description_naming_nothing_alone(self, tmp_path, migration):
+        # No backticked name to move; rewriting the line would be a guess.
         write_corpus_item(tmp_path)
         write_media(tmp_path, AVIF)
         description = write_description(tmp_path)
         before = description.read_text()
         write_ledger(tmp_path, page_entry(), media_entry())
-        report = migration.apply(tmp_path)
+        migration.apply(tmp_path)
         assert description.read_text() == before
-        assert len(report.actions) == 1
-        assert "media-1" not in report.actions[0]
 
     def test_a_renamed_line_keeps_what_the_live_line_carried(self, tmp_path, migration):
         # Identical but for path, item and via: a title, a rerun flag and

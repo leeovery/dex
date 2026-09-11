@@ -162,15 +162,33 @@ class TestRewrite:
         )
         assert description(instance, "media-1.md").endswith(f"\n\n{TEXT}\n")
 
-    def test_the_match_is_the_engines_own_first_line(self, instance):
-        # A hand-written description names the file in its own words; only
-        # the engine's header ties a slot to the file it covers.
+    def test_a_first_line_naming_no_file_takes_a_fresh_slot(self, instance):
+        # A hand-written description names the file in its own words, with
+        # nothing to read the name out of; a slot number ties a description
+        # to nothing, so the standing reading is left where it is.
         write_item(instance)
         write_enrichment(instance, "media-0.png")
         write_enrichment(instance, "media-0.md", text="Description of media-0.png:\nbold lines\n")
         describe(instance, "media-0.png")
         assert descriptions(instance) == ["media-0.md", "media-1.md"]
         assert description(instance, "media-1.md").startswith("Describes `media-0.png`\n")
+
+    def test_a_pre_verb_description_is_found_by_the_name_its_first_line_carries(self, instance):
+        # Written before this verb existed: the same opening, then its own
+        # prose. Matched whole it would be passed over, leaving the stale
+        # reading beside the new one — both counted, neither marked.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png")
+        write_enrichment(
+            instance,
+            "media-0.md",
+            text="Describes `media-0.png` (23 KB) — which is not an image.\n\nthe old reading\n",
+        )
+        assert describe(instance, "media-0.png", "A wiring diagram.") == (
+            f"rewrote enrichment/{ITEM}/media-0.md · describes media-0.png"
+        )
+        assert descriptions(instance) == ["media-0.md"]
+        assert description(instance) == "Describes `media-0.png`\n\nA wiring diagram.\n"
 
     def test_a_sibling_that_is_not_text_does_not_block_the_write(self, instance):
         write_item(instance)

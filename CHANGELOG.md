@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+🐛 Fixed
+- Migration 13 moved media out from under the descriptions written against it and left them standing — a renamed file's description still named the old spelling, and a deleted file's description was left with a report line asking the session to "rewrite or remove" it, which no verb could do. Migration 13 now moves the description with the file, and **migration 14** repairs what it already left behind: a description whose file was renamed is re-pointed to the new name, and one whose file is simply gone is retired to `discarded-media-<n>.md` — out of the family the describe row counts, text untouched.
+- Why it mattered: the name in a description's first line is the only tie between a description and the file it covers. Unmoored, `describe` stops finding it (so a revised reading lands in a second slot with the stale one still counted beside it), the describe row reads zero media against one description as met (so no report, status listing or health check names it again), and a file landing in that slot later silently inherits a reading of bytes that are gone.
+- `dex-enrich item describe` now finds a standing description by the file its first line names rather than by matching that line whole, so a description written before the verb existed is rewritten in place instead of leaving a stale reading beside the new one.
+
 ## [0.1.15] - 2026-09-11
 
 ✨ Added

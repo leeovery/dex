@@ -20,11 +20,16 @@ description of one would be counted against a media file it does not
 cover.
 
 Rewriting is allowed — a session revising its reading describes the file
-again — and the engine's own first line is how the earlier description is
-found: slots are counted, never paired to a download's number, so that
-line is the only tie between a description and the file it covers.
+again — and the first line is how the earlier description is found: slots
+are counted, never paired to a download's number, so the name that line
+carries is the only tie between a description and the file it covers. The
+line is read for that name rather than matched whole, because a
+description written before this verb existed carries its own prose after
+it and would otherwise be passed over — leaving the stale reading beside
+the new one, both counted, neither marked.
 """
 
+import re
 from pathlib import Path
 
 from dex_engine import atomic, corpus
@@ -33,7 +38,11 @@ from .run import RunContext, is_media_file, live_item, refresh_item_frontmatter
 from .types import Instance
 from .urls import resolve_repo_path
 
-__all__ = ["DescribeError", "item_describe"]
+__all__ = ["DescribeError", "described_file", "item_describe"]
+
+# The name a description's first line carries. Written by this verb as the
+# whole line; a pre-verb description opens the same way and runs on.
+_DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
 
 
 class DescribeError(ValueError):
@@ -76,7 +85,7 @@ def item_describe(item_id: str, *, of: str, text_path: Path, ctx: RunContext) ->
         raise DescribeError(f"{text_path}: the description is empty — it stands in for nothing")
     header = f"Describes `{of}`"
     item_dir = instance.enrichment_dir / item.id
-    target = _target(item_dir, header)
+    target = _target(item_dir, of)
     rewrite = target.exists()
     item_dir.mkdir(parents=True, exist_ok=True)
     atomic.write_text(target, f"{header}\n\n{text}\n")
@@ -111,10 +120,25 @@ def _carried(instance: Instance, item: corpus.CorpusItem, of: str) -> bool:
     return of.startswith("media-") and download.name == of and is_media_file(download)
 
 
-def _target(item_dir: Path, header: str) -> Path:
-    """The description already opening with ``header``, else the lowest free slot."""
+def described_file(path: Path) -> str | None:
+    """The file a description's first line names, or None where it names none.
+
+    The one tie between a description and the file it covers, and the
+    reason a slot number proves nothing: a capture's media carries no
+    slot at all. Read by this module to find the description to rewrite,
+    and by the migration that retires a description whose file is gone.
+    """
+    line = _first_line(path)
+    if line is None:
+        return None
+    match = _DESCRIBED_RE.match(line)
+    return None if match is None else match.group(1)
+
+
+def _target(item_dir: Path, of: str) -> Path:
+    """The description already covering ``of``, else the lowest free slot."""
     for path in sorted(item_dir.glob("media-*.md")):
-        if _first_line(path) == header:
+        if described_file(path) == of:
             return path
     n = 0
     while (item_dir / f"media-{n}.md").exists():
