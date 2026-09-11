@@ -61,6 +61,7 @@ KNOWN_VERBS = (
     "connect",
     "enrich compact",
     "enrich fetch",
+    "enrich item describe",
     "enrich item digest",
     "enrich item new",
     "enrich mark",

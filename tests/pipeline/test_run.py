@@ -31,6 +31,7 @@ from dex_engine.pipeline.digest import item_digest
 from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
+    _SHOWN_ID_MAX,
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
     MAX_DEPTH,
@@ -2885,6 +2886,16 @@ class TestVerbs:
         message = str(excinfo.value)
         assert "\n" not in message
         assert len(message) < 200
+        assert "2026-08-19-item-000000" in message  # named, not just bounded
+
+    def test_record_pass_error_shows_an_id_at_the_display_bound_whole(self, instance):
+        # The cap trims what is over it, never what meets it: an id of
+        # exactly the bound is quoted whole, with no ellipsis after it.
+        item_id = "x" * _SHOWN_ID_MAX
+        ctx = make_ctx(instance, FakeDriver())
+        with pytest.raises(ValueError, match=f"no corpus item '{item_id}'") as excinfo:
+            run_mod.record_pass(ctx, item_id, "digest")
+        assert "…" not in str(excinfo.value)
 
     def test_compact_reports_removed_lines(self, instance):
         write_item(instance)

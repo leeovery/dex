@@ -20,8 +20,9 @@ the engine stays unaware of which ones exist.
     `enrichment.py` (the one enrichment-file format point), `urls.py`,
     `ownership.py` (which live item claims a work unit), `capture.py`
     (`enrich item new`), `digest.py` (`enrich item digest` — the ONE
-    digest write point), `placement.py` (`enrich place` — the ONE
-    taxonomy/entity-members write point), `issues.py` (the issue
+    digest write point), `describe.py` (`enrich item describe` — the ONE
+    media-description write point), `placement.py` (`enrich place` — the
+    ONE taxonomy/entity-members write point), `issues.py` (the issue
     filer), `observed.py` (`dex issue` — the observation-shaped
     producer and its leak rejectors).
   - `drivers/` — one per source shape: youtube, x, instagram, github,

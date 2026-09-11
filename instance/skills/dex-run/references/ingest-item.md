@@ -74,22 +74,37 @@ default for dense technical audio.
 ## 4. Media and cognitive-floor work (judgment)
 
 For a media capture the primary source is the media itself: view it and
-write `enrichment/<id>/media-0.md` — what it depicts, all legible text
-(OCR), and, where relevant to this instance's domain, style, palette,
-composition, typography, layout. This is the media's "transcript"; make it
-substantive enough to stand in for the media in text-only contexts.
+write its description — what it depicts, all legible text (OCR), and,
+where relevant to this instance's domain, style, palette, composition,
+typography, layout. This is the media's "transcript"; make it substantive
+enough to stand in for the media in text-only contexts. Write the text to
+a file and let the verb place it:
 
-One description per media file — an item carrying three gets three, in
-the next free `media-<n>.md` slot (`media-0.md`, then `media-1.md`, …;
-existing files take their numbers, you take what is left). The slot
-numbers are not a claim about which file each covers — capture media
-carries no slot at all — so name the file you are describing in the
-description's first line. A markdown file the item carries owes one too:
-nothing transcribes or extracts it, so read it and write a summary — the
-read is the point, and the description is what proves it happened. The
-engine counts descriptions against media files and lists any item short of
-one under **Describe these**, on the run report, `bin/dex enrich status`,
-and the health check, until the count is met.
+```
+bin/dex enrich item describe <item-id> --of <file> --file cache/description.md
+```
+
+`--of` names the file described: a path the item's `media:` states
+(`media/<id>/photo.jpg`), or the bare name of a download in
+`enrichment/<id>/` (`media-0.png`). Only a file the item carries is
+accepted — the same reading the describe queue counts — so an extraction
+asset (`<hash6>-asset-<n>.<ext>`) is refused: it owes nothing. The text is
+the judgment; the `enrichment/<id>/media-<n>.md` slot, the first line
+naming the file, and the item's `enrichment:`/`status` refresh are the
+engine's. Never hand-write `media-<n>.md`: a hand-written description
+leaves the item reading as undescribed and `raw` until the next run.
+
+One description per media file — an item carrying three gets three, and
+the verb takes the next free slot each time (slots are counted, never
+paired: capture media carries no slot at all, which is why the engine's
+first line is what names the file). Describing a file again rewrites its
+standing description in place — how a revised reading lands. A markdown
+file the item carries owes one too: nothing transcribes or extracts it,
+so read it and write a summary — the read is the point, and the
+description is what proves it happened. The engine counts descriptions
+against media files and lists any item short of one under **Describe
+these**, on the run report, `bin/dex enrich status`, and the health check,
+until the count is met.
 
 For a cognitive job the report listed (a document no extractor reads, a
 scanned PDF): read the file directly, write the enrichment as

@@ -21,9 +21,11 @@ directory).
    obligation: every item carrying more media files than descriptions,
    named again every run until the descriptions land. It is a backlog, not
    news — an item listed there may be long enriched and already digested —
-   so the section persists, and the only thing that clears a row is writing
-   the missing `enrichment/<id>/media-<n>.md` (per-item reference, step 4).
-   The counts say how many are short; the media itself says what to write.
+   so the section persists, and the only thing that clears a row is
+   describing the missing files through `bin/dex enrich item describe`
+   (per-item reference, step 4), which refreshes the item's frontmatter
+   as it writes. The counts say how many are short; the media itself says
+   what to write.
    Items you created this session always get the full per-item procedure
    whether or not the report names them. **Needs you** holds the entries
    only you can move, each with a stated reason: judge them per the
