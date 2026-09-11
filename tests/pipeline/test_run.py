@@ -31,6 +31,7 @@ from dex_engine.pipeline.digest import item_digest
 from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
+    _SHOWN_ID_MAX,
     _SNIFF_PREFIX_BYTES,
     MAX_BLOCKED_ATTEMPTS,
     MAX_DEPTH,
@@ -2885,6 +2886,16 @@ class TestVerbs:
         message = str(excinfo.value)
         assert "\n" not in message
         assert len(message) < 200
+        assert "2026-08-19-item-000000" in message  # named, not just bounded
+
+    def test_record_pass_error_shows_an_id_at_the_display_bound_whole(self, instance):
+        # The cap trims what is over it, never what meets it: an id of
+        # exactly the bound is quoted whole, with no ellipsis after it.
+        item_id = "x" * _SHOWN_ID_MAX
+        ctx = make_ctx(instance, FakeDriver())
+        with pytest.raises(ValueError, match=f"no corpus item '{item_id}'") as excinfo:
+            run_mod.record_pass(ctx, item_id, "digest")
+        assert "…" not in str(excinfo.value)
 
     def test_compact_reports_removed_lines(self, instance):
         write_item(instance)
@@ -4191,6 +4202,21 @@ class TestOwnershipIsTheCorpusAnswer:
         (instance.digests_dir / f"{OLD_ITEM}.md").write_text("digested\n", encoding="utf-8")
         run_mod.record_pass(make_ctx(instance, FakeDriver()), OLD_ITEM, "digest")
         assert run_mod.digest_orphans(instance) == []
+
+    def test_a_pass_under_a_pre_rename_id_refreshes_the_live_item(self, instance):
+        # The record keeps the id as given — its readers resolve it — but
+        # the refresh has to reach the item that exists: refreshing the
+        # given id found no corpus file and silently left the live item
+        # stale, exactly the state the refresh exists to end.
+        path = write_item(instance, NEW_ITEM, urls=[], kinds=["image"])
+        item_dir = instance.enrichment_dir / NEW_ITEM
+        item_dir.mkdir(parents=True)
+        (item_dir / "media-0.md").write_text("described by hand\n", encoding="utf-8")
+        run_mod.record_pass(make_ctx(instance, FakeDriver()), OLD_ITEM, "digest")
+        item = corpus.read_item(path)
+        assert (item.status, item.enrichment) == ("enriched", ["media-0.md"])
+        record = json.loads(instance.passes_path.read_text(encoding="utf-8").splitlines()[0])
+        assert record["item"] == OLD_ITEM  # as given, never rewritten
 
     def test_a_pre_rename_digest_gone_stale_is_still_stale(self, instance):
         # The other direction: enrichment lands AFTER the rename, so the

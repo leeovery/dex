@@ -115,11 +115,13 @@ __all__ = [
     "is_media_file",
     "items_owing_descriptions",
     "items_owing_work",
+    "live_item",
     "mark",
     "media_cap",
     "never_harvested",
     "no_providers",
     "record_pass",
+    "refresh_item_frontmatter",
     "run",
     "run_transcribe",
     "status_report",
@@ -1926,7 +1928,7 @@ class _Drain:
         """
         self.resolve_owners()  # this run's children exist now, and want owners
         for item_id, path in self.item_paths.items():
-            detail = _refresh_item_frontmatter(
+            detail = refresh_item_frontmatter(
                 self.ctx.instance, item_id, path, entries=self.entries, owners=self.owners
             )
             if detail is not None:
@@ -2228,7 +2230,7 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
             stale.unlink()
 
 
-def _refresh_item_frontmatter(
+def refresh_item_frontmatter(
     instance: Instance,
     item_id: str,
     path: Path | None = None,
@@ -2251,8 +2253,9 @@ def _refresh_item_frontmatter(
     refresh the derived listing itself refuses — an on-disk enrichment
     filename the corpus schema cannot hold (a hand-written name with a
     comma, bracket, or edge whitespace) — comes back as the failure detail
-    for callers with a report to surface; quiet callers (the mark and pass
-    verbs) ignore it, and no caller ever dies on it.
+    for callers with a report to surface (the drain's notes, the describe
+    verb's confirmation line); quiet callers (the mark and pass verbs)
+    ignore it, and no caller ever dies on it.
     """
     if path is None:
         path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
@@ -3295,9 +3298,43 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     # item's line names an id with no file to refresh at all.
     drain.resolve_owners()
     for item_id in drain.owners.get(prior.hash, (prior.item,)):
-        _refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
+        refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
     drain.close_ledger()
     return f"marked {prior.url} ({prior.hash}) {status.value}"
+
+
+def live_item(instance: Instance, item_id: str, *, claim: str) -> str:
+    """The live corpus item ``item_id`` names, asked exactly as the readers ask.
+
+    The trailing-shortid rule (:func:`_dir_owner`), so an id whose slug a
+    rename rewrote still names its item — the readers resolve it the same
+    way. Whitespace is refused however the id resolves: a whole pasted
+    list of ids taken as one argument ends in a real id, so the blob's
+    trailing shortid resolves and the whole paste lands as one write no
+    item can ever claim — while the session reads the work as done.
+    Existence is the only claim checked; a corpus file that exists but
+    cannot be read is seeding's to report.
+
+    Args:
+        instance: The instance.
+        item_id: The id as the verb was given it.
+        claim: What the verb does for an existing item, for the refusal
+            — the clause after the id it could not find.
+
+    Returns:
+        The live id: ``item_id`` itself, or the renamed item it resolves to.
+
+    Raises:
+        ValueError: No live item answers to ``item_id``.
+    """
+    live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
+    owner = _dir_owner(item_id, live)
+    if any(map(str.isspace, item_id)) or owner not in live:
+        shown = " ".join(item_id.split())
+        if len(shown) > _SHOWN_ID_MAX:
+            shown = f"{shown[:_SHOWN_ID_MAX]}…"
+        raise ValueError(f"no corpus item {shown!r} — {claim}")
+    return owner
 
 
 def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
@@ -3322,21 +3359,11 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
     if stage not in _PASS_STAGES:
         options = ", ".join(sorted(_PASS_STAGES))
         raise ValueError(f"stage must be one of {options}, got {stage!r}")
-    # The record must bind to a live item, asked exactly as the readers
-    # ask: the trailing-shortid rule (:func:`_dir_owner`), so an id whose
-    # slug a rename rewrote still records — its readers resolve it the
-    # same way. Whitespace is refused BEFORE resolution: a whole pasted
-    # list of ids taken as one argument ends in a real id, so the blob's
-    # trailing shortid resolves and the whole paste lands as one record no
-    # item can ever claim — while the session reads the stage as covered.
-    # Existence is the only claim checked; a corpus file that exists but
-    # cannot be read is seeding's to report, and the pass on it stands.
-    live = {path.stem for path in ctx.instance.corpus_dir.glob("*/*.md")}
-    if any(map(str.isspace, item_id)) or _dir_owner(item_id, live) not in live:
-        shown = " ".join(item_id.split())
-        if len(shown) > _SHOWN_ID_MAX:
-            shown = f"{shown[:_SHOWN_ID_MAX]}…"
-        raise ValueError(f"no corpus item {shown!r} — a pass records a stage for an existing item")
+    # The record names the id as given, not the item it resolves to: a
+    # pass on a pre-rename id still records, and its readers resolve it
+    # the same way the check here did. The refresh goes to the live item
+    # — the id as given may name no corpus file at all.
+    live = live_item(ctx.instance, item_id, claim="a pass records a stage for an existing item")
     record: dict[str, str | int] = {
         "stage": stage,
         "item": item_id,
@@ -3348,7 +3375,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    _refresh_item_frontmatter(ctx.instance, item_id)
+    refresh_item_frontmatter(ctx.instance, live)
     return f"recorded {stage} pass for {item_id}"
 
 

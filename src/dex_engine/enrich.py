@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .capabilities import Capabilities
 from .pipeline.capture import item_new
+from .pipeline.describe import item_describe
 from .pipeline.digest import item_digest
 from .pipeline.placement import place
 from .pipeline.registry import build_drivers
@@ -156,6 +157,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="the JSON payload file (conventionally under cache/): "
         '{"id", "signal", "topics", "facts"}, entities optional',
     )
+    describe_parser = item_commands.add_parser(
+        "describe",
+        help="write an item's description of one media file it carries (the slot and "
+        "the first line are the engine's) and refresh the item's frontmatter",
+    )
+    describe_parser.add_argument("item", help="the corpus item id")
+    describe_parser.add_argument(
+        "--of",
+        required=True,
+        help="the file described: a path the item's media: states, or the bare name "
+        "of a media-<n>.<ext> download in enrichment/<id>/",
+    )
+    describe_parser.add_argument(
+        "--file",
+        required=True,
+        type=Path,
+        help="the description text (conventionally under cache/)",
+    )
 
     return parser
 
@@ -187,6 +206,8 @@ def _dispatch(args: argparse.Namespace, ctx: RunContext) -> str:  # noqa: PLR091
             return place(args.file, instance=ctx.instance)
         case "item" if args.item_command == "digest":
             return item_digest(args.file, ctx=ctx)
+        case "item" if args.item_command == "describe":
+            return item_describe(args.item, of=args.of, text_path=args.file, ctx=ctx)
         case "item":
             return item_new(
                 args.capture,

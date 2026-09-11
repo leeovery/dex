@@ -88,6 +88,37 @@ class TestParser:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["item", "digest"])
 
+    def test_item_describe_takes_item_of_and_file(self):
+        args = build_parser().parse_args(
+            [
+                "item",
+                "describe",
+                "2026-08-19-x-55ad7b",
+                "--of",
+                "media-0.png",
+                "--file",
+                "cache/d.md",
+            ]
+        )
+        assert (args.command, args.item_command) == ("item", "describe")
+        assert (args.item, args.of, str(args.file)) == (
+            "2026-08-19-x-55ad7b",
+            "media-0.png",
+            "cache/d.md",
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["item", "describe", "2026-08-19-x-55ad7b", "--file", "cache/d.md"],
+            ["item", "describe", "2026-08-19-x-55ad7b", "--of", "media-0.png"],
+            ["item", "describe", "--of", "media-0.png", "--file", "cache/d.md"],
+        ],
+    )
+    def test_item_describe_requires_the_item_the_file_and_the_text(self, argv):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(argv)
+
     def test_item_requires_a_subcommand(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["item"])
@@ -169,6 +200,47 @@ class TestMain:
         with pytest.raises(SystemExit) as excinfo:
             main(["item", "digest", "--file", str(payload)])
         assert "missing required key(s) ['facts', 'topics']" in str(excinfo.value)
+
+    def test_item_describe_writes_the_description(self, instance, monkeypatch, capsys):
+        monkeypatch.chdir(instance.root)
+        capture = instance.root / "inbox" / "20260818-101530.md"
+        capture.parent.mkdir()
+        capture.write_text("https://example.test/post\n\nwhy I saved it\n")
+        main(["item", "new", str(capture)])
+        item_path = next(instance.corpus_dir.glob("*/*.md"))
+        item_id = item_path.stem
+        item_dir = instance.enrichment_dir / item_id
+        item_dir.mkdir(parents=True)
+        (item_dir / "media-0.png").write_bytes(b"png")
+        text = instance.cache_dir / "description.md"
+        text.write_text("A chart of token spend per run.\n")
+        capsys.readouterr()
+        main(["item", "describe", item_id, "--of", "media-0.png", "--file", str(text)])
+        assert capsys.readouterr().out == (
+            f"wrote enrichment/{item_id}/media-0.md · describes media-0.png\n"
+        )
+        assert (item_dir / "media-0.md").read_text() == (
+            "Describes `media-0.png`\n\nA chart of token spend per run.\n"
+        )
+        assert "enrichment: [media-0.md]" in item_path.read_text()
+
+    def test_a_refused_description_exits_with_a_stated_line(self, instance, monkeypatch):
+        monkeypatch.chdir(instance.root)
+        text = instance.cache_dir / "description.md"
+        text.write_text("A chart.\n")
+        with pytest.raises(SystemExit) as excinfo:
+            main(
+                [
+                    "item",
+                    "describe",
+                    "2026-08-19-x-55ad7b",
+                    "--of",
+                    "media-0.png",
+                    "--file",
+                    str(text),
+                ]
+            )
+        assert "no corpus item '2026-08-19-x-55ad7b'" in str(excinfo.value)
 
     def test_place_writes_the_state_files_and_the_map(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)

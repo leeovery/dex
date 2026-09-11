@@ -287,6 +287,7 @@ cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
 | `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
 | `dex-enrich item new` | create a corpus item from a capture file (id rules and provenance; code writes frontmatter) |
 | `dex-enrich item digest` | write an item's digest from a JSON payload — signal, topics and facts are the judgment, the file's shape is the engine's; the digest pass is recorded in the same call |
+| `dex-enrich item describe` | write an item's description of one media file it carries from a text file — the reading is the judgment, the `media-<n>.md` slot and the first line naming the file are the engine's; the item's frontmatter is refreshed in the same call |
 | `dex-enrich place` | apply placement judgment to `state/taxonomy.json` and `state/entity-members.json` from a JSON payload — define topics and entities, place/unplace items, drop fold-aways; validated whole and refused whole, both files rewritten deterministically, the map and index recompiled |
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
 | `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, map and index freshness (a byte diff against an in-memory recompile), stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, media drift and placement advisories, pass records (`--write` reconciles derived wiki frontmatter) |

@@ -69,7 +69,11 @@ never state, never synced.
   is append-only and verb-written: ledger heals via `bin/dex enrich mark`,
   stage records via `bin/dex enrich pass`. Digests too: the judgment goes
   in as JSON and `bin/dex enrich item digest --file <payload>` writes the
-  file, recording the digest pass in the same call. Engine-defect reports
+  file, recording the digest pass in the same call. Media descriptions
+  the same way: the text goes in as a file and `bin/dex enrich item
+  describe <id> --of <file> --file <text>` takes the
+  `enrichment/<id>/media-<n>.md` slot, refreshing the item's frontmatter
+  in the same call. Engine-defect reports
   the same way: `bin/dex issue --file <payload>` files upstream and writes
   the `issue-reports.jsonl` record. A hand-appended line
   is how state and reality diverge; the verbs are what make a malformed
