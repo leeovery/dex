@@ -46,6 +46,7 @@ The convention:
 - [PDF figures are never extracted](pdf-figures-never-extracted.md) — anydoc converts PDF straight to markdown, so every embedded figure is lost before any cap applies
 - [Format-aware asset cap](format-aware-asset-cap.md) — PPTX slides are the artefact and deserve the pooled bound; DOCX decoration keeps the tight one
 - [Media URL re-derivation](media-url-rederivation.md) — a site redesign moves its `og:image`; the engine retries the dead URL five times and never re-reads the page that has the live one
+- [One shared serve daemon](shared-serve-daemon.md) — every session spawns its own `dex serve`; 26 process pairs and ~780 MB for four instances and one stateless answer
 
 Hard-earned platform facts several of these ideas lean on (shortcut
 mechanics, scheduled-task hosts, cowork limits) live in the repo root's
