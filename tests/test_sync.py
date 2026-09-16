@@ -1,6 +1,7 @@
 """Tests for sync.py: pin flow, re-exec seams, migrations-first, template sync."""
 
 import datetime
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -11,11 +12,13 @@ from dex_engine.migrations import AppliedMigration, log_path, read_applied
 from dex_engine.pipeline.types import Instance, MigrationReport, Skipped
 from dex_engine.sync import (
     PIN_FILE,
+    Release,
     ReleaseChannel,
     ReleaseCheckError,
     build_parser,
     main,
     read_pin,
+    read_pin_commit,
     release_tags,
     run_sync,
     sync,
@@ -35,13 +38,31 @@ def fixed_now() -> datetime.datetime:
     return NOW
 
 
+def _sha(seed: str) -> str:
+    return hashlib.sha1(seed.encode(), usedforsecurity=False).hexdigest()
+
+
+def commit_for(tag: str) -> str:
+    """The commit a tag's peeled line names in a :func:`listing_for` listing."""
+    return _sha(f"commit:{tag}")
+
+
 def listing_for(*tags: str) -> str:
+    """A ``git ls-remote --tags`` listing of annotated tags.
+
+    Each tag's own line names its tag object and its ``^{}`` line the commit
+    — two different hashes, as a real listing has them.
+    """
     lines = []
-    for i, tag in enumerate(tags):
-        sha = f"{i:040x}"
-        lines.append(f"{sha}\trefs/tags/{tag}")
-        lines.append(f"{sha}\trefs/tags/{tag}^{{}}")
+    for tag in tags:
+        lines.append(f"{_sha(f'tag:{tag}')}\trefs/tags/{tag}")
+        lines.append(f"{commit_for(tag)}\trefs/tags/{tag}^{{}}")
     return "\n".join(lines) + "\n"
+
+
+def pin_text(inst: Instance) -> str | None:
+    path = inst.root / PIN_FILE
+    return path.read_text() if path.exists() else None
 
 
 def make_channel(listing: str = "", *, fail: bool = False):
@@ -124,27 +145,80 @@ class TestParser:
             build_parser().parse_args(["--prev-pin", "v0.1.0"])
 
 
+def versions(releases: list[Release]) -> dict[str, tuple[int, ...]]:
+    return {release.tag: release.version for release in releases}
+
+
 class TestReleaseTags:
     def test_parses_version_tags_and_collapses_peeled_refs(self):
         tags = release_tags(listing_for("v0.1.0", "v0.2.0"))
-        assert dict(tags) == {"v0.1.0": (0, 1, 0), "v0.2.0": (0, 2, 0)}
+        assert versions(tags) == {"v0.1.0": (0, 1, 0), "v0.2.0": (0, 2, 0)}
+
+    def test_commit_is_the_peeled_line_never_the_tag_object(self):
+        tags = release_tags(listing_for("v0.1.0", "v0.2.0"))
+        assert {release.tag: release.commit for release in tags} == {
+            "v0.1.0": commit_for("v0.1.0"),
+            "v0.2.0": commit_for("v0.2.0"),
+        }
+
+    def test_peeled_line_wins_whatever_order_the_listing_has(self):
+        peeled = f"{commit_for('v0.1.0')}\trefs/tags/v0.1.0^{{}}"
+        own = f"{_sha('tag:v0.1.0')}\trefs/tags/v0.1.0"
+        first, second = release_tags(f"{peeled}\n{own}\n{listing_for('v0.2.0')}")
+        assert first.commit == commit_for("v0.1.0")
+        assert second.tag == "v0.2.0"  # the own line is skipped, not the rest of the listing
+
+    def test_lightweight_tag_names_its_commit_on_its_own_line(self):
+        listing = f"{commit_for('v0.1.0')}\trefs/tags/v0.1.0\n"
+        assert release_tags(listing) == [Release("v0.1.0", (0, 1, 0), commit_for("v0.1.0"))]
 
     def test_non_release_tags_are_ignored(self):
-        listing = listing_for("v0.1.0", "inbox", "some-experiment")
-        assert dict(release_tags(listing)) == {"v0.1.0": (0, 1, 0)}
+        listing = listing_for("inbox", "v0.1.0", "some-experiment")
+        assert versions(release_tags(listing)) == {"v0.1.0": (0, 1, 0)}
+
+    def test_blank_and_foreign_lines_are_skipped_not_terminal(self):
+        head = f"{_sha('head')}\trefs/heads/main"
+        listing = f"\n{head}\n\n{listing_for('v0.1.0')}\n{listing_for('v0.2.0')}"
+        assert versions(release_tags(listing)) == {"v0.1.0": (0, 1, 0), "v0.2.0": (0, 2, 0)}
 
     def test_unprefixed_versions_are_releases_too(self):
-        assert dict(release_tags(listing_for("0.3.1"))) == {"0.3.1": (0, 3, 1)}
+        assert versions(release_tags(listing_for("0.3.1"))) == {"0.3.1": (0, 3, 1)}
 
     def test_empty_listing(self):
         assert release_tags("") == []
+
+
+class TestPinFile:
+    def test_tag_and_commit_round_trip(self, inst):
+        write_pin(inst.root, "v0.1.2", commit_for("v0.1.2"))
+        assert pin_text(inst) == f"v0.1.2 {commit_for('v0.1.2')}\n"
+        assert read_pin(inst.root) == "v0.1.2"
+        assert read_pin_commit(inst.root) == commit_for("v0.1.2")
+
+    def test_tag_alone_round_trips(self, inst):
+        write_pin(inst.root, "v0.1.2")
+        assert pin_text(inst) == "v0.1.2\n"
+        assert read_pin(inst.root) == "v0.1.2"
+        assert read_pin_commit(inst.root) is None
+
+    def test_absent_and_empty_read_as_unpinned(self, inst):
+        assert read_pin(inst.root) is None
+        assert read_pin_commit(inst.root) is None
+        (inst.root / PIN_FILE).write_text("\n")
+        assert read_pin(inst.root) is None
+        assert read_pin_commit(inst.root) is None
+
+    def test_hand_edited_whitespace_reads_like_the_shim_reads_it(self, inst):
+        (inst.root / PIN_FILE).write_bytes(b"  v0.1.2 \t" + commit_for("v0.1.2").encode() + b"\r\n")
+        assert read_pin(inst.root) == "v0.1.2"
+        assert read_pin_commit(inst.root) == commit_for("v0.1.2")
 
 
 class TestBootstrap:
     def test_first_tag_aware_sync_pins_its_own_release(self, inst, template):
         channel, calls = make_channel(listing_for("v0.1.0"))
         report, _ = run(inst, channel, template)
-        assert read_pin(inst.root) == "v0.1.0"
+        assert pin_text(inst) == f"v0.1.0 {commit_for('v0.1.0')}\n"
         assert calls["exec"] == []
         assert "## Sync — engine pinned at v0.1.0" in report
         assert "first tag-aware sync" in report
@@ -165,6 +239,26 @@ class TestBootstrap:
         assert "engine unpinned" in report
         assert "left unpinned until it is released" in report
 
+    def test_bootstrap_across_a_major_announces_loudly(self, inst, template):
+        channel, _ = make_channel(listing_for("v1.0.0"))
+        _, echoes = run(inst, channel, template)
+        assert "MAJOR ENGINE UPGRADE: unpinned, engine 0.1.0 → v1.0.0" in echoes
+        assert any("(currently unpinned, engine 0.1.0)" in line for line in echoes)
+
+    def test_bootstrap_minor_bump_is_not_announced_as_major(self, inst, template):
+        channel, _ = make_channel(listing_for("v0.2.0"))
+        _, echoes = run(inst, channel, template)
+        assert not any("MAJOR" in line for line in echoes)
+        assert any("v0.2.0 available (currently unpinned, engine 0.1.0)" in line for line in echoes)
+
+    def test_pinned_but_remote_lists_no_releases_is_a_note(self, inst, template):
+        write_pin(inst.root, "v0.1.0")
+        channel, calls = make_channel("")
+        report, _ = run(inst, channel, template)
+        assert calls["exec"] == []
+        assert "pinned v0.1.0, but the remote lists no release tags" in report
+        assert "check the remote" in report
+
 
 class TestBumpAndReexec:
     def test_newer_release_bumps_pin_then_reexecs(self, inst, template):
@@ -173,6 +267,7 @@ class TestBumpAndReexec:
         report, echoes = run(inst, channel, template)
         assert report is None  # re-exec'd; the new process renders the report
         assert read_pin(inst.root) == "v0.1.2"
+        assert read_pin_commit(inst.root) == commit_for("v0.1.2")
         assert calls["exec"] == [
             [
                 "uvx",
@@ -183,7 +278,7 @@ class TestBumpAndReexec:
                 "v0.1.0",
             ]
         ]
-        assert any("v0.1.2" in line for line in echoes)
+        assert any("v0.1.2 available (currently v0.1.0)" in line for line in echoes)
 
     def test_reexec_happens_before_migrations_and_template_sync(self, inst, template):
         # Steps 3-5 must run on the NEW code — nothing may touch state first.
@@ -205,7 +300,7 @@ class TestBumpAndReexec:
         channel, calls = make_channel(listing_for("v0.1.2"))
         report, _ = run(inst, channel, template)
         assert report is None
-        assert read_pin(inst.root) == "v0.1.2"
+        assert pin_text(inst) == f"v0.1.2 {commit_for('v0.1.2')}\n"
         assert calls["exec"] == [
             ["uvx", "--from", "git+https://example.test/dex@v0.1.2", "dex-sync"]
         ]
@@ -228,18 +323,45 @@ class TestBumpAndReexec:
 
 class TestSteadyStateAndEdges:
     def test_pin_at_latest_proceeds_without_exec(self, inst, template):
-        write_pin(inst.root, "v0.2.0")
+        write_pin(inst.root, "v0.2.0", commit_for("v0.2.0"))
         channel, calls = make_channel(listing_for("v0.1.0", "v0.2.0"))
         report, _ = run(inst, channel, template)
         assert calls["exec"] == []
         assert "## Sync — engine pinned at v0.2.0" in report
+
+    def test_pin_at_latest_without_a_commit_gains_one(self, inst, template):
+        # Written by a sync from before commits were recorded.
+        write_pin(inst.root, "v0.2.0")
+        channel, calls = make_channel(listing_for("v0.1.0", "v0.2.0"))
+        report, _ = run(inst, channel, template)
+        assert calls["exec"] == []
+        assert pin_text(inst) == f"v0.2.0 {commit_for('v0.2.0')}\n"
+        assert "pin now records v0.2.0's commit" in report
+        assert "review + commit the refreshed files and the pin" in report
+
+    def test_pin_with_the_wrong_commit_follows_the_tag(self, inst, template):
+        write_pin(inst.root, "v0.2.0", "0" * 40)
+        channel, _ = make_channel(listing_for("v0.2.0"))
+        report, _ = run(inst, channel, template)
+        assert read_pin_commit(inst.root) == commit_for("v0.2.0")
+        assert "pin now records v0.2.0's commit" in report
+
+    def test_pin_with_its_commit_is_left_byte_identical(self, inst, template):
+        write_pin(inst.root, "v0.2.0", commit_for("v0.2.0"))
+        channel, _ = make_channel(listing_for("v0.2.0"))
+        run(inst, channel, template)  # first sync lays down the machinery
+        before = pin_text(inst)
+        report, _ = run(inst, channel, template)
+        assert pin_text(inst) == before
+        assert "pin now records" not in report
+        assert "review + commit" not in report
 
     def test_pin_ahead_of_latest_is_left_alone(self, inst, template):
         write_pin(inst.root, "v0.3.0")
         channel, calls = make_channel(listing_for("v0.2.0"))
         report, _ = run(inst, channel, template)
         assert calls["exec"] == []
-        assert read_pin(inst.root) == "v0.3.0"
+        assert pin_text(inst) == "v0.3.0\n"
         assert "## Sync — engine pinned at v0.3.0" in report
 
     def test_no_releases_yet_runs_unpinned(self, inst, template):
@@ -257,7 +379,7 @@ class TestSteadyStateAndEdges:
         write_pin(inst.root, "v0.1.0")
         channel, _ = make_channel(fail=True)
         report, _ = run(inst, channel, template)
-        assert read_pin(inst.root) == "v0.1.0"
+        assert pin_text(inst) == "v0.1.0\n"  # no listing, so no commit to record
         assert "release check failed (offline)" in report
         assert (inst.root / "bin" / "dex").exists()
 

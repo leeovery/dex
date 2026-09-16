@@ -147,9 +147,19 @@ the engine stays unaware of which ones exist.
   the phone shortcut.
 - **Engine/instance separation.** Instances hold content plus synced
   machinery; every machinery change happens here and reaches instances via
-  `bin/dex sync` (tag-pinned: `.dex-engine-pin` names the release; Mint
-  cuts releases, sync bumps pins and runs migrations). Nothing is ever
-  fixed by hand-editing a synced file in an instance.
+  `bin/dex sync` (pinned: `.dex-engine-pin` is one line, `<tag> <commit>`;
+  Mint cuts releases, sync bumps pins and runs migrations). The shim reads
+  the pin beside itself, never from the working directory, and launches by
+  the commit: uv never re-resolves a full commit, so a launch skips the
+  release lookup a tag costs every time. Nothing is ever fixed by
+  hand-editing a synced file in an instance.
+- **The engine stays Python, and offline is a non-goal.** A Go or Rust
+  rewrite was considered on 2026-08-21 and rejected: the dependencies are
+  the engine — yt-dlp, faster-whisper, trafilatura, the document extractor
+  — and a rewrite would shell out to most of them while losing the rest.
+  Running with no network was ruled a non-goal on 2026-09-16: the sessions
+  that drive an instance need the network anyway, so nothing here is built
+  or argued for the offline case.
 
 ## Development
 
