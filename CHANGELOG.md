@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-09-16
+
+🔧 Changed
+
+- The `bin/dex` shim now launches by the pinned commit instead of the tag, skipping a network resolve on every command — and reads its pin next to itself rather than the working directory, fixing chat clients that launch `serve` from elsewhere.
+- Sync now writes both the tag and its commit into `.dex-engine-pin`, backfilling the commit onto any pin an older sync left tag-only.
+
 ## [0.1.16] - 2026-09-11
 
 🐛 Fixed
