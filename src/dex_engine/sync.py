@@ -13,8 +13,13 @@ Flow::
     5. render the sync report (one surface), carrying whatever a read of the
        desktop app's own config says about this instance's reach into chat
 
-``.dex-engine-pin`` is one line at the instance root, committed,
-instance-owned: sync writes its *value* — it is not a synced-template file.
+``.dex-engine-pin`` is one line at the instance root — ``<tag> <commit>`` —
+committed, instance-owned: sync writes its *value* — it is not a
+synced-template file. The commit is the tag's peeled commit, and it is what
+the shim launches by: uv treats a full commit as immutable and never
+re-resolves it, where a tag costs a release lookup on every launch. A pin
+that carries no commit yet (written by an older sync) gains one at the next
+successful release check.
 Bootstrap: the first tag-aware sync pins that sync's own release. Until any
 release tag exists (pre-first-tag), sync runs migrations + template sync
 without pinning and the shim keeps tracking main; the same holds when the
@@ -50,11 +55,13 @@ from dex_engine.version import engine_version
 __all__ = [
     "PIN_FILE",
     "REPO_URL",
+    "Release",
     "ReleaseChannel",
     "ReleaseCheckError",
     "build_parser",
     "main",
     "read_pin",
+    "read_pin_commit",
     "release_tags",
     "run_sync",
     "sync",
@@ -113,21 +120,39 @@ def default_channel() -> ReleaseChannel:
 # ---------------------------------------------------------------------------
 
 
-def read_pin(root: Path) -> str | None:
-    """The pinned release tag, or ``None`` when unpinned (file absent/empty)."""
+def _pin_fields(root: Path) -> list[str]:
+    """The pin line's whitespace-separated fields; empty when unpinned.
+
+    Split the way the shim splits it — on any whitespace, so a hand-edited
+    line with CRLF or stray blanks reads the same here as there.
+    """
     path = root / PIN_FILE
     if not path.exists():
-        return None
-    return path.read_text(encoding="utf-8").strip() or None
+        return []
+    return path.read_text(encoding="utf-8").split()
 
 
-def write_pin(root: Path, tag: str) -> None:
-    """Write the pin line — the one place the engine sets the pinned tag.
+def read_pin(root: Path) -> str | None:
+    """The pinned release tag, or ``None`` when unpinned (file absent/empty)."""
+    fields = _pin_fields(root)
+    return fields[0] if fields else None
 
-    Atomic (same-dir temp file, then replace), like every state write: a
-    crash mid-write must never leave a truncated pin for the shim to read.
+
+def read_pin_commit(root: Path) -> str | None:
+    """The commit the pin records for its tag, or ``None`` when it carries none."""
+    fields = _pin_fields(root)
+    return fields[1] if len(fields) > 1 else None
+
+
+def write_pin(root: Path, tag: str, commit: str | None = None) -> None:
+    """Write the pin line — the one place the engine sets the pinned release.
+
+    ``<tag> <commit>`` when the commit is known, the bare tag when it is
+    not. Atomic (same-dir temp file, then replace), like every state write:
+    a crash mid-write must never leave a truncated pin for the shim to read.
     """
-    atomic.write_text(root / PIN_FILE, tag + "\n")
+    line = tag if commit is None else f"{tag} {commit}"
+    atomic.write_text(root / PIN_FILE, line + "\n")
 
 
 def _validate_pin(pin: str) -> None:
@@ -145,32 +170,46 @@ def _validate_pin(pin: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def release_tags(listing: str) -> list[tuple[str, tuple[int, ...]]]:
-    """Parse ``git ls-remote --tags`` output into ``(tag, version)`` pairs.
+@dataclass(frozen=True, slots=True)
+class Release:
+    """One release on the remote: its tag, the tag's version, and its commit."""
+
+    tag: str
+    version: tuple[int, ...]
+    commit: str
+
+
+def release_tags(listing: str) -> list[Release]:
+    """Parse ``git ls-remote --tags`` output into releases.
 
     Only version-shaped tags (``v0.2.1`` / ``0.2.1``) are releases; other
-    tags (e.g. an instance's standing ``inbox`` release) are ignored. Peeled
-    ``^{}`` refs collapse onto their tag.
+    tags (e.g. an instance's standing ``inbox`` release) are ignored. A
+    release's commit is its peeled ``^{}`` line where the listing has one:
+    an annotated tag's own line names the tag object, which uv accepts as a
+    ref but builds a second, separate environment for. A lightweight tag
+    has no peeled line and its own line already names the commit.
     """
-    found: dict[str, tuple[int, ...]] = {}
+    found: dict[str, Release] = {}
     for raw_line in listing.split("\n"):
         line = raw_line.strip()
         if not line:
             continue
-        _, _, ref = line.partition("\t")
+        sha, _, ref = line.partition("\t")
         if not ref.startswith("refs/tags/"):
             continue
-        tag = ref.removeprefix("refs/tags/").removesuffix("^{}")
+        name = ref.removeprefix("refs/tags/")
+        tag = name.removesuffix("^{}")
+        if tag in found and name == tag:
+            continue  # the tag's own line never overrides its peeled one
         try:
-            found[tag] = parse_version(tag)
+            version = parse_version(tag)
         except ValueError:
             continue
-    return list(found.items())
+        found[tag] = Release(tag=tag, version=version, commit=sha)
+    return list(found.values())
 
 
-def _check_releases(
-    channel: ReleaseChannel, notes: list[str]
-) -> list[tuple[str, tuple[int, ...]]] | None:
+def _check_releases(channel: ReleaseChannel, notes: list[str]) -> list[Release] | None:
     """The remote's release tags; ``None`` when the check itself failed."""
     try:
         listing = channel.ls_remote(channel.repo_url)
@@ -192,7 +231,7 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
     root: Path,
     *,
     pin: str | None,
-    tags: list[tuple[str, tuple[int, ...]]],
+    tags: list[Release],
     running_version: str,
     channel: ReleaseChannel,
     echo: Callable[[str], None],
@@ -215,38 +254,58 @@ def _settle_pin(  # noqa: PLR0913 — pin settlement reads every seam: pin, tags
                 "check the remote"
             )
         return False
-    latest_tag, latest_version = max(tags, key=lambda pair: pair[1])
+    latest = max(tags, key=lambda release: release.version)
     if pin is not None:
         pin_version = parse_version(pin)
-        if latest_version <= pin_version:
+        if latest.version <= pin_version:
+            _carry_commit(root, pin=pin, tags=tags, notes=notes)
             return False
         _announce(
-            echo, current=pin, latest_tag=latest_tag, major=latest_version[0] > pin_version[0]
+            echo, current=pin, latest_tag=latest.tag, major=latest.version[0] > pin_version[0]
         )
-        write_pin(root, latest_tag)
-        channel.execute(_reexec_argv(channel.repo_url, latest_tag, previous=pin))
+        write_pin(root, latest.tag, latest.commit)
+        channel.execute(_reexec_argv(channel.repo_url, latest.tag, previous=pin))
         return True
     running = parse_version(running_version)
-    if latest_version > running:
+    if latest.version > running:
         _announce(
             echo,
             current=f"unpinned, engine {running_version}",
-            latest_tag=latest_tag,
-            major=latest_version[0] > running[0],
+            latest_tag=latest.tag,
+            major=latest.version[0] > running[0],
         )
-        write_pin(root, latest_tag)
-        channel.execute(_reexec_argv(channel.repo_url, latest_tag, previous=None))
+        write_pin(root, latest.tag, latest.commit)
+        channel.execute(_reexec_argv(channel.repo_url, latest.tag, previous=None))
         return True
-    own = next((tag for tag, version in tags if version == running), None)
+    own = next((release for release in tags if release.version == running), None)
     if own is not None:
-        write_pin(root, own)
-        notes.append(f"first tag-aware sync — pinned this engine's own release {own}")
+        write_pin(root, own.tag, own.commit)
+        notes.append(f"first tag-aware sync — pinned this engine's own release {own.tag}")
     else:
         notes.append(
             f"running engine {running_version} is newer than the latest release "
-            f"{latest_tag} — left unpinned until it is released"
+            f"{latest.tag} — left unpinned until it is released"
         )
     return False
+
+
+def _carry_commit(root: Path, *, pin: str, tags: list[Release], notes: list[str]) -> None:
+    """Give a current pin the commit its tag names, where it lacks or mislays it.
+
+    A pin written before commits were recorded launches by tag — a release
+    lookup on every launch — until this rewrites it. The commit follows the
+    tag: what the remote says the tag points at is what the pin says, so a
+    tag that moved is corrected here too. A pin whose tag the remote no
+    longer lists is left as it is.
+    """
+    release = next((candidate for candidate in tags if candidate.tag == pin), None)
+    if release is None or read_pin_commit(root) == release.commit:
+        return
+    write_pin(root, pin, release.commit)
+    notes.append(
+        f"pin now records {pin}'s commit ({release.commit[:12]}) — launches no longer "
+        "resolve the tag over the network"
+    )
 
 
 def _announce(echo: Callable[[str], None], *, current: str, latest_tag: str, major: bool) -> None:
@@ -485,6 +544,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
     root = instance.root
     notes: list[str] = []
     pin = read_pin(root)
+    pin_line = _pin_fields(root)
     if pin is not None:
         _validate_pin(pin)
     tags = _check_releases(channel, notes)
@@ -504,7 +564,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied = migrations.run_pending(root, today=today, now=now, engine_version=running_version)
     changed = sync(root, template=template)
     notes.extend(rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed)
-    if changed or read_pin(root) != pin:
+    if changed or _pin_fields(root) != pin_line:
         notes.append("review + commit the refreshed files and the pin")
     payload = _report_payload(
         pin=read_pin(root),

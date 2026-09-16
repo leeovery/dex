@@ -273,8 +273,12 @@ for the corpus format.
 <summary><b>Under the hood</b> (for agents and the curious; humans never need this)</summary>
 
 Instances run the engine's mechanical commands via a `bin/dex` shim
-(`uvx --from git+https://github.com/leeovery/dex@<pinned-tag> dex-<cmd>`,
-cwd = instance root; the tag lives in `.dex-engine-pin`, bumped by sync):
+(`uvx --from git+https://github.com/leeovery/dex@<pinned-commit> dex-<cmd>`,
+cwd = instance root). The pin is one line in `.dex-engine-pin`, `<tag>
+<commit>`, bumped by sync and read beside the shim rather than from the
+working directory (chat clients spawn `serve` from anywhere). The shim
+launches by the commit, which uv treats as immutable — no release lookup per
+launch — and falls back to the tag for a pin an older sync wrote:
 
 | command | does |
 |---|---|
@@ -360,6 +364,6 @@ Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) �
 `wiki/` (topics/entities/syntheses plus index, log, pins) · `state/` (digests,
 taxonomy, the compiled map, the ledger and other append-only JSONL,
 config.json) · `cache/` (gitignored ephemera) · `.dex-engine-pin` (the engine
-release this instance runs).
+release this instance runs, tag and commit).
 
 </details>
