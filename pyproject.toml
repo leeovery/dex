@@ -134,10 +134,11 @@ pytest_add_cli_args = [
     "tests/pipeline/test_ledger.py::TestStamp::test_stamping_never_calls_the_ambient_clock",
 ]
 # mutmut runs the suite from a copied `mutants/` tree; tests/ and pyproject.toml
-# come for free, but tests/test_shim.py reaches out to instance/dex, and
+# come for free, but tests/test_shim.py reaches out to instance/dex,
 # tests/directives/test_wheel.py builds a wheel from the tree's own LICENSE
-# and .gitignore as well.
-also_copy = ["instance", "LICENSE", ".gitignore"]
+# and .gitignore as well, and tests/test_seeds.py and tests/test_template.py
+# read the guides under docs/.
+also_copy = ["instance", "docs", "LICENSE", ".gitignore"]
 
 [tool.ty.environment]
 python-version = "3.11"
