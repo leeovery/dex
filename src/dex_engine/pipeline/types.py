@@ -745,6 +745,11 @@ class Instance:
         return self.root / "cache"
 
     @property
+    def lens_path(self) -> Path:
+        """``lens.md`` — the owner's statement of what this instance reads for."""
+        return self.root / "lens.md"
+
+    @property
     def ledger_path(self) -> Path:
         """``state/enrichment-ledger.jsonl`` — the work queue."""
         return self.state_dir / "enrichment-ledger.jsonl"

@@ -788,6 +788,37 @@ class TestSyncReport:
         assert "the connected dex serves other instances but not this one" in out
         assert "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md" in out
 
+    def test_a_lens_finding_is_its_own_block_before_the_offers(self):
+        out = render(
+            "sync-report",
+            {
+                "pin": "v0.3.0",
+                "migrations": [],
+                "machinery_changes": 0,
+                "lens": "`lens.md` is missing",
+                "connect": [{"client": "desktop", "gap": "unconnected"}],
+                "notes": ["a note"],
+            },
+        )
+        assert (
+            "**Machinery changes** — 0\n\n"
+            "**Lens** — `lens.md` is missing: every judgment in a run reads through the lens, "
+            "so the owner fills in `lens.md` with what this instance reads for, and a session "
+            "writes it only when the owner asks\n\n**Chat connection**"
+        ) in out
+        assert_no_trailing_whitespace(out)
+
+    def test_no_lens_finding_is_no_line(self):
+        out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0})
+        assert "**Lens**" not in out
+
+    def test_a_lens_finding_must_be_a_string(self):
+        with pytest.raises(PayloadError, match=r"^sync-report: lens"):
+            render(
+                "sync-report",
+                {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0, "lens": ["missing"]},
+            )
+
     def test_no_gap_is_no_line(self):
         out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0})
         assert "Chat connection" not in out
@@ -1237,6 +1268,41 @@ class TestHealthReport:
         # A full payload beside it would render checks that never ran.
         with pytest.raises(PayloadError, match="summary"):
             render("health-report", {**CLEAN_HEALTH, "pre_taxonomy": {"stranded": []}})
+
+    def test_a_lens_failure_opens_the_full_report(self):
+        out = render("health-report", {**CLEAN_HEALTH, "lens_error": "`lens.md` is missing"})
+        assert out.startswith(
+            "## Health check — 0 corpus items · 0 pages · 0 cited\n\n"
+            "- **LENS FAILURE** — every judgment in a run reads through the lens, so the owner "
+            "fills in `lens.md` with what this instance reads for, and a session writes it only "
+            "when the owner asks\n"
+            "  - `lens.md` is missing\n\n"
+            "### Wiki — 0 pages\n"
+        )
+        assert_no_trailing_whitespace(out)
+
+    def test_no_lens_failure_is_no_row(self):
+        assert "LENS FAILURE" not in render("health-report", CLEAN_HEALTH)
+
+    def test_a_lens_failure_rides_the_fresh_instance_shape(self):
+        out = render(
+            "health-report",
+            {"pre_taxonomy": {"stranded": []}, "lens_error": "`lens.md` is empty"},
+        )
+        assert out.startswith("## Health check — fresh instance, 0 corpus items\n\n- **LENS")
+        assert "  - `lens.md` is empty\n\nNo `state/taxonomy.json` yet — nothing to lint.\n" in out
+        assert_no_trailing_whitespace(out)
+
+    def test_a_lens_failure_rides_the_broken_mid_ingest_shape(self):
+        out = render(
+            "health-report",
+            {"pre_taxonomy": {"stranded": ["2026-01-01-a-aaaaaa"]}, "lens_error": "`lens.md` x"},
+        )
+        assert "  - `lens.md` x\n\n- **BROKEN MID-INGEST**" in out
+
+    def test_a_lens_failure_must_be_a_string(self):
+        with pytest.raises(PayloadError, match=r"^health-report: lens_error"):
+            render("health-report", {**CLEAN_HEALTH, "lens_error": 3})
 
     def test_pre_taxonomy_shape_is_validated_loudly(self):
         with pytest.raises(PayloadError, match="stranded"):

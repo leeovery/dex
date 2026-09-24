@@ -181,12 +181,16 @@ def _add_tools(server: MCPServer, roster: Roster) -> None:
     def capture(instance: str, url: str = "", note: str = "") -> library.Capture:
         """Save a link and/or a note into one instance's inbox, and commit it.
 
-        A suggestion, not a corpus entry: the instance judges it against its
-        own scope when it next processes the inbox.
+        A suggestion, not a corpus entry: the instance reads it through its
+        lens when it next processes the inbox.
 
         Args:
-            instance: Which instance to capture into — nothing is guessed
-                here, so name the one whose scope this belongs to.
+            instance: Which instance to capture into. Capture into the one
+                the owner names; when this server serves a single instance,
+                capture there without asking; otherwise ask the owner which
+                instance, or which ones, before saving. Never choose from the
+                content: any link can belong in any instance, depending on
+                the lens the owner wants it read through.
             url: The link being saved, if there is one.
             note: Why it is worth saving, in the owner's own words. Often
                 the more valuable half; pass it verbatim.

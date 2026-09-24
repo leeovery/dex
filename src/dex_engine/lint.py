@@ -2,6 +2,11 @@
 
 Checks:
 
+  lens — ``lens.md`` missing, unreadable, empty, or still holding the
+  seed's placeholder lines (:func:`dex_engine.lens.lens_finding`). Asked
+  before the taxonomy exists too: a fresh instance's first run already
+  reads everything through the lens.
+
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
   citation everywhere, index included), coverage orphans and their cited
@@ -57,10 +62,11 @@ staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
 Output renders through the ``health-report`` surface. Exit 1 on hard
-failures: broken wikilinks, bad citations, a ledger schema error, a
-malformed taxonomy or entity-members file, an unparseable pass record, a
-malformed digest, and the pre-taxonomy broken-mid-ingest state (corpus
-items but no ``state/taxonomy.json`` — placement never ran). Every one
+failures: a lens that states nothing, broken wikilinks, bad citations, a
+ledger schema error, a malformed taxonomy or entity-members file, an
+unparseable pass record, a malformed digest, and the pre-taxonomy
+broken-mid-ingest state (corpus items but no ``state/taxonomy.json`` —
+placement never ran). Every one
 renders as a failure row on the report naming the file and its repair;
 lint never dies bare on a state file it exists to check.
 """
@@ -73,10 +79,12 @@ import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from . import corpus, frontmatter, instance_map
 from .capabilities import Capabilities
+from .lens import lens_finding
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.digest import item_media
@@ -94,6 +102,7 @@ from .pipeline.run import (
 )
 from .pipeline.types import Config, Format, Instance, LedgerEntry, Need, Status
 from .render import surfaces
+from .template import bundled_template
 
 __all__ = ["LintOutcome", "build_parser", "main", "run_lint"]
 
@@ -157,6 +166,7 @@ def run_lint(
     is_cognitive: IsCognitive,
     today: Callable[[], datetime.date],
     write: bool = False,
+    template: Traversable | None = None,
 ) -> LintOutcome:
     """Run every mechanical check against the instance.
 
@@ -169,11 +179,14 @@ def run_lint(
             ``generated:`` dates.
         write: Reconcile derived wiki frontmatter (``items:`` counts,
             missing ``generated:`` dates).
+        template: The template tree holding the seed lens; ``None`` uses
+            the running engine's bundled copy.
 
     Returns:
         The outcome: rendered report and exit code.
     """
-    special = _pre_taxonomy_outcome(instance)
+    lens_error = lens_finding(instance, template if template is not None else bundled_template())
+    special = _pre_taxonomy_outcome(instance, lens_error)
     if special is not None:
         return special
     taxonomy, taxonomy_error = _load_taxonomy(instance)
@@ -230,6 +243,8 @@ def run_lint(
         "count_drift": scan.count_drift,
         "restated": scan.restated,
     }
+    if lens_error is not None:
+        payload["lens_error"] = lens_error
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
     if entity_members_error is not None:
@@ -250,7 +265,8 @@ def run_lint(
         payload["notes"] = scan.notes
 
     failed = bool(
-        scan.broken_links
+        lens_error
+        or scan.broken_links
         or scan.bad_citations
         or ledger_error
         or taxonomy_error
@@ -371,18 +387,22 @@ def _topic_members(taxonomy: dict[str, object]) -> dict[str, set[str]]:
     return members
 
 
-def _pre_taxonomy_outcome(instance: Instance) -> LintOutcome | None:
+def _pre_taxonomy_outcome(instance: Instance, lens_error: str | None) -> LintOutcome | None:
     """The two pre-taxonomy states: fresh instance, or broken mid-ingest.
 
     Rendered through the health-report surface's pre-taxonomy shape like
-    every other report — never hand-drawn.
+    every other report — never hand-drawn. The lens finding travels with
+    it, since no taxonomy is needed to read everything through the lens.
     """
     if instance.taxonomy_path.exists():
         return None
     stranded = sorted(path.stem for path in instance.corpus_dir.glob("*/*.md"))
+    payload: dict[str, object] = {"pre_taxonomy": {"stranded": stranded}}
+    if lens_error is not None:
+        payload["lens_error"] = lens_error
     return LintOutcome(
-        report=surfaces.render("health-report", {"pre_taxonomy": {"stranded": stranded}}),
-        exit_code=1 if stranded else 0,
+        report=surfaces.render("health-report", payload),
+        exit_code=1 if stranded or lens_error else 0,
     )
 
 

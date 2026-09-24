@@ -111,8 +111,8 @@ def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
     """Resolve a repo-relative path strictly under the instance root.
 
     The one containment check: a ``file:`` work key's path, and the paths
-    ``dex-exclude`` deletes. Both come from data an owner or the scope
-    filter wrote, so they are never trusted as paths: an absolute path
+    ``dex-exclude`` deletes. Both come from data an owner or a session
+    wrote, so they are never trusted as paths: an absolute path
     (which ``root / path`` would silently substitute for the root), a ``..``
     climb, or a symlink pointing outside the root all resolve elsewhere.
     Both sides are resolved before the containment check so symlinks cannot
@@ -125,7 +125,8 @@ def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
     Returns:
         The resolved path, or ``None`` when it escapes the root or cannot
         be a path at all (an embedded NUL byte) — the drain parks the unit
-        and never reads the bytes; ``exclude`` refuses the batch.
+        and never reads the bytes; ``exclude`` refuses a batch whose id
+        escapes, and leaves a stated media path that escapes undeleted.
     """
     try:
         resolved = (root / repo_path).resolve()

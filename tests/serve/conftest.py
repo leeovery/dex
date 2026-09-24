@@ -1,11 +1,11 @@
 """Fixtures for the serve tests: two toy instances and an in-process client.
 
 The instances are shaped like the repo's `example/` — a corpus item, its
-digest, its enrichment, a wiki page, the CLAUDE.md declaring its scope, the
-taxonomy and its compiled map — times two, so fan-out, the instance filter
-and the id namespace all have something to be wrong about. `dex-books` is
-deliberately younger: no wiki, no taxonomy, no compiled map, no CLAUDE.md,
-one item and its digest.
+digest, its enrichment, a wiki page, the lens.md stating what it reads for,
+the taxonomy and its compiled map — times two, so fan-out, the instance
+filter and the id namespace all have something to be wrong about.
+`dex-books` is deliberately younger: no wiki, no taxonomy, no compiled map,
+no lens.md, one item and its digest.
 
 Every call goes through the SDK's in-memory transport: a real client session
 against a real server, no subprocess and no socket. The one exception is
@@ -35,10 +35,10 @@ BOOKS = "dex-books"
 # The tree's own instance/ — the same files the wheel bundles at
 # `dex_engine/instance`, which a source checkout has nowhere else.
 TEMPLATE = Path(__file__).resolve().parents[2] / "instance"
-SCOPE = """\
-# dex-coffee — Coffee Knowledge Base (a dex instance)
+LENS = """\
+# dex-coffee
 
-## In scope
+## Reads for
 
 - brewing technique and recipes
 - grinders and gear
@@ -55,7 +55,7 @@ def write(path: Path, text: str) -> Path:
 
 
 def _coffee(root: Path) -> None:
-    write(root / "CLAUDE.md", SCOPE)
+    write(root / "lens.md", LENS)
     write(
         root / "corpus" / "2026" / f"{V60}.md",
         f"""---

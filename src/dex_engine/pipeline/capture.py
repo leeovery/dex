@@ -1,11 +1,12 @@
 """Corpus-item creation from capture files: ``enrich item new``.
 
 Corpus items are created by this verb, never freehand — code writes
-frontmatter, Claude writes prose. Creation was always mechanical work (the
-only judgment is the scope check before it): the id follows the id rules,
-provenance is stamped from the capture, and the body is the capture's note
-verbatim. Claude's interpretive context belongs in the digest, never the
-item body.
+frontmatter, Claude writes prose. Creation is mechanical work, and nothing
+is judged before it: every capture becomes an item, and whether one holds
+anything for the instance is asked once its content has landed. The id
+follows the id rules, provenance is stamped from the capture, and the body
+is the capture's note verbatim. Claude's interpretive context belongs in
+the digest, never the item body.
 
 Both id paths:
 
