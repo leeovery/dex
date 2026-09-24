@@ -59,6 +59,7 @@ __all__ = [
 # [project.scripts] and enrich's argparse tree), so it cannot rot.
 KNOWN_VERBS = (
     "connect",
+    "directive",
     "enrich compact",
     "enrich fetch",
     "enrich item describe",

@@ -701,6 +701,60 @@ class TestSyncReport:
                 {"pin": "v1", "migrations": [{"number": 1}], "machinery_changes": 0},
             )
 
+    def test_pending_directives_render_as_a_section_in_the_order_given(self):
+        out = render(
+            "sync-report",
+            {
+                "pin": "v0.3.0",
+                "migrations": [],
+                "directives": [
+                    {"number": 1, "intent": "rehome the scope"},
+                    {"number": 2, "intent": "rewrite the readme"},
+                ],
+                "machinery_changes": 0,
+            },
+        )
+        assert (
+            "\n\n### Directives pending — 2\n\n"
+            "- **directive 1** — rehome the scope\n"
+            "- **directive 2** — rewrite the readme\n\n"
+            "The run performs these after its pull, in this order, working from "
+            "`bin/dex directive list`: another machine may have completed one, and the "
+            "pull brings its record.\n\n"
+            "**Machinery changes** — 0\n"
+        ) in out
+        assert_no_trailing_whitespace(out)
+
+    def test_no_pending_directives_is_no_section(self):
+        for payload in (
+            {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0},
+            {"pin": "v0.3.0", "migrations": [], "directives": [], "machinery_changes": 0},
+        ):
+            out = render("sync-report", payload)
+            assert "Directives" not in out
+            assert "bin/dex directive" not in out
+
+    @pytest.mark.parametrize(
+        ("directives", "complaint"),
+        [
+            ("1", r"directives must be a list"),
+            (["1"], r"directives\[0\] must be an object"),
+            ([{"number": 1}], r"directives\[0\]\.missing required key\(s\) \['intent'\]"),
+            ([{"number": "1", "intent": "x"}], r"directives\[0\]\.number must be a non-negative"),
+            ([{"number": 1, "intent": "a\nb"}], r"directives\[0\]\.intent must be single"),
+            (
+                [{"number": 1, "intent": "x", "done": True}],
+                r"directives\[0\]\.unknown key\(s\) \['done'\]",
+            ),
+        ],
+    )
+    def test_a_malformed_directives_payload_is_loud_and_names_the_surface(
+        self, directives, complaint
+    ):
+        payload = {"migrations": [], "directives": directives, "machinery_changes": 0}
+        with pytest.raises(PayloadError, match=rf"^sync-report: {complaint}"):
+            render("sync-report", payload)
+
     def test_a_desktop_app_with_no_dex_is_an_offer_to_make(self):
         out = render(
             "sync-report",
@@ -1342,7 +1396,12 @@ SURFACE_PAYLOADS = {
     "capability-report": {
         "capabilities": [{"name": "ocr", "providers": [{"name": "vision", "state": "active"}]}]
     },
-    "sync-report": {"pin": "v1", "migrations": [], "machinery_changes": 2},
+    "sync-report": {
+        "pin": "v1",
+        "migrations": [],
+        "directives": [{"number": 1, "intent": "rehome the scope"}],
+        "machinery_changes": 2,
+    },
     "ingest-receipt": {"item": LONG_ID, "fetched": 2},
     "health-report": HEALTH_PAYLOAD,
 }

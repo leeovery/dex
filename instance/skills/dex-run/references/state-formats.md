@@ -138,6 +138,31 @@ checked against the corpus, so lint's ghost-members row names each
 leftover id and its list, and the removal is the session's: an `unplace`
 payload through `bin/dex enrich place` (below).
 
+## `bin/dex directive` — the engine's directives
+
+A directive is work the engine ships for the run to perform on this
+instance's own files: work that needs judgment, which a migration is not
+allowed to do. Each has a number, a one-line intent, instructions, and a
+check written in code. Sync lists the pending ones on its report, and the
+run performs them after the pull (`preparation.md`, step 5):
+
+- `bin/dex directive list` prints the pending directives in numeric
+  order, each with its intent, or says that none are pending.
+- `bin/dex directive show <n>` prints the directive's intent and its full
+  instructions.
+- `bin/dex directive done <n>` runs the directive's check. When every
+  condition holds it appends the record to `state/directives.jsonl`
+  (below) and confirms, naming the commit message. When any condition is
+  unmet it prints each one, writes nothing and exits non-zero. It also
+  refuses, writing nothing, a number the engine does not ship and a
+  directive whose predecessor is still pending, because directives
+  complete in numeric order. A directive already recorded is reported as
+  such, and nothing is written.
+
+The check confirms only what code can see: a file exists and is not
+empty, config still parses, a link is present. Whether the work was
+faithful rests on performing the instructions exactly.
+
 ## `state/taxonomy.json` — the topic and entity namespace
 
 Topic and entity names are kebab-case and define the wikilink namespace: a
@@ -264,7 +289,9 @@ reference). Maintain page *bodies* by hand; leave these fields to lint.
 
 Renamed from `normalize-config.json` (migration 1). Parsed loudly: an
 unknown key is an error, never silently dead. Unattended runs NEVER edit
-this file — they propose changes in the run report.
+this file — they propose changes in the run report. A directive whose
+instructions name it is the one exception: it is the engine's decision,
+not the run's.
 
 | key | meaning |
 |---|---|
@@ -330,6 +357,14 @@ a malformed record impossible:
   digest` remains the manual re-record).
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
+- `state/directives.jsonl` — completed-directives log `{number, engine,
+  date}`, one record per directive this instance has performed. Written
+  by `bin/dex directive done <n>` only after the directive's check passes
+  (above), and seeded by `dex-new` with every directive the engine
+  shipped when the instance was created, since a new instance is born in
+  the shape directives exist to reach. Two machines that both performed
+  one union-merge to two lines for one number, which reads the same as
+  one.
 - `state/issue-reports.jsonl` — what this instance observed and reported
   `{fingerprint, action, filed, engine, date, issue?, note?}`.
   Written by the issue filer (crash reports) and by `bin/dex issue`

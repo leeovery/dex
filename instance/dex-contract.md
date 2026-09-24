@@ -12,10 +12,10 @@ Four operations. Detailed procedures live in skills — load them, don't improvi
   over in any session becomes one capture file in `inbox/`, committed and
   pushed. Capture only; it never processes. One route in.
 - **run** (`.claude/skills/dex-run`) — the one route through: sync →
-  migrations reviewed → pull → inbox → items → `enrich run` → per-item
-  cognitive work for everything its report names (harvest → digest → place →
-  wiki) → `bin/dex map` → health check when due → push. Covers scheduled
-  runs, "process now", and "process the inbox" alike.
+  migrations reviewed → pull → directives → inbox → items → `enrich run` →
+  per-item cognitive work for everything its report names (harvest → digest
+  → place → wiki) → `bin/dex map` → health check when due → push. Covers
+  scheduled runs, "process now", and "process the inbox" alike.
 - **query** (`.claude/skills/dex-query`) — answer from the wiki: `wiki/index.md`
   first, follow [[wikilinks]], prefer newest, cite item ids. File real syntheses
   back under `wiki/syntheses/`.
@@ -42,11 +42,11 @@ raw/ (verbatim exports) + inbox/ (capture files; staged binaries land in media/<
   →  state/taxonomy.json (topics/entities)  →  wiki/ (pages, index, log, pins)
 
 state/ also holds: passes.jsonl (stage records) · migrations.jsonl (applied
-migrations) · issue-reports.jsonl (engine-defect reports, filed upstream or
-held locally — the gate or the per-run cap) · config.json
-(owner-editable) · entity-members.json (entity → items) · map.json (the
-compiled instance map — derived, rewritten with wiki/index.md by
-`bin/dex map`) · exclusions.tsv
+migrations) · directives.jsonl (completed directives) · issue-reports.jsonl
+(engine-defect reports, filed upstream or held locally — the gate or the
+per-run cap) · config.json (owner-editable) · entity-members.json (entity →
+items) · map.json (the compiled instance map — derived, rewritten with
+wiki/index.md by `bin/dex map`) · exclusions.tsv
 cache/ is ephemeral and gitignored (render payloads, in-flight audio) —
 never state, never synced.
 ```
@@ -75,7 +75,9 @@ never state, never synced.
   `enrichment/<id>/media-<n>.md` slot, refreshing the item's frontmatter
   in the same call. Engine-defect reports
   the same way: `bin/dex issue --file <payload>` files upstream and writes
-  the `issue-reports.jsonl` record. A hand-appended line
+  the `issue-reports.jsonl` record. Directive records too: `bin/dex
+  directive done <n>` appends to `directives.jsonl` only once the
+  directive's check passes. A hand-appended line
   is how state and reality diverge; the verbs are what make a malformed
   record impossible.
 - `wiki/` is a build artifact: regenerable, never the only home of a fact. Pages cite
@@ -98,6 +100,12 @@ never state, never synced.
   writing a summary.
 - Unattended sessions never edit `state/config.json`: proposed changes go in
   the run report; the owner ratifies them in an attended session.
+- A directive (`bin/dex directive`) is the engine's decision, not the
+  session's: written, reviewed and rehearsed before its release, then
+  performed by the run after the pull. It always runs unattended and never
+  asks the owner anything, and it has full authority over every file its
+  instructions name, `state/config.json` included, so the rule above does
+  not apply to it.
 
 ## Conventions
 

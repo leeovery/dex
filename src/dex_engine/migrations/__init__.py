@@ -26,7 +26,6 @@ migration can hand cognitive repairs to the session instead of guessing.
 """
 
 import datetime
-import json
 import pkgutil
 import re
 from collections.abc import Callable, Sequence
@@ -35,6 +34,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Protocol
 
+from dex_engine import numbered_log
 from dex_engine.pipeline.types import MigrationReport
 
 __all__ = [
@@ -78,6 +78,10 @@ class AppliedMigration:
 
 
 _MODULE_RE = re.compile(r"^migration_([1-9][0-9]*)$")
+
+_TORN_REPAIR = (
+    "delete the torn line and re-run sync (idempotent migrations make a lost record harmless)"
+)
 
 
 def log_path(root: Path) -> Path:
@@ -143,9 +147,7 @@ def read_applied(path: Path) -> set[int]:
     """Read the applied-migrations log into the set of applied numbers.
 
     The file merges as a union between machines, so duplicate records
-    are expected and collapse here; a missing file is an empty log. Records
-    are delimited by newlines alone — ``str.splitlines()`` would also split
-    on unicode line separators inside a JSON string.
+    are expected and collapse here; a missing file is an empty log.
 
     Args:
         path: The ``state/migrations.jsonl`` file.
@@ -158,30 +160,9 @@ def read_applied(path: Path) -> set[int]:
             the log is corrupt, and guessing which migrations ran is exactly
             how state gets destroyed.
     """
-    applied: set[int] = set()
-    if not path.exists():
-        return applied
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError as e:
-            raise MigrationError(
-                f"{path}:{lineno}: unparseable applied-migration record ({e}) — a "
-                "half-written line is not a record: delete the torn line and re-run "
-                "sync (idempotent migrations make a lost record harmless)"
-            ) from e
-        if not isinstance(raw, dict):
-            raise MigrationError(f"{path}:{lineno}: record must be a JSON object: {line!r}")
-        number = raw.get("number")
-        if not isinstance(number, int) or isinstance(number, bool):
-            raise MigrationError(
-                f"{path}:{lineno}: record must carry an integer 'number' "
-                f"({{number, engine, date}}): {line!r}"
-            )
-        applied.add(number)
-    return applied
+    return numbered_log.read(
+        path, record="applied-migration", repair=_TORN_REPAIR, error=MigrationError
+    )
 
 
 def append_applied(
@@ -193,16 +174,11 @@ def append_applied(
 ) -> None:
     """Append one ``{number, engine, date}`` record, creating the file if needed.
 
-    The append is not atomic: a crash mid-write can tear the record. That
-    window is accepted — a torn line fails :func:`read_applied` loudly with
-    the file and line named, and the repair is one line of session judgment:
-    fix or delete the torn line, re-run sync; idempotent migrations make a
-    lost record harmless.
+    A torn record from a crash mid-write fails :func:`read_applied` loudly,
+    and the repair is one line of session judgment: fix or delete the torn
+    line, re-run sync; idempotent migrations make a lost record harmless.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record = {"number": number, "engine": engine, "date": date.isoformat()}
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    numbered_log.append(path, number=number, engine=engine, date=date)
 
 
 def run_pending(

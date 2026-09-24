@@ -299,7 +299,8 @@ launch — and falls back to the tag for a pin an older sync wrote:
 | `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
-| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report: step 0 of every run |
+| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report (pending directives included): step 0 of every run |
+| `dex-directive` | the engine's directives, performed by the run after its pull: `list` the pending ones in order, `show <n>` one's instructions, `done <n>` to run its check and record it in `state/directives.jsonl` only when every condition holds |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
 | `dex-serve --instance <path>` | serve one or more instances to MCP clients over stdio: mechanical text search, item and wiki reads, the compiled-map reads (topics, entities, relation graph), instance-tagged and namespaced, plus capture into a named instance's inbox (repeat the flag per instance) |
@@ -317,6 +318,18 @@ session's work list, and the same session finishes the cognitive steps for
 everything on it. There is no headless daemon and no handoff. Entries that
 survive a session are `waiting`, `blocked`, `error` or `manual`, each parked for
 a stated reason and each printed on the report.
+
+Directives are the engine's other way into an instance. A migration is
+mechanical by rule and never transforms content, so work on an instance's own
+files that needs judgment ships as a directive instead, numbered in a sequence
+of its own beside the migrations, with an intent, markdown instructions and a
+check written in code. Sync lists the ones an instance has not completed, and
+the run performs them after its pull and before the inbox, unattended and in
+order, one commit each. `dex-directive done` records a directive in
+`state/directives.jsonl` only when its check passes, so a session that ran out
+of time or misread the instructions cannot mark the work done, and a directive
+that fails its check is filed as an engine defect and tried again on the next
+run. A new instance records every shipped directive as done when it is created.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the GitHub
 contents API (the phone shortcut) or committed directly by the dex-capture

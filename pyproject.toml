@@ -34,6 +34,7 @@ dex-lint = "dex_engine.lint:main"
 dex-map = "dex_engine.instance_map:main"
 dex-exclude = "dex_engine.exclude:main"
 dex-sync = "dex_engine.sync:main"
+dex-directive = "dex_engine.directive:main"
 dex-new = "dex_engine.new:main"
 dex-inbox = "dex_engine.inbox:main"
 dex-render = "dex_engine.render.cli:main"
@@ -133,8 +134,10 @@ pytest_add_cli_args = [
     "tests/pipeline/test_ledger.py::TestStamp::test_stamping_never_calls_the_ambient_clock",
 ]
 # mutmut runs the suite from a copied `mutants/` tree; tests/ and pyproject.toml
-# come for free, but tests/test_shim.py reaches out to instance/dex.
-also_copy = ["instance"]
+# come for free, but tests/test_shim.py reaches out to instance/dex, and
+# tests/directives/test_wheel.py builds a wheel from the tree's own LICENSE
+# and .gitignore as well.
+also_copy = ["instance", "LICENSE", ".gitignore"]
 
 [tool.ty.environment]
 python-version = "3.11"

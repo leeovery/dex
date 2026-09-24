@@ -6,12 +6,14 @@ Flow::
     2. newer release? → bump the pin, RE-EXEC sync at the new tag
        (majors auto-apply too — the always-migratable commitment — announcing
        loudly)
-    3. run pending migrations (new code, before anything else touches state)
+    3. run pending migrations (new code, before anything else touches state),
+       then read which directives the instance has yet to complete
     4. refresh engine-managed machinery from the running — pinned — version's
        bundled template: .claude/skills/dex-*, .claude/dex-contract.md,
        bin/dex, .gitattributes (instance-owned files are never touched)
-    5. render the sync report (one surface), carrying whatever a read of the
-       desktop app's own config says about this instance's reach into chat
+    5. render the sync report (one surface): the pending directives for the
+       run to perform after its pull, and whatever a read of the desktop
+       app's own config says about this instance's reach into chat
 
 ``.dex-engine-pin`` is one line at the instance root — ``<tag> <commit>`` —
 committed, instance-owned: sync writes its *value* — it is not a
@@ -39,12 +41,13 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
-from dex_engine import atomic, migrations
+from dex_engine import atomic, directives, migrations
+from dex_engine.directives import Directive
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
@@ -514,6 +517,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
     template: Traversable | None = None,
     previous_pin: str | None = None,
     migrate: Callable[[Path], list[AppliedMigration]] | None = None,
+    shipped: Sequence[Directive] | None = None,
 ) -> str | None:
     """Run the sync flow (pin check → migrations → template → report) at ``instance.root``.
 
@@ -531,6 +535,8 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
             ``--previous-pin``) so the report can show the transition.
         migrate: Migration-runner override for tests; ``None`` runs the
             shipped migrations via :func:`dex_engine.migrations.run_pending`.
+        shipped: Directive-set override for tests; ``None`` reads the
+            engine's own directives against ``state/directives.jsonl``.
 
     Returns:
         The rendered sync report, or ``None`` when this process re-exec'd
@@ -539,7 +545,8 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
 
     Raises:
         ValueError: The pin line is not a release tag, or state is invalid.
-        RuntimeError: A migration or the applied-migrations log failed.
+        RuntimeError: A migration, the applied-migrations log, or the
+            completed-directives log failed.
     """
     root = instance.root
     notes: list[str] = []
@@ -562,6 +569,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied = migrate(root)
     else:
         applied = migrations.run_pending(root, today=today, now=now, engine_version=running_version)
+    waiting = directives.pending(root, shipped)
     changed = sync(root, template=template)
     notes.extend(rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed)
     if changed or _pin_fields(root) != pin_line:
@@ -570,6 +578,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         pin=read_pin(root),
         previous=previous_pin,
         applied=applied,
+        waiting=waiting,
         machinery_changes=len(changed),
         connect=connect_gaps(root),
         notes=notes,
@@ -582,6 +591,7 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
     pin: str | None,
     previous: str | None,
     applied: list[AppliedMigration],
+    waiting: list[Directive],
     machinery_changes: int,
     connect: list[dict[str, str]],
     notes: list[str],
@@ -600,6 +610,10 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
         "migrations": migrations_payload,
         "machinery_changes": machinery_changes,
     }
+    if waiting:
+        payload["directives"] = [
+            {"number": directive.number, "intent": directive.intent} for directive in waiting
+        ]
     if connect:
         payload["connect"] = connect
     if pin is not None:

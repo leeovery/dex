@@ -1,5 +1,6 @@
 """Tests for new.py: instance scaffolding from the bundled template."""
 
+import datetime
 import io
 import json
 import sys
@@ -7,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from dex_engine.directives import log_path as directives_log
+from dex_engine.directives import pending
 from dex_engine.new import EPHEMERAL, SEEDS, TREE, build_parser, main, scaffold
 from dex_engine.pipeline.types import Config
 from dex_engine.render.cli import main as render_main
+from tests.directives.conftest import make_directive
 
 # The repo's template tree — what the wheel bundles as dex_engine/instance.
 TEMPLATE = Path(__file__).resolve().parent.parent / "instance"
@@ -96,6 +100,29 @@ class TestScaffold:
         monkeypatch.setattr(sys, "stdout", out)
         render_main(["--file", "cache/receipt.json"])
         assert "## Ingested 2026-08-18-note-a1b2c3" in out.getvalue()
+
+    def test_every_shipped_directive_is_recorded_done_at_birth(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        shipped = [make_directive(1), make_directive(2)]
+        scaffold(
+            root,
+            run=RecordingRun(),
+            template=TEMPLATE,
+            shipped=shipped,
+            today=lambda: datetime.date(2026, 9, 24),
+            version=lambda: "0.2.0",
+        )
+        records = [json.loads(line) for line in directives_log(root).read_text().splitlines()]
+        assert records == [
+            {"number": 1, "engine": "0.2.0", "date": "2026-09-24"},
+            {"number": 2, "engine": "0.2.0", "date": "2026-09-24"},
+        ]
+        assert pending(root, shipped) == []
+
+    def test_an_engine_shipping_no_directives_writes_no_log(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE, shipped=[])
+        assert not directives_log(root).exists()
 
     def test_nonempty_target_is_loud(self, tmp_path):
         root = tmp_path / "dex-cooking"
