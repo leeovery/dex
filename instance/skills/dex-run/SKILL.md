@@ -72,10 +72,10 @@ instructions apply when its step is reached.
 - **Never edit `state/config.json`** (or any owner-editable config) in an
   unattended run. A config change is a policy decision; the run's job is
   to surface it: put the proposed change and its rationale in the report,
-  and the owner ratifies it in an attended session. The one exception is
-  a directive whose instructions name the file: a directive is the
-  engine's decision, not the run's, and has full authority over every
-  file it names.
+  and the owner ratifies it in an attended session. This rule governs
+  the run's own judgment, so it does not apply to a directive: a
+  directive is the engine's decision, not the run's, and has full
+  authority over every file its instructions name.
 - Borderline scope calls are skipped and reported, never guessed
   (details in `references/ingest-item.md`).
 - Cap-fired events (depth/URL caps) are internal — they live in the

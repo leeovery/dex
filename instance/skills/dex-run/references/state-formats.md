@@ -289,9 +289,9 @@ reference). Maintain page *bodies* by hand; leave these fields to lint.
 
 Renamed from `normalize-config.json` (migration 1). Parsed loudly: an
 unknown key is an error, never silently dead. Unattended runs NEVER edit
-this file — they propose changes in the run report. A directive whose
-instructions name it is the one exception: it is the engine's decision,
-not the run's.
+this file — they propose changes in the run report. That rule governs the
+run's own judgment and does not apply to a directive whose instructions
+name this file: a directive is the engine's decision, not the run's.
 
 | key | meaning |
 |---|---|
