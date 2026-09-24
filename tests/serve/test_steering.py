@@ -22,9 +22,16 @@ def block(instructions: str, name: str) -> str:
     return instructions[start : instructions.index("\n</instance>", start)]
 
 
+GENERAL = "This instance has no lens, so it is a general knowledge dex: search it for anything."
+
+
+def said_of_coffee(roots) -> str:
+    return block(steering.instructions(build_roster(roots), TEMPLATE), COFFEE)
+
+
 @pytest.fixture
 def instructions(roster) -> str:
-    return steering.instructions(roster)
+    return steering.instructions(roster, TEMPLATE)
 
 
 class TestDoctrine:
@@ -101,28 +108,36 @@ class TestRoster:
 
     def test_the_lens_is_read_from_lens_md_and_never_claude_md(self, roots):
         (roots[0] / "CLAUDE.md").write_text("# identity only\n", encoding="utf-8")
-        said = block(steering.instructions(build_roster(roots)), COFFEE)
-        assert said == LENS.strip()
+        assert said_of_coffee(roots) == LENS.strip()
 
-    def test_an_instance_with_no_lens_md_is_undeclared_in_one_line(self, instructions):
-        said = block(instructions, BOOKS)
-        assert "\n" not in said
-        assert said == (
-            "This instance has no readable lens.md, so its lens is undeclared: search it "
-            "whenever a question might touch it."
-        )
+    def test_an_instance_with_no_lens_md_is_a_general_knowledge_dex(self, instructions):
+        assert block(instructions, BOOKS) == GENERAL
 
-    def test_an_unreadable_lens_md_reads_as_undeclared(self, roots):
+    def test_an_unreadable_lens_md_reads_as_general_knowledge(self, roots):
         # A server that refused to start over one unreadable file would take
         # every other instance down with it.
         (roots[0] / "lens.md").write_bytes(b"\xff\xfe not text")
-        said = block(steering.instructions(build_roster(roots)), COFFEE)
-        assert "its lens is undeclared" in said
+        assert said_of_coffee(roots) == GENERAL
 
-    def test_an_empty_lens_md_reads_as_undeclared(self, roots):
+    def test_an_empty_lens_md_reads_as_general_knowledge(self, roots):
         (roots[0] / "lens.md").write_text("  \n\n", encoding="utf-8")
-        said = block(steering.instructions(build_roster(roots)), COFFEE)
-        assert "its lens is undeclared" in said
+        assert said_of_coffee(roots) == GENERAL
+
+    def test_the_seed_s_placeholder_lines_are_never_read_as_a_lens(self, roots):
+        partly = LENS + "\n## Set aside\n<what to ignore, even when it is the subject>\n"
+        (roots[0] / "lens.md").write_text(partly, encoding="utf-8")
+        assert said_of_coffee(roots) == GENERAL
+
+    def test_the_placeholder_lines_come_from_the_template_given(self, roots, tmp_path):
+        template = tmp_path / "other-template"
+        template.mkdir()
+        (template / "lens.md").write_text("<only this prompt>\n", encoding="utf-8")
+        (roots[0] / "lens.md").write_text("<only this prompt>\n", encoding="utf-8")
+        said = block(steering.instructions(build_roster(roots), template), COFFEE)
+        assert said == GENERAL
+        (roots[0] / "lens.md").write_text("<what to look at hardest>\n", encoding="utf-8")
+        said = block(steering.instructions(build_roster(roots), template), COFFEE)
+        assert said == "<what to look at hardest>"
 
     def test_each_instance_is_its_own_block(self, instructions):
         assert f'</instance>\n<instance name="{BOOKS}">' in instructions

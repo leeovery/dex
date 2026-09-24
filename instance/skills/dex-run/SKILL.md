@@ -52,7 +52,8 @@ instructions apply when its step is reached.
    still pending, and any that failed, with what its check reported; what
    was ingested (full item ids), what was parked and why, each item the
    lens verdict dropped (full item id) with its reason, what the health
-   check found or why it was not due, any engine defect filed, any config
+   check found or why it was not due, the lens note when the sync report
+   or the health check carried one, any engine defect filed, any config
    change proposed, and the end state (pushed commit, or clean with
    nothing to push). "Nothing to do" covers every empty
    section in one line. Shape the rest to the run — prose where there is
@@ -82,6 +83,14 @@ instructions apply when its step is reached.
   item that yields nothing through the lens is dropped and named in the
   report, never skipped or left waiting for an attended decision
   (details in `references/ingest-item.md`).
+- An instance with no lens is a general knowledge dex, which is a
+  legitimate way to run one: it reads every share for its general
+  substance, and its verdict drops only content with nothing in it at
+  all. A **Lens note** on the sync report or the health check (the seed's
+  placeholder lines left in `lens.md`, or a file that cannot be read)
+  says the dex reads as general knowledge until the owner fills in or
+  deletes the file. It is the owner's to act on: carry it into the report
+  and never edit `lens.md` for it.
 - Cap-fired events (depth/URL caps) are internal — they live in the
   ledger for the health check. An `enrich fetch` refusal is already
   answered on the engine's own report; the summaries and receipts you

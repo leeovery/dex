@@ -11,7 +11,7 @@ import pytest
 from dex_engine import seeds
 from dex_engine.directives import discover, pending
 from dex_engine.directives import log_path as directives_log
-from dex_engine.lens import lens_finding
+from dex_engine.lens import read_lens
 from dex_engine.new import EPHEMERAL, NAMED_SEEDS, SEEDS, TREE, build_parser, main, scaffold
 from dex_engine.pipeline.types import Config, Instance
 from dex_engine.render.cli import main as render_main
@@ -63,8 +63,8 @@ class TestScaffold:
         assert lines == [
             f"created {root}",
             (
-                "next: fill in lens.md (what this dex reads for) and README.md's <owner>/<repo>, "
-                "commit, then:"
+                "next: fill in lens.md with what this dex reads for (or delete it for a general "
+                "knowledge dex) and README.md's <owner>/<repo>, commit, then:"
             ),
             "  if using GitHub: gh repo create dex-cooking --private --source . --push",
             "  bin/dex inbox ensure",
@@ -77,11 +77,11 @@ class TestScaffold:
         _seed_title, *seed_rest = (TEMPLATE / "lens.md").read_text().splitlines()
         assert title == "# dex-cooking"
         assert rest == seed_rest
-        # The placeholder lines stay for setup to fill, so lint and sync
-        # say so until it has.
-        finding = lens_finding(Instance(root=root), TEMPLATE)
-        assert finding is not None
-        assert finding.startswith("`lens.md` still holds the seed's placeholder text")
+        # The placeholder lines stay for setup to fill or delete, so lint
+        # and sync note it until setup has.
+        note = read_lens(Instance(root=root), TEMPLATE).note
+        assert note is not None
+        assert note.startswith("`lens.md` still holds the seed's placeholder text")
 
     def test_the_readme_is_named_and_links_the_lens(self, tmp_path):
         root = tmp_path / "dex-cooking"

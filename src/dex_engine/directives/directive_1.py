@@ -11,8 +11,9 @@ commit that records the directive.
 
 It always completes. An instance whose history holds no version of the
 owner's, or one whose scope is still the old template's placeholders, has
-no scope to carry: the seed lens stands in, and filling it is the owner's,
-which the lens check on lint and the sync report tells them.
+no scope to carry, and the directive writes nothing to ``lens.md``: with
+none there, the instance is a general knowledge dex that reads for
+anything, and one already there is left as it is.
 """
 
 from collections.abc import Callable, Sequence
@@ -22,7 +23,7 @@ from pathlib import Path
 
 from dex_engine import seeds
 from dex_engine.gitread import git_output
-from dex_engine.lens import lens_finding
+from dex_engine.lens import read_lens
 from dex_engine.pipeline.types import Config, Instance
 from dex_engine.template import bundled_template
 
@@ -82,7 +83,7 @@ def check(root: Path) -> list[str]:
 
 
 def materials(root: Path) -> str:
-    """The owner's CLAUDE.md with its commit, then the seed lens named for this instance."""
+    """The owner's CLAUDE.md with its commit, then the seed lens when there is a scope to carry."""
     return render(root, bundled_template())
 
 
@@ -116,22 +117,28 @@ def states_scope(owner: OwnerClaude | None) -> bool:
 def render(root: Path, template: Traversable, *, git: Git = git_output) -> str:
     """The materials: the owner's CLAUDE.md, or the word that there is none, then the seed lens.
 
+    The seed lens is the layout a stated scope is written into, so it is
+    printed only when there is one to carry.
+
     Args:
         root: The instance root, whose directory name is the instance's.
         template: The template tree whose ``lens.md`` is the seed.
         git: The git seam the owner's version is found through.
     """
     owner = owner_claude(root, git=git)
-    seed = seeds.lens(template, root.name).rstrip("\n")
-    return "\n".join([*_owner_part(owner), "", SEED_BEGIN, seed, SEED_END, ""])
+    parts = [*_owner_part(owner), ""]
+    if states_scope(owner):
+        parts += [SEED_BEGIN, seeds.lens(template, root.name).rstrip("\n"), SEED_END, ""]
+    return "\n".join(parts)
 
 
 def unmet(root: Path, template: Traversable, *, git: Git = git_output) -> list[str]:
     """Every condition not yet met: the lens, and a config that parses.
 
-    With a stated scope to carry, the lens must pass the lens check. With
-    none, ``lens.md`` must only exist, the seed at least: filling it is the
-    owner's, never the directive's, which always completes.
+    With a stated scope to carry, ``lens.md`` must state a lens: there, not
+    empty, and free of the seed's placeholder lines. With none, the lens is
+    no condition at all, since ``lens.md`` absent is a general knowledge dex
+    and one already there is the owner's.
 
     Args:
         root: The instance root.
@@ -157,11 +164,9 @@ def _owner_part(owner: OwnerClaude | None) -> list[str]:
 def _lens_condition(
     instance: Instance, template: Traversable, owner: OwnerClaude | None
 ) -> str | None:
-    if states_scope(owner):
-        return lens_finding(instance, template)
-    if instance.lens_path.exists():
+    if not states_scope(owner):
         return None
-    return "`lens.md` is missing: with no stated scope to carry, write the materials' seed lens"
+    return read_lens(instance, template).finding
 
 
 def _config_finding(instance: Instance) -> str | None:

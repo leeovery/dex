@@ -302,10 +302,17 @@ rename or delete, and nothing in the engine parses it by section. Every
 session reads it whole, as one coherent statement. It is the owner's, so a
 session writes it only when the owner asks or a directive's instructions
 name it, and `bin/dex sync` never writes it, whether it exists or not.
-`bin/dex lint` fails when it is missing, unreadable, empty, or still holds
-any of the seed's placeholder lines (the lines that are only `<...>`), and
-the sync report carries the same finding, so a lens that states nothing
-shows before any work starts.
+
+A missing or empty `lens.md` makes the instance a general knowledge dex,
+which is a legitimate way to run one: it reads for anything, every share
+is read for its general substance, and the lens verdict drops only
+content with nothing in it at all. A `lens.md` still holding any of the
+seed's placeholder lines (the lines that are only `<...>`) reads the same
+way until the placeholders are replaced or the file is deleted, since a
+placeholder line is never read as a lens, and so does one that cannot be
+read. `bin/dex lint` and the sync report carry a **Lens note** for those
+two cases and never fail on it; a missing or empty `lens.md` gets no note
+at all.
 
 ## `state/config.json` — instance configuration, owner-editable
 

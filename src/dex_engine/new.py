@@ -4,9 +4,10 @@
 
 Creates ``./<name>``: the directory tree (tracked dirs plus the gitignored
 ``cache/``), the README and ``lens.md`` seeded with the instance's name (the
-lens to be filled in), the engine-managed machinery, CLAUDE.md among it (via
-the same template sync every instance runs), every shipped directive
-recorded as done, git init, and local LFS.
+lens to be filled in, or deleted for a general knowledge dex), the
+engine-managed machinery, CLAUDE.md among it (via the same template sync
+every instance runs), every shipped directive recorded as done, git init,
+and local LFS.
 """
 
 import argparse
@@ -125,8 +126,8 @@ def scaffold(  # noqa: PLR0913 — the seams are the signature: subprocess, temp
     return [
         f"created {root}",
         (
-            "next: fill in lens.md (what this dex reads for) and README.md's <owner>/<repo>, "
-            "commit, then:"
+            "next: fill in lens.md with what this dex reads for (or delete it for a general "
+            "knowledge dex) and README.md's <owner>/<repo>, commit, then:"
         ),
         f"  if using GitHub: gh repo create {root.name} --private --source . --push",
         "  bin/dex inbox ensure",

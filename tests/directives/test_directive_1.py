@@ -1,8 +1,6 @@
 """Tests for directive 1: the owner's CLAUDE.md, rehomed into lens.md and config."""
 
 import json
-import shlex
-import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -74,6 +72,15 @@ Home Cooking Knowledge Base
 """
 
 DISCORD = {"guild": "1000", "channels": {"general": "2000"}}
+
+# Every history with no stated scope to carry: none of the owner's, or the
+# owner's still the unfilled pre-lens template, however many engine copies
+# stand in front of it.
+NO_SCOPE_HISTORIES = pytest.mark.parametrize(
+    "history",
+    [[], [("t1", OLD_TEMPLATE)], [("e1", ENGINE_CLAUDE_MD), ("t1", OLD_TEMPLATE)]],
+    ids=["no-owner", "unfilled-template", "unfilled-behind-engine"],
+)
 
 
 @pytest.fixture
@@ -264,16 +271,16 @@ class TestRender:
             f"{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n"
         )
 
-    def test_a_version_stating_no_scope_says_so_after_it(self, root):
+    def test_a_version_stating_no_scope_says_so_and_carries_no_seed(self, root):
+        # With no scope to carry nothing is written into lens.md, so the
+        # layout a scope is written into has no use.
         text = render(root, TEMPLATE, git=ScriptedGit([("t1", OLD_TEMPLATE)]))
         assert text == (
-            f"{OWNER_BEGIN.format(commit='t1')}\n{OLD_TEMPLATE}{OWNER_END}\n\n{NO_SCOPE}\n\n"
-            f"{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n"
+            f"{OWNER_BEGIN.format(commit='t1')}\n{OLD_TEMPLATE}{OWNER_END}\n\n{NO_SCOPE}\n"
         )
 
-    def test_no_owner_s_version_is_said_in_its_place(self, root):
-        text = render(root, TEMPLATE, git=ScriptedGit([]))
-        assert text == f"{NO_OWNER}\n\n{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n"
+    def test_no_owner_s_version_is_said_in_its_place_with_no_seed(self, root):
+        assert render(root, TEMPLATE, git=ScriptedGit([])) == f"{NO_OWNER}\n"
 
     def test_an_owner_s_version_without_a_final_newline_still_closes_on_its_own_line(self, root):
         text = render(root, TEMPLATE, git=ScriptedGit([("o1", OWNER.rstrip("\n"))]))
@@ -291,23 +298,6 @@ class TestRender:
         assert f"- {tail}{OWNER_END}\n" in text
         assert text.endswith(f"\n{tail}{SEED_END}\n")
 
-    def test_the_instructions_command_writes_the_seed_lens_exactly(self, root):
-        # The command the instructions give for writing the seed, run on the
-        # materials, must produce the seed byte for byte.
-        if shutil.which("awk") is None:
-            pytest.skip("awk is not on PATH")
-        [line] = [
-            line
-            for line in directive_1_instructions().splitlines()
-            if line.startswith("bin/dex directive show 1 --materials | awk ")
-        ]
-        argv = shlex.split(line.split(" | ", 1)[1].rsplit(" > ", 1)[0])
-        text = render(root, TEMPLATE, git=ScriptedGit([("t1", OLD_TEMPLATE)]))
-        written = subprocess.run(  # noqa: S603 — the instructions' own awk program
-            argv, input=text, capture_output=True, text=True, check=True
-        ).stdout
-        assert written == self.seed(root)
-
 
 class TestUnmet:
     def test_a_stated_scope_needs_a_stated_lens_and_parsing_config(self, root):
@@ -323,6 +313,18 @@ class TestUnmet:
     def test_with_a_stated_scope_a_missing_lens_is_unmet(self, root):
         assert unmet(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)])) == ["`lens.md` is missing"]
 
+    def test_with_a_stated_scope_an_empty_lens_is_unmet(self, root):
+        # No lens is a general knowledge dex, legitimate on its own, but the
+        # owner stated a scope here, and carrying it is the directive's job.
+        write(root, "lens.md", "\n  \n")
+        assert unmet(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)])) == ["`lens.md` is empty"]
+
+    def test_with_a_stated_scope_an_unreadable_lens_is_unmet(self, root):
+        (root / "lens.md").write_bytes(b"\xff\xfe not text")
+        assert unmet(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)])) == [
+            "`lens.md` is unreadable (UnicodeDecodeError)"
+        ]
+
     def test_with_a_stated_scope_the_unfilled_seed_is_unmet(self, root):
         write(root, "lens.md", seeds.lens(TEMPLATE, root.name))
         [finding] = unmet(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)]))
@@ -334,32 +336,26 @@ class TestUnmet:
         write(template, "lens.md", "# <instance name>\n\n<only this one>\n")
         write(root, "lens.md", "# dex-cooking\n\n<only this one>\n")
         assert unmet(root, template, git=ScriptedGit([("o1", OWNER)])) == [
-            "`lens.md` still holds the seed's placeholder text: `<only this one>`"
+            "`lens.md` still holds the seed's placeholder text (`<only this one>`)"
         ]
 
-    @pytest.mark.parametrize(
-        "history",
-        [[], [("t1", OLD_TEMPLATE)], [("e1", ENGINE_CLAUDE_MD), ("t1", OLD_TEMPLATE)]],
-        ids=["no-owner", "unfilled-template", "unfilled-behind-engine"],
-    )
-    def test_with_no_scope_to_carry_the_seed_lens_completes_it(self, root, history):
-        write(root, "lens.md", seeds.lens(TEMPLATE, root.name))
+    @NO_SCOPE_HISTORIES
+    def test_with_no_scope_to_carry_no_lens_completes_it(self, root, history):
+        # Absent, lens.md makes a general knowledge dex: nothing to write.
         assert unmet(root, TEMPLATE, git=ScriptedGit(history)) == []
 
+    @NO_SCOPE_HISTORIES
     @pytest.mark.parametrize(
-        "history", [[], [("t1", OLD_TEMPLATE)]], ids=["no-owner", "unfilled-template"]
+        "lens",
+        ["", "seed", LENS, b"\xff\xfe not text"],
+        ids=["empty", "seed", "stated", "unreadable"],
     )
-    def test_with_no_scope_to_carry_an_existing_lens_is_left_as_it_is(self, root, history):
-        write(root, "lens.md", "")
+    def test_with_no_scope_to_carry_an_existing_lens_is_left_as_it_is(self, root, history, lens):
+        if isinstance(lens, bytes):
+            (root / "lens.md").write_bytes(lens)
+        else:
+            write(root, "lens.md", seeds.lens(TEMPLATE, root.name) if lens == "seed" else lens)
         assert unmet(root, TEMPLATE, git=ScriptedGit(history)) == []
-
-    @pytest.mark.parametrize(
-        "history", [[], [("t1", OLD_TEMPLATE)]], ids=["no-owner", "unfilled-template"]
-    )
-    def test_with_no_scope_to_carry_a_missing_lens_is_still_unmet(self, root, history):
-        assert unmet(root, TEMPLATE, git=ScriptedGit(history)) == [
-            "`lens.md` is missing: with no stated scope to carry, write the materials' seed lens"
-        ]
 
     def test_config_that_is_not_json_is_unmet(self, root):
         write(root, "lens.md", LENS)
@@ -452,10 +448,11 @@ class TestTheShippedFunctions:
         write(root, "lens.md", LENS)
         assert check(root) == []
 
-    def test_an_instance_that_never_stated_a_scope_completes_on_the_seed(self, history):
+    def test_an_instance_that_never_stated_a_scope_completes_with_no_lens(self, history):
         history.commit(OLD_TEMPLATE, "initial instance")
         history.commit(ENGINE_CLAUDE_MD, "sync: machinery refresh")
         root = history.root
         assert NO_SCOPE in materials(root)
-        write(root, "lens.md", seeds.lens(TEMPLATE, root.name))
+        assert SEED_BEGIN not in materials(root)
+        assert not (root / "lens.md").exists()
         assert check(root) == []

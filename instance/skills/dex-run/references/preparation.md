@@ -18,6 +18,14 @@ in order:
      it. Dropped ledger lines are not repair work: a migration drops only
      lines nothing on disk or in the corpus can own, the report names them,
      and git history holds the pre-migration ledger.
+   - **Carry a Lens note line to the owner.** The line is informational:
+     `lens.md` still holds the seed's placeholder lines or cannot be read,
+     so this dex reads as general knowledge until the owner fills in or
+     deletes the file. The run goes on, never edits `lens.md` for the
+     note, and carries it into the closing report (dex-run step 6). When
+     the report carries no such line, `lens.md` either states a lens or is
+     missing or empty, and an instance with no lens is a general knowledge
+     dex, which is a legitimate way to run one.
    - **Commit the refreshed files and the pin** — this session owns that
      commit step; sync itself never commits. Message: `sync: engine <tag>`
      (or `sync: machinery refresh` when unpinned).

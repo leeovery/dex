@@ -18,6 +18,7 @@ with nothing to notice.
 from importlib.resources.abc import Traversable
 
 from dex_engine import frontmatter
+from dex_engine.lens import read_lens
 from dex_engine.pipeline.types import Instance
 
 from .roster import Roster
@@ -69,10 +70,7 @@ depending on the lens the owner wants it read through."""
 # enclosed markdown cannot accidentally close.
 _LENS_OPEN = '<instance name="{name}">'
 _LENS_CLOSE = "</instance>"
-_UNDECLARED = (
-    "This instance has no readable lens.md, so its lens is undeclared: search it "
-    "whenever a question might touch it."
-)
+_GENERAL = "This instance has no lens, so it is a general knowledge dex: search it for anything."
 
 _SEARCH_NEXT = (
     "Raw hits, not an answer — fetch the promising ids, open the wiki pages and "
@@ -121,17 +119,19 @@ _GRAPH_TRIMMED = (
 )
 
 
-def instructions(roster: Roster) -> str:
+def instructions(roster: Roster, template: Traversable) -> str:
     """The connect-time instructions for a server holding ``roster``.
 
     Args:
         roster: The served instances, whose lenses the model routes questions by.
+        template: The template tree whose seed lens names the placeholder
+            lines, which are never read as a lens.
 
     Returns:
         The doctrine, then every instance's lens, then the routing of
         questions and captures.
     """
-    return "\n\n".join((_DOCTRINE, _LENSES_LEAD, _lenses(roster), _ROUTING))
+    return "\n\n".join((_DOCTRINE, _LENSES_LEAD, _lenses(roster, template), _ROUTING))
 
 
 def search_next(*, shown: int, total: int) -> str:
@@ -183,26 +183,18 @@ def procedure(template: Traversable) -> str:
     return frontmatter.body(skill.read_text(encoding="utf-8"))
 
 
-def _lenses(roster: Roster) -> str:
+def _lenses(roster: Roster, template: Traversable) -> str:
     """Every served instance's lens, in roster order."""
-    return "\n".join(_lens(name, instance) for name, instance in roster.instances.items())
+    return "\n".join(_lens(name, instance, template) for name, instance in roster.instances.items())
 
 
-def _lens(name: str, instance: Instance) -> str:
-    """One instance's lens.md verbatim, delimited and named."""
-    return "\n".join(
-        (_LENS_OPEN.format(name=name), _declared(instance) or _UNDECLARED, _LENS_CLOSE)
-    )
+def _lens(name: str, instance: Instance, template: Traversable) -> str:
+    """One instance's lens verbatim, delimited and named, or the line for a general dex.
 
-
-def _declared(instance: Instance) -> str:
-    """What an instance reads for, or "" when it says nothing.
-
-    An instance whose lens will not read is an instance with no declared
-    lens: a server that refused to start over one unreadable lens.md would
-    take every other instance down with it.
+    A lens.md still holding the seed's placeholder lines, or one that will
+    not read, makes a general knowledge dex just as no lens.md does, never
+    an error: a server that refused to start over one unreadable lens.md
+    would take every other instance down with it.
     """
-    try:
-        return instance.lens_path.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
-        return ""
+    lens = read_lens(instance, template).text
+    return "\n".join((_LENS_OPEN.format(name=name), lens or _GENERAL, _LENS_CLOSE))

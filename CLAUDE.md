@@ -62,13 +62,16 @@ the engine stays unaware of which ones exist.
     owner. Directive 1 rehomes an owner-written CLAUDE.md, which its code
     finds in git history and prints in its materials (scope into
     `lens.md`, Discord facts into config; with no stated scope to carry,
-    the seed lens stands in for the owner to fill); directive 2 rewrites
-    the README from the template.
+    it writes no `lens.md`, and the instance is a general knowledge dex);
+    directive 2 rewrites the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
-  - `lens.py` — the ONE lens check (is `lens.md` missing, empty, or still
-    holding the seed's placeholder lines), shared by lint and sync.
+  - `lens.py` — the ONE lens check (does `lens.md` state a lens: missing
+    or empty is a general knowledge dex and no finding, while the seed's
+    placeholder lines left or an unreadable file are a note, never a
+    failure), shared by lint, sync, the server's instructions and
+    directive 1's check.
   - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
     and the map compiler share it).
   - `instance_map.py` — `dex-map`: compiles `state/map.json` (topics,
@@ -107,10 +110,11 @@ the engine stays unaware of which ones exist.
   `dex-new` through `seeds.py`, each with the instance's name filled in,
   and never copied by sync, because both are the owner's: `README.md`,
   how the instance shows on GitHub, and `lens.md`, the seed lens whose
-  placeholder lines the lens check reads. An instance older than the lens
-  reaches the same shape through directives 1 and 2, which render the
-  same two seeds. Everything instance-specific lives in `lens.md` and
-  `state/config.json`.
+  placeholder lines the lens check reads, which an owner who wants a
+  general knowledge dex deletes. An instance older than the lens reaches
+  the same shape through directives 1 and 2, which render the same two
+  seeds (directive 1's only when there is a scope to carry). Everything
+  instance-specific lives in `lens.md` and `state/config.json`.
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), `capture.md` (the

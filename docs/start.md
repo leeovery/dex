@@ -79,7 +79,9 @@ at a time (use your ask-user tool where available):
    says it best ("a site like this, for its type pairing, not its
    products"). The seed `lens.md` has three headings you can use as
    prompts: what it reads for, what to look at hardest, and what to set
-   aside even when it is the subject.
+   aside even when it is the subject. The owner may also want a general
+   knowledge dex, one with no lens that reads anything shared into it for
+   its general substance, which is a legitimate way to run one.
 3. **GitHub** — private repo (default), or local-only for now. Local-only
    is a supported state, not a half-setup: runs skip pulls, pushes and the
    inbox release checks (skipped, not passed) until a repo exists, and the
@@ -102,7 +104,8 @@ and engine-owned, so it is never personalised. Then:
 
 - Write the lens: the owner's answer to question 2 goes into `lens.md` in
   place of the seed's placeholder lines. Keep, rename or drop the seed's
-  headings as the answer suits, and keep the owner's own words.
+  headings as the answer suits, and keep the owner's own words. For a
+  general knowledge dex, delete the seeded `lens.md` instead.
 - Fill the `<owner>/<repo>` placeholder in README.md's "Run it on another
   machine" prompt. That prompt is what a second machine or a second person
   pastes, so it has to name the real repo. If GitHub was declined, delete
@@ -111,9 +114,11 @@ and engine-owned, so it is never personalised. Then:
   was wanted: `gh repo create {name} --private --source . --push`, then
   `bin/dex inbox ensure` — creates the standing "inbox" release that
   binary captures stage into.
-- Sanity check: `bin/dex lint` (prints a fresh-instance notice). It fails
-  while `lens.md` still holds one of the seed's placeholder lines, which
-  means the lens step is unfinished: finish it, commit, and run lint again.
+- Sanity check: `bin/dex lint` (prints a fresh-instance notice). A
+  **Lens note** on it means `lens.md` still holds one of the seed's
+  placeholder lines, so the dex would read as general knowledge and the
+  lens step is unfinished: fill in the lens, or delete the file for a
+  general knowledge dex, then commit and run lint again.
 
 → Proceed to **Step 5**.
 
@@ -210,8 +215,9 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 ## Step 9: Hand-Off
 
 End your final message with, in a few lines: `{instance}` (where it
-lives), its lens as written, the schedule it runs on, how to save things
-(the shortcut, or "add this to dex" in a session — either way the save is
+lives), its lens as written (or that it is a general knowledge dex), the
+schedule it runs on, how to save things (the shortcut, or "add this to
+dex" in a session — either way the save is
 instant and processing happens on the schedule), and how to ask questions —
 including, if they declined the chat connection in Step 7, that asking for the
 `docs/connect.md` paste again is all it takes to set it up later.

@@ -26,7 +26,8 @@ reference at the step that names it, not before.
 3. **Repair.** Read `references/repairs.md` now and fix what the report
    names, in the reference's order — state before wiki, because a broken
    ledger blocks the verbs the other repairs need. Never edit state
-   files by hand.
+   files by hand. A **Lens note** row is not a repair: it is the owner's,
+   passed on in the step 10 report, and `lens.md` is never edited for it.
 
 4. **Standing signals.** Read `references/standing-signals.md` now and
    read both signals — counts to interpret, not a queue that drains, and
@@ -36,7 +37,9 @@ reference at the step that names it, not before.
    contradictions (surface with dates), self-citation, and pages drifting
    off the lens, which write about an item's subject matter where the lens
    reads it for something else (a design instance's page on a gardening
-   site that has wandered into plant care).
+   site that has wandered into plant care). In a general knowledge dex,
+   which has no lens, every page is written about its items' own
+   subjects, so none can drift off a lens.
 
 6. **Coarse-topic check**: when a topic has grown unwieldy or a coherent
    sub-cluster has formed inside it, split it — create the finer-grained

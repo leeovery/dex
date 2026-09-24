@@ -20,7 +20,7 @@ owns, or README.md, which directive 2 rewrites.
 
 The materials are printed after these instructions, between the
 `===== materials` line and the `===== end of materials =====` line. They
-hold two things, each between delimiter lines of its own:
+hold up to two things, each between delimiter lines of its own:
 
 - The owner's CLAUDE.md, the newest committed version that is not an
   engine copy, between the
@@ -28,14 +28,15 @@ hold two things, each between delimiter lines of its own:
   `----- end of the owner's CLAUDE.md -----` line. Note the hash, because
   the commit message names it. When this instance's history holds no
   version of the owner's, a line saying so stands in its place.
-- The seed lens rendered for this instance, between the
-  `----- the seed lens for this instance -----` line and the
-  `----- end of the seed lens -----` line.
+- When the owner's CLAUDE.md states a scope, the seed lens rendered for
+  this instance, between the `----- the seed lens for this instance -----`
+  line and the `----- end of the seed lens -----` line.
 
 There is no stated scope to carry when the materials say that no committed
 version is the owner's, or that the owner's CLAUDE.md states no scope
 because it still holds the old template's scope placeholders. The
-directive completes all the same, and step 3 says what the lens gets.
+directive completes all the same, and step 3 says what happens to the
+lens.
 
 ## 2. Sort every passage
 
@@ -89,25 +90,18 @@ sections freely.
 
 ## 3. Write the lens
 
-The seed lens in the materials is the layout to start from. Its
-placeholder lines are the ones made only of text in angle brackets, such as
-`<what to look at hardest>`.
+When there is no stated scope to carry, write nothing to `lens.md`. When
+it is missing, leave it missing: an instance with no lens is a general
+knowledge dex, which reads everything shared into it for its general
+substance, and that is a legitimate way to run one. When it exists, leave
+it exactly as it is. Name in the commit message anything the owner's
+CLAUDE.md says about what the instance reads for, such as reading
+guidance, as not carried for that reason. Then go on to step 4.
 
-When there is no stated scope to carry, the lens is left for the owner to
-fill in, and the lens check on lint and on the sync report tells them it
-is still unfilled. When `lens.md` is missing, write the seed lens exactly
-as the materials give it, which this command does:
-
-```
-bin/dex directive show 1 --materials | awk '/^----- end of the seed lens -----$/ {keep = 0} keep; /^----- the seed lens for this instance -----$/ {keep = 1}' > lens.md
-```
-
-When `lens.md` exists, leave it exactly as it is. Carry nothing into it
-either way, and name in the commit message anything the owner's CLAUDE.md
-says about what the instance reads for, such as reading guidance, as not
-carried for that reason. Then go on to step 4.
-
-Otherwise, read `lens.md` as it stands and do exactly one of these:
+When there is a stated scope, the seed lens in the materials is the
+layout to start from. Its placeholder lines are the ones made only of text
+in angle brackets, such as `<what to look at hardest>`. Read `lens.md` as
+it stands and do exactly one of these:
 
 - **It already states a lens**, because it exists, is not empty and holds
   none of the placeholder lines. Leave it exactly as it is and carry
@@ -186,18 +180,19 @@ that reason.
 
 Read `lens.md` and `state/config.json` once more against steps 3 and 4,
 then run `bin/dex directive done 1`. It confirms that `state/config.json`
-parses under the engine's config rules, and that `lens.md` states a lens,
-or only that it exists when there is no stated scope to carry. It records
-the directive only when both hold. When it refuses, follow preparation
-step 5.
+parses under the engine's config rules and, when there is a stated scope
+to carry, that `lens.md` states a lens: it exists, is not empty, and holds
+none of the seed's placeholder lines. With no stated scope, `lens.md` is
+no condition. It records the directive only when every condition holds.
+When it refuses, follow preparation step 5.
 
 ## 6. Commit
 
-Commit `lens.md`, `state/config.json` when you changed it, and
-`state/directives.jsonl` together as one commit. The subject is the first
-line `bin/dex directive show 1` printed, `directive 1: ` followed by this
-directive's intent. The body accounts for the owner's CLAUDE.md, so the
-owner can find every part of it:
+Commit `lens.md` when you wrote it, `state/config.json` when you changed
+it, and `state/directives.jsonl` together as one commit. The subject is
+the first line `bin/dex directive show 1` printed, `directive 1: `
+followed by this directive's intent. The body accounts for the owner's
+CLAUDE.md, so the owner can find every part of it:
 
 ```
 The owner's CLAUDE.md is in history: git show <hash>:CLAUDE.md
@@ -216,11 +211,12 @@ carried, and say there when an export overrode the owner's CLAUDE.md.
 Engine boilerplate needs no line. Leave out a list that would be empty.
 
 When there was no stated scope to carry, say so in a paragraph between the
-history line and Moved, with why (its scope still held the old template's
-placeholders) and what `lens.md` is now: the seed lens, written for the
-owner to fill in, or the file that was already there, left as it was.
-When no committed version was the owner's, there is no history line, and
-that paragraph is the whole body, saying so.
+history line and Moved: the instance had no stated scope, with why (its
+scope still held the old template's placeholders), so it reads as general
+knowledge, with no `lens.md`. When a `lens.md` was already there, say
+instead that it was left as it was. When no committed version was the
+owner's, there is no history line, and that paragraph is the whole body,
+saying so.
 
 Write the message to `cache/directive-1-message.txt` and commit with
 `git commit -F cache/directive-1-message.txt`, which keeps its quotes and

@@ -49,15 +49,19 @@ def build_server(roster: Roster, *, template: Traversable | None = None) -> MCPS
         roster: The instances to serve.
         template: Template override for tests; ``None`` uses the wheel's
             bundled ``instance/`` tree, which is where the dex-query
-            procedure the prompt serves lives.
+            procedure the prompt serves lives, and the seed lens whose
+            placeholder lines the instructions never read as a lens.
 
     Returns:
         The server, tools, resources and prompt attached, not yet listening.
     """
-    server = MCPServer("dex", version=engine_version(), instructions=steering.instructions(roster))
+    tpl = template if template is not None else bundled_template()
+    server = MCPServer(
+        "dex", version=engine_version(), instructions=steering.instructions(roster, tpl)
+    )
     _add_tools(server, roster)
     _add_resources(server, roster)
-    _add_prompt(server, template if template is not None else bundled_template())
+    _add_prompt(server, tpl)
     return server
 
 
