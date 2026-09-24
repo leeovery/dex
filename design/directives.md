@@ -200,3 +200,18 @@ Recorded 2026-09-24, while the stack that builds this design was reviewed.
   `diff`, `ls` or `grep` to something else, and a scheduled session runs in
   that shell, so every such command an instruction gives is written as
   `command diff` and the like, and a template test fails on a bare one.
+- **The engine says it when it matters, because the first run holds old
+  instructions.** A scheduled run reads its preparation steps before sync
+  replaces them, so on the first run after a release the session holds the
+  previous release's text, and it does not re-read what it believes it has
+  read. The engine therefore carries the directive flow in its command
+  output: `inbox`, `normalize`, `enrich` and `exclude` refuse while any
+  directive is pending, with one line pointing at `bin/dex directive list`;
+  `list` names the next step; a refused `done` prints the whole recovery
+  procedure; and `preparation.md` step 5 is one line. Each instruction lives
+  in one place. A directive that cannot complete leaves content work
+  stopped until an engine release fixes it, and captures wait in `inbox/`.
+  A directive whose work an older rule forbids says its authority in its
+  own text, since that text is all a first-run session reads. Proven by an
+  upgrade test from the previous release's pin, through the real pin bump
+  and re-exec.
