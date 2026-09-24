@@ -75,16 +75,21 @@ the engine stays unaware of which ones exist.
     CLIs over injected Instance/Config; zero import-time state anywhere.
 - `instance/` — the template for a new instance, bundled into the wheel:
   the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
-  contract, synced to `.claude/dex-contract.md` and imported by every
-  instance's CLAUDE.md), and `skills/` (`dex-capture`, `dex-query`, and
-  `dex-run` + `dex-lint` each with their `references/` — each dir synced
-  recursively into `.claude/skills/`; the `dex-` skill namespace is
-  engine-owned and sync retires skills the template drops), and `lens.md`,
-  the seed lens whose placeholder lines the lens check reads; sync never
-  copies it, because an instance's lens is its owner's. `CLAUDE.md` and `README.md` are
-  scaffold seeds — written by `dex-new` at creation, instance-owned
-  afterwards (they hold only identity, scope, and instance-specifics;
-  everything shared lives in the synced contract).
+  contract, synced to `.claude/dex-contract.md`), `CLAUDE.md` (synced to
+  the instance root and engine-owned, identical in every instance: it
+  imports the contract and `lens.md` and names no instance; sync leaves a
+  copy that git history does not hold, because it has uncommitted changes
+  or sits outside a repository, alone and says so on its report, so an
+  owner's edit is overwritten only once it is recoverable), and
+  `skills/` (`dex-capture`, `dex-query`, and `dex-run` + `dex-lint` each
+  with their `references/` — each dir synced recursively into
+  `.claude/skills/`; the `dex-` skill namespace is engine-owned and sync
+  retires skills the template drops). Two seeds are written once by
+  `dex-new`, each with the instance's name filled in, and never copied by
+  sync, because both are the owner's: `README.md`, how the instance shows
+  on GitHub, and `lens.md`, the seed lens whose placeholder lines the lens
+  check reads. Everything instance-specific lives in `lens.md` and
+  `state/config.json`.
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), `capture.md` (the

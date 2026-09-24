@@ -9,9 +9,10 @@ Flow::
     3. run pending migrations (new code, before anything else touches state),
        then read which directives the instance has yet to complete
     4. refresh engine-managed machinery from the running — pinned — version's
-       bundled template: .claude/skills/dex-*, .claude/dex-contract.md,
-       bin/dex, .gitattributes (instance-owned files are never touched,
-       lens.md among them)
+       bundled template: CLAUDE.md, .claude/skills/dex-*,
+       .claude/dex-contract.md, bin/dex, .gitattributes (CLAUDE.md waits
+       while git history does not hold what it would replace; the README,
+       lens.md and every other instance-owned file are never touched)
     5. render the sync report (one surface): the pending directives for the
        run to perform after its pull, the lens check's finding when lens.md
        states nothing, and whatever a read of the desktop app's own config
@@ -61,6 +62,7 @@ from dex_engine.version import engine_version
 __all__ = [
     "PIN_FILE",
     "REPO_URL",
+    "Refresh",
     "Release",
     "ReleaseChannel",
     "ReleaseCheckError",
@@ -340,12 +342,84 @@ def _reexec_argv(repo_url: str, tag: str, *, previous: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class Refresh:
+    """What one template sync did to an instance.
+
+    ``changed`` describes every write and removal. ``held`` says why
+    CLAUDE.md was left as it stands, and is ``None`` when sync wrote it or
+    it was already current.
+    """
+
+    changed: list[str]
+    held: str | None = None
+
+
+def _git_uncommitted(path: Path) -> str | None:
+    """Why git history may not hold ``path`` as it stands; ``None`` when it does.
+
+    Whatever ``git status`` lists for the path (an edit, staged or not, an
+    untracked or an ignored file) is content no commit holds. A git that
+    cannot answer, outside a repository or absent altogether, vouches for
+    nothing either.
+    """
+    try:
+        done = subprocess.run(  # noqa: S603 — engine-built args, no shell
+            [  # noqa: S607 — git resolves via PATH like every dev tool
+                "git",
+                "--no-optional-locks",
+                "-C",
+                str(path.parent),
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+                "--",
+                path.name,
+            ],
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"git cannot say whether it is committed ({e})"
+    if done.returncode != 0:
+        said = done.stderr.decode("utf-8", "replace").strip().partition("\n")[0]
+        return f"git cannot say whether it is committed ({said or f'exit {done.returncode}'})"
+    return "it has uncommitted changes" if done.stdout.strip() else None
+
+
 def _write_if_changed(root: Path, dest: Path, content: str, changed: list[str]) -> None:
     if dest.exists() and dest.read_text(encoding="utf-8") == content:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     changed.append(str(dest.relative_to(root)))
+
+
+def _take_over(
+    root: Path,
+    dest: Path,
+    content: str,
+    changed: list[str],
+    uncommitted: Callable[[Path], str | None],
+) -> str | None:
+    """Write an engine-owned file an owner may have written into; say why when it waits.
+
+    Overwriting loses nothing only while git history holds what it
+    replaces, so a copy that differs and that git cannot vouch for stays
+    as it stands until its edit is committed.
+    """
+    if dest.exists() and dest.read_text(encoding="utf-8") != content:
+        reason = uncommitted(dest)
+        if reason is not None:
+            rel = dest.relative_to(root)
+            return (
+                f"left {rel} untouched: {reason}. Sync overwrites it only once git history "
+                "holds what it would replace, so the next sync after a commit takes it over"
+            )
+    _write_if_changed(root, dest, content, changed)
+    return None
 
 
 def _copy_tree(
@@ -393,32 +467,46 @@ def _converge_shape(root: Path, dest: Path, changed: list[str], *, to_dir: bool)
     changed.append(f"removed {dest.relative_to(root)} (template ships a {noun} here now)")
 
 
-def sync(root: Path, template: Traversable | None = None) -> list[str]:
+def sync(
+    root: Path,
+    template: Traversable | None = None,
+    *,
+    uncommitted: Callable[[Path], str | None] = _git_uncommitted,
+) -> Refresh:
     """Refresh engine-managed machinery from the bundled instance template.
 
-    Copies ``.claude/skills/dex-*`` (recursively), ``.claude/dex-contract.md``,
-    ``bin/dex`` (kept executable), and ``.gitattributes`` — and REMOVES any
-    ``dex-*`` skill directory the template no longer ships (the ``dex-``
-    namespace under ``.claude/skills`` is engine-owned; a retired skill left
-    in place would keep loading its stale procedure in sessions). Also
-    ensures the gitignored ``cache/`` directory exists — every render
-    receipt goes through it, and a pre-existing instance never scaffolded.
-    Instance-owned files (CLAUDE.md, README, ``lens.md``, content,
-    ``.dex-engine-pin``, non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
-    to seed a fresh instance.
+    Copies ``CLAUDE.md``, ``.claude/skills/dex-*`` (recursively),
+    ``.claude/dex-contract.md``, ``bin/dex`` (kept executable), and
+    ``.gitattributes`` — and REMOVES any ``dex-*`` skill directory the
+    template no longer ships (the ``dex-`` namespace under
+    ``.claude/skills`` is engine-owned; a retired skill left in place would
+    keep loading its stale procedure in sessions). CLAUDE.md is the same in
+    every instance, but an owner may have written into one: a copy that
+    differs is overwritten only once git history holds it, so an
+    uncommitted edit is never destroyed and a committed one stays
+    recoverable. Also ensures the gitignored ``cache/`` directory exists —
+    every render receipt goes through it, and a pre-existing instance never
+    scaffolded. Instance-owned files (the README, ``lens.md``, content,
+    ``.dex-engine-pin``, non-``dex-`` skills) are never touched. ``dex-new``
+    calls this directly to seed a fresh instance.
 
     Args:
         root: The instance root.
         template: The template tree; ``None`` uses the running engine's
             bundled copy (which is what "sync copies from the bundled
             template of the running — pinned — version" means).
+        uncommitted: Why git history may not hold a file as it stands, or
+            ``None`` when it does. Asked only about a CLAUDE.md that
+            differs from the template's.
 
     Returns:
-        Change descriptions: paths (relative to ``root``) that were written
-        because they differed, plus ``removed <path>`` entries for retired
-        skills, for files a synced ``dex-*`` skill no longer carries, and
-        for entries cleared because the template's shape changed (a file
-        where it now ships a directory, or the reverse).
+        The refresh: why CLAUDE.md was left as it stands, when it was, and
+        the change descriptions. Those are paths (relative to ``root``)
+        that were written because they differed, plus ``removed <path>``
+        entries for retired skills, for files a synced ``dex-*`` skill no
+        longer carries, and for entries cleared because the template's
+        shape changed (a file where it now ships a directory, or the
+        reverse).
     """
     tpl = template if template is not None else bundled_template()
     # Ensured here, not only at scaffold: a migrated pre-existing instance
@@ -444,6 +532,13 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
             if engine_owned:
                 _prune_tree(root, skill, dest, changed)
     _remove_retired_skills(root, template_skills, changed)
+    held = _take_over(
+        root,
+        root / "CLAUDE.md",
+        (tpl / "CLAUDE.md").read_text(encoding="utf-8"),
+        changed,
+        uncommitted,
+    )
     _write_if_changed(
         root,
         root / ".claude" / "dex-contract.md",
@@ -460,7 +555,7 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
         (tpl / "gitattributes").read_text(encoding="utf-8"),
         changed,
     )
-    return changed
+    return Refresh(changed=changed, held=held)
 
 
 def _prune_tree(root: Path, src_dir: Traversable, dest_dir: Path, changed: list[str]) -> None:
@@ -509,7 +604,7 @@ def _remove_retired_skills(root: Path, template_skills: set[str], changed: list[
 # ---------------------------------------------------------------------------
 
 
-def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version, channel, echo, template
+def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version, channel, echo, template, git
     instance: Instance,
     *,
     running_version: str,
@@ -521,6 +616,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
     previous_pin: str | None = None,
     migrate: Callable[[Path], list[AppliedMigration]] | None = None,
     shipped: Sequence[Directive] | None = None,
+    uncommitted: Callable[[Path], str | None] = _git_uncommitted,
 ) -> str | None:
     """Run the sync flow (pin check → migrations → template → report) at ``instance.root``.
 
@@ -541,6 +637,8 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
             shipped migrations via :func:`dex_engine.migrations.run_pending`.
         shipped: Directive-set override for tests; ``None`` reads the
             engine's own directives against ``state/directives.jsonl``.
+        uncommitted: The git seam behind CLAUDE.md's guard (see
+            :func:`sync`); the default asks git.
 
     Returns:
         The rendered sync report, or ``None`` when this process re-exec'd
@@ -575,16 +673,20 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied = migrations.run_pending(root, today=today, now=now, engine_version=running_version)
     waiting = directives.pending(root, shipped)
     tpl = template if template is not None else bundled_template()
-    changed = sync(root, template=tpl)
-    notes.extend(rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed)
-    if changed or _pin_fields(root) != pin_line:
+    refresh = sync(root, template=tpl, uncommitted=uncommitted)
+    notes.extend(
+        rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in refresh.changed
+    )
+    if refresh.held is not None:
+        notes.append(refresh.held)
+    if refresh.changed or _pin_fields(root) != pin_line:
         notes.append("review + commit the refreshed files and the pin")
     payload = _report_payload(
         pin=read_pin(root),
         previous=previous_pin,
         applied=applied,
         waiting=waiting,
-        machinery_changes=len(changed),
+        machinery_changes=len(refresh.changed),
         lens=lens_finding(instance, tpl),
         connect=connect_gaps(root),
         notes=notes,

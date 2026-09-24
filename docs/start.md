@@ -74,9 +74,12 @@ at a time (use your ask-user tool where available):
 
 1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the
    dex brand; the domain is the qualifier. Set `{name}` = the answer.
-2. **What it covers** — 2-4 bullets. Anything not covered is out of scope
-   by default; at processing time the agent asks the owner about borderline
-   items rather than guessing.
+2. **What it reads for**: the dex's lens, free-form and in the owner's own
+   words. Sentences, a list or examples all work, and an example often
+   says it best ("a site like this, for its type pairing, not its
+   products"). The seed `lens.md` has three headings you can use as
+   prompts: what it reads for, what to look at hardest, and what to set
+   aside even when it is the subject.
 3. **GitHub** — private repo (default), or local-only for now. Local-only
    is a supported state, not a half-setup: runs skip pulls, pushes and the
    inbox release checks (skipped, not passed) until a repo exists, and the
@@ -93,20 +96,24 @@ uvx --from git+https://github.com/leeovery/dex dex-new {name}
 ```
 
 This builds the whole instance from the engine's template: directory tree,
-seed CLAUDE.md and README.md, machinery, git init, local LFS. Then:
+`lens.md` and README.md seeded with `{name}`, machinery, git init, local
+LFS. The machinery includes CLAUDE.md, which is the same in every instance
+and engine-owned, so it is never personalised. Then:
 
-- Fill CLAUDE.md: `{name}`, the domain, and the In-scope list exactly as
-  interviewed.
-- Personalize README.md: owner/domain, the same In-scope list (the two
-  files mirror each other; scope changes always update both), and the
-  `<owner>/<repo>` placeholder in its "Run it on another machine" prompt —
-  that prompt is what a second machine or a second person pastes, so it has
-  to name the real repo. If GitHub was declined, delete the section.
+- Write the lens: the owner's answer to question 2 goes into `lens.md` in
+  place of the seed's placeholder lines. Keep, rename or drop the seed's
+  headings as the answer suits, and keep the owner's own words.
+- Fill the `<owner>/<repo>` placeholder in README.md's "Run it on another
+  machine" prompt. That prompt is what a second machine or a second person
+  pastes, so it has to name the real repo. If GitHub was declined, delete
+  the section.
 - Commit — from `{instance}`, like every command from here on. If GitHub
   was wanted: `gh repo create {name} --private --source . --push`, then
   `bin/dex inbox ensure` — creates the standing "inbox" release that
   binary captures stage into.
-- Sanity check: `bin/dex lint` (prints a fresh-instance notice).
+- Sanity check: `bin/dex lint` (prints a fresh-instance notice). It fails
+  while `lens.md` still holds one of the seed's placeholder lines, which
+  means the lens step is unfinished: finish it, commit, and run lint again.
 
 → Proceed to **Step 5**.
 
@@ -129,8 +136,8 @@ environment. The task:
   The first line is load-bearing: task creation from a session cannot set
   the task's folder (no folder parameter), so the prompt must carry it.
 - **Model**: recommend the owner set the task's model to **Opus-class or
-  above** — the run's core work is judgment (scope, harvest, digests, wiki
-  synthesis), and a lighter model degrades it invisibly. Skills cannot pin
+  above** — the run's core work is judgment (the lens verdict, harvest,
+  digests, wiki synthesis), and a lighter model degrades it invisibly. Skills cannot pin
   a model; the scheduled task can. dex is not Claude-exclusive (any agent
   runtime that reads skills could drive it) but is untested elsewhere —
   say so rather than implying portability is verified.
@@ -203,7 +210,7 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 ## Step 9: Hand-Off
 
 End your final message with, in a few lines: `{instance}` (where it
-lives), its scope as written, the schedule it runs on, how to save things
+lives), its lens as written, the schedule it runs on, how to save things
 (the shortcut, or "add this to dex" in a session — either way the save is
 instant and processing happens on the schedule), and how to ask questions —
 including, if they declined the chat connection in Step 7, that asking for the

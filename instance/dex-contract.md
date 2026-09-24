@@ -27,9 +27,9 @@ Four operations. Detailed procedures live in skills — load them, don't improvi
   ask in plain words ("check my knowledge base over", "health check") —
   same operation.
 
-Machinery is engine-owned: `.claude/` (skills and this contract), `bin/dex`,
-and `.gitattributes` are overwritten by `bin/dex sync` — never hand-edit them
-here. Fixes go into the engine, then sync.
+Machinery is engine-owned: `CLAUDE.md`, `.claude/` (skills and this
+contract), `bin/dex`, and `.gitattributes` are overwritten by `bin/dex sync`
+— never hand-edit them here. Fixes go into the engine, then sync.
 
 ## The lens
 

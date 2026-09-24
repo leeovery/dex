@@ -10,8 +10,9 @@ import pytest
 
 from dex_engine.directives import log_path as directives_log
 from dex_engine.directives import pending
-from dex_engine.new import EPHEMERAL, SEEDS, TREE, build_parser, main, scaffold
-from dex_engine.pipeline.types import Config
+from dex_engine.lens import lens_finding
+from dex_engine.new import EPHEMERAL, NAMED_SEEDS, SEEDS, TREE, build_parser, main, scaffold
+from dex_engine.pipeline.types import Config, Instance
 from dex_engine.render.cli import main as render_main
 from tests.directives.conftest import make_directive
 
@@ -43,7 +44,8 @@ class TestScaffold:
         assert (root / ".claude" / "dex-contract.md").exists()
         assert (root / ".gitattributes").exists()
         assert (root / "CLAUDE.md").exists()
-        assert (root / "README.md").exists()
+        for rel in NAMED_SEEDS:
+            assert (root / rel).exists()
         assert run.calls == [
             (["git", "init", "-q"], root),
             (["git", "lfs", "install", "--local"], root),
@@ -59,10 +61,49 @@ class TestScaffold:
         lines = scaffold(root, run=RecordingRun(), template=TEMPLATE)
         assert lines == [
             f"created {root}",
-            "next: personalize CLAUDE.md and README.md, commit, then:",
+            (
+                "next: fill in lens.md (what this dex reads for) and README.md's <owner>/<repo>, "
+                "commit, then:"
+            ),
             "  if using GitHub: gh repo create dex-cooking --private --source . --push",
             "  bin/dex inbox ensure",
         ]
+
+    def test_the_lens_is_named_for_the_instance_and_still_to_be_filled_in(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        title, *rest = (root / "lens.md").read_text().splitlines()
+        _seed_title, *seed_rest = (TEMPLATE / "lens.md").read_text().splitlines()
+        assert title == "# dex-cooking"
+        assert rest == seed_rest
+        # The placeholder lines stay for setup to fill, so lint and sync
+        # say so until it has.
+        finding = lens_finding(Instance(root=root), TEMPLATE)
+        assert finding is not None
+        assert finding.startswith("`lens.md` still holds the seed's placeholder text")
+
+    def test_the_readme_is_named_and_links_the_lens(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        readme = (root / "README.md").read_text()
+        assert readme.splitlines()[0] == "# dex-cooking"
+        assert "<instance name>" not in readme
+        assert "[`lens.md`](./lens.md)" in readme
+        # The repo is only known once setup settles GitHub.
+        assert "an existing dex at <owner>/<repo>." in readme
+
+    def test_claude_md_is_the_template_s_own(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        assert (root / "CLAUDE.md").read_text() == (TEMPLATE / "CLAUDE.md").read_text()
+
+    def test_claude_md_arrives_through_sync_alone(self, tmp_path, monkeypatch):
+        synced: list[Path] = []
+        monkeypatch.setattr("dex_engine.new.sync", lambda root, **_kwargs: synced.append(root))
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        assert synced == [root]
+        assert not (root / "CLAUDE.md").exists()
 
     def test_seeds_config_json_not_the_pre_rename_file(self, tmp_path):
         root = tmp_path / "dex-cooking"
