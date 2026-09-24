@@ -24,8 +24,10 @@ that README: the exact text `README.md` must hold.
    step 3.
 2. **List what it carried beyond the template.** Compare the old README
    with the materials:
-   `bin/dex directive show 2 --materials | diff README.md -` prints every
-   line that differs, and exits 1 when any does. List every part of the
+   `bin/dex directive show 2 --materials | command diff README.md -`
+   prints every line that differs, and exits 1 when any does. `command`
+   runs the system's diff past any shell alias of that name, which would
+   read these arguments differently. List every part of the
    old README the materials do not carry: its scope list and the sentences
    around it, its own opening line, anything the owner added, and anything
    else the materials leave out. A part the materials also carry, word for
