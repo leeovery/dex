@@ -232,6 +232,17 @@ beyond the template is removed and named in the commit message, by the same
 rule as directive 1. Its check: the README links to `lens.md` and carries no
 scope section.
 
+## Existing digests
+
+Digests written before this release stay as they are. Most existing items
+were shared into the instance whose subject already matched them, and where
+the two differ the instance's scope list was usually enough to steer the old
+run toward the right angle anyway, so re-reading whole corpora through their
+lenses would cost thousands of item reads for little change. Nothing extra is
+needed for the corpus to move toward lens-shaped digests over time: every
+digest the engine rewrites after the release, for a re-fetch or a requeued
+item, is written by the new skills and so through the lens.
+
 ## What changes in the engine
 
 - `instance/CLAUDE.md` becomes a synced file that `sync()` writes beside the
@@ -278,11 +289,6 @@ for nothing leaving without being named.
 
 ## Open questions
 
-- **Open question: existing digests.** Digests written before this release
-  were read without a lens. Recommendation: going forward only, because
-  re-reading a corpus through its lens would be a directive with a large cost, and most
-  existing items were shared into the instance whose lens already matches
-  their content.
 - **Open question: per-instance context.** `backlog/per-instance-context.md`
   (standing context that steers scanning, enrichment and digestion) is what
   the optional sections of `lens.md` hold. Recommendation: this design
