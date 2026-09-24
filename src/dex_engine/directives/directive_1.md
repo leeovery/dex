@@ -70,7 +70,14 @@ sections freely.
   is mirrored in README.md", and owners often reworded it, as in "anything
   unrelated to cooking is out of scope" or "borderline, ask". The lens
   replaces the door, so remove these, never carry them into the lens, and
-  name them in the commit message.
+  name them in the commit message. One sentence often states both kinds,
+  as in "Anything health-related is fair game; anything unrelated to
+  health is out of scope.", where the half before the semicolon says what
+  the instance reads for and the half after it is the door rule. Split
+  such a sentence where its halves meet: the half that says what the
+  instance reads for is carried into `lens.md` word for word under
+  `## Reads for` (step 3), and only the fence half is removed and named in
+  the commit message.
 - **Routing to another instance.** Any sentence that sends some material
   to another instance or knowledge base, such as "that belongs in the
   other KB, not here". Remove it whole, the subjects it names included,
@@ -115,7 +122,9 @@ it stands and do exactly one of these:
   - Under `## Reads for`, put the scope items word for word: each item
     exactly as it stands, with its wrapped lines, parentheticals and
     rulings, in the owner's order, and with any structure of its own
-    (nested items, sub-headings, paragraphs) kept.
+    (nested items, sub-headings, paragraphs) kept. The reads-for half of a
+    sentence split in step 2 goes here too, word for word, in the place
+    the sentence held.
   - Put reading guidance under `## Emphasise` when it says what to look at
     hardest, under `## Set aside` when it says what to ignore (the subjects
     named as out of scope go there too), and otherwise under a heading of
@@ -207,8 +216,10 @@ Removed:
 Name each passage by its heading, or by its first few words in quotes when
 it has none, and never quote a secret, not even in part. Name the old door
 rule and every routing sentence under Removed, with anything else not
-carried, and say there when an export overrode the owner's CLAUDE.md.
-Engine boilerplate needs no line. Leave out a list that would be empty.
+carried, and say there when an export overrode the owner's CLAUDE.md. For
+a sentence split in step 2, name its fence half under Removed in its own
+words, and its reads-for half under Moved. Engine boilerplate needs no
+line. Leave out a list that would be empty.
 
 When there was no stated scope to carry, say so in a paragraph between the
 history line and Moved: the instance had no stated scope, with why (its
