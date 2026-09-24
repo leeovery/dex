@@ -1022,6 +1022,7 @@ class TestPassPurge:
         assert not instance.passes_path.exists()
 
 
+@pytest.mark.usefixtures("no_directives_pending")
 class TestCli:
     def test_main_excludes_from_a_file(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
@@ -1030,6 +1031,24 @@ class TestCli:
         payload.write_text(json.dumps([{"id": ITEM, "reason": "meme"}]))
         main([str(payload)])
         assert "excluded 1: removed 1 items" in capsys.readouterr().out
+
+    def test_main_hands_the_entries_to_the_instance_at_cwd_and_prints_the_summary(
+        self, instance, monkeypatch, capsys
+    ):
+        given: list[tuple[Instance, list[dict[str, object]]]] = []
+
+        def excluded(inst: Instance, entries: list[dict[str, object]]) -> str:
+            given.append((inst, entries))
+            return "the summary"
+
+        monkeypatch.setattr("dex_engine.exclude.run_exclude", excluded)
+        monkeypatch.chdir(instance.root)
+        payload = instance.root / "exclusions.json"
+        payload.write_text(json.dumps([{"id": ITEM, "reason": "meme"}]))
+        main([str(payload)])
+        assert capsys.readouterr().out == "the summary\n"
+        [(inst, entries)] = given
+        assert (inst.root, entries) == (instance.root, [{"id": ITEM, "reason": "meme"}])
 
     def test_missing_file_is_loud(self, instance, monkeypatch):
         monkeypatch.chdir(instance.root)

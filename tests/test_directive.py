@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from dex_engine.directive import (
+    LIST_NEXT,
     MATERIALS_BEGIN,
     MATERIALS_END,
+    REFUSED_NEXT,
     build_parser,
     complete,
     list_pending,
@@ -77,7 +79,12 @@ class TestList:
             "2 directives pending, to perform in this order:",
             "directive 1: rehome the scope",
             "directive 3: rewrite the readme",
+            "",
+            LIST_NEXT,
         ]
+
+    def test_the_next_step_performs_each_through_show(self):
+        assert "`bin/dex directive show <n>`" in LIST_NEXT
 
     def test_one_pending_directive_is_counted_in_the_singular(self, instance):
         assert list_pending(instance, [make_directive(1)]).startswith("1 directive pending")
@@ -182,8 +189,23 @@ class TestDone:
             "directive 1 is not done: its check found 2 unmet conditions, and nothing was recorded",
             "- lens.md is missing",
             "- config.json does not parse",
+            "",
+            *REFUSED_NEXT.format(number=1).split("\n"),
         ]
         assert log_text(instance) is None
+
+    def test_the_next_steps_name_the_refused_directive(self, instance):
+        record(instance, 1)
+        shipped = [make_directive(1), make_directive(2, unmet=["README.md differs"])]
+        with pytest.raises(ValueError, match="not done") as err:
+            done(instance, 2, shipped)
+        assert str(err.value).endswith(f"\n\n{REFUSED_NEXT.format(number=2)}")
+
+    def test_the_issue_wording_is_fixed_so_every_run_dedups_to_one_issue(self):
+        steps = REFUSED_NEXT.format(number=4)
+        assert '"verb": "directive"' in steps
+        assert '"expected": "directive 4 completes and passes its own check"' in steps
+        assert '"observed": "directive 4 did not complete on this instance"' in steps
 
     def test_one_unmet_condition_is_counted_in_the_singular(self, instance):
         with pytest.raises(ValueError, match="found 1 unmet condition,"):
@@ -215,6 +237,7 @@ class TestDone:
             message
         )
         assert "directive 2 comes first" in message
+        assert REFUSED_NEXT.format(number=3) not in message
         assert check.roots == []
         assert (log_text(instance) or "").count("\n") == 1
 
@@ -264,7 +287,14 @@ class TestMain:
         main(["list"])
         assert capsys.readouterr().out == (
             "1 directive pending, to perform in this order:\ndirective 1: rehome the scope\n"
+            f"\n{LIST_NEXT}\n"
         )
+
+    def test_list_with_nothing_pending_prints_no_next_step(self, at, capsys):
+        instance = at([make_directive(1)])
+        record(instance, 1)
+        main(["list"])
+        assert capsys.readouterr().out == "no directives pending\n"
 
     def test_show_prints_the_instructions(self, at, capsys):
         at([make_directive(1)])
@@ -301,7 +331,19 @@ class TestMain:
             main(["done", "1"])
         assert isinstance(exit_info.value.code, str)
         assert exit_info.value.code.startswith("dex-directive: directive 1 is not done")
-        assert exit_info.value.code.endswith("\n- lens.md is missing")
+        assert exit_info.value.code.endswith(
+            f"\n- lens.md is missing\n\n{REFUSED_NEXT.format(number=1)}"
+        )
+        assert log_text(instance) is None
+
+    def test_an_out_of_order_refusal_names_only_the_directive_that_comes_first(self, at):
+        instance = at([make_directive(1), make_directive(2)])
+        with pytest.raises(SystemExit) as exit_info:
+            main(["done", "2"])
+        code = exit_info.value.code
+        assert isinstance(code, str)
+        assert code.startswith("dex-directive: directive 2 cannot complete")
+        assert code.endswith("so directive 1 comes first")
         assert log_text(instance) is None
 
     def test_an_unknown_number_exits_non_zero(self, at):

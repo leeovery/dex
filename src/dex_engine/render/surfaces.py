@@ -955,11 +955,6 @@ def _lens_note(note: str) -> str:
 # this line.
 _CONNECT_DOC = "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md"
 
-_DIRECTIVES_WHEN = (
-    "The run performs these after its pull, in this order, working from `bin/dex directive "
-    "list`: another machine may have completed one, and the pull brings its record."
-)
-
 # What sync found about this machine's chat clients, as the offer the session
 # reading it makes. Addressed to that session, not to the owner: the owner is
 # asked a question and never handed a command, and the doc is the session's
@@ -1096,12 +1091,16 @@ def _sync_lens(surface: str, payload: Mapping[str, object]) -> list[str]:
 
 
 def _sync_directives(surface: str, payload: Mapping[str, object]) -> list[str]:
-    """The pending directives as a section; nothing at all when none are pending."""
+    """The pending directives as a section of information; nothing when none are pending.
+
+    It says nothing of how to perform them: `bin/dex directive list` does,
+    and the content commands refuse until they are done.
+    """
     rows = _obj_list_at(surface, payload, "directives", required=False)
     if not rows:
         return []
     heading = kernel.heading(f"Directives pending — {len(rows)}", level=3)
-    return ["", heading, "", *_sync_directive_rows(surface, rows), "", _DIRECTIVES_WHEN]
+    return ["", heading, "", *_sync_directive_rows(surface, rows)]
 
 
 def _sync_directive_rows(surface: str, rows: list[Mapping[str, object]]) -> list[str]:

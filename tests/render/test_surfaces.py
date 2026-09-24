@@ -729,9 +729,6 @@ class TestSyncReport:
             "\n\n### Directives pending — 2\n\n"
             "- **directive 1** — rehome the scope\n"
             "- **directive 2** — rewrite the readme\n\n"
-            "The run performs these after its pull, in this order, working from "
-            "`bin/dex directive list`: another machine may have completed one, and the "
-            "pull brings its record.\n\n"
             "**Machinery changes** — 0\n"
         ) in out
         assert_no_trailing_whitespace(out)

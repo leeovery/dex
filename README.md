@@ -327,11 +327,17 @@ check written in code, and where it needs them, materials the engine renders
 for the instance, such as a template filled in with its name. Sync lists the
 ones an instance has not completed, and
 the run performs them after its pull and before the inbox, unattended and in
-order, one commit each. `dex-directive done` records a directive in
+order, one commit each. Until they are done, the content commands
+(`dex-inbox`, `dex-normalize`, `dex-enrich`, `dex-exclude`) refuse and point
+at `dex-directive list`, and each directive command's output names the step
+after it, so a session holding instructions older than the engine it just
+synced still performs the directives before it touches any content.
+`dex-directive done` records a directive in
 `state/directives.jsonl` only when its check passes, so a session that ran out
 of time or misread the instructions cannot mark the work done, and a directive
-that fails its check is filed as an engine defect and tried again on the next
-run. A new instance records every shipped directive as done when it is created.
+that fails its check is filed as an engine defect, as the refusal directs, and
+tried again on the next run, with content work waiting until it completes.
+A new instance records every shipped directive as done when it is created.
 The first two bring an instance older than the lens into the shape a new one
 is born in: directive 1 reads the owner's CLAUDE.md back from git history and
 moves its scope into `lens.md` and its Discord facts into config (with no

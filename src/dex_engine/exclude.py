@@ -95,6 +95,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import atomic, corpus, instance_map
+from .directives import refuse_while_pending
 from .pipeline import ledger
 from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
@@ -716,8 +717,9 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     try:
+        refuse_while_pending(instance.root)
         summary = run_exclude(instance, _load_entries(args.file))
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-exclude: {e}")
     sys.stdout.write(summary + "\n")
 

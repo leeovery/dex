@@ -38,8 +38,9 @@ that README: the exact text `README.md` must hold.
    materials byte for byte. Change nothing in the file afterwards: the
    check compares README.md with this same text, and any difference fails
    it, down to a single character or a missing final newline.
-4. **Check and record** with `bin/dex directive done 2`. When it refuses,
-   follow preparation step 5.
+4. **Check and record** with `bin/dex directive done 2`, even when you
+   could not finish the steps above. When it refuses, do what its output
+   says.
 5. **Commit** `README.md` and `state/directives.jsonl` together as one
    commit. The subject is the first line `bin/dex directive show 2`
    printed, `directive 2: ` followed by this directive's intent. The body

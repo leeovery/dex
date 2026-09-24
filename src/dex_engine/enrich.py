@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .capabilities import Capabilities
+from .directives import refuse_while_pending
 from .pipeline.capture import item_new
 from .pipeline.describe import item_describe
 from .pipeline.digest import item_digest
@@ -260,6 +261,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     try:
+        refuse_while_pending(instance.root)
         # Inside the wrapper: an unreadable .env is instance state like any
         # other, and it must fail as a stated line, not a traceback.
         _load_env(instance.root)

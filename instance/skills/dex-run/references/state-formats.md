@@ -152,20 +152,25 @@ A directive is work the engine ships for the run to perform on this
 instance's own files: work that needs judgment, which a migration is not
 allowed to do. Each has a number, a one-line intent, instructions, and a
 check written in code. Sync lists the pending ones on its report, and the
-run performs them after the pull (`preparation.md`, step 5):
+run performs them after the pull (`preparation.md`, step 5). While any is
+pending, the content commands (`bin/dex inbox`, `normalize`, `enrich` and
+`exclude`) refuse before touching anything, exit non-zero and point at
+`bin/dex directive list`. Every other command runs as usual.
 
 - `bin/dex directive list` prints the pending directives in numeric
-  order, each with its intent, or says that none are pending.
+  order, each with its intent, and how to perform them, or says that none
+  are pending.
 - `bin/dex directive show <n>` prints the directive's intent and its full
   instructions.
 - `bin/dex directive done <n>` runs the directive's check. When every
   condition holds it appends the record to `state/directives.jsonl`
   (below) and confirms, naming the commit message. When any condition is
-  unmet it prints each one, writes nothing and exits non-zero. It also
-  refuses, writing nothing, a number the engine does not ship and a
-  directive whose predecessor is still pending, because directives
-  complete in numeric order. A directive already recorded is reported as
-  such, and nothing is written.
+  unmet it prints each one and what the run does next, writes nothing and
+  exits non-zero. It also refuses, writing nothing, a number the engine
+  does not ship and a directive whose predecessor is still pending, naming
+  the one that comes first, because directives complete in numeric order.
+  A directive already recorded is reported as such, and nothing is
+  written.
 
 The check confirms only what code can see: a file exists and is not
 empty, config still parses, a link is present. Whether the work was

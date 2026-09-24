@@ -193,7 +193,8 @@ parses under the engine's config rules and, when there is a stated scope
 to carry, that `lens.md` states a lens: it exists, is not empty, and holds
 none of the seed's placeholder lines. With no stated scope, `lens.md` is
 no condition. It records the directive only when every condition holds.
-When it refuses, follow preparation step 5.
+Run it even when you could not finish the steps above, and when it
+refuses, do what its output says.
 
 ## 6. Commit
 

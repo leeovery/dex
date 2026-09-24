@@ -58,11 +58,18 @@ the engine stays unaware of which ones exist.
     lists the pending ones, the run session performs them after the pull,
     `dex-directive done` records each in `state/directives.jsonl` only
     once its check passes, and `dex-new` records every shipped one as
-    done. A directive always completes unattended and never waits on the
-    owner. Directive 1 rehomes an owner-written CLAUDE.md, which its code
-    finds in git history and prints in its materials (scope into
-    `lens.md`, Discord facts into config; with no stated scope to carry,
-    it writes no `lens.md`, and the instance is a general knowledge dex);
+    done. While any is pending, `dex-inbox`, `dex-normalize`, `dex-enrich`
+    and `dex-exclude` refuse through the package's one gate,
+    `refuse_while_pending`, called from each CLI's `main`. The procedure
+    lives in the commands' output, never in the synced skills: `list`
+    says how to perform the pending ones, and `done`, refusing an unmet
+    check, says what the run does next, so a session holding instructions
+    older than the engine it just synced still does it right. A directive
+    always completes unattended and never waits on the owner. Directive 1
+    rehomes an owner-written CLAUDE.md, which its code finds in git
+    history and prints in its materials (scope into `lens.md`, Discord
+    facts into config; with no stated scope to carry, it writes no
+    `lens.md`, and the instance is a general knowledge dex);
     directive 2 rewrites the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.

@@ -1,13 +1,17 @@
 """Tests for enrich.py: the thin CLI — parse, build, call, print."""
 
+import datetime
 import json
 import os
 
 import pytest
 
+from dex_engine.capabilities import Capabilities
 from dex_engine.capabilities.transcribe.whisper_api import WhisperApi
 from dex_engine.enrich import _load_env, build_parser, main
-from dex_engine.pipeline.types import Instance
+from dex_engine.pipeline.run import RunContext
+from dex_engine.pipeline.types import Config, Instance
+from dex_engine.version import engine_version
 
 
 class TestParser:
@@ -124,7 +128,48 @@ class TestParser:
             build_parser().parse_args(["item"])
 
 
+@pytest.mark.usefixtures("no_directives_pending")
 class TestMain:
+    def test_the_run_context_is_wired_from_the_instance_and_the_arguments(
+        self, instance, monkeypatch, capsys
+    ):
+        seen: dict[str, object] = {}
+        build = Capabilities.build
+
+        def built(config: Config, *, model: str | None = None) -> Capabilities:
+            seen["model"] = model
+            return build(config, model=model)
+
+        def drivers(**kwargs: object) -> list[object]:
+            seen["drivers"] = kwargs
+            return []
+
+        def dispatched(_args: object, ctx: RunContext) -> str:
+            seen["ctx"] = ctx
+            return "dispatched\n"
+
+        monkeypatch.setattr(Capabilities, "build", built)
+        monkeypatch.setattr("dex_engine.enrich.build_drivers", drivers)
+        monkeypatch.setattr("dex_engine.enrich._dispatch", dispatched)
+        monkeypatch.chdir(instance.root)
+        main(["transcribe", "--model", "small"])
+        assert capsys.readouterr().out == "dispatched\n"
+        ctx = seen["ctx"]
+        assert isinstance(ctx, RunContext)
+        assert ctx.capabilities is not None
+        assert seen["model"] == "small"
+        assert seen["drivers"] == {
+            "capabilities": ctx.capabilities,
+            "root": instance.root,
+            "config": ctx.config,
+        }
+        assert ctx.instance.root == instance.root
+        assert ctx.drivers == []
+        assert ctx.provider_available == ctx.capabilities.available
+        assert ctx.engine_version == engine_version()
+        assert ctx.command == "enrich transcribe"
+        assert ctx.now().tzinfo is datetime.UTC
+
     def test_run_on_an_empty_instance_prints_the_report(self, instance, monkeypatch, capsys):
         monkeypatch.chdir(instance.root)
         main(["run"])
@@ -288,6 +333,7 @@ class TestMain:
         assert "media_fech" in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("no_directives_pending")
 class TestLoadEnv:
     """The instance ``.env`` is the local-secret slot; every verb loads it."""
 

@@ -469,7 +469,7 @@ class TestDirectivesInTheReport:
             report
         )
         assert "done on another machine" not in report
-        assert "after its pull" in report
+        assert "- **directive 3** — rewrite the readme\n\n**Machinery changes**" in report
 
     def test_nothing_pending_is_no_section_at_all(self, inst, template):
         append_done(directives_log(inst.root), number=1, engine=RUNNING, date=TODAY)
