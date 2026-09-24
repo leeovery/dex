@@ -290,3 +290,64 @@ real session over copies of every instance the maintainer can reach,
 including ones whose CLAUDE.md was customised well beyond the template, and
 each copy is checked for its scope arriving in `lens.md` word for word and
 for nothing leaving without being named.
+
+## Settled during implementation
+
+Recorded 2026-09-24, while the stack that builds this design was reviewed,
+rehearsed on copies of every instance the maintainer can reach, and run
+through an acceptance test. Where a line here contradicts the sections
+above, this section is the later decision.
+
+- **No lens is a general knowledge dex (owner's ruling).** A missing or
+  empty `lens.md` is a legitimate way to run an instance, never a fault:
+  the instance reads for anything, every share is read for its general
+  substance, and the verdict drops only content with nothing in it at all.
+  A lens still holding the seed's placeholder lines, or one that cannot be
+  read, reads the same way. Lint and the sync report carry a note for those
+  two cases and never fail on the lens, which supersedes "Lint fails" in
+  the section on `lens.md`. The chat server describes such an instance as
+  a general knowledge dex, and its README says so in place of the lens
+  link.
+- **A look the capture could not carry is never a drop.** When the lens
+  reads for an aspect the capture could not hold, such as a page's look
+  when only its text landed, that is a capture gap like a paywall, and the
+  item is digested from what landed and the owner's note. A rendered page
+  capture for visual lenses is the fast follow
+  (`backlog/page-screenshots.md`).
+- **The verdict's edges.** An item that already holds a digest is past its
+  verdict, so a re-fetch or requeue goes straight to its digest. A thin
+  yield is a `signal: low` digest, never a drop. An item whose landed
+  content only points at a unit that never landed is never dropped. The
+  verdict is made alone in attended sessions too, and a drop reason never
+  names another instance, so a reason cannot act as routing.
+- **The harvest rules version was not bumped.** The harvest rule became
+  lens relative, but a bump re-harvests every corpus, which the ruling on
+  existing digests rules out.
+- **`exclude` purges everything a dropped item leaves.** Beyond the corpus
+  file, enrichment, digest and ledger entries, it removes the item's media
+  (a file another live item lists is kept) and its `state/passes.jsonl`
+  records, since the verdict now drops items after harvest. A batch is
+  refused whole when an unreadable corpus file leaves its media unsettled,
+  because nothing else records which media a dropped item carried.
+- **The takeover waits for history.** Sync overwrites a CLAUDE.md that
+  differs from the engine's only once git history holds it: an uncommitted,
+  untracked or ignored copy, or one outside git, is left untouched and
+  named on the sync report, and the next sync after a commit takes it over.
+- **Discord channel names are directory names.** Normalize derives item ids
+  from `raw/discord/<name>/`, so a channel's name in config is its export
+  directory and never changes after its first pull. Setup offers existing
+  exports as the answers.
+- **Directive 1 never waits.** The engine finds the owner's CLAUDE.md (the
+  newest committed version that is not an engine copy) and prints it as the
+  directive's materials. A sentence that states what the instance reads for
+  and then the old fence ("anything X-related is fair game; anything
+  unrelated is out of scope") keeps its first half in the lens and loses
+  only the fence. When the owner never stated a scope (no such version, or
+  one still holding the old template's placeholders), the directive writes
+  no lens, so the instance reads as a general knowledge dex.
+- **Directive 2's check is exact.** Its materials are the README rendered
+  for the instance, and `done` passes only when `README.md` equals them.
+  The render links `lens.md` only when the instance has one, drops the "Run
+  it on another machine" section when there is no GitHub origin (read as
+  stored, past any `insteadOf` rewrite), and keeps the template's closing
+  line above that section so it survives the drop.

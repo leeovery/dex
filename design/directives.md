@@ -166,3 +166,37 @@ nothing.
 - Directives aimed at some instances and not others. Every directive runs
   everywhere, and an instance with nothing to do for one completes it by
   finding nothing to do.
+
+## Settled during implementation
+
+Recorded 2026-09-24, while the stack that builds this design was reviewed.
+
+- **Materials.** A directive may define `materials(root)`: text the engine
+  generates for the instance, which `bin/dex directive show <n>` prints after
+  the instructions between two marker lines, and `show <n> --materials`
+  prints alone, byte for byte, so a session can write a file the check
+  compares exactly. It keeps engine templates in one place instead of copied
+  into instructions.
+- **`done` refuses in a fixed order:** an unknown number, then a directive
+  already recorded (exit 0, nothing written), then one whose predecessor is
+  still pending, then an unmet check, and only a passing check appends.
+- **A refused `done` leaves nothing behind.** The run restores the tree to
+  HEAD (`git reset --hard HEAD`, then `git clean -fd`, safe because the guard
+  left the tree clean), performs no later directive, files the issue and
+  continues with the inbox.
+- **The dedup holds because the wording is fixed.** The issue fingerprint
+  hashes the verb and both clauses as written, so `preparation.md` prescribes
+  the exact `expected` and `observed` clauses for a directive that cannot
+  complete, with the detail in `steps` and the local `note`.
+- **A run that died mid-directive is never recovered.** The guard restores a
+  tree holding only a pending directive's edits to HEAD, and the directive
+  runs again from the start: half a judgment nobody checked is not work.
+- **Standalone health checks perform pending directives too,** because
+  dex-lint's preparation is the run's.
+- **`dex-new` writes nothing when no directive ships;** a missing log reads
+  as empty. The log's reader and appender are shared with migrations
+  (`numbered_log.py`).
+- **Instructions run past shell aliases.** An owner's shell can alias
+  `diff`, `ls` or `grep` to something else, and a scheduled session runs in
+  that shell, so every such command an instruction gives is written as
+  `command diff` and the like, and a template test fails on a bare one.
