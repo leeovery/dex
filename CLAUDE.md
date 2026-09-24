@@ -69,8 +69,11 @@ the engine stays unaware of which ones exist.
     rehomes an owner-written CLAUDE.md, which its code finds in git
     history and prints in its materials (scope into `lens.md`, Discord
     facts into config; with no stated scope to carry, it writes no
-    `lens.md`, and the instance is a general knowledge dex);
-    directive 2 rewrites the README from the template.
+    `lens.md`, and the instance is a general knowledge dex). Its
+    instructions claim authority over config in their own text, because
+    the first run after the release still holds the previous release's
+    instructions, which forbid editing config unattended. Directive 2
+    rewrites the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
