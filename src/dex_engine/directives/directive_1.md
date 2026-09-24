@@ -4,40 +4,46 @@ Until this engine release, each instance's CLAUDE.md was written by its
 owner: a title, the import of the contract, a list of what the instance
 covers, and sometimes more, such as the server and channels a Discord pull
 exports. CLAUDE.md now belongs to the engine and is the same in every
-instance, and `bin/dex sync` has already replaced this instance's copy,
-which the run committed. The owner's version is still in git history. This
-directive reads it back and gives every part of it a home: what the
-instance reads for goes into `lens.md`, the Discord server and channels go
-into the `discord` key of `state/config.json`, and whatever has no home is
-named in the commit message, where the owner can find it again.
+instance, and `bin/dex sync` replaces this instance's copy once git history
+holds it. The engine finds the owner's version in that history and prints
+it for you. This directive gives every part of it a home: what the instance
+reads for goes into `lens.md`, the Discord server and channels go into the
+`discord` key of `state/config.json`, and whatever has no home is named in
+the commit message, where the owner can find it again. It always
+completes, including on an instance that has no scope to carry.
 
 This directive edits `lens.md` and `state/config.json` and nothing else. It
-reads CLAUDE.md's history and the exports under `raw/discord/`. Never edit
-CLAUDE.md, which sync owns, or README.md, which directive 2 rewrites.
+reads the exports under `raw/discord/`. Never edit CLAUDE.md, which sync
+owns, or README.md, which directive 2 rewrites.
 
-## 1. Find the owner's CLAUDE.md
+## 1. Read the owner's CLAUDE.md from the materials
 
-Run `git log --format=%H -- CLAUDE.md`. It lists every commit that changed
-CLAUDE.md, newest first. Take the hashes in that order and read each
-version with `git show <hash>:CLAUDE.md`, passing over any hash where that
-fails, which is a commit that deleted the file. The owner's CLAUDE.md is
-the first version that is not the engine's. A version is the engine's when
-it is identical to the CLAUDE.md on disk now, which
-`git diff --quiet <hash> -- CLAUDE.md` confirms by exiting 0, or when it
-says, as every engine copy does, that the file is engine-owned and that
-`bin/dex sync` overwrites it.
+The materials are printed after these instructions, between the
+`===== materials` line and the `===== end of materials =====` line. They
+hold two things, each between delimiter lines of its own:
 
-Note that version's hash, because the commit message names it. When no
-version qualifies, this instance never had a CLAUDE.md of its own and there
-is nothing to rehome: go to step 3, which then only makes sure the lens is
-stated.
+- The owner's CLAUDE.md, the newest committed version that is not an
+  engine copy, between the
+  `----- the owner's CLAUDE.md, from commit <hash> -----` line and the
+  `----- end of the owner's CLAUDE.md -----` line. Note the hash, because
+  the commit message names it. When this instance's history holds no
+  version of the owner's, a line saying so stands in its place.
+- The seed lens rendered for this instance, between the
+  `----- the seed lens for this instance -----` line and the
+  `----- end of the seed lens -----` line.
+
+There is no stated scope to carry when the materials say that no committed
+version is the owner's, or that the owner's CLAUDE.md states no scope
+because it still holds the old template's scope placeholders. The
+directive completes all the same, and step 3 says what the lens gets.
 
 ## 2. Sort every passage
 
-Read the owner's CLAUDE.md whole. Then sort every passage in it, each
-heading, paragraph, list and list item, into exactly one of the kinds
-below. Sort by what a passage says and never by its heading, because owners
-named and arranged their sections freely.
+Skip this step when there is no owner's CLAUDE.md. Otherwise read it
+whole, then sort every passage in it, each heading, paragraph, list and
+list item, into exactly one of the kinds below. Sort by what a passage
+says and never by its heading, because owners named and arranged their
+sections freely.
 
 - **Engine boilerplate.** The title's instance name and its
   `(a dex instance)` suffix, the paragraph saying this is a personal,
@@ -83,21 +89,33 @@ named and arranged their sections freely.
 
 ## 3. Write the lens
 
-The materials printed after these instructions, between the
-`===== materials` line and the `===== end of materials =====` line, are the
-seed lens rendered for this instance: the layout to start from. Its
+The seed lens in the materials is the layout to start from. Its
 placeholder lines are the ones made only of text in angle brackets, such as
 `<what to look at hardest>`.
 
-Read `lens.md` as it stands, then do exactly one of these:
+When there is no stated scope to carry, the lens is left for the owner to
+fill in, and the lens check on lint and on the sync report tells them it
+is still unfilled. When `lens.md` is missing, write the seed lens exactly
+as the materials give it, which this command does:
+
+```
+bin/dex directive show 1 --materials | awk '/^----- end of the seed lens -----$/ {keep = 0} keep; /^----- the seed lens for this instance -----$/ {keep = 1}' > lens.md
+```
+
+When `lens.md` exists, leave it exactly as it is. Carry nothing into it
+either way, and name in the commit message anything the owner's CLAUDE.md
+says about what the instance reads for, such as reading guidance, as not
+carried for that reason. Then go on to step 4.
+
+Otherwise, read `lens.md` as it stands and do exactly one of these:
 
 - **It already states a lens**, because it exists, is not empty and holds
   none of the placeholder lines. Leave it exactly as it is and carry
   nothing into it. Name the owner's scope in the commit message as not
   carried, because `lens.md` already states the lens.
-- **It is missing or empty.** Write it from the materials, filled in from
-  the owner's CLAUDE.md:
-  - Keep the materials' title line, `# ` followed by this instance's name.
+- **It is missing or empty.** Write it from the seed lens in the
+  materials, filled in from the owner's CLAUDE.md:
+  - Keep the seed's title line, `# ` followed by this instance's name.
   - As the first paragraph under the title, put the title's domain phrase
     word for word. With no domain phrase there is no such paragraph.
   - Under `## Reads for`, put the scope items word for word: each item
@@ -116,20 +134,11 @@ Read `lens.md` as it stands, then do exactly one of these:
   line that nothing fills, with its heading when the heading is left
   empty.
 
-A lens is the owner's statement, and a directive never invents one. When
-`lens.md` does not state a lens and the owner's CLAUDE.md states nothing
-the instance reads for (step 1 found no version of the owner's, or its
-scope holds only template placeholders such as `<topic>`), stop here
-without running `done`. Restore the working tree exactly as preparation
-step 5 says for a directive that cannot complete, and perform no further
-directive this run. This gap is the owner's to close, not an engine
-defect, so file no issue for it: say in the run's closing report that
-`lens.md` needs the owner's statement of what this instance reads for.
-
 ## 4. Move the Discord facts into config
 
-Skip this step when the owner's CLAUDE.md names no Discord server or
-channel.
+Skip this step when there is no owner's CLAUDE.md, or when it names no
+Discord server or channel. An owner's CLAUDE.md that states no scope may
+still name them, and they move all the same.
 
 When `state/config.json` already has a `discord` key, leave it exactly as
 it is, and name the Discord facts in the commit message as not carried,
@@ -176,10 +185,11 @@ that reason.
 ## 5. Check and record
 
 Read `lens.md` and `state/config.json` once more against steps 3 and 4,
-then run `bin/dex directive done 1`. It confirms that `lens.md` states a
-lens and that `state/config.json` parses under the engine's config rules,
-and records the directive only when both hold. When it refuses, follow
-preparation step 5.
+then run `bin/dex directive done 1`. It confirms that `state/config.json`
+parses under the engine's config rules, and that `lens.md` states a lens,
+or only that it exists when there is no stated scope to carry. It records
+the directive only when both hold. When it refuses, follow preparation
+step 5.
 
 ## 6. Commit
 
@@ -204,8 +214,13 @@ it has none, and never quote a secret, not even in part. Name the old door
 rule and every routing sentence under Removed, with anything else not
 carried, and say there when an export overrode the owner's CLAUDE.md.
 Engine boilerplate needs no line. Leave out a list that would be empty.
-When step 1 found no version of the owner's, the whole body is one line
-saying so.
+
+When there was no stated scope to carry, say so in a paragraph between the
+history line and Moved, with why (its scope still held the old template's
+placeholders) and what `lens.md` is now: the seed lens, written for the
+owner to fill in, or the file that was already there, left as it was.
+When no committed version was the owner's, there is no history line, and
+that paragraph is the whole body, saying so.
 
 Write the message to `cache/directive-1-message.txt` and commit with
 `git commit -F cache/directive-1-message.txt`, which keeps its quotes and

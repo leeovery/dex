@@ -7,8 +7,9 @@ else names no GitHub repository.
 """
 
 import re
-import subprocess
 from pathlib import Path
+
+from .gitread import git_output
 
 __all__ = ["github_repo", "origin_url"]
 
@@ -32,15 +33,5 @@ def origin_url(root: Path) -> str | None:
         The URL, or ``None`` when there is no origin to read: no such
         remote, no repository at ``root``, or no git to ask.
     """
-    try:
-        done = subprocess.run(  # noqa: S603 — engine-built args, no shell
-            ["git", "-C", str(root), "remote", "get-url", "origin"],  # noqa: S607 — git resolves via PATH like every dev tool
-            capture_output=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if done.returncode != 0:
-        return None
-    return done.stdout.decode("utf-8", "replace").strip()
+    url = git_output(root, ["remote", "get-url", "origin"])
+    return None if url is None else url.strip()

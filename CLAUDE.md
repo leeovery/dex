@@ -58,9 +58,12 @@ the engine stays unaware of which ones exist.
     lists the pending ones, the run session performs them after the pull,
     `dex-directive done` records each in `state/directives.jsonl` only
     once its check passes, and `dex-new` records every shipped one as
-    done. Directive 1 rehomes an owner-written CLAUDE.md from git history
-    (scope into `lens.md`, Discord facts into config); directive 2
-    rewrites the README from the template.
+    done. A directive always completes unattended and never waits on the
+    owner. Directive 1 rehomes an owner-written CLAUDE.md, which its code
+    finds in git history and prints in its materials (scope into
+    `lens.md`, Discord facts into config; with no stated scope to carry,
+    the seed lens stands in for the owner to fill); directive 2 rewrites
+    the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -80,6 +83,9 @@ the engine stays unaware of which ones exist.
     origin (directive 2).
   - `origin.py` — the ONE reading of the `origin` remote as a GitHub
     `owner/repo` (the inbox's release checks and the README render).
+  - `gitread.py` — read-only git queries (`git -C <root> …`): what git
+    printed, or `None` when it cannot answer; the default git seam for
+    `origin.py` and directive 1.
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·

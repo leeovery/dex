@@ -16,6 +16,8 @@ change it whenever you like.
 - **Health check** — it checks itself over on a schedule (broken links, stale
   pages, contradictions get found and fixed); you can also ask anytime.
 
+The machinery lives in the shared engine and never needs touching.
+
 ## Run it on another machine
 
 New laptop, or a second person joining? Open Claude Code in the
@@ -28,5 +30,3 @@ Fetch and follow the instructions at https://raw.githubusercontent.com/leeovery/
 
 It clones this repo, checks the dependencies, arms the schedule, and sets up
 phone capture. Everything else is already in the repo.
-
-The machinery lives in the shared engine and never needs touching.

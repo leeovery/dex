@@ -84,6 +84,10 @@ class TestInstanceReadme:
         assert JOIN_HEADING not in text
         assert REPO_PLACEHOLDER not in text
         assert "[`lens.md`](./lens.md)" in text
+        # The closing line sits above the join section, so it stays.
+        assert text.endswith(
+            "\nThe machinery lives in the shared engine and never needs touching.\n"
+        )
 
     def test_the_name_is_the_root_directory_s(self, tmp_path):
         text = instance_readme(TEMPLATE, tmp_path / "dex-garden", origin=origin_of(None))

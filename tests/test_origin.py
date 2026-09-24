@@ -50,12 +50,6 @@ class TestOriginUrl:
         own_git(tmp_path, "remote", "add", "upstream", "git@github.com:someone/other.git")
         assert origin_url(tmp_path) is None
 
-    def test_a_url_that_is_not_utf_8_reads_rather_than_raising(self, tmp_path, own_git):
-        own_git(tmp_path, "init", "-q")
-        with (tmp_path / ".git" / "config").open("ab") as config:
-            config.write(b'[remote "origin"]\n\turl = https://example.test/caf\xe9\n')
-        assert origin_url(tmp_path) == "https://example.test/caf�"
-
     def test_a_repository_with_no_remote_has_no_origin(self, tmp_path, own_git):
         own_git(tmp_path, "init", "-q")
         assert origin_url(tmp_path) is None
