@@ -76,6 +76,16 @@ after    capture ─► item new ─► enrich ─► harvest ─► lens verdic
   until its sources land, which is how parked items already wait for their
   digest. An item whose every unit is dead is judged on your note, as its
   digest already is.
+- Items that arrive by a pull meet the same verdict. A Discord pull lands
+  its export in `raw/`, and `bin/dex normalize` turns each conversation into
+  an item without passing through the inbox; today a separate scope-filter
+  pass then removes items before anything is fetched. That pass goes, and
+  every item, shared or pulled, gets the one verdict after enrichment and harvest,
+  and no stricter bar is needed for pulled items, because chatter such as a
+  one-line complaint about a tool yields nothing through any lens and is
+  dropped by the same question. A dropped conversation stays dropped when
+  the next pull re-exports the channel, since `bin/dex exclude` records it in
+  `state/exclusions.tsv` and normalize skips it.
 - Unattended runs stop skipping borderline items. Nothing is borderline at
   the door any more, and the verdict after harvest is a judgment the run is
   equipped to make alone.
@@ -227,7 +237,8 @@ scope section.
   the lens, and lint checks that `lens.md` exists, is not empty and no
   longer holds the seed's placeholder text.
 - `exclude.py`'s default reason and the exclude section of `state-formats.md`
-  speak in lens terms.
+  speak in lens terms, and `backfills.md`, `exclude.py` and `normalize.py`
+  stop describing a scope-filter pass after normalize.
 - `serve/steering.py` describes each instance from `lens.md` in place of
   CLAUDE.md, and its capture routing and the `capture` tool's docstring in
   `serve/server.py` stop sending captures to "the instance whose scope this
@@ -250,11 +261,6 @@ for nothing leaving without being named.
 
 ## Open questions
 
-- **Open question: backfills.** A bulk export (a chat dump, a bookmark
-  file) was never curated item by item, so the signal that a share is
-  relevant does not exist there. Recommendation: the backfill scope-filter
-  pass stays a filter, applied through the lens, and only direct shares get
-  full curation trust.
 - **Open question: chat capture routing.** The chat server tells an agent to
   save into "the instance whose scope it belongs to", which is the exclusive
   framing again. Recommendation: your choice decides; when you name no
