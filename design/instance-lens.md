@@ -105,6 +105,23 @@ after    capture ─► item new ─► enrich ─► harvest ─► lens verdic
 - **Wiki** pages are written from the lens's angle: what the design does,
   how the business makes money, what the copy achieves.
 
+## Saving from chat
+
+The chat server lets you say "save this to my dex" from any connected
+client, and the agent has to name an instance for the capture. Today it is
+told to pick "the instance whose scope it belongs to", which is the
+exclusive framing this design removes. The rule becomes:
+
+- when you name an instance, the capture goes there;
+- when the server serves a single instance, it goes there without a
+  question;
+- otherwise the agent asks which instance, or which ones, before saving.
+
+The agent never infers the destination from the content, because any link
+can belong in any instance depending on the lens you want it read through.
+A gardening site might be for a gardening instance, or for design, business,
+marketing or engineering, and only you know which.
+
 ## Where the lens lives: `lens.md`
 
 `lens.md` at the instance root is your statement of what this instance reads
@@ -241,8 +258,8 @@ scope section.
   stop describing a scope-filter pass after normalize.
 - `serve/steering.py` describes each instance from `lens.md` in place of
   CLAUDE.md, and its capture routing and the `capture` tool's docstring in
-  `serve/server.py` stop sending captures to "the instance whose scope this
-  belongs to".
+  `serve/server.py` state the chat rule above in place of "the instance
+  whose scope this belongs to".
 - The config parser in `pipeline/types.py` and the config table in
   `state-formats.md` gain the `discord` key, and `backfills.md` reads it.
 - Directives 1 and 2, per `design/directives.md`.
@@ -261,10 +278,6 @@ for nothing leaving without being named.
 
 ## Open questions
 
-- **Open question: chat capture routing.** The chat server tells an agent to
-  save into "the instance whose scope it belongs to", which is the exclusive
-  framing again. Recommendation: your choice decides; when you name no
-  instance and more than one lens fits, the agent asks.
 - **Open question: existing digests.** Digests written before this release
   were read without a lens. Recommendation: going forward only, because
   re-reading a corpus through its lens would be a directive with a large cost, and most
