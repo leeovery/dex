@@ -301,6 +301,7 @@ name this file: a directive is the engine's decision, not the run's.
 | `instagram_base_url` | the Instagram embed proxy serving the media endpoints (default `https://uuinstagram.com`); the escape hatch when that host dies or you self-host a fork |
 | `report_issues` | gate on filing engine bugs upstream — crash reports and `bin/dex issue` alike (default `true`). Gates the filing only: the `state/issue-reports.jsonl` record is written either way, `filed` saying which |
 | `providers` | capability → provider order, e.g. `{"transcribe": ["whisper-api"]}` |
+| `discord` | the Discord server and channels a pull exports: `{"guild": "<guild id>", "channels": {"<channel name>": "<channel id>"}}`, exactly those two keys and at least one channel. Ids are strings of digits, never JSON numbers; each channel name is the `raw/discord/<name>/` directory its export lands in. Absent means Discord is not configured (`backfills.md` sets it up); the token is `DISCORD_TOKEN` in `.env`, not here |
 | `internal_domains` | domains treated as internal/noise at normalize |
 | `noise_prefixes` | reserved |
 

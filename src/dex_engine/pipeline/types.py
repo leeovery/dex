@@ -18,6 +18,7 @@ __all__ = [
     "Cap",
     "Config",
     "Content",
+    "DiscordSource",
     "Extraction",
     "Extractor",
     "Format",
@@ -785,6 +786,18 @@ class Instance:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class DiscordSource:
+    """The Discord server a pull exports, and its channels: name → channel id.
+
+    A channel's name is the ``raw/discord/<name>/`` directory its export
+    lands in, and normalize derives item ids from that directory.
+    """
+
+    guild: str
+    channels: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Config:
     """Instance configuration from ``state/config.json``.
 
@@ -812,6 +825,7 @@ class Config:
     instagram_base_url: str | None = None
     report_issues: bool = True
     providers: dict[str, list[str]] = field(default_factory=dict)
+    discord: DiscordSource | None = None
     internal_domains: list[str] = field(default_factory=list)
     noise_prefixes: list[str] = field(default_factory=list)
 
@@ -865,6 +879,7 @@ class Config:
             "instagram_base_url",
             "report_issues",
             "providers",
+            "discord",
             "internal_domains",
             "noise_prefixes",
         }
@@ -883,6 +898,7 @@ class Config:
             instagram_base_url=_config_opt_url(source, raw, "instagram_base_url"),
             report_issues=_config_bool(source, raw, "report_issues", default=True),
             providers=_config_providers(source, raw),
+            discord=_config_discord(source, raw),
             internal_domains=_config_str_list(source, raw, "internal_domains"),
             noise_prefixes=_config_str_list(source, raw, "noise_prefixes"),
         )
@@ -961,6 +977,50 @@ def _config_providers(source: str, raw: dict[str, object]) -> dict[str, list[str
             f"{source}: providers key(s) {unknown} are not capabilities — "
             f"known capabilities: {sorted(capabilities)} (a typo'd key would silently "
             "never resolve)"
+        )
+    return value
+
+
+_DISCORD_KEYS = frozenset({"guild", "channels"})
+# Discord ids are 64-bit snowflakes, which Discord's own API writes as
+# strings: as JSON numbers they lose precision in any reader that parses
+# numbers as doubles.
+_DISCORD_ID_RE = re.compile(r"[0-9]+")
+
+
+def _config_discord(source: str, raw: dict[str, object]) -> DiscordSource | None:
+    if "discord" not in raw:
+        return None
+    value = raw["discord"]
+    if not isinstance(value, dict):
+        raise ValueError(f"{source}: discord must be an object, got {type(value).__name__}")
+    if set(value) != _DISCORD_KEYS:
+        raise ValueError(
+            f"{source}: discord must hold exactly guild and channels, got keys {sorted(value)}"
+        )
+    return DiscordSource(
+        guild=_discord_id(source, "discord.guild", value["guild"]),
+        channels=_discord_channels(source, value["channels"]),
+    )
+
+
+def _discord_channels(source: str, value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(
+            f"{source}: discord.channels must be a non-empty object of channel name -> channel id"
+        )
+    if "" in value:
+        raise ValueError(f"{source}: discord.channels holds an empty channel name")
+    return {
+        name: _discord_id(source, f"discord.channels[{name!r}]", channel_id)
+        for name, channel_id in value.items()
+    }
+
+
+def _discord_id(source: str, where: str, value: object) -> str:
+    if not isinstance(value, str) or not _DISCORD_ID_RE.fullmatch(value):
+        raise ValueError(
+            f"{source}: {where} must be a Discord id written as a string of digits, got {value!r}"
         )
     return value
 
