@@ -24,7 +24,6 @@ The convention:
 - [Ingestion pipeline — open ends](ingestion-open-ends.md) — X thread walk-down and engine OCR providers, deferred by the ingestion design
 - [Hosted transcription providers](hosted-transcription.md) — Groq, Fireworks, Deepgram, Workers AI: a documented recommended config
 - [Per-instance tokens in the phone shortcut](shortcut-per-instance-tokens.md) — one token field serves every instance today; cross-org sets cannot work
-- [Per-instance context instructions](per-instance-context.md) — standing content context beyond the scope list, machinery identical
 - [Source removal](source-removal.md) — no story yet for removing an entire source after ingestion
 - [Resurfacing and the owner's reading queue](resurfacing-reading-queue.md) — read/intent flags and views so saved things stop vanishing from mind
 - [App-only owner surfaces](app-only-owners.md) — the owner who lives in the Claude app, no computer

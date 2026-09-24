@@ -1,9 +1,10 @@
 # The instance lens
 
 > Designed 2026-09-24, out of a working conversation with the owner. No
-> backlog file preceded it, though it may absorb
-> `backlog/per-instance-context.md` (see the open questions). It is not yet
-> implemented, and it depends on `design/directives.md`, and its two directives
+> backlog file preceded it, but it absorbs the idea
+> `backlog/per-instance-context.md` held (standing guidance on how to read an
+> instance's content), whose file is deleted with this design. It is not yet
+> implemented, it depends on `design/directives.md`, and its two directives
 > are specified here.
 
 An instance's scope stops being a check at the door and becomes the lens its
@@ -151,7 +152,10 @@ write under in any form, rename or delete:
 
 A design lens, for example, might read for how things are made to look and
 work, emphasise layout, typography, colour and interaction, and set aside
-the subject matter entirely.
+the subject matter entirely. Any standing guidance on how to read this
+instance's content belongs here too: what a community's shorthand means
+("CC" is Claude Code in these channels), which kinds of link are noise here,
+or how deep a domain deserves to go.
 
 The contract says all of this to every session: the lens is free-form, owned
 by you, and read whole. Lint fails when `lens.md` is missing or empty, and
@@ -286,10 +290,3 @@ real session over copies of every instance the maintainer can reach,
 including ones whose CLAUDE.md was customised well beyond the template, and
 each copy is checked for its scope arriving in `lens.md` word for word and
 for nothing leaving without being named.
-
-## Open questions
-
-- **Open question: per-instance context.** `backlog/per-instance-context.md`
-  (standing context that steers scanning, enrichment and digestion) is what
-  the optional sections of `lens.md` hold. Recommendation: this design
-  absorbs it, and the backlog file and its index line are deleted.
