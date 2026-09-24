@@ -1,4 +1,4 @@
-"""Directive 2: the README rewritten from the engine's template, linking the lens.
+"""Directive 2: the README rewritten from the engine's template, in place of the scope list.
 
 An instance's README used to mirror its scope list. What the instance
 reads for is ``lens.md`` now, after directive 1, and the template's lens
@@ -18,7 +18,7 @@ from dex_engine.template import bundled_template
 
 __all__ = ["INTENT", "check", "materials", "unmet"]
 
-INTENT = "Rewrite README.md from the engine's template, linking the lens"
+INTENT = "Rewrite README.md from the engine's template, which replaces the scope list"
 
 _REWRITE = "write it with `bin/dex directive show 2 --materials > README.md`"
 
