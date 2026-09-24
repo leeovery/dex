@@ -201,6 +201,10 @@ reaches:
 - content the engine could not reach, such as a paywall, a blocked fetch
   or a dead link, which is a fetch problem for the parking lanes and the
   heal procedure below, never a drop;
+- an aspect the lens reads for that the capture could not carry, such as
+  a page's look when only its text landed, which is a capture gap like a
+  paywall and never a drop: the item goes on to its digest from what
+  landed and the owner's note;
 - a parked item (waiting, blocked, manual), which gets no verdict until
   its sources land, just as it gets no digest;
 - an item whose every unit is dead or skipped, or whose landed content
