@@ -19,6 +19,7 @@ The convention:
 
 ## Ideas
 
+- [Page screenshots](page-screenshots.md) — a fast follow to the lens release: a rendered-page capture, so a lens that reads for the look gets it, not only the text
 - [Watchers — feeding sources as a first-class layer](watchers.md) — every feeder becomes a watcher writing standard inbox captures; the next thing to design
 - [Self-tuning cadence](self-tuning-cadence.md) — scheduled runs reschedule their own task: hourly while captures flow, daily when quiet
 - [Ingestion pipeline — open ends](ingestion-open-ends.md) — X thread walk-down and engine OCR providers, deferred by the ingestion design
