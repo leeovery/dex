@@ -1,28 +1,18 @@
 # Per-item procedure
 
-One item = scope check → corpus item → enrich → harvest → digest → place →
-wiki → receipt. Never skip steps; never invent inputs. All commands run
-from the instance root. Code writes frontmatter and state; you write prose
-and judgment.
+One item = corpus item → enrich → media → harvest → lens verdict → digest
+→ place → wiki → receipt, and a drop at the lens verdict ends it there.
+Never skip steps; never invent inputs. All commands run from the instance
+root. Code writes frontmatter and state; you write prose and judgment.
+Every judgment below reads the item through this instance's lens, the
+owner's `lens.md` at the instance root, taken whole as the contract says.
 
-## 1. Scope check (fresh captures only — judgment)
+## 1. Corpus item (mechanical: the verb writes it)
 
-Goal: only in-scope items enter the corpus. Bar: the capture's *content*
-matches CLAUDE.md's In-scope list — if the capture has `media:`, view the
-media first and judge what it actually shows. Boundaries:
-
-- Attended session, unsure → ask the owner.
-- Unattended run, borderline → do NOT guess: leave the capture file in
-  place, skip it, and name it in the report for an attended decision.
-- Rejected → delete the capture file (and its `media/<item-id>/` directory
-  if one was created) and say why.
-- Navigational/index URLs (site roots, topic indexes) usually fail scope:
-  their substance lives in their pages, which is the harvest subject
-  rule's job when the substance is wanted, and a skip when it isn't.
-  Don't enrich navigation into empty items. This is judgment, not a
-  blanket rule — a small site's root can be the content itself.
-
-## 2. Corpus item (mechanical — the verb writes it)
+Every capture becomes a corpus item, whatever its subject, because the
+owner sharing it into this instance is the curation. Nothing is judged at
+the door: whether the item holds anything for this instance is the lens
+verdict's question (step 5), asked once its content has landed.
 
 ```
 bin/dex enrich item new inbox/<capture>.md --shared-by <owner> [--slug <slug>]
@@ -59,7 +49,7 @@ shows.
 Then delete the capture file — the capture is preserved in git history and
 its content lives on in the corpus.
 
-## 3. Enrich (mechanical)
+## 2. Enrich (mechanical)
 
 `bin/dex enrich run` fetches everything behind the item's URLs and files —
 captions, articles, READMEs, papers, thread walk-ups, podcast audio →
@@ -67,16 +57,16 @@ transcripts (capped per run), document extraction — and its report names
 what landed, what was rewritten, and what parked. Formats with no
 mechanical provider appear under **Read these yourself**: those are yours
 — read the document/scan with eyes and write the enrichment file yourself
-(step 4). Transcription backlogs: `bin/dex enrich transcribe --limit N`;
+(step 3). Transcription backlogs: `bin/dex enrich transcribe --limit N`;
 model judgment — `--model small` for long backlogged queues, stay at the
 default for dense technical audio.
 
-## 4. Media and cognitive-floor work (judgment)
+## 3. Media and cognitive-floor work (judgment)
 
-For a media capture the primary source is the media itself: view it and
-write its description — what it depicts, all legible text (OCR), and,
-where relevant to this instance's domain, style, palette, composition,
-typography, layout. This is the media's "transcript"; make it substantive
+For a media capture the primary source is the media itself, so view it
+and write its description: what it depicts, all legible text (OCR), and,
+wherever the lens reads for them, style, palette, composition, typography
+and layout. This is the media's "transcript"; make it substantive
 enough to stand in for the media in text-only contexts. Write the text to
 a file and let the verb place it:
 
@@ -131,17 +121,23 @@ was corrected mid-fetch (a page that turned out to be a PDF), `mark` drops
 the superseded `<old-kind>-<hash6>.md` once the file you named is on disk,
 so the item is left holding one enrichment for the unit, not two.
 
-## 5. Harvest — the subject rule (judgment, engine-bounded)
+## 4. Harvest: the subject rule (judgment, engine-bounded)
 
-Goal: the item's enrichment holds the primary artifacts of its subject.
-At each fetched page, promote links that are **primary artifacts of the
-item's subject** — the project's repo, its homepage, its docs, the paper.
-Links that *leave* the subject (similar-projects lists, blogrolls,
-footers) are never promoted, at any depth. There is no hop-counting rule:
-depth is bounded mechanically by the engine (depth 4, 12 URLs per item),
-and the subject rule is the judgment inside those bounds — a thin landing
-page whose substance is on /pricing and /docs is the subject rule applied
-to the site's own pages.
+Goal: the item's enrichment holds the primary artifacts of its subject
+that the lens needs. At each fetched page, promote links that are
+**primary artifacts of the item's subject**, choosing the ones this
+instance's lens reads for: the pricing and about pages for a business
+lens, the repo and docs for an engineering lens, the rendered pages
+themselves for a design lens. Links that *leave* the subject
+(similar-projects lists, blogrolls, footers) are never promoted, at any
+depth. There is no hop-counting rule: depth is bounded mechanically by
+the engine (depth 4, 12 URLs per item), and the subject rule is the
+judgment inside those bounds. A shared site root or topic index is
+navigation whose substance lives in its pages, so harvest is how the item
+reaches them: a thin landing page whose substance sits on /pricing for a
+business lens, or on /docs for an engineering one, is the subject rule
+applied to the site's own pages, while a small site's root can be the
+content itself, with nothing further to promote.
 
 Promote via:
 
@@ -160,6 +156,63 @@ nothing" must be distinguishable from "never ran"):
 bin/dex enrich pass <item-id> --stage harvest
 ```
 
+## 5. Lens verdict (judgment: the only drop)
+
+Once the item's content has landed (its enrichment, its media
+descriptions and whatever harvest promoted), ask one question of it, read
+together with the owner's note: through this instance's lens, is there
+anything here? The verdict follows harvest because the substance is often
+one link away, like a post whose whole point is the article it links to,
+so judge the item by everything harvest brought in, never by a site root
+or an index page alone.
+
+If there is anything, however little, the item goes on to its digest: a
+thin yield is a `signal: low` digest, perhaps filed in
+`uncategorized-shares`, and never a drop. If there is nothing, drop the
+item through the exclude verb, with a reason in lens terms that says what
+the content is and why nothing in it reads through this lens, never
+naming another instance it might suit. Write the record to
+`cache/exclusions.json`:
+
+```json
+[{"id": "<item-id>", "reason": "<what it is, and why the lens finds nothing in it>"}]
+```
+
+```
+bin/dex exclude cache/exclusions.json
+```
+
+The verb records the drop in `state/exclusions.tsv` and removes the item
+with its enrichment and ledger entries (the full behaviour is in
+`state-formats.md`, this directory). A dropped item gets no digest,
+placement, wiki work or receipt, and the closing report (dex-run step 6)
+names it with its reason.
+
+Nothing is dropped for its subject: a gardening site shared into a design
+instance is read for its design, because the owner sharing it here has
+already decided it belongs. The drop is for an item that yields nothing
+through the lens, which means a share into the wrong instance or content
+with nothing in it, like chatter or a one-line complaint about a tool.
+The verdict judges only content that actually landed, and what could not
+be read is never evidence that nothing is there, so the verdict never
+reaches:
+
+- content the engine could not reach, such as a paywall, a blocked fetch
+  or a dead link, which is a fetch problem for the parking lanes and the
+  heal procedure below, never a drop;
+- a parked item (waiting, blocked, manual), which gets no verdict until
+  its sources land, just as it gets no digest;
+- an item whose every unit is dead or skipped, or whose landed content
+  only points at a unit that never landed: it goes on to its digest from
+  the owner's note and whatever did land (step 6), and the lens never
+  drops it.
+
+The verdict is yours alone, in a scheduled run and an attended session
+alike: make it without asking the owner, and never skip an item or leave
+it waiting for someone else to decide. An item that already holds a
+digest is past its verdict, so a re-fetch or a requeue goes straight on
+to step 6.
+
 ## 6. Digest (judgment — the values ARE the judgment; the verb writes it)
 
 Read the enrichment fully — including viewing any media — then write the
@@ -168,7 +221,7 @@ judgment as JSON and let the engine serialize it:
 ```json
 {"id": "<item-id>", "signal": "high", "topics": ["agent-architecture"],
  "entities": ["claude-code"],
- "facts": ["one standalone fact per fact the source actually yields", "..."]}
+ "facts": ["one standalone fact per fact the source yields through the lens", "..."]}
 ```
 
 ```
@@ -180,6 +233,12 @@ the field order and the bullets are the engine's, so a digest cannot come
 out malformed. Never hand-write `state/digests/<id>.md`. The item's `date`
 and `media:` are the engine's to derive from the item and its enrichment —
 passing either is refused. Full shape in `state-formats.md` (this directory).
+
+Extract the facts the source yields through this instance's lens, with
+enough about its subject to say what the item is, and choose its topics
+along the lens too. Judge `signal` by the same measure: a design mockup
+with no product behind it is thin evidence to a business lens and rich
+material to a design one.
 
 Each fact carries concrete specifics and reads without the source in front
 of you. No target count: a rich paper earns many bullets and a two-line
@@ -227,6 +286,10 @@ land in `uncategorized-shares` until pages are justified. A corpus with
 no taxonomy is the state lint reads as BROKEN MID-INGEST and fails on,
 so the file exists from the first placed item onward.
 
+Topics break along the lens: from the same shares, a design instance
+grows topics like typography and landing-page layout, where a marketing
+instance files them under social proof and sales copy.
+
 Create a new topic only once several items justify a page; the
 several-items rule governs page creation, never taxonomy existence. When
 you do create one, sweep the existing digests (`state/digests/`) for
@@ -237,6 +300,10 @@ Full payload shape — definitions, moves, drops, and what the verb
 refuses — in `state-formats.md` (this directory).
 
 ## 8. Wiki (judgment — synthesis is the point)
+
+Write every page from the lens's angle, so that it says what this
+instance reads its items for: what a design does, how a business makes
+money, what a piece of copy achieves.
 
 Splice cited sentence(s) into affected pages — rewrite-not-append when
 "current state" changes. Pages citing a media item should usually embed it

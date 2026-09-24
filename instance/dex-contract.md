@@ -13,9 +13,10 @@ Four operations. Detailed procedures live in skills — load them, don't improvi
   pushed. Capture only; it never processes. One route in.
 - **run** (`.claude/skills/dex-run`) — the one route through: sync →
   migrations reviewed → pull → directives → inbox → items → `enrich run` →
-  per-item cognitive work for everything its report names (harvest → digest
-  → place → wiki) → `bin/dex map` → health check when due → push. Covers
-  scheduled runs, "process now", and "process the inbox" alike.
+  per-item cognitive work for everything its report names (harvest → lens
+  verdict → digest → place → wiki) → `bin/dex map` → health check when due
+  → push. Covers scheduled runs, "process now", and "process the inbox"
+  alike.
 - **query** (`.claude/skills/dex-query`) — answer from the wiki: `wiki/index.md`
   first, follow [[wikilinks]], prefer newest, cite item ids. File real syntheses
   back under `wiki/syntheses/`.
@@ -29,6 +30,30 @@ Four operations. Detailed procedures live in skills — load them, don't improvi
 Machinery is engine-owned: `.claude/` (skills and this contract), `bin/dex`,
 and `.gitattributes` are overwritten by `bin/dex sync` — never hand-edit them
 here. Fixes go into the engine, then sync.
+
+## The lens
+
+`lens.md` at the instance root is this instance's lens: the owner's
+statement of what the instance reads for, and the angle every judgment in
+a run reads content through. It is free-form and owned by the owner, so
+edit it only when the owner asks or a directive's instructions name it,
+and read it as one coherent statement, never section by section.
+
+Sharing something into this instance is the curation: the owner has
+already decided it belongs here, so a session never rejects a share for
+its subject, and a gardening site shared into a design instance is read
+for its design. The lens decides what harvest promotes, which facts a
+digest extracts, how topics break apart and what the wiki writes about.
+The only drop is an item whose landed content yields nothing through the
+lens, such as a share into the wrong instance or chatter with nothing in
+it; it goes through `bin/dex exclude` with its reason, and the run report
+names it. Content the engine could not reach (a paywall, a blocked fetch,
+a dead link) is a fetch problem for the parking lanes and never a drop,
+and a parked item meets no verdict until its sources land.
+
+Overlap between instances is expected: the same link shared into two
+instances becomes two items, each read through its own lens, and nothing
+in this instance routes content to a sibling.
 
 ## Dataflow
 

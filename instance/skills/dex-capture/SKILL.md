@@ -22,8 +22,8 @@ given a link, file, or note.
    personal inbox needs). Body = the captured URL and/or the owner's note,
    exactly as given — URL on the first line, note after, nothing else. The
    note is often the most valuable part; never trim or paraphrase it. Do
-   not create a corpus item, do not fetch anything, do not judge scope —
-   all of that is processing.
+   not create a corpus item, fetch anything or judge the content: all of
+   that is processing.
 
 2. **A binary in hand** (an image, PDF, any file dropped into the
    session): file it as `bin/dex inbox` would have —

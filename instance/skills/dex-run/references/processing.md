@@ -4,10 +4,12 @@ Items, then the enrich run, then the backstop — in that order. The
 per-item cognitive work every step dispatches is `ingest-item.md` (this
 directory).
 
-1. **Items.** For each capture file in `inbox/`: the scope check, then
-   `bin/dex enrich item new` — the per-item reference prescribes both.
-   Item creation is mechanical and fast; it must precede the enrich run
-   so the pipeline seeds the new items' URLs.
+1. **Items.** Every capture file in `inbox/` becomes a corpus item
+   through `bin/dex enrich item new`, as the per-item reference
+   prescribes, with no judgment at the door: whether an item holds
+   anything for this instance is the lens verdict's question, asked once
+   its content has landed. Item creation is mechanical and fast; it must
+   precede the enrich run so the pipeline seeds the new items' URLs.
 
 2. **Enrich.** `bin/dex enrich run`, and **read its report — it is the
    work list**. It is markdown, and its sections say who owns the next
@@ -23,7 +25,7 @@ directory).
    news — an item listed there may be long enriched and already digested —
    so the section persists, and the only thing that clears a row is
    describing the missing files through `bin/dex enrich item describe`
-   (per-item reference, step 4), which refreshes the item's frontmatter
+   (per-item reference, step 3), which refreshes the item's frontmatter
    as it writes. The counts say how many are short; the media itself says
    what to write.
    Items you created this session always get the full per-item procedure
@@ -38,10 +40,11 @@ directory).
 
 3. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
    these** is an interrupted previous session: complete its remaining
-   per-item steps now, harvest → digest → place → wiki. The listing says
-   a digest is owed, not that harvest ran — the interruption can predate
-   either step, and no surface here would catch a skipped harvest before
-   the next health check. Every item listed is digestible; one still
+   per-item steps now, harvest → lens verdict → digest → place → wiki.
+   The listing says a digest is owed, not that harvest or the verdict
+   ran: the interruption can predate any of those steps, and no surface
+   here would catch a skipped harvest before the next health check.
+   Every item listed is digestible; one still
    owing a unit is `raw` and never appears there, however long it stays
    parked. **Describe these** is the same standing describe queue the run
    report carries, and clears the same way. **Needs you** and **Waiting on
@@ -59,7 +62,8 @@ directory).
      file it.
    - Every capture you ingested this session appears somewhere in the
      final accounting: named on the report, parked with a stated
-     reason, or excluded on record. One that simply vanished is an
+     reason, or dropped at the lens verdict with its exclusion on
+     record. One that simply vanished is an
      engine defect — file it.
    The engine cannot see these from inside; you are the only party who
    held both sides. Anything mechanical (ledger lines, field shapes,

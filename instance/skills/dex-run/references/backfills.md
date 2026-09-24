@@ -82,8 +82,15 @@ whole normalize summary before treating a backfill as complete: the
 `channel incomplete` line. A silently short cohort is the failure this
 reports.
 
-`bin/dex normalize` → scope-filter pass (judgment; purge via `bin/dex
-exclude <file.json>`) → `bin/dex enrich run` → the per-item work at scale.
+`bin/dex normalize` → `bin/dex enrich run` → the per-item work at scale.
+A pulled item meets the same lens verdict a shared one does
+(`ingest-item.md`, step 5), after its enrichment and harvest and with no
+stricter bar, because chatter yields nothing through any lens and is
+dropped by the same question. A dropped conversation stays dropped when
+the next pull re-exports its channel: `bin/dex exclude` records it in
+`state/exclusions.tsv`, and normalize never regenerates a cluster on
+that record.
+
 Per-driver politeness sleeps make large cohorts slow by design, and the
 pacing is automatic: fresh work drains first, then rerun cohorts
 (migration reseeds and other requeues) at most 50 per run — the report

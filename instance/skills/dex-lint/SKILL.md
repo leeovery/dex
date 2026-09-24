@@ -33,7 +33,10 @@ reference at the step that names it, not before.
    neither fails the check.
 
 5. **Judgment sweep** over every page you touched: cross-page
-   contradictions (surface with dates), self-citation, scope creep.
+   contradictions (surface with dates), self-citation, and pages drifting
+   off the lens, which write about an item's subject matter where the lens
+   reads it for something else (a design instance's page on a gardening
+   site that has wandered into plant care).
 
 6. **Coarse-topic check**: when a topic has grown unwieldy or a coherent
    sub-cluster has formed inside it, split it — create the finer-grained
