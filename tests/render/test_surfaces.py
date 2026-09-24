@@ -804,7 +804,8 @@ class TestSyncReport:
             "**Machinery changes** — 0\n\n"
             "**Lens** — `lens.md` is missing: every judgment in a run reads through the lens, "
             "so the owner fills in `lens.md` with what this instance reads for, and a session "
-            "writes it only when the owner asks\n\n**Chat connection**"
+            "writes it only when the owner asks or a directive's instructions name it\n\n"
+            "**Chat connection**"
         ) in out
         assert_no_trailing_whitespace(out)
 
@@ -1275,7 +1276,7 @@ class TestHealthReport:
             "## Health check — 0 corpus items · 0 pages · 0 cited\n\n"
             "- **LENS FAILURE** — every judgment in a run reads through the lens, so the owner "
             "fills in `lens.md` with what this instance reads for, and a session writes it only "
-            "when the owner asks\n"
+            "when the owner asks or a directive's instructions name it\n"
             "  - `lens.md` is missing\n\n"
             "### Wiki — 0 pages\n"
         )

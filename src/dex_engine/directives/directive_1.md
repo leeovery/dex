@@ -1,0 +1,212 @@
+# Rehome the owner's CLAUDE.md
+
+Until this engine release, each instance's CLAUDE.md was written by its
+owner: a title, the import of the contract, a list of what the instance
+covers, and sometimes more, such as the server and channels a Discord pull
+exports. CLAUDE.md now belongs to the engine and is the same in every
+instance, and `bin/dex sync` has already replaced this instance's copy,
+which the run committed. The owner's version is still in git history. This
+directive reads it back and gives every part of it a home: what the
+instance reads for goes into `lens.md`, the Discord server and channels go
+into the `discord` key of `state/config.json`, and whatever has no home is
+named in the commit message, where the owner can find it again.
+
+This directive edits `lens.md` and `state/config.json` and nothing else. It
+reads CLAUDE.md's history and the exports under `raw/discord/`. Never edit
+CLAUDE.md, which sync owns, or README.md, which directive 2 rewrites.
+
+## 1. Find the owner's CLAUDE.md
+
+Run `git log --format=%H -- CLAUDE.md`. It lists every commit that changed
+CLAUDE.md, newest first. Take the hashes in that order and read each
+version with `git show <hash>:CLAUDE.md`, passing over any hash where that
+fails, which is a commit that deleted the file. The owner's CLAUDE.md is
+the first version that is not the engine's. A version is the engine's when
+it is identical to the CLAUDE.md on disk now, which
+`git diff --quiet <hash> -- CLAUDE.md` confirms by exiting 0, or when it
+says, as every engine copy does, that the file is engine-owned and that
+`bin/dex sync` overwrites it.
+
+Note that version's hash, because the commit message names it. When no
+version qualifies, this instance never had a CLAUDE.md of its own and there
+is nothing to rehome: go to step 3, which then only makes sure the lens is
+stated.
+
+## 2. Sort every passage
+
+Read the owner's CLAUDE.md whole. Then sort every passage in it, each
+heading, paragraph, list and list item, into exactly one of the kinds
+below. Sort by what a passage says and never by its heading, because owners
+named and arranged their sections freely.
+
+- **Engine boilerplate.** The title's instance name and its
+  `(a dex instance)` suffix, the paragraph saying this is a personal,
+  LLM-maintained knowledge base that Claude operates as the application,
+  and the `@.claude/dex-contract.md` import. The engine's CLAUDE.md carries
+  all of it now, so it needs no home and no mention.
+- **What the instance reads for.** The scope list, whatever its heading,
+  with every parenthetical and every owner ruling inside its items. The
+  domain phrase in the title, which is the words between the instance name
+  (with the dash after it) and `(a dex instance)`, such as
+  `Home Cooking Knowledge Base`. Any guidance on how to read this
+  instance's content, such as what a community's shorthand means or which
+  kinds of link are noise here. Subjects the owner named as out of scope,
+  one by one, which are what this instance sets aside. All of it goes into
+  `lens.md` word for word (step 3), except a template placeholder such as
+  `<Domain>` or `<topic>`, which the owner never filled in and which is
+  never carried.
+- **The old door rule.** The blanket statement that whatever is not listed
+  is out of scope, and any statement that a borderline find needs the
+  owner's decision or that the list is mirrored in README.md and a change
+  must update both files. The template worded it "Anything not listed is
+  out of scope. When unsure, ask the owner rather than guessing. The list
+  is mirrored in README.md", and owners often reworded it, as in "anything
+  unrelated to cooking is out of scope" or "borderline, ask". The lens
+  replaces the door, so remove these, never carry them into the lens, and
+  name them in the commit message.
+- **Routing to another instance.** Any sentence that sends some material
+  to another instance or knowledge base, such as "that belongs in the
+  other KB, not here". Remove it whole, the subjects it names included,
+  never carry it into the lens, and name it in the commit message, because
+  a lens never names or points to a sibling instance. When the routing is
+  a clause inside a scope item, cut only that clause and carry the rest of
+  the item word for word.
+- **Discord facts.** The server's id, and the names and ids of the channels
+  a pull exports. They become the `discord` key of `state/config.json`
+  (step 4). The rest of a Discord section, such as how to run a pull, where
+  the token lives, and notes about machinery still to come, is engine
+  documentation now, in the dex-run skill's backfills reference: remove it
+  and name it in the commit message. Never copy a token or any other secret
+  anywhere, the commit message included.
+- **Everything else.** A passage that is none of the above has no home
+  here. Remove it and name it in the commit message.
+
+## 3. Write the lens
+
+The materials printed after these instructions, between the
+`===== materials` line and the `===== end of materials =====` line, are the
+seed lens rendered for this instance: the layout to start from. Its
+placeholder lines are the ones made only of text in angle brackets, such as
+`<what to look at hardest>`.
+
+Read `lens.md` as it stands, then do exactly one of these:
+
+- **It already states a lens**, because it exists, is not empty and holds
+  none of the placeholder lines. Leave it exactly as it is and carry
+  nothing into it. Name the owner's scope in the commit message as not
+  carried, because `lens.md` already states the lens.
+- **It is missing or empty.** Write it from the materials, filled in from
+  the owner's CLAUDE.md:
+  - Keep the materials' title line, `# ` followed by this instance's name.
+  - As the first paragraph under the title, put the title's domain phrase
+    word for word. With no domain phrase there is no such paragraph.
+  - Under `## Reads for`, put the scope items word for word: each item
+    exactly as it stands, with its wrapped lines, parentheticals and
+    rulings, in the owner's order, and with any structure of its own
+    (nested items, sub-headings, paragraphs) kept.
+  - Put reading guidance under `## Emphasise` when it says what to look at
+    hardest, under `## Set aside` when it says what to ignore (the subjects
+    named as out of scope go there too), and otherwise under a heading of
+    its own after `## Reads for`, named for what it holds.
+  - Delete every seed heading that nothing goes under, and every
+    placeholder line.
+- **It still holds placeholder lines** beside lines the owner wrote. Keep
+  every line that is not a placeholder, fill each placeholder from the
+  owner's CLAUDE.md as the case above does, and delete each placeholder
+  line that nothing fills, with its heading when the heading is left
+  empty.
+
+A lens is the owner's statement, and a directive never invents one. When
+`lens.md` does not state a lens and the owner's CLAUDE.md states nothing
+the instance reads for (step 1 found no version of the owner's, or its
+scope holds only template placeholders such as `<topic>`), stop here
+without running `done`. Restore the working tree exactly as preparation
+step 5 says for a directive that cannot complete, and perform no further
+directive this run. This gap is the owner's to close, not an engine
+defect, so file no issue for it: say in the run's closing report that
+`lens.md` needs the owner's statement of what this instance reads for.
+
+## 4. Move the Discord facts into config
+
+Skip this step when the owner's CLAUDE.md names no Discord server or
+channel.
+
+When `state/config.json` already has a `discord` key, leave it exactly as
+it is, and name the Discord facts in the commit message as not carried,
+because config already holds them. Otherwise add the key beside the file's
+other keys, changing none of them, and create the file holding only this
+key when it does not exist:
+
+```json
+"discord": {"guild": "<server id>", "channels": {"<channel name>": "<channel id>"}}
+```
+
+Every id is a string of digits in quotes, never a bare number. Work out the
+values like this:
+
+- **Each channel's name is the directory its export lands in**, because
+  normalize derives item ids from `raw/discord/<name>/`, and a channel
+  whose name changes has every conversation in it filed again as a new
+  item. List `raw/discord/` and read the ids at the top of each export,
+  where the exporter writes the server and the channel before any message:
+  `head -c 2000 raw/discord/<name>/messages.json` shows `guild.id` and
+  `channel.id`.
+- **A channel the owner's CLAUDE.md names that has an export** is the
+  directory whose `channel.id` matches the id it gives, or, when it gives
+  no id, the directory it names. The channel's name is exactly that
+  directory's name, and its id is the export's `channel.id`. When the
+  owner's CLAUDE.md disagrees with the export about either, the export
+  wins, and the commit message says what differed.
+- **A channel it names that has no export yet** takes the name it gives,
+  without a leading `#`, and the id it gives. When it gives no id, leave
+  the channel out and name it in the commit message.
+- **An export it does not name** stays out of config. Name the export's
+  directory in the commit message, so the owner can add it.
+- **The server id** is the one it gives. When the exports' `guild.id`
+  differs, the exports win, and the commit message says so; when it gives
+  none, the server id is the exports' `guild.id`. When it names more than
+  one server, configure the one the exports come from, or the first it
+  names when there are no exports, and name the others in the commit
+  message.
+
+When no server id can be found, or no channel is left to configure, add no
+key, and name the Discord facts in the commit message as not carried, with
+that reason.
+
+## 5. Check and record
+
+Read `lens.md` and `state/config.json` once more against steps 3 and 4,
+then run `bin/dex directive done 1`. It confirms that `lens.md` states a
+lens and that `state/config.json` parses under the engine's config rules,
+and records the directive only when both hold. When it refuses, follow
+preparation step 5.
+
+## 6. Commit
+
+Commit `lens.md`, `state/config.json` when you changed it, and
+`state/directives.jsonl` together as one commit. The subject is the first
+line `bin/dex directive show 1` printed, `directive 1: ` followed by this
+directive's intent. The body accounts for the owner's CLAUDE.md, so the
+owner can find every part of it:
+
+```
+The owner's CLAUDE.md is in history: git show <hash>:CLAUDE.md
+
+Moved:
+- <passage>: <where it went>
+
+Removed:
+- <passage>: <why, in one line>
+```
+
+Name each passage by its heading, or by its first few words in quotes when
+it has none, and never quote a secret, not even in part. Name the old door
+rule and every routing sentence under Removed, with anything else not
+carried, and say there when an export overrode the owner's CLAUDE.md.
+Engine boilerplate needs no line. Leave out a list that would be empty.
+When step 1 found no version of the owner's, the whole body is one line
+saying so.
+
+Write the message to `cache/directive-1-message.txt` and commit with
+`git commit -F cache/directive-1-message.txt`, which keeps its quotes and
+backticks exactly as written.

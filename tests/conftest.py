@@ -1,12 +1,15 @@
 """Shared fixtures for the engine test suite.
 
 ``instance`` builds the corpus/state/enrichment/cache skeleton in a tmp
-dir; ``FakeDriver`` is the scriptable driver the pipeline tests drive;
+dir; ``own_git`` runs git in tmp repositories, kept apart from the
+machine's config; ``FakeDriver`` is the scriptable driver the pipeline tests drive;
 ``FlippableProvider`` is the availability seam the waiting-cohort tests
 toggle.
 """
 
 import os
+import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -34,6 +37,31 @@ from dex_engine.pipeline.types import (
     WorkUnit,
 )
 from dex_engine.pipeline.urls import base_canonical
+
+
+@pytest.fixture
+def own_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """A git runner for repositories under ``tmp_path``, with nothing of the machine's.
+
+    The maintainer's own config and any repository around the tmp tree are
+    kept out, so what a test sees is what it built.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+    config = tmp_path / "gitconfig"
+    config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+    def git(root: Path, *args: str) -> None:
+        subprocess.run(  # noqa: S603 — test-built args, no shell
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.test", *args],  # noqa: S607 — PATH resolution is the dependency contract
+            check=True,
+            capture_output=True,
+        )
+
+    return git
 
 
 @pytest.fixture

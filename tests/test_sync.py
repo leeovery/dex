@@ -518,7 +518,7 @@ class TestLensInTheReport:
         assert self.lens_line(inst, template) == (
             "**Lens** — `lens.md` is missing: every judgment in a run reads through the lens, "
             "so the owner fills in `lens.md` with what this instance reads for, and a session "
-            "writes it only when the owner asks"
+            "writes it only when the owner asks or a directive's instructions name it"
         )
 
     def test_an_unfilled_lens_names_the_placeholders_left(self, inst, template):

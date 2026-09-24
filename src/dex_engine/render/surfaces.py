@@ -932,10 +932,11 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
 
 
 # The lens check's repair, carried by both surfaces that show its finding:
-# the lens is the owner's statement, so a session writes it only on their word.
+# the lens is the owner's statement, so a session writes it only on their
+# word or on a directive's, the engine's own decision.
 _LENS_REPAIR = (
     "the owner fills in `lens.md` with what this instance reads for, and a session "
-    "writes it only when the owner asks"
+    "writes it only when the owner asks or a directive's instructions name it"
 )
 
 # ---------------------------------------------------------------------------

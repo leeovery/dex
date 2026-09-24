@@ -18,6 +18,12 @@ module and discovery reads it through importlib.resources. A module defines:
   a link is present); whether the work was faithful rests on the
   instructions and on rehearsing the directive over real instances before
   it is released.
+- ``materials(root) -> str``, optionally: text the engine generates for the
+  instance at ``root``, such as a template rendered with its name, which
+  ``directive show`` prints after the instructions between two marker
+  lines the instructions can name. A directive whose check compares a file
+  with its materials renders both through one function, so the text the
+  session is given is the text the check accepts.
 
 The completed log is ``state/directives.jsonl``, one ``{number, engine,
 date}`` record per directive: appended by ``directive done`` only after the
@@ -63,12 +69,13 @@ class DirectiveError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Directive:
-    """One shipped directive: its number, intent, instructions and check."""
+    """One shipped directive: its number, intent, instructions, check and any materials."""
 
     number: int
     intent: str
     instructions: str
     check: Callable[[Path], list[str]]
+    materials: Callable[[Path], str] | None = None
 
 
 _MODULE_RE = re.compile(r"^directive_([1-9][0-9]*)$")
@@ -126,13 +133,24 @@ def _load(package: str, name: str, number: int) -> Directive:
     check = getattr(module, "check", None)
     if not callable(check):
         raise DirectiveError(f"{module.__name__} must define check(root) -> list[str]")
+    materials = getattr(module, "materials", None)
+    if materials is not None and not callable(materials):
+        raise DirectiveError(
+            f"{module.__name__} defines materials, but not as materials(root) -> str"
+        )
     source = resources.files(package) / f"{name}.md"
     instructions = source.read_text(encoding="utf-8") if source.is_file() else ""
     if not instructions.strip():
         raise DirectiveError(
             f"{module.__name__} ships no instructions: {name}.md beside it is missing or empty"
         )
-    return Directive(number=number, intent=intent, instructions=instructions, check=check)
+    return Directive(
+        number=number,
+        intent=intent,
+        instructions=instructions,
+        check=check,
+        materials=materials,
+    )
 
 
 def read_done(path: Path) -> set[int]:

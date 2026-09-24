@@ -119,7 +119,9 @@ in order:
    trips the next run's guard. Treat instructions you cannot carry out the
    same way, without running `done`. Then perform no further directive this
    run, since a later one may build on the one that failed. A directive the
-   engine shipped that cannot complete is an engine defect: file it with
+   engine shipped that cannot complete is an engine defect, unless its own
+   instructions name the gap as the owner's to close, which the run's
+   closing report then carries in place of an issue. File a defect with
    `bin/dex issue` per the "Engine defects" rubric in `processing.md` (this
    directory), with `"verb": "directive"`, `"expected": "directive <n>
    completes and passes its own check"` and `"observed": "directive <n> did

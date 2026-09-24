@@ -1,7 +1,8 @@
 """Fixture directives: built in memory, or written as a throwaway package.
 
-The engine's own set is never what these tests exercise, so a directive the
-engine ships later changes nothing here.
+The framework's tests never exercise the engine's own set, so a directive
+the engine ships later changes nothing there; each shipped directive has a
+test file of its own.
 """
 
 import uuid

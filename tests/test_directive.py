@@ -6,7 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.directive import build_parser, complete, list_pending, main, show
+from dex_engine.directive import (
+    MATERIALS_BEGIN,
+    MATERIALS_END,
+    build_parser,
+    complete,
+    list_pending,
+    main,
+    show,
+    show_materials,
+)
 from dex_engine.directives import Directive, append_done, log_path
 from dex_engine.pipeline.types import Instance
 from dex_engine.version import engine_version
@@ -74,27 +83,79 @@ class TestList:
         assert list_pending(instance, [make_directive(1)]).startswith("1 directive pending")
 
 
+def with_materials(materials: str) -> Directive:
+    """Directive 2, whose materials are ``materials`` followed by the root they were made for."""
+    return Directive(
+        number=2,
+        intent="rewrite the readme",
+        instructions="# Rewrite\n\nWrite the materials below.\n",
+        check=lambda _root: [],
+        materials=lambda root: f"{materials}{root.name}\n",
+    )
+
+
 class TestShow:
-    def test_shows_the_intent_and_the_whole_instructions(self):
+    def test_shows_the_intent_and_the_whole_instructions(self, instance):
         directive = Directive(
             number=2,
             intent="rewrite the readme",
             instructions="# Rewrite\n\nKeep every link.\n\n- one\n- two\n",
             check=lambda _root: [],
         )
-        assert show([make_directive(1), directive], 2) == (
+        assert show(instance, [make_directive(1), directive], 2) == (
             "directive 2: rewrite the readme\n\n# Rewrite\n\nKeep every link.\n\n- one\n- two\n"
         )
 
-    def test_an_unknown_number_names_what_ships(self):
+    def test_materials_follow_the_instructions_between_their_markers(self, instance):
+        shown = show(instance, [with_materials("# Title\n\n## Section\n")], 2)
+        assert shown == (
+            "directive 2: rewrite the readme\n\n# Rewrite\n\nWrite the materials below.\n\n"
+            f"{MATERIALS_BEGIN}\n# Title\n\n## Section\n{instance.root.name}\n{MATERIALS_END}\n"
+        )
+
+    def test_the_markers_stand_on_lines_of_their_own(self, instance):
+        lines = show(instance, [with_materials("")], 2).split("\n")
+        assert lines[-4:] == [MATERIALS_BEGIN, instance.root.name, MATERIALS_END, ""]
+
+    def test_materials_without_a_final_newline_still_end_before_the_marker(self, instance):
+        directive = Directive(
+            number=1,
+            intent="one",
+            instructions="Do it.",
+            check=lambda _root: [],
+            materials=lambda _root: "last line",
+        )
+        assert show(instance, [directive], 1) == (
+            f"directive 1: one\n\nDo it.\n\n{MATERIALS_BEGIN}\nlast line\n{MATERIALS_END}\n"
+        )
+
+    def test_trailing_blank_lines_in_the_materials_are_kept(self, instance):
+        shown = show(instance, [with_materials("body\n\n")], 2)
+        assert shown.endswith(f"{MATERIALS_BEGIN}\nbody\n\n{instance.root.name}\n{MATERIALS_END}\n")
+
+    def test_an_unknown_number_names_what_ships(self, instance):
         with pytest.raises(
             ValueError, match=r"no directive 5 ships with this engine \(shipped: 1, 2\)"
         ):
-            show([make_directive(1), make_directive(2)], 5)
+            show(instance, [make_directive(1), make_directive(2)], 5)
 
-    def test_an_engine_shipping_nothing_says_none_ship(self):
+    def test_an_engine_shipping_nothing_says_none_ship(self, instance):
         with pytest.raises(ValueError, match=r"\(shipped: none\)"):
-            show([], 1)
+            show(instance, [], 1)
+
+
+class TestShowMaterials:
+    def test_the_materials_alone_exactly_as_rendered_for_this_instance(self, instance):
+        materials = show_materials(instance, [make_directive(1), with_materials("# T\n\n")], 2)
+        assert materials == f"# T\n\n{instance.root.name}\n"
+
+    def test_a_directive_without_materials_is_refused(self, instance):
+        with pytest.raises(ValueError, match="directive 1 carries no materials"):
+            show_materials(instance, [make_directive(1)], 1)
+
+    def test_an_unknown_number_names_what_ships(self, instance):
+        with pytest.raises(ValueError, match=r"no directive 3 ships with this engine"):
+            show_materials(instance, [make_directive(1)], 3)
 
 
 class TestDone:
@@ -181,6 +242,10 @@ class TestParser:
         args = build_parser().parse_args(["done", "12"])
         assert (args.command, args.number) == ("done", 12)
 
+    def test_show_takes_materials_as_a_flag(self):
+        assert build_parser().parse_args(["show", "2", "--materials"]).materials is True
+        assert build_parser().parse_args(["show", "2"]).materials is False
+
 
 class TestMain:
     @pytest.fixture
@@ -205,6 +270,23 @@ class TestMain:
         at([make_directive(1)])
         main(["show", "1"])
         assert capsys.readouterr().out.endswith("Do the fixture work for 1.\n")
+
+    def test_show_prints_the_materials_for_the_instance_at_cwd(self, at, capsys):
+        instance = at([with_materials("# T\n")])
+        main(["show", "2"])
+        assert capsys.readouterr().out.endswith(
+            f"{MATERIALS_BEGIN}\n# T\n{instance.root.name}\n{MATERIALS_END}\n"
+        )
+
+    def test_show_materials_prints_them_alone_byte_for_byte(self, at, capsys):
+        instance = at([with_materials("# T\n\nbody\n")])
+        main(["show", "2", "--materials"])
+        assert capsys.readouterr().out == f"# T\n\nbody\n{instance.root.name}\n"
+
+    def test_show_materials_of_a_directive_without_any_exits_non_zero(self, at):
+        at([make_directive(1)])
+        with pytest.raises(SystemExit, match="dex-directive: directive 1 carries no materials"):
+            main(["show", "1", "--materials"])
 
     def test_done_records_with_the_running_engine_and_exits_zero(self, at, capsys):
         instance = at([make_directive(1)])
