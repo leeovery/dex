@@ -379,8 +379,9 @@ class TestEnrichReport:
             ],
         }
         shortfall = (
-            "  ↳ 1 of 3 media files described — view the rest and write "
-            "`enrichment/2026-08-19-photo-abc123/media-<n>.md`"
+            "  ↳ 1 of 3 media files described — view the rest and write each description "
+            "through `bin/dex enrich item describe 2026-08-19-photo-abc123 --of <file> "
+            "--file cache/description.md`"
         )
         out = render("enrich-report", payload)
         lines = out.splitlines()

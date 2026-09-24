@@ -409,9 +409,10 @@ def _undescribed_media(surface: str, payload: Mapping[str, object]) -> str:
                 f"{where}described ({described}) is not short of binaries ({binaries}) — "
                 "only an item still owing a description belongs here",
             )
+        describe = f"bin/dex enrich item describe {item} --of <file> --file cache/description.md"
         shortfall = (
             f"{described} of {kernel.plural(binaries, 'media file')} described — view the "
-            f"rest and write {kernel.code(f'enrichment/{item}/media-<n>.md')}"
+            f"rest and write each description through {kernel.code(describe)}"
         )
         rows.append((item, shortfall))
     if not rows:
