@@ -55,7 +55,8 @@ that README: the exact text `README.md` must hold.
 
    Name each part by its heading, or by its first few words in quotes when
    it has none. The scope list's reason is that `lens.md` states what the
-   instance reads for now; for anything else, say what it was. When there
+   instance reads for now, or, when the instance has no `lens.md`, that it
+   reads as a general knowledge dex; for anything else, say what it was. When there
    was no old README, or it already matched the materials, the whole body
    is one line saying so.
 
