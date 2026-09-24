@@ -67,9 +67,10 @@ the engine stays unaware of which ones exist.
     older than the engine it just synced still does it right. A directive
     always completes unattended and never waits on the owner. Directive 1
     rehomes an owner-written CLAUDE.md, which its code finds in git
-    history and prints in its materials (scope into `lens.md`, Discord
-    facts into config; with no stated scope to carry, it writes no
-    `lens.md`, and the instance is a general knowledge dex). Its
+    history and prints in its materials beside the server and channel
+    ids read from the head of each Discord export (scope into `lens.md`,
+    Discord facts into config; with no stated scope to carry, it writes
+    no `lens.md`, and the instance is a general knowledge dex). Its
     instructions claim authority over config in their own text, because
     the first run after the release still holds the previous release's
     instructions, which forbid editing config unattended. Directive 2

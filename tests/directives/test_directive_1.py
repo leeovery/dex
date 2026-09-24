@@ -1,6 +1,7 @@
 """Tests for directive 1: the owner's CLAUDE.md, rehomed into lens.md and config."""
 
 import json
+import re
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,15 +12,21 @@ from dex_engine import seeds
 from dex_engine.directive import MATERIALS_BEGIN, MATERIALS_END
 from dex_engine.directives import directive_1, discover
 from dex_engine.directives.directive_1 import (
+    DISCORD_BEGIN,
+    DISCORD_END,
     ENGINE_OWNED,
+    EXPORT_HEAD_LIMIT,
+    NO_EXPORTS,
     NO_OWNER,
     NO_SCOPE,
     OWNER_BEGIN,
     OWNER_END,
     SEED_BEGIN,
     SEED_END,
+    DiscordExport,
     OwnerClaude,
     check,
+    discord_exports,
     materials,
     owner_claude,
     render,
@@ -73,6 +80,8 @@ Home Cooking Knowledge Base
 
 DISCORD = {"guild": "1000", "channels": {"general": "2000"}}
 
+NO_IDS = "no guild.id and channel.id as strings of digits ahead of its messages"
+
 # Every history with no stated scope to carry: none of the owner's, or the
 # owner's still the unfilled pre-lens template, however many engine copies
 # stand in front of it.
@@ -96,6 +105,45 @@ def write(root: Path, rel: str, text: str) -> None:
 
 def config(root: Path, value: object) -> None:
     write(root, "state/config.json", json.dumps(value))
+
+
+def export_text(guild: object = "1000", channel: object = "2000", *, preamble: int = 0) -> str:
+    """An export as DiscordChatExporter writes one, behind ``preamble`` characters of padding.
+
+    The padding is a top-level member ahead of the guild, so the ids sit
+    that much further in.
+    """
+    head = {"preamble": "x" * preamble} if preamble else {}
+    return json.dumps(
+        {
+            **head,
+            "guild": {"id": guild, "name": "a server", "iconUrl": "messages.json_Files/icon.png"},
+            "channel": {"id": channel, "type": "GuildTextChat", "name": "general", "topic": None},
+            "exportedAt": "2026-09-01T00:00:00+00:00",
+            "messages": [{"id": "3000", "type": "Default", "content": "never read"}],
+        },
+        indent=2,
+    )
+
+
+def ids_end(preamble: int) -> int:
+    """How many characters of :func:`export_text` run up to the channel object's close."""
+    text = export_text(preamble=preamble)
+    return text.index("}", text.index('"channel"')) + 1
+
+
+def preamble_ending_ids_at(end: int) -> int:
+    """The preamble that closes the channel object at character ``end`` of the export."""
+    return end - ids_end(1) + 1
+
+
+def put_export(root: Path, name: str, content: str | bytes) -> None:
+    path = root / "raw" / "discord" / name / "messages.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        path.write_text(content, encoding="utf-8")
 
 
 class ScriptedGit:
@@ -260,6 +308,177 @@ class TestStatesScope:
         assert states_scope(owner_of("## In scope\n\n- recipes, not <topic> pages\n"))
 
 
+class TestDiscordExports:
+    def test_one_export_gives_its_directory_and_ids(self, root):
+        put_export(root, "general", export_text())
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+    def test_several_exports_are_listed_by_directory_name(self, root):
+        put_export(root, "zeta", export_text("1000", "2003"))
+        put_export(root, "alpha", export_text("1000", "2001"))
+        put_export(root, "mid", export_text("1001", "2002"))
+        assert discord_exports(root) == [
+            DiscordExport(name="alpha", guild="1000", channel="2001"),
+            DiscordExport(name="mid", guild="1001", channel="2002"),
+            DiscordExport(name="zeta", guild="1000", channel="2003"),
+        ]
+
+    def test_no_raw_discord_directory_is_no_exports(self, root):
+        assert discord_exports(root) == []
+
+    def test_an_empty_raw_discord_directory_is_no_exports(self, root):
+        (root / "raw" / "discord").mkdir(parents=True)
+        assert discord_exports(root) == []
+
+    def test_a_file_beside_the_exports_is_not_one(self, root):
+        put_export(root, "general", export_text())
+        (root / "raw" / "discord" / ".DS_Store").write_bytes(b"\x00")
+        assert [export.name for export in discord_exports(root)] == ["general"]
+
+    def test_a_raw_discord_that_is_a_file_is_no_exports(self, root):
+        (root / "raw").mkdir()
+        (root / "raw" / "discord").write_text("", encoding="utf-8")
+        assert discord_exports(root) == []
+
+    def test_a_directory_with_no_messages_json_is_unreadable(self, root):
+        (root / "raw" / "discord" / "general" / "messages.json_Files").mkdir(parents=True)
+        assert discord_exports(root) == [
+            DiscordExport(name="general", unreadable="no messages.json")
+        ]
+
+    def test_a_messages_json_that_cannot_be_read_is_unreadable(self, root):
+        (root / "raw" / "discord" / "general" / "messages.json").mkdir(parents=True)
+        assert discord_exports(root) == [
+            DiscordExport(name="general", unreadable="IsADirectoryError")
+        ]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "not json",
+            "[]",
+            '{"guild": {"id": "1000"',
+            '{"guild" {"id": "1000"}, "channel": {"id": "2000"}}',
+            '{"guild": {"id": "1000"} "channel": {"id": "2000"}}',
+            '{"guild": {"id": "1000"}; "channel": {"id": "2000"}}',
+            '{[1]: 2, "guild": {"id": "1000"}, "channel": {"id": "2000"}}',
+        ],
+        ids=[
+            "empty",
+            "not-json",
+            "array",
+            "truncated",
+            "no-colon",
+            "no-comma",
+            "wrong-separator",
+            "key-not-a-string",
+        ],
+    )
+    def test_malformed_json_is_unreadable(self, root, text):
+        put_export(root, "general", text)
+        assert discord_exports(root) == [
+            DiscordExport(name="general", unreadable="JSONDecodeError")
+        ]
+
+    def test_a_head_that_is_not_utf8_is_unreadable(self, root):
+        put_export(root, "general", b'{"guild": {"id": "1000", "name": "\xff"}}')
+        assert discord_exports(root) == [
+            DiscordExport(name="general", unreadable="UnicodeDecodeError")
+        ]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "{}",
+            " { } ",
+            '{"guild": {"id": "1000"}}',
+            '{"channel": {"id": "2000"}}',
+            '{"guild": {"id": "1000"}, "messages": [], "channel": {"id": "2000"}}',
+            export_text(1000, "2000"),
+            export_text("1000", 2000),
+            export_text("", "2000"),
+            export_text("1000", "2000x"),
+            export_text("1000", "٢٠٠٠"),
+            '{"guild": "1000", "channel": {"id": "2000"}}',
+            '{"guild": {"id": "1000"}, "channel": ["2000"]}',
+        ],
+        ids=[
+            "empty-object",
+            "spaced-empty-object",
+            "no-channel",
+            "no-guild",
+            "channel-after-messages",
+            "numeric-guild-id",
+            "numeric-channel-id",
+            "empty-guild-id",
+            "non-digit-channel-id",
+            "non-ascii-digits",
+            "guild-not-an-object",
+            "channel-not-an-object",
+        ],
+    )
+    def test_a_head_without_both_ids_as_digit_strings_is_unreadable(self, root, text):
+        put_export(root, "general", text)
+        assert discord_exports(root) == [DiscordExport(name="general", unreadable=NO_IDS)]
+
+    def test_members_in_any_order_and_any_spacing_are_read(self, root):
+        put_export(
+            root,
+            "general",
+            '\n\t{"exportedAt":"2026","channel":{"id":"2000"} ,\r\n"guild" : {"id" : "1000"},'
+            '"messages":[]}',
+        )
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+    def test_an_export_cut_off_right_after_its_channel_still_gives_its_ids(self, root):
+        put_export(root, "general", '{"guild": {"id": "1000"}, "channel": {"id": "2000"}')
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+    def test_ids_after_a_large_preamble_are_read(self, root):
+        # Far past `head -c 2000`, and past the first chunk the read takes.
+        put_export(root, "general", export_text(preamble=100_000))
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+    def test_ids_that_end_at_the_limit_are_read(self, root):
+        preamble = preamble_ending_ids_at(EXPORT_HEAD_LIMIT)
+        assert ids_end(preamble) == EXPORT_HEAD_LIMIT
+        put_export(root, "general", export_text(preamble=preamble))
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+    def test_ids_that_end_one_character_past_the_limit_are_unreadable(self, root):
+        preamble = preamble_ending_ids_at(EXPORT_HEAD_LIMIT + 1)
+        assert ids_end(preamble) == EXPORT_HEAD_LIMIT + 1
+        put_export(root, "general", export_text(preamble=preamble))
+        assert discord_exports(root) == [
+            DiscordExport(name="general", unreadable="JSONDecodeError")
+        ]
+
+    def test_the_messages_behind_the_ids_are_never_read(self, root):
+        # Bytes no UTF-8 read survives, a limit's length into the messages:
+        # any read that reached them would list the export as unreadable.
+        head, _ = export_text().split('"messages"')
+        filler = "y" * EXPORT_HEAD_LIMIT
+        put_export(
+            root,
+            "general",
+            f'{head}"messages": [{{"content": "{filler}'.encode() + b'\xff"}]}',
+        )
+        assert discord_exports(root) == [
+            DiscordExport(name="general", guild="1000", channel="2000")
+        ]
+
+
 class TestRender:
     def seed(self, root: Path) -> str:
         return seeds.lens(TEMPLATE, root.name)
@@ -268,7 +487,7 @@ class TestRender:
         text = render(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)]))
         assert text == (
             f"{OWNER_BEGIN.format(commit='o1')}\n{OWNER}{OWNER_END}\n\n"
-            f"{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n"
+            f"{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n\n{NO_EXPORTS}\n"
         )
 
     def test_a_version_stating_no_scope_says_so_and_carries_no_seed(self, root):
@@ -276,11 +495,37 @@ class TestRender:
         # layout a scope is written into has no use.
         text = render(root, TEMPLATE, git=ScriptedGit([("t1", OLD_TEMPLATE)]))
         assert text == (
-            f"{OWNER_BEGIN.format(commit='t1')}\n{OLD_TEMPLATE}{OWNER_END}\n\n{NO_SCOPE}\n"
+            f"{OWNER_BEGIN.format(commit='t1')}\n{OLD_TEMPLATE}{OWNER_END}\n\n{NO_SCOPE}\n\n"
+            f"{NO_EXPORTS}\n"
         )
 
     def test_no_owner_s_version_is_said_in_its_place_with_no_seed(self, root):
-        assert render(root, TEMPLATE, git=ScriptedGit([])) == f"{NO_OWNER}\n"
+        assert render(root, TEMPLATE, git=ScriptedGit([])) == f"{NO_OWNER}\n\n{NO_EXPORTS}\n"
+
+    def test_the_exports_follow_the_seed_lens_between_their_delimiters(self, root):
+        put_export(root, "general", export_text())
+        put_export(root, "links", export_text("1000", "2001"))
+        (root / "raw" / "discord" / "broken").mkdir()
+        text = render(root, TEMPLATE, git=ScriptedGit([("o1", OWNER)]))
+        assert text == (
+            f"{OWNER_BEGIN.format(commit='o1')}\n{OWNER}{OWNER_END}\n\n"
+            f"{SEED_BEGIN}\n{self.seed(root)}{SEED_END}\n\n"
+            f"{DISCORD_BEGIN}\n"
+            "- broken: unreadable (no messages.json)\n"
+            "- general: guild.id 1000, channel.id 2000\n"
+            "- links: guild.id 1000, channel.id 2001\n"
+            f"{DISCORD_END}\n"
+        )
+
+    @NO_SCOPE_HISTORIES
+    def test_the_exports_are_listed_with_no_scope_to_carry(self, root, history):
+        # An owner's CLAUDE.md with no scope may still name Discord facts,
+        # and with none at all the list costs nothing.
+        put_export(root, "general", export_text())
+        text = render(root, TEMPLATE, git=ScriptedGit(history))
+        assert text.endswith(
+            f"\n\n{DISCORD_BEGIN}\n- general: guild.id 1000, channel.id 2000\n{DISCORD_END}\n"
+        )
 
     def test_an_owner_s_version_without_a_final_newline_still_closes_on_its_own_line(self, root):
         text = render(root, TEMPLATE, git=ScriptedGit([("o1", OWNER.rstrip("\n"))]))
@@ -296,7 +541,7 @@ class TestRender:
         owner = f"# dex-cooking\n\n- {tail}"
         text = render(root, template, git=ScriptedGit([("o1", owner)]))
         assert f"- {tail}{OWNER_END}\n" in text
-        assert text.endswith(f"\n{tail}{SEED_END}\n")
+        assert text.endswith(f"\n{tail}{SEED_END}\n\n{NO_EXPORTS}\n")
 
 
 class TestUnmet:
@@ -424,8 +669,13 @@ class TestShipped:
         assert "`===== materials`" in instructions
         assert f"`{MATERIALS_END}`" in instructions
         assert f"`{OWNER_BEGIN.format(commit='<hash>')}`" in instructions
-        for delimiter in (OWNER_END, SEED_BEGIN, SEED_END):
+        for delimiter in (OWNER_END, SEED_BEGIN, SEED_END, DISCORD_BEGIN, DISCORD_END):
             assert f"`{delimiter}`" in instructions
+
+    def test_its_instructions_leave_the_exports_to_the_materials(self):
+        # Reading an export by hand prints its messages into the transcript
+        # and leaves the ids to be parsed out of them.
+        assert re.search(r"\bhead\b", directive_1_instructions()) is None
 
     def test_the_engine_s_claude_md_carries_the_mark_the_finder_passes_over(self):
         assert ENGINE_OWNED in " ".join(ENGINE_CLAUDE_MD.split())
@@ -456,3 +706,12 @@ class TestTheShippedFunctions:
         assert SEED_BEGIN not in materials(root)
         assert not (root / "lens.md").exists()
         assert check(root) == []
+
+    def test_materials_list_the_instance_s_own_exports(self, history):
+        history.commit(OWNER, "personalise")
+        root = history.root
+        assert materials(root).endswith(f"\n\n{NO_EXPORTS}\n")
+        put_export(root, "general", export_text())
+        assert materials(root).endswith(
+            f"\n\n{DISCORD_BEGIN}\n- general: guild.id 1000, channel.id 2000\n{DISCORD_END}\n"
+        )

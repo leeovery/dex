@@ -15,15 +15,16 @@ completes, including on an instance that has no scope to carry.
 This directive edits `lens.md` and `state/config.json` and nothing else. It
 is the engine's decision and runs unattended, with full authority over both
 files, `state/config.json` included, whatever instructions you hold from an
-earlier release say about editing config in an unattended run. It reads the
-exports under `raw/discord/`. Never edit CLAUDE.md, which sync owns, or
-README.md, which directive 2 rewrites.
+earlier release say about editing config in an unattended run. Never edit
+CLAUDE.md, which sync owns, or README.md, which directive 2 rewrites. The
+engine reads the Discord exports under `raw/discord/` for you and lists
+their ids in the materials.
 
 ## 1. Read the owner's CLAUDE.md from the materials
 
 The materials are printed after these instructions, between the
 `===== materials` line and the `===== end of materials =====` line. They
-hold up to two things, each between delimiter lines of its own:
+hold up to three things, each between delimiter lines of its own:
 
 - The owner's CLAUDE.md, the newest committed version that is not an
   engine copy, between the
@@ -34,6 +35,13 @@ hold up to two things, each between delimiter lines of its own:
 - When the owner's CLAUDE.md states a scope, the seed lens rendered for
   this instance, between the `----- the seed lens for this instance -----`
   line and the `----- end of the seed lens -----` line.
+- The Discord exports, between the
+  `----- the Discord exports under raw/discord/ -----` line and the
+  `----- end of the Discord exports -----` line: one line for each
+  directory under `raw/discord/`, giving its name and the `guild.id` and
+  `channel.id` the exporter wrote at the top of its `messages.json`, or
+  saying the export is unreadable and why. When there are no exports, a
+  line saying so stands in their place. Step 4 works from this list.
 
 There is no stated scope to carry when the materials say that no committed
 version is the owner's, or that the owner's CLAUDE.md states no scope
@@ -157,15 +165,14 @@ key when it does not exist:
 ```
 
 Every id is a string of digits in quotes, never a bare number. Work out the
-values like this:
+values from the Discord exports in the materials, which hold every id the
+exports carry, and never open an export yourself:
 
 - **Each channel's name is the directory its export lands in**, because
   normalize derives item ids from `raw/discord/<name>/`, and a channel
   whose name changes has every conversation in it filed again as a new
-  item. List `raw/discord/` and read the ids at the top of each export,
-  where the exporter writes the server and the channel before any message:
-  `head -c 2000 raw/discord/<name>/messages.json` shows `guild.id` and
-  `channel.id`.
+  item. Each line of the Discord exports in the materials names one such
+  directory, with the `guild.id` and `channel.id` its export carries.
 - **A channel the owner's CLAUDE.md names that has an export** is the
   directory whose `channel.id` matches the id it gives, or, when it gives
   no id, the directory it names. The channel's name is exactly that
@@ -177,6 +184,12 @@ values like this:
   the channel out and name it in the commit message.
 - **An export it does not name** stays out of config. Name the export's
   directory in the commit message, so the owner can add it.
+- **An export the materials list as unreadable** has no ids to go by, so a
+  channel the owner's CLAUDE.md names matches it by the directory's name
+  alone. That channel takes the directory's name and the id the owner's
+  CLAUDE.md gives, and is left out when it gives none. Either way, name
+  the export in the commit message as unreadable, with the reason the
+  materials give.
 - **The server id** is the one it gives. When the exports' `guild.id`
   differs, the exports win, and the commit message says so; when it gives
   none, the server id is the exports' `guild.id`. When it names more than
