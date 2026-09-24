@@ -2,8 +2,10 @@
 
 Until this engine release, an instance's README mirrored its scope list.
 What the instance reads for now lives in `lens.md`, which directive 1
-wrote, and the engine's README template links to that file in place of the
-list. This directive replaces `README.md` once with the template rendered
+wrote from the owner's stated scope, and the engine's README template
+links to that file in place of the list. An instance that stated no scope
+has no `lens.md` and reads as a general knowledge dex, and its README is
+rewritten from the same template all the same. This directive replaces `README.md` once with the template rendered
 for this instance: named for the instance's directory, and with the
 repository in its "Run it on another machine" prompt taken from the
 `origin` remote. An instance with no origin on GitHub has no repository a
