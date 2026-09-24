@@ -102,22 +102,36 @@ for, and it is the one file in an instance that is neither knowledge nor
 machinery. You change it by asking a session; sync never overwrites it, and
 an unattended run never edits it except through a directive.
 
+The lens is free-form, because Claude is its only reader and reads
+sentences, lists and examples equally well; an example is often the clearest way to
+state taste ("a site like this, for its type pairing, not its products").
+Nothing in the engine parses it, and it is read as one coherent statement,
+never section by section. The seed offers headings as prompts, which you may
+write under in any form, rename or delete:
+
 ```markdown
-# <instance name>: <what it reads for, in a phrase>
+# <instance name>
 
 ## Reads for
-- the angles this instance takes on whatever is shared into it
+<what this instance takes from whatever is shared into it>
 
-## Emphasise        (optional)
-## Set aside        (optional)
+## Emphasise
+<what to look at hardest>
+
+## Set aside
+<what to ignore, even when it is the subject>
 ```
 
-`Reads for` is required, while `Emphasise` and `Set aside` are optional
-guidance on how to read: a design lens might emphasise layout, typography, colour and
-interaction and set aside the subject matter. Lint checks that the file
-exists with a non-empty `Reads for`, and fails when it does not, because
-every judgment in a run depends on the lens; the sync report carries the
-same finding so a missing lens is visible before any work starts.
+A design lens, for example, might read for how things are made to look and
+work, emphasise layout, typography, colour and interaction, and set aside
+the subject matter entirely.
+
+The contract says all of this to every session: the lens is free-form, owned
+by you, and read whole. Lint fails when `lens.md` is missing or empty, and
+when it still holds the seed's placeholder text, because every judgment in a
+run depends on the lens and a blank one fails silently. The sync report
+carries the same finding, so a missing or unfilled lens is visible before
+any work starts.
 
 ## CLAUDE.md becomes engine-owned
 
@@ -173,15 +187,16 @@ from history.
 **Directive 1: rehome the owner's CLAUDE.md.** It reads CLAUDE.md as it
 stood in the commit before sync replaced it, and gives every section a home:
 
-- the scope section, whatever its heading, becomes `lens.md`, its bullets
-  carried over word for word under `Reads for`, with any prose about how to
-  read kept under `Emphasise` or `Set aside` where it fits;
+- the scope section, whatever its heading, becomes `lens.md`, carried over
+  word for word and laid out under the seed's suggested headings, with any
+  prose about how to read kept under `Emphasise` or `Set aside` where it
+  fits;
 - per-instance Discord facts become the `discord` config key;
 - anything with no home is removed, and the commit message names each
   removed section so history keeps it.
 
-Its check: `lens.md` exists with a non-empty `Reads for`, and
-`state/config.json` parses.
+Its check: `lens.md` exists and is not empty, and `state/config.json`
+parses.
 
 **Directive 2: rewrite the README from the template.** It fills the
 instance name from the directory and the repo from the `origin` remote,
@@ -201,14 +216,16 @@ scope section.
 - `docs/start.md` asks what the dex should read for in place of what it
   covers, writes the answer into `lens.md`, and drops the step that
   personalises CLAUDE.md.
-- `instance/dex-contract.md` gains the lens semantics.
+- `instance/dex-contract.md` gains the lens semantics, including that the
+  lens is free-form, owner-owned and read as a whole.
 - `ingest-item.md` loses its door check (§1), gains the lens verdict after
   harvest, and reads the lens in harvest, digest, place and wiki (§5 to §8).
 - `processing.md` creates an item for every capture, and `dex-run/SKILL.md`
   loses the rule that unattended runs skip borderline scope calls, while
   its closing report names dropped items.
 - `dex-lint`'s judgment sweep replaces "scope creep" with pages drifting off
-  the lens, and lint checks `lens.md`.
+  the lens, and lint checks that `lens.md` exists, is not empty and no
+  longer holds the seed's placeholder text.
 - `exclude.py`'s default reason and the exclude section of `state-formats.md`
   speak in lens terms.
 - `serve/steering.py` describes each instance from `lens.md` in place of
