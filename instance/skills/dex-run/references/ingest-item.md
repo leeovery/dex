@@ -296,11 +296,12 @@ grows topics like typography and landing-page layout, where a marketing
 instance files them under social proof and sales copy.
 
 Create a new topic only once several items justify a page; the
-several-items rule governs page creation, never taxonomy existence. When
-you do create one, sweep the existing digests (`state/digests/`) for
-items that belong to it — including `uncategorized-shares` — and move
-them in with `place` plus `unplace` in the one payload: a new topic
-usually reveals items that were previously overlooked or coarsely filed.
+several-items rule governs page creation, never whether
+`state/taxonomy.json` exists. When you do create one, sweep the existing
+digests (`state/digests/`) for items that belong to it — including
+`uncategorized-shares` — and move them in with `place` plus `unplace` in
+the one payload: a new topic usually reveals items that were previously
+overlooked or coarsely filed.
 Full payload shape — definitions, moves, drops, and what the verb
 refuses — in `state-formats.md` (this directory).
 
