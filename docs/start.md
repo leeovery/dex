@@ -105,7 +105,15 @@ and engine-owned, so it is never personalised. Then:
 - Write the lens: the owner's answer to question 2 goes into `lens.md` in
   place of the seed's placeholder lines. Keep, rename or drop the seed's
   headings as the answer suits, and keep the owner's own words. For a
-  general knowledge dex, delete the seeded `lens.md` instead.
+  general knowledge dex, delete the seeded `lens.md` instead, and in
+  README.md replace the two lines that begin
+  `What this dex reads for is its lens:` with these two, exactly, so the
+  README links no file that is not there:
+
+  ```
+  This dex has no lens, so it is a general knowledge dex that reads anything
+  shared into it. Ask Claude to give it one whenever you like.
+  ```
 - Fill the `<owner>/<repo>` placeholder in README.md's "Run it on another
   machine" prompt. That prompt is what a second machine or a second person
   pastes, so it has to name the real repo. If GitHub was declined, delete

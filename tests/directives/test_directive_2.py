@@ -37,6 +37,10 @@ def readme(root: Path, text: str) -> None:
     (root / "README.md").write_text(text, encoding="utf-8")
 
 
+def lens(root: Path) -> None:
+    (root / "lens.md").write_text("# dex-cooking\n\nWeeknight recipes.\n", encoding="utf-8")
+
+
 class TestUnmet:
     def test_the_rendered_readme_meets_the_condition(self, root):
         readme(root, rendered(root))
@@ -85,6 +89,33 @@ class TestUnmet:
         assert unmet(root, TEMPLATE, origin=origin_of(SSH)) == [NOT_THE_TEMPLATE]
 
 
+class TestTheLensLine:
+    """The README links lens.md when the instance has one, and names a general dex when not."""
+
+    def test_with_a_lens_the_readme_links_it_and_meets_the_condition(self, root):
+        lens(root)
+        readme(root, rendered(root))
+        assert seeds.LENS_LINE in rendered(root)
+        assert unmet(root, TEMPLATE, origin=origin_of(SSH)) == []
+
+    def test_with_no_lens_the_readme_is_a_general_dex_s_and_meets_the_condition(self, root):
+        readme(root, rendered(root))
+        assert seeds.GENERAL_LINE in rendered(root)
+        assert "(./lens.md)" not in rendered(root)
+        assert unmet(root, TEMPLATE, origin=origin_of(SSH)) == []
+
+    def test_with_no_lens_a_readme_linking_one_is_unmet(self, root):
+        # The dead link: the README dex-new writes, never right without a lens.
+        linked = rendered(root).replace(seeds.GENERAL_LINE, seeds.LENS_LINE)
+        readme(root, linked)
+        assert unmet(root, TEMPLATE, origin=origin_of(SSH)) == [NOT_THE_TEMPLATE]
+
+    def test_with_a_lens_the_general_dex_readme_is_unmet(self, root):
+        readme(root, rendered(root))
+        lens(root)
+        assert unmet(root, TEMPLATE, origin=origin_of(SSH)) == [NOT_THE_TEMPLATE]
+
+
 class TestShipped:
     def directive(self):
         [shipped] = [directive for directive in discover() if directive.number == 2]
@@ -112,6 +143,19 @@ class TestTheShippedFunctions:
         # The wheel bundles instance/ as dex_engine/instance; a source
         # checkout has it at the repo root.
         monkeypatch.setattr(directive_2, "bundled_template", lambda: TEMPLATE)
+
+    @pytest.mark.parametrize("has_lens", [True, False], ids=["lens", "no-lens"])
+    def test_check_accepts_exactly_the_materials_with_or_without_a_lens(
+        self, root, own_git, has_lens
+    ):
+        own_git(root, "init", "-q")
+        own_git(root, "remote", "add", "origin", SSH)
+        if has_lens:
+            lens(root)
+        line = seeds.LENS_LINE if has_lens else seeds.GENERAL_LINE
+        assert line in materials(root)
+        readme(root, materials(root))
+        assert check(root) == []
 
     def test_the_materials_name_the_repo_origin_points_at(self, root, own_git):
         own_git(root, "init", "-q")

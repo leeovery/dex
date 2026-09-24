@@ -336,7 +336,8 @@ The first two bring an instance older than the lens into the shape a new one
 is born in: directive 1 reads the owner's CLAUDE.md back from git history and
 moves its scope into `lens.md` and its Discord facts into config (with no
 stated scope it writes no `lens.md`, and the instance reads as a general
-knowledge dex), and directive 2 rewrites the README from the template.
+knowledge dex), and directive 2 rewrites the README from the template,
+whose lens line links `lens.md` or, with none, names a general knowledge dex.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the GitHub
 contents API (the phone shortcut) or committed directly by the dex-capture

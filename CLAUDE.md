@@ -81,8 +81,10 @@ the engine stays unaware of which ones exist.
     regenerated whole at every compile, never hand-edited, unpinnable.
   - `seeds.py` — the ONE render of the owner's two seeds, `README.md` and
     `lens.md`, for one instance: named for its directory, the README's
-    join prompt either left for setup to fill (`dex-new`) or filled from
-    the `origin` remote, the whole section dropped without a GitHub
+    lens line linking `lens.md` (always for `dex-new`, which seeds one)
+    or, for an instance with none, naming a general knowledge dex, and
+    its join prompt either left for setup to fill (`dex-new`) or filled
+    from the `origin` remote, the whole section dropped without a GitHub
     origin (directive 2).
   - `origin.py` — the ONE reading of the `origin` remote as a GitHub
     `owner/repo` (the inbox's release checks and the README render),
