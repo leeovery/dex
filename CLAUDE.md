@@ -82,7 +82,8 @@ the engine stays unaware of which ones exist.
     the `origin` remote, the whole section dropped without a GitHub
     origin (directive 2).
   - `origin.py` — the ONE reading of the `origin` remote as a GitHub
-    `owner/repo` (the inbox's release checks and the README render).
+    `owner/repo` (the inbox's release checks and the README render),
+    always the stored URL, never one an `insteadOf` rewrite expanded.
   - `gitread.py` — read-only git queries (`git -C <root> …`): what git
     printed, or `None` when it cannot answer; the default git seam for
     `origin.py` and directive 1.

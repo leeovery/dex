@@ -345,7 +345,9 @@ class _Reconcile:
         return staged.startswith("version https://git-lfs")
 
     def repo(self) -> str | None:
-        code, out = self.seams.git(["remote", "get-url", "origin"])
+        # The stored URL: `remote get-url` expands insteadOf rewrites, and the
+        # inbox release lives on GitHub however this machine fetches.
+        code, out = self.seams.git(["config", "--get", "remote.origin.url"])
         return github_repo(out) if code == 0 else None
 
 

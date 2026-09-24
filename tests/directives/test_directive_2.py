@@ -119,6 +119,16 @@ class TestTheShippedFunctions:
         assert materials(root) == rendered(root, SSH)
         assert "an existing dex at someone/dex-cooking." in materials(root)
 
+    def test_a_rewrite_to_a_file_url_keeps_the_join_section(self, root, tmp_path, own_git):
+        # A machine fetching GitHub through a local mirror still hosts the
+        # instance on GitHub, so the README still names the repository.
+        mirror = (tmp_path / "mirror").as_uri() + "/"
+        own_git(root, "init", "-q")
+        own_git(root, "remote", "add", "origin", SSH)
+        own_git(root, "config", f"url.{mirror}.insteadOf", "git@github.com:")
+        assert materials(root) == rendered(root, SSH)
+        assert "an existing dex at someone/dex-cooking." in materials(root)
+
     @pytest.mark.usefixtures("own_git")
     def test_without_a_repository_the_materials_drop_the_join_section(self, root):
         assert materials(root) == rendered(root, None)

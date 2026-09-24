@@ -81,7 +81,7 @@ class FakeGithub:
     def git(self, args):
         self.git_calls.append(list(args))
         self.ops.append(("git", *args))
-        if args[0] == "remote":
+        if args == ["config", "--get", "remote.origin.url"]:
             return 0, f"git@github.com:{REPO}.git\n"
         if args[0] == "check-attr":
             return 0, f"{args[-1]}: filter: {'lfs' if self.lfs_ok else 'unspecified'}\n"
@@ -314,7 +314,7 @@ class TestReconcileModes:
         gh = FakeGithub()
 
         def no_remote(args):
-            if args[0] == "remote":
+            if args == ["config", "--get", "remote.origin.url"]:
                 return 1, ""
             return gh.git(args)
 

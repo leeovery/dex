@@ -2,6 +2,7 @@
 
 import pytest
 
+from dex_engine.gitread import git_output
 from dex_engine.origin import github_repo, origin_url
 
 
@@ -44,6 +45,22 @@ class TestOriginUrl:
         own_git(tmp_path, "init", "-q")
         own_git(tmp_path, "remote", "add", "origin", "git@github.com:someone/dex-cooking.git")
         assert origin_url(tmp_path) == "git@github.com:someone/dex-cooking.git"
+
+    @pytest.mark.parametrize(
+        "base", ["git@github.com:", "https://github.com/"], ids=["ssh", "https"]
+    )
+    def test_an_insteadof_rewrite_never_hides_the_stored_url(self, tmp_path, own_git, base):
+        # git expands `url.<to>.insteadOf <from>` when it reads a remote for
+        # use; a machine that fetches GitHub through a mirror or a local
+        # path still names the GitHub repository in its origin.
+        stored = f"{base}someone/dex-cooking.git"
+        mirror = (tmp_path / "mirror").as_uri() + "/"
+        own_git(tmp_path, "init", "-q")
+        own_git(tmp_path, "remote", "add", "origin", stored)
+        own_git(tmp_path, "config", f"url.{mirror}.insteadOf", base)
+        rewritten = git_output(tmp_path, ["remote", "get-url", "origin"])
+        assert rewritten == f"{mirror}someone/dex-cooking.git\n"
+        assert origin_url(tmp_path) == stored
 
     def test_only_origin_counts(self, tmp_path, own_git):
         own_git(tmp_path, "init", "-q")
