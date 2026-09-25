@@ -1,7 +1,10 @@
-# <instance>
+# <instance name>
 
-<Owner>'s <domain> knowledge base — a private **[dex](https://github.com/leeovery/dex)**
-instance, maintained by Claude.
+A private **[dex](https://github.com/leeovery/dex)** instance: a knowledge base
+maintained by Claude.
+
+What this dex reads for is its lens: [`lens.md`](./lens.md). Ask Claude to
+change it whenever you like.
 
 **How to use it** (no technical steps, ever):
 
@@ -12,15 +15,6 @@ instance, maintained by Claude.
   Answers come from the wiki with citations, newest first.
 - **Health check** — it checks itself over on a schedule (broken links, stale
   pages, contradictions get found and fixed); you can also ask anytime.
-
-## In scope
-
-- <topic>
-- <topic>
-
-Anything not listed is out of scope — Claude will ask rather than guess about
-borderline finds. Want more topics covered? Just say so: scope changes update
-both this README and [`CLAUDE.md`](./CLAUDE.md).
 
 ## Run it on another machine
 

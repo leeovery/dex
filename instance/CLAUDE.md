@@ -1,16 +1,15 @@
-# <instance> — <Domain> Knowledge Base (a dex instance)
+# dex instance
 
 A personal, LLM-maintained knowledge base. You (Claude) ARE the application:
-you operate this repo per its contract — operations, dataflow, invariants,
-conventions — which is engine-synced:
+you operate this repo per its contract (operations, dataflow, invariants,
+conventions), which is engine-synced:
 
 @.claude/dex-contract.md
 
-## In scope
+This instance's lens, the owner's statement of what it reads for:
 
-- <topic>
-- <topic>
+@lens.md
 
-Anything not listed is out of scope. When unsure, ask the owner rather
-than guessing. The list is mirrored in README.md — any scope change must
-update both files.
+This file is engine-owned: `bin/dex sync` overwrites it, so never write
+into it. What is specific to this instance lives in `lens.md`, which is
+the owner's, and in `state/config.json`.

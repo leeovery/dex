@@ -72,8 +72,8 @@ questions. The LLM's job is everything else."*
 ## Getting started
 
 Setup is a single paste, after which Claude asks whether this is a new dex or
-an existing one, interviews you about scope, installs it, arms the schedule and
-sets up phone capture.
+an existing one, asks what it should read for, installs it, arms the schedule
+and sets up phone capture.
 
 The right home is **Claude Code in the [Claude desktop app](https://claude.com/download)**,
 which is the only surface that can arm the schedule: a local routine that runs
@@ -373,8 +373,11 @@ cannot be — and puts each gap on its report separately, so a session offers
 the connection rather than the owner having to know it exists. Setup:
 `docs/connect.md`.
 
-Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·
-`lens.md` (what the instance reads for; the owner's, never synced) ·
+Instance layout: `CLAUDE.md` (the same in every instance, synced and
+engine-owned, left alone while git history does not hold it; imports the
+contract and the lens) · `lens.md` (what the instance reads for; the
+owner's, never synced) · `README.md` (the owner's; how the instance shows on
+GitHub) ·
 `.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·
 `inbox/` (pending captures) · `raw/` (verbatim exports) · `corpus/`
 (append-only items) · `enrichment/` · `media/` (captured binaries, LFS) ·

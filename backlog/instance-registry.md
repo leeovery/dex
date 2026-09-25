@@ -10,10 +10,11 @@ that separation is load-bearing. So the registry is owned by the person: a
 list of instance roots or `owner/repo` pairs, read by whatever fans out —
 a query server, a site, a capture client.
 
-Routing needs no model call. Every instance already declares its scope in its
-own CLAUDE.md, so a registry that reads those bullets can send a question to
-the instances whose scope covers it, or to all of them, and the answer cites
-per-instance item ids that stay distinguishable by repo.
+Routing needs no model call beyond the one already answering: every instance
+declares what it reads for in its own `lens.md`, so a registry that serves
+those lenses lets the calling model send a question to the instances whose
+lens it touches, or to all of them, and the answer cites per-instance item
+ids that stay distinguishable by repo.
 
 Note this problem is already solved once, badly-scoped: the phone shortcut
 carries a dictionary of instances so it can offer a picker. That is the same

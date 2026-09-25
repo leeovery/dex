@@ -3,9 +3,10 @@
 ``uvx --from git+https://github.com/leeovery/dex dex-new <name>``
 
 Creates ``./<name>``: the directory tree (tracked dirs plus the gitignored
-``cache/``), seed CLAUDE.md and README.md (both to be personalized), the
-engine-managed machinery (via the same template sync every instance runs),
-every shipped directive recorded as done, git init, and local LFS.
+``cache/``), the README and ``lens.md`` seeded with the instance's name (the
+lens to be filled in), the engine-managed machinery, CLAUDE.md among it (via
+the same template sync every instance runs), every shipped directive
+recorded as done, git init, and local LFS.
 """
 
 import argparse
@@ -21,7 +22,7 @@ from .sync import sync
 from .template import bundled_template
 from .version import engine_version
 
-__all__ = ["EPHEMERAL", "SEEDS", "TREE", "build_parser", "main", "scaffold"]
+__all__ = ["EPHEMERAL", "NAMED_SEEDS", "SEEDS", "TREE", "build_parser", "main", "scaffold"]
 
 # Gitignored, so it carries no .gitkeep — but it must exist from birth: the
 # per-item procedure renders every receipt through `cache/receipt.json`, and
@@ -52,6 +53,11 @@ SEEDS = {
     "wiki/pins.md": "# Pins\n\nHuman corrections as claim+anchor; regeneration must "
     "re-apply these.\n",
 }
+
+# Template files written once, with the instance's name in place of the
+# placeholder, and the owner's from then on: sync never touches either.
+NAMED_SEEDS = ("README.md", "lens.md")
+_NAME_PLACEHOLDER = "<instance name>"
 
 
 def _run(args: list[str], cwd: Path) -> None:
@@ -104,8 +110,9 @@ def scaffold(  # noqa: PLR0913 — the seams are the signature: subprocess, temp
     for rel, content in SEEDS.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(content)
-    (root / "CLAUDE.md").write_text((template / "CLAUDE.md").read_text(encoding="utf-8"))
-    (root / "README.md").write_text((template / "README.md").read_text(encoding="utf-8"))
+    for rel in NAMED_SEEDS:
+        seed = (template / rel).read_text(encoding="utf-8")
+        (root / rel).write_text(seed.replace(_NAME_PLACEHOLDER, root.name), encoding="utf-8")
     sync(root, template=template)
     record_shipped(root, engine=version(), date=today(), shipped=shipped)
     run(["git", "init", "-q"], root)
@@ -115,7 +122,10 @@ def scaffold(  # noqa: PLR0913 — the seams are the signature: subprocess, temp
     # here read as an instruction to an owner who declined GitHub.
     return [
         f"created {root}",
-        "next: personalize CLAUDE.md and README.md, commit, then:",
+        (
+            "next: fill in lens.md (what this dex reads for) and README.md's <owner>/<repo>, "
+            "commit, then:"
+        ),
         f"  if using GitHub: gh repo create {root.name} --private --source . --push",
         "  bin/dex inbox ensure",
     ]

@@ -3,6 +3,8 @@
 import datetime
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from dex_engine.migrations import AppliedMigration, log_path, read_applied
 from dex_engine.pipeline.types import Instance, MigrationReport, Skipped
 from dex_engine.sync import (
     PIN_FILE,
+    Refresh,
     Release,
     ReleaseChannel,
     ReleaseCheckError,
@@ -35,6 +38,8 @@ SEED_LENS = (Path(__file__).resolve().parent.parent / "instance" / "lens.md").re
     encoding="utf-8"
 )
 FILLED_LENS = "# dex-coffee\n\n## Reads for\nBrewing technique, recipes and gear.\n"
+CLAUDE_MD = "# dex instance\n\n@.claude/dex-contract.md\n\n@lens.md\n"
+OLD_CLAUDE_MD = "# dex-coffee\n\n@.claude/dex-contract.md\n\n## In scope\n\n- brewing\n"
 
 
 def fixed_today() -> datetime.date:
@@ -111,6 +116,7 @@ def template(tmp_path: Path) -> Path:
     (tpl / "skills" / "dex-query").mkdir()
     (tpl / "skills" / "dex-query" / "SKILL.md").write_text("query skill\n")
     (tpl / "dex-contract.md").write_text("contract\n")
+    (tpl / "CLAUDE.md").write_text(CLAUDE_MD)
     (tpl / "dex").write_text("#!/bin/sh\nshim\n")
     (tpl / "gitattributes").write_text("state/*.jsonl merge=union\n")
     (tpl / "lens.md").write_text(SEED_LENS)
@@ -540,10 +546,11 @@ class TestLensInTheReport:
 
 class TestTemplateSync:
     def test_copies_skills_recursively_and_machinery(self, inst, template):
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert ".claude/skills/dex-run/SKILL.md" in changed
         assert ".claude/skills/dex-run/references/ingest-item.md" in changed
         assert ".claude/skills/dex-query/SKILL.md" in changed
+        assert "CLAUDE.md" in changed
         assert ".claude/dex-contract.md" in changed
         assert "bin/dex" in changed
         assert ".gitattributes" in changed
@@ -551,7 +558,7 @@ class TestTemplateSync:
 
     def test_second_sync_changes_nothing(self, inst, template):
         sync(inst.root, template=template)
-        assert sync(inst.root, template=template) == []
+        assert sync(inst.root, template=template) == Refresh(changed=[])
 
     def test_sync_ensures_the_cache_directory_exists(self, inst, template):
         # A migrated pre-existing instance never went through the scaffold
@@ -561,13 +568,13 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert (inst.root / "cache").is_dir()
         # Idempotent, harmless on every run — and never a reported change.
-        assert sync(inst.root, template=template) == []
+        assert sync(inst.root, template=template) == Refresh(changed=[])
 
     def test_retired_engine_skills_are_removed(self, inst, template):
         retired = inst.root / ".claude" / "skills" / "dex-ingest"
         retired.mkdir(parents=True)
         (retired / "SKILL.md").write_text("stale procedure\n")
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert not retired.exists()
         assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
 
@@ -578,7 +585,7 @@ class TestTemplateSync:
         skills = inst.root / ".claude" / "skills"
         skills.mkdir(parents=True)
         (skills / "dex-ingest").symlink_to(target)
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert not (skills / "dex-ingest").exists()
         assert (target / "SKILL.md").exists()  # the link's target is untouched
         assert "removed .claude/skills/dex-ingest (retired engine skill)" in changed
@@ -590,7 +597,7 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         stale = inst.root / ".claude" / "skills" / "dex-run" / "references" / "old-procedure.md"
         stale.write_text("stale procedure\n")
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert not stale.exists()
         assert (
             "removed .claude/skills/dex-run/references/old-procedure.md (retired skill file)"
@@ -604,7 +611,7 @@ class TestTemplateSync:
         retired = inst.root / ".claude" / "skills" / "dex-run" / "old-references"
         retired.mkdir()
         (retired / "stale.md").write_text("stale\n")
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert not retired.exists()
         assert "removed .claude/skills/dex-run/old-references (retired skill file)" in changed
 
@@ -616,7 +623,7 @@ class TestTemplateSync:
         skill = inst.root / ".claude" / "skills" / "dex-run"
         skill.mkdir(parents=True)
         (skill / "references").write_text("used to be one file\n")
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert (skill / "references").is_dir()
         assert (skill / "references" / "ingest-item.md").read_text() == "reference\n"
         assert (
@@ -632,7 +639,7 @@ class TestTemplateSync:
         stale = skill / "SKILL.md"
         stale.mkdir(parents=True)
         (stale / "part-one.md").write_text("was split up\n")
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert (skill / "SKILL.md").is_file()
         assert (skill / "SKILL.md").read_text() == "run skill\n"
         assert "removed .claude/skills/dex-run/SKILL.md (template ships a file here now)" in changed
@@ -647,7 +654,7 @@ class TestTemplateSync:
         skill = inst.root / ".claude" / "skills" / "dex-run"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").symlink_to(target)
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert (skill / "SKILL.md").is_file()
         assert not (skill / "SKILL.md").is_symlink()
         assert (target / "kept.md").exists()  # the link's target is untouched
@@ -676,12 +683,14 @@ class TestTemplateSync:
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "removed .claude/skills/dex-ingest" in report
+        assert "refreshed: removed" not in report
 
     def test_instance_owned_files_untouched(self, inst, template):
-        (inst.root / "CLAUDE.md").write_text("mine\n")
+        (inst.root / "README.md").write_text("mine\n")
+        (template / "README.md").write_text("# <instance name>\n")
         write_pin(inst.root, "v0.1.0")
         sync(inst.root, template=template)
-        assert (inst.root / "CLAUDE.md").read_text() == "mine\n"
+        assert (inst.root / "README.md").read_text() == "mine\n"
         assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned
         assert (inst.root / "lens.md").read_text() == FILLED_LENS
 
@@ -689,7 +698,7 @@ class TestTemplateSync:
         # The template ships lens.md as the seed, and the lens is the
         # owner's: sync neither writes one where it is missing nor counts it.
         (inst.root / "lens.md").unlink()
-        changed = sync(inst.root, template=template)
+        changed = sync(inst.root, template=template).changed
         assert not (inst.root / "lens.md").exists()
         assert not any("lens" in change for change in changed)
 
@@ -697,7 +706,225 @@ class TestTemplateSync:
         channel, _ = make_channel("")
         report, _ = run(inst, channel, template)
         assert "refreshed: bin/dex" in report
+        assert "refreshed: CLAUDE.md" in report
+        assert "**Machinery changes** — 7" in report
+        # Unpinned before and after: the refreshed files alone ask for the commit.
+        assert "review + commit the refreshed files and the pin" in report
+
+
+HELD_UNCOMMITTED = (
+    "left CLAUDE.md untouched: it has uncommitted changes. Sync overwrites it only once git "
+    "history holds what it would replace, so the next sync after a commit takes it over"
+)
+
+
+def never_asked(path: Path) -> str | None:
+    raise AssertionError(f"git was asked about {path}")
+
+
+def edited(_path: Path) -> str | None:
+    return "it has uncommitted changes"
+
+
+class TestClaudeMdTakeover:
+    """CLAUDE.md is engine-owned, and an owner's uncommitted edit to it is never destroyed."""
+
+    def test_a_missing_claude_md_is_written_without_asking_git(self, inst, template):
+        # dex-new's order: its sync runs before `git init`, so there is no
+        # repository to ask, and nothing on disk to lose.
+        refresh = sync(inst.root, template=template, uncommitted=never_asked)
+        assert (inst.root / "CLAUDE.md").read_text() == CLAUDE_MD
+        assert "CLAUDE.md" in refresh.changed
+        assert refresh.held is None
+
+    def test_a_current_claude_md_is_neither_written_nor_asked_about(self, inst, template):
+        (inst.root / "CLAUDE.md").write_text(CLAUDE_MD)
+        refresh = sync(inst.root, template=template, uncommitted=never_asked)
+        assert "CLAUDE.md" not in refresh.changed
+        assert refresh.held is None
+
+    def test_a_committed_claude_md_is_taken_over(self, inst, template):
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template, uncommitted=lambda _path: None)
+        assert (inst.root / "CLAUDE.md").read_text() == CLAUDE_MD
+        assert "CLAUDE.md" in refresh.changed
+        assert refresh.held is None
+
+    def test_an_uncommitted_edit_is_left_untouched_and_says_why(self, inst, template):
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        asked: list[Path] = []
+
+        def uncommitted(path: Path) -> str | None:
+            asked.append(path)
+            return edited(path)
+
+        refresh = sync(inst.root, template=template, uncommitted=uncommitted)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert asked == [inst.root / "CLAUDE.md"]
+        assert "CLAUDE.md" not in refresh.changed
+        assert refresh.held == HELD_UNCOMMITTED
+
+    def test_a_held_claude_md_holds_back_nothing_else(self, inst, template):
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template, uncommitted=edited)
+        assert ".claude/dex-contract.md" in refresh.changed
+        assert "bin/dex" in refresh.changed
+
+    def test_the_report_says_so_and_counts_no_machinery_change(self, inst, template):
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template, uncommitted=edited)
+        assert HELD_UNCOMMITTED in report
+        assert "refreshed: CLAUDE.md" not in report
         assert "**Machinery changes** — 6" in report
+
+    def test_a_held_claude_md_alone_asks_for_no_commit(self, inst, template):
+        sync(inst.root, template=template)
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template, uncommitted=edited, migrate=lambda _root: [])
+        assert HELD_UNCOMMITTED in report
+        assert "**Machinery changes** — 0" in report
+        assert "review + commit" not in report
+
+
+class TestClaudeMdAgainstGit:
+    """The production seam: git's own status decides what sync may overwrite."""
+
+    @pytest.fixture(autouse=True)
+    def _a_git_of_its_own(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep the maintainer's git config, and any repository around the tmp tree, out."""
+        if shutil.which("git") is None:
+            pytest.skip("git is not on PATH")
+        config = tmp_path / "gitconfig"
+        config.write_text("")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+    @staticmethod
+    def git(root: Path, *args: str) -> None:
+        subprocess.run(  # noqa: S603 — test-built args, no shell
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.test", *args],  # noqa: S607 — PATH resolution is the dependency contract
+            check=True,
+            capture_output=True,
+        )
+
+    def committed(self, root: Path) -> None:
+        """A repository whose history holds the old, instance-written CLAUDE.md."""
+        self.git(root, "init", "-q")
+        (root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        self.git(root, "add", "CLAUDE.md")
+        self.git(root, "commit", "-q", "-m", "the old CLAUDE.md")
+
+    def test_an_edit_waits_for_its_commit_then_is_taken_over(self, inst, template):
+        self.committed(inst.root)
+        edit = OLD_CLAUDE_MD + "- grinding\n"
+        (inst.root / "CLAUDE.md").write_text(edit)
+        waiting = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == edit
+        assert waiting.held == HELD_UNCOMMITTED
+        self.git(inst.root, "commit", "-q", "-am", "the owner's edit")
+        taken = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == CLAUDE_MD
+        assert "CLAUDE.md" in taken.changed
+        assert taken.held is None
+
+    def test_a_staged_edit_waits(self, inst, template):
+        self.committed(inst.root)
+        (inst.root / "CLAUDE.md").write_text("staged\n")
+        self.git(inst.root, "add", "CLAUDE.md")
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == "staged\n"
+        assert refresh.held == HELD_UNCOMMITTED
+
+    def test_a_claude_md_no_commit_holds_waits_whatever_the_config_hides(self, inst, template):
+        self.git(inst.root, "init", "-q")
+        self.git(inst.root, "config", "status.showUntrackedFiles", "no")
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held == HELD_UNCOMMITTED
+
+    def test_an_ignored_claude_md_waits(self, inst, template):
+        self.git(inst.root, "init", "-q")
+        (inst.root / ".gitignore").write_text("CLAUDE.md\n")
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held == HELD_UNCOMMITTED
+
+    def test_outside_a_repository_a_claude_md_that_differs_waits(self, inst, template):
+        # No history holds it, so overwriting it would lose it for good.
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held is not None
+        assert refresh.held.startswith(
+            "left CLAUDE.md untouched: git cannot say whether it is committed "
+            "(fatal: not a git repository"
+        )
+
+    def test_outside_a_repository_a_missing_claude_md_is_written(self, inst, template):
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == CLAUDE_MD
+        assert refresh.held is None
+
+    def test_with_no_git_at_all_a_claude_md_that_differs_waits(
+        self, inst, template, tmp_path, monkeypatch
+    ):
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        nowhere = tmp_path / "no-git"
+        nowhere.mkdir()
+        monkeypatch.setenv("PATH", str(nowhere))
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held is not None
+        assert refresh.held.startswith(
+            "left CLAUDE.md untouched: git cannot say whether it is committed ([Errno 2]"
+        )
+
+    @staticmethod
+    def refusing_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str) -> None:
+        """The only git on PATH runs ``script`` and fails, the way a refusal does."""
+        fake = tmp_path / "fake-bin"
+        fake.mkdir()
+        (fake / "git").write_text(f"#!/bin/sh\n{script}\n")
+        (fake / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", str(fake))
+
+    def test_a_refusal_is_named_by_its_first_line(self, inst, template, tmp_path, monkeypatch):
+        # Dubious ownership is the real one: exit 128 and a paragraph of advice.
+        self.refusing_git(tmp_path, monkeypatch, "printf 'fatal: one\\nhint: two\\n' >&2; exit 128")
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held is not None
+        assert refresh.held.startswith(
+            "left CLAUDE.md untouched: git cannot say whether it is committed (fatal: one)."
+        )
+
+    def test_a_refusal_in_bytes_that_are_not_utf8_still_leaves_it_alone(
+        self, inst, template, tmp_path, monkeypatch
+    ):
+        self.refusing_git(tmp_path, monkeypatch, r"printf '\377 fatal: bytes\n' >&2; exit 128")
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held is not None
+        assert "(\N{REPLACEMENT CHARACTER} fatal: bytes)." in refresh.held
+
+    def test_a_silent_refusal_is_named_by_its_exit_code(
+        self, inst, template, tmp_path, monkeypatch
+    ):
+        self.refusing_git(tmp_path, monkeypatch, "exit 3")
+        (inst.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        refresh = sync(inst.root, template=template)
+        assert (inst.root / "CLAUDE.md").read_text() == OLD_CLAUDE_MD
+        assert refresh.held is not None
+        assert refresh.held.startswith(
+            "left CLAUDE.md untouched: git cannot say whether it is committed (exit 3)."
+        )
 
 
 class TestChatConnection:
