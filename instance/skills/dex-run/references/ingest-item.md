@@ -4,11 +4,14 @@ One item = corpus item → enrich → media → harvest → lens verdict → dig
 → place → wiki → receipt, and a drop at the lens verdict ends it there.
 Never skip steps; never invent inputs. All commands run from the instance
 root. Code writes frontmatter and state; you write prose and judgment.
-Every judgment below reads the item through this instance's lens, the
-owner's `lens.md` at the instance root, taken whole as the contract says.
-An instance with no lens is a general knowledge dex, which the contract
-also defines: there every judgment reads the item for its general
-substance, the facts the source yields and the subject it is about.
+
+Before the first item this session, read `lens.md` at the instance root,
+once: it is this instance's lens, the owner's statement of what it reads
+for, taken whole as the contract says, and every judgment below reads the
+item through it. When the file is missing or empty, or reads as no lens
+for a reason the contract gives, the instance is a general knowledge
+dex: there every judgment reads the item for its general substance, the
+facts the source yields and the subject it is about.
 
 ## 1. Corpus item (mechanical: the verb writes it)
 

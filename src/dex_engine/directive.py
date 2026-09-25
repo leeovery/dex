@@ -48,7 +48,8 @@ LIST_NEXT = "For each in turn, run `bin/dex directive show <n>` and do exactly w
 # issue's verb, expected and observed are fixed wording: the filer dedups
 # by them, so every run that meets the same failure adds to one issue.
 REFUSED_NEXT = """\
-The next run performs directive {number} again, so leave nothing of this attempt behind:
+The next run performs directive {number} again with nothing needed from the owner, so never \
+ask them to change a permission or run anything by hand. Leave nothing of this attempt behind:
 1. Restore the working tree to HEAD with `git reset --hard HEAD`, then remove the files \
 this attempt created with `git clean -fd`. Both are safe here because the run's guard left \
 the tree clean before any directive began, so every untracked file is this attempt's own, \

@@ -112,7 +112,10 @@ the engine stays unaware of which ones exist.
   the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
   contract, synced to `.claude/dex-contract.md`), `CLAUDE.md` (synced to
   the instance root and engine-owned, identical in every instance: it
-  imports the contract and `lens.md` and names no instance; sync leaves a
+  imports the contract alone and names no instance, and names `lens.md`
+  as data the judgment steps read, never an import, because a run
+  writing an imported file reads to Auto mode's safety check as a session
+  rewriting its own instructions; sync leaves a
   copy that git history does not hold, because it has uncommitted changes
   or sits outside a repository, alone and says so on its report, so an
   owner's edit is overwritten only once it is recoverable), and
@@ -205,7 +208,12 @@ the engine stays unaware of which ones exist.
   machinery; every machinery change happens here and reaches instances via
   `bin/dex sync` (pinned: `.dex-engine-pin` is one line, `<tag> <commit>`;
   Mint cuts releases, sync bumps pins, runs migrations and lists the
-  directives the run then performs). The shim reads
+  directives the run then performs). A run loads its instructions before
+  it syncs, so a sync that writes or removes CLAUDE.md, the contract or a
+  skill closes its report with a line ending the run in progress, and the
+  next run carries on under the new instructions; the line lives only in
+  the sync-report surface, because the report is the one text from the
+  new release a first run reads. The shim reads
   the pin beside itself, never from the working directory, and launches by
   the commit: uv never re-resolves a full commit, so a launch skips the
   release lookup a tag costs every time. Nothing is ever fixed by

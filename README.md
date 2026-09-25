@@ -318,7 +318,7 @@ launch — and falls back to the tag for a pin an older sync wrote:
 | `dex-exclude <json>` | permanently drop items that yield nothing through the instance's lens, with their media, enrichment, digest, pass records and ledger entries, surviving re-normalization |
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
-| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report (pending directives included, and a lens note when `lens.md` still holds the seed's placeholders or cannot be read): step 0 of every run |
+| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report (pending directives included, a lens note when `lens.md` still holds the seed's placeholders or cannot be read, and a closing line that ends the run in progress when the refresh changed CLAUDE.md, the contract or a skill): step 0 of every run |
 | `dex-directive` | the engine's directives, performed by the run after its pull: `list` the pending ones in order, `show <n>` one's instructions and any materials rendered for this instance (`--materials` prints those alone, byte for byte), `done <n>` to run its check and record it in `state/directives.jsonl` only when every condition holds |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
@@ -350,7 +350,11 @@ order, one commit each. Until they are done, the content commands
 (`dex-inbox`, `dex-normalize`, `dex-enrich`, `dex-exclude`) refuse and point
 at `dex-directive list`, and each directive command's output names the step
 after it, so a session holding instructions older than the engine it just
-synced still performs the directives before it touches any content.
+synced still performs the directives before it touches any content. A sync
+that changes the instructions a run began with (CLAUDE.md, the contract or a
+skill) ends that run on its report instead, once the sync is committed and
+pushed, and the next run performs the directives under the new instructions,
+with nothing asked of you.
 `dex-directive done` records a directive in
 `state/directives.jsonl` only when its check passes, so a session that ran out
 of time or misread the instructions cannot mark the work done, and a directive
@@ -413,8 +417,9 @@ the connection rather than the owner having to know it exists. Setup:
 
 Instance layout: `CLAUDE.md` (the same in every instance, synced and
 engine-owned, left alone while git history does not hold it; imports the
-contract and the lens) · `lens.md` (what the instance reads for; the
-owner's, never synced; absent for a general knowledge dex) · `README.md` (the owner's; how the instance shows on
+contract alone) · `lens.md` (what the instance reads for; the owner's, never
+synced and never imported, read by the steps that judge through it; absent
+for a general knowledge dex) · `README.md` (the owner's; how the instance shows on
 GitHub) ·
 `.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·
 `inbox/` (pending captures) · `raw/` (verbatim exports) · `corpus/`

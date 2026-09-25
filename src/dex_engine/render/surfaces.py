@@ -980,9 +980,20 @@ _CONNECT_OFFERS = {
     ),
 }
 
+# A run loads its instructions before it syncs, so the first run after a
+# release holds the previous release's, and this report is the one text from
+# the new release it reads: the stop is said here and nowhere else.
+_RUN_ENDS = (
+    "this run began with instructions this sync has now replaced, so a dex run or health "
+    "check in progress goes no further: commit the sync, then pull and push, report that the "
+    "engine was updated, and end the run here. The next run starts with the new instructions "
+    "and carries on, pending directives included, and nothing is needed from the owner. A "
+    "session that is not performing a run, such as setup or a query, carries on."
+)
+
 
 def _render_sync_report(payload: Mapping[str, object]) -> str:
-    """Render the sync report: pin state, migrations, pending directives, machinery, lens.
+    """Render the sync report: pin, migrations, directives, machinery, lens, and a run's end.
 
     Payload::
 
@@ -1005,6 +1016,9 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
               "intent": str}
           ],
           "machinery_changes": int,   # template files written + retired skills removed
+          "instructions_changed": bool,  # optional: the refresh wrote or removed
+                                      #   CLAUDE.md, the contract or a skill, so
+                                      #   the report closes by ending the run
           "lens": str,                # optional: the lens check's note, when
                                       #   lens.md holds placeholder lines or will
                                       #   not read (informational, never a failure)
@@ -1023,7 +1037,18 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "major", "directives", "lens", "connect", "notes"}),
+        optional=frozenset(
+            {
+                "pin",
+                "previous",
+                "major",
+                "directives",
+                "instructions_changed",
+                "lens",
+                "connect",
+                "notes",
+            }
+        ),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
@@ -1040,6 +1065,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     lens = _sync_lens(surface, payload)
     connect = _sync_connect(surface, payload)
     notes = _str_list_at(surface, payload, "notes")
+    run_ends = _sync_run_ends(surface, payload)
 
     if pin is None:
         head = "Sync — engine unpinned (no release pinned; see notes)"
@@ -1080,7 +1106,18 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     if connect:
         blocks += ["", *connect]
     blocks += _note_section("Notes", notes)
+    blocks += run_ends
     return kernel.document(blocks)
+
+
+def _sync_run_ends(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The closing line that ends a run whose instructions sync replaced; nothing otherwise."""
+    changed = payload.get("instructions_changed", False)
+    if not isinstance(changed, bool):
+        _fail(surface, f"instructions_changed must be a boolean, got {changed!r}")
+    if not changed:
+        return []
+    return ["", f"{kernel.bold('Instructions changed')} — {_RUN_ENDS}"]
 
 
 def _sync_lens(surface: str, payload: Mapping[str, object]) -> list[str]:

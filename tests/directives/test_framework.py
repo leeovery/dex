@@ -266,6 +266,12 @@ class TestRefuseWhilePending:
     def test_the_refusal_names_the_command_that_performs_them(self):
         assert "`bin/dex directive list`" in PENDING_REFUSAL
 
+    def test_the_refusal_asks_nothing_of_the_owner(self):
+        # A directive this run cannot complete waits for the next run, never
+        # for the owner to change a permission or run a command.
+        assert "performed again by the next one without the owner" in PENDING_REFUSAL
+        assert "no permission change and no command to run by hand" in PENDING_REFUSAL
+
     def test_a_corrupt_log_is_loud_rather_than_read_as_nothing_pending(self, tmp_path):
         log_path(tmp_path).parent.mkdir()
         log_path(tmp_path).write_text("{torn\n")

@@ -74,7 +74,9 @@ __all__ = [
 # the directives come first.
 PENDING_REFUSAL = (
     "this instance has {count} pending, and directives come before any content work: run "
-    "`bin/dex directive list` and follow it, then run this command again"
+    "`bin/dex directive list` and follow it, then run this command again. A directive this "
+    "run cannot complete is performed again by the next one without the owner, so ask them "
+    "for nothing: no permission change and no command to run by hand"
 )
 
 

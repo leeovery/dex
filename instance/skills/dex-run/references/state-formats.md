@@ -303,10 +303,12 @@ reference). Maintain page *bodies* by hand; leave these fields to lint.
 `lens.md` at the instance root is the owner's statement of what this
 instance reads for. It is free-form: the seed's headings (Reads for,
 Emphasise, Set aside) are prompts the owner may write under in any form,
-rename or delete, and nothing in the engine parses it by section. Every
-session reads it whole, as one coherent statement. It is the owner's, so a
-session writes it only when the owner asks or a directive's instructions
-name it, and `bin/dex sync` never writes it, whether it exists or not.
+rename or delete, and nothing in the engine parses it by section.
+Nothing loads it with a session's instructions: every step that judges
+through it reads it, whole, as one coherent statement. It is the owner's,
+so a session writes it only when the owner asks or a directive's
+instructions name it, and `bin/dex sync` never writes it, whether it
+exists or not.
 
 A missing or empty `lens.md` makes the instance a general knowledge dex,
 which is a legitimate way to run one: it reads for anything, every share

@@ -215,3 +215,24 @@ Recorded 2026-09-24, while the stack that builds this design was reviewed.
   own text, since that text is all a first-run session reads. Proven by an
   upgrade test from the previous release's pin, through the real pin bump
   and re-exec.
+- **A sync that changes the run's instructions ends the run (2026-09-25).**
+  On two real instances, the first run after v0.2.0 held the previous
+  release's instructions and still attempted the directives, and the
+  safety check of Auto permission mode, which scheduled runs work in,
+  blocked each attempt differently: once an edit to `state/config.json`,
+  which the old instructions forbid unattended, and once the commit of
+  `lens.md`, read as the session rewriting its own instructions because
+  CLAUDE.md imported it. Each run rolled back safely, but its report asked the owner to add permission
+  rules or run the work by hand, while the second run, holding the new
+  instructions, converted each instance with nobody present. So when sync
+  writes or removes CLAUDE.md, the contract or a skill (never for `bin/dex`
+  or `.gitattributes`, which no session loads), its report closes with a
+  line telling a run or health check in progress to commit, pull and push
+  the sync, report the update and end there, and the next run carries on
+  under the new instructions, pending directives included. The line is a
+  surface constant carried by a boolean on the report's payload, because
+  the report is the one text from the new release a first run reads, and
+  no skill restates it: `preparation.md` says only that the line binds the
+  run. A session that is not performing a run, such as setup or a query,
+  carries on. A refused `done` and the content gate each add that the next
+  run performs the directive again and the owner is asked for nothing.

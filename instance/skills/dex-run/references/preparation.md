@@ -28,7 +28,9 @@ in order:
      dex, which is a legitimate way to run one.
    - **Commit the refreshed files and the pin** — this session owns that
      commit step; sync itself never commits. Message: `sync: engine <tag>`
-     (or `sync: machinery refresh` when unpinned).
+     (or `sync: machinery refresh` when unpinned). When the report closes
+     with an **Instructions changed** line, that line binds this run: do
+     what it says and perform no later step.
 
 3. **Guard.** The dirty-tree check runs *after* sync's commit,
    deliberately: sync legitimately edits state (pin bump, migration

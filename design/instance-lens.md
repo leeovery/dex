@@ -360,3 +360,13 @@ above, this section is the later decision.
   dex's digest of a flower site holds its design, not plant facts, as a
   designer reading it would), the topics and the wiki. The fetched content
   itself is always kept whole in the enrichment.
+- **The lens is data, never an import (2026-09-25).** This supersedes the
+  `lens.md` import in "CLAUDE.md becomes engine-owned". Imported, the lens
+  joined every session's instructions, so a run writing it, as directive 1
+  does, was a session rewriting what every later session loads, and Auto
+  permission mode's safety check blocked that commit as self-modification
+  on a real instance. CLAUDE.md now imports only the contract and names
+  `lens.md` as the owner's statement of what the instance reads for, and
+  each procedure that judges through the lens reads the file itself: the
+  per-item procedure once before its first item, and the health check
+  before its repairs, its judgment sweep and its topic splits.

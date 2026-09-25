@@ -35,9 +35,11 @@ contract), `bin/dex`, and `.gitattributes` are overwritten by `bin/dex sync`
 
 `lens.md` at the instance root is this instance's lens: the owner's
 statement of what the instance reads for, and the angle every judgment in
-a run reads content through. It is free-form and owned by the owner, so
-edit it only when the owner asks or a directive's instructions name it,
-and read it as one coherent statement, never section by section.
+a run reads content through. It is data, never loaded with these
+instructions: each procedure that judges through it says when to read it,
+and a session reads it then, whole, as one coherent statement and never
+section by section. It is free-form and owned by the owner, so edit it
+only when the owner asks or a directive's instructions name it.
 
 An instance with no lens is a general knowledge dex, which is a legitimate
 way to run one and never a fault to repair. When `lens.md` is missing or
