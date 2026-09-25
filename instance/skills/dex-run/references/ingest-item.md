@@ -126,20 +126,29 @@ so the item is left holding one enrichment for the unit, not two.
 
 ## 4. Harvest: the subject rule (judgment, engine-bounded)
 
-Goal: the item's enrichment holds the primary artifacts of its subject
-that the lens needs. At each fetched page, promote links that are
-**primary artifacts of the item's subject**, choosing the ones this
-instance's lens reads for: the pricing and about pages for a business
-lens, the repo and docs for an engineering lens, the rendered pages
-themselves for a design lens. Links that *leave* the subject
-(similar-projects lists, blogrolls, footers) are never promoted, at any
-depth. There is no hop-counting rule: depth is bounded mechanically by
-the engine (depth 4, 12 URLs per item), and the subject rule is the
-judgment inside those bounds. A shared site root or topic index is
-navigation whose substance lives in its pages, so harvest is how the item
-reaches them: a thin landing page whose substance sits on /pricing for a
-business lens, or on /docs for an engineering one, is the subject rule
-applied to the site's own pages, while a small site's root can be the
+Goal: the item's enrichment holds the primary artifacts of its subject,
+gathered the same way whatever this instance's lens is, so the lens
+verdict and the digest judge the item on everything there was to find. At
+each fetched page, promote links that are **primary artifacts of the
+item's subject**: the project's repo, its homepage, its docs, the paper,
+the pages of a site that hold its substance. Links that *leave* the
+subject (similar-projects lists, blogrolls, footers) are never promoted,
+at any depth.
+
+The lens never narrows harvest, because a link is chosen before its page
+is read: skipping one because the lens reads for something else throws
+away what nobody has seen yet, and reading through the lens is the
+digest's work, once everything has landed. The lens may add to harvest: a page its angle
+needs that the subject rule alone would pass over, such as the pricing
+page for a business lens or more of a site's rendered pages for a design
+lens.
+
+There is no hop-counting rule: depth is bounded mechanically by the engine
+(depth 4, 12 URLs per item), and the subject rule is the judgment inside
+those bounds. A shared site root or topic index is navigation whose
+substance lives in its pages, so harvest is how the item reaches them: a
+thin landing page whose substance sits on /pricing or /docs is the subject
+rule applied to the site's own pages, while a small site's root can be the
 content itself, with nothing further to promote.
 
 Promote via:
