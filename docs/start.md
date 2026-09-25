@@ -74,14 +74,16 @@ at a time (use your ask-user tool where available):
 
 1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the
    dex brand; the domain is the qualifier. Set `{name}` = the answer.
-2. **What it reads for**: the dex's lens, free-form and in the owner's own
-   words. Sentences, a list or examples all work, and an example often
-   says it best ("a site like this, for its type pairing, not its
-   products"). The seed `lens.md` has three headings you can use as
-   prompts: what it reads for, what to look at hardest, and what to set
-   aside even when it is the subject. The owner may also want a general
-   knowledge dex, one with no lens that reads anything shared into it for
-   its general substance, which is a legitimate way to run one.
+2. **Its lens**: what this dex should read things for. Ask it plainly, in
+   words like: "When you share something into this dex, what do you want
+   it to take from it, and is there anything it should ignore, even when
+   that's what the thing is about?" An example helps the owner answer: a
+   design dex reads a gardening site for its layout and type, never its
+   plants. Write the answer into `lens.md` in the owner's own words,
+   whether sentences, a list or examples. If it comes back as a bare list
+   of subjects, one follow-up is fine: what should the dex take from those
+   things? A general knowledge dex, with no lens, reading everything for
+   its plain substance, is a legitimate answer too.
 3. **GitHub** — private repo (default), or local-only for now. Local-only
    is a supported state, not a half-setup: runs skip pulls, pushes and the
    inbox release checks (skipped, not passed) until a repo exists, and the

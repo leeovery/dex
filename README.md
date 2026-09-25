@@ -69,6 +69,25 @@ questions. The LLM's job is everything else."*
            thread and everything else filed against the problem
 ```
 
+## The lens
+
+Every dex reads through a lens: a short note, in your own words, of what it
+reads things for. Whatever you share into it is read from that angle, so the
+lens decides what gets pulled out, how it is filed and what the wiki says
+about it.
+
+Share a gardening company's website into three dexes and you get three
+different readings: your design dex reads it for its layout, type and
+photography, your business dex for how the company makes its money, and your
+gardening dex for the plants. Nothing is turned away for its subject, because
+sharing it was the decision and the lens only decides what to take from it.
+Something is dropped only when the lens finds nothing in it at all, like a
+stray chat message.
+
+The lens lives in `lens.md`, written however suits you (sentences, a list or
+an example), and you change it by asking Claude. A dex with no lens is a
+general knowledge dex, which reads everything for its plain substance.
+
 ## Getting started
 
 Setup is a single paste, after which Claude asks whether this is a new dex or
@@ -338,12 +357,13 @@ of time or misread the instructions cannot mark the work done, and a directive
 that fails its check is filed as an engine defect, as the refusal directs, and
 tried again on the next run, with content work waiting until it completes.
 A new instance records every shipped directive as done when it is created.
-The first two bring an instance older than the lens into the shape a new one
-is born in: directive 1 reads the owner's CLAUDE.md back from git history and
-moves its scope into `lens.md` and its Discord facts into config (with no
-stated scope it writes no `lens.md`, and the instance reads as a general
-knowledge dex), and directive 2 rewrites the README from the template,
-whose lens line links `lens.md` or, with none, names a general knowledge dex.
+The first two bring an instance made by an older engine into the shape a new
+one is born in: directive 1 reads the owner's own CLAUDE.md back from git
+history and moves what it said the instance reads for into `lens.md`, and its
+Discord facts into config (when it said nothing, no `lens.md` is written and
+the instance reads as a general knowledge dex), and directive 2 rewrites the
+README from the template, whose lens line links `lens.md` or, with none,
+names a general knowledge dex.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the GitHub
 contents API (the phone shortcut) or committed directly by the dex-capture
