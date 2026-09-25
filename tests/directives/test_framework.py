@@ -1,4 +1,4 @@
-"""Tests for the directives package: discovery, the completed log, the pending set."""
+"""Tests for the directives package: discovery, the completed log, the pending set, the gate."""
 
 import datetime
 import json
@@ -6,14 +6,18 @@ import json
 import pytest
 
 from dex_engine.directives import (
+    PENDING_REFUSAL,
     DirectiveError,
+    DirectivesPendingError,
     append_done,
     discover,
     log_path,
     pending,
     read_done,
     record_shipped,
+    refuse_while_pending,
 )
+from dex_engine.render.kernel import plural
 from tests.directives.conftest import directive_module, make_directive
 
 TODAY = datetime.date(2026, 9, 24)
@@ -237,3 +241,39 @@ class TestRecordShipped:
     def test_nothing_shipped_writes_nothing(self, tmp_path):
         record_shipped(tmp_path, engine=ENGINE, date=TODAY, shipped=[])
         assert not log_path(tmp_path).exists()
+
+
+class TestRefuseWhilePending:
+    def test_nothing_pending_lets_content_work_through(self, tmp_path):
+        append_done(log_path(tmp_path), number=1, engine=ENGINE, date=TODAY)
+        refuse_while_pending(tmp_path, [make_directive(1)])
+
+    def test_an_engine_shipping_nothing_lets_content_work_through(self, tmp_path):
+        refuse_while_pending(tmp_path, [])
+
+    def test_pending_directives_refuse_with_the_count_and_the_next_step(self, tmp_path):
+        append_done(log_path(tmp_path), number=2, engine=ENGINE, date=TODAY)
+        shipped = [make_directive(1), make_directive(2), make_directive(3)]
+        with pytest.raises(DirectivesPendingError) as refused:
+            refuse_while_pending(tmp_path, shipped)
+        assert str(refused.value) == PENDING_REFUSAL.format(count="2 directives")
+
+    def test_one_pending_directive_is_counted_in_the_singular(self, tmp_path):
+        with pytest.raises(DirectivesPendingError) as refused:
+            refuse_while_pending(tmp_path, [make_directive(1)])
+        assert str(refused.value) == PENDING_REFUSAL.format(count="1 directive")
+
+    def test_the_refusal_names_the_command_that_performs_them(self):
+        assert "`bin/dex directive list`" in PENDING_REFUSAL
+
+    def test_a_corrupt_log_is_loud_rather_than_read_as_nothing_pending(self, tmp_path):
+        log_path(tmp_path).parent.mkdir()
+        log_path(tmp_path).write_text("{torn\n")
+        with pytest.raises(DirectiveError, match=r"directives\.jsonl:1"):
+            refuse_while_pending(tmp_path, [make_directive(1)])
+
+    def test_no_override_reads_the_engines_own_set(self, tmp_path):
+        with pytest.raises(DirectivesPendingError) as refused:
+            refuse_while_pending(tmp_path)
+        count = plural(len(discover()), "directive")
+        assert str(refused.value) == PENDING_REFUSAL.format(count=count)

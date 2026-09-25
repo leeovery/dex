@@ -409,9 +409,10 @@ def _undescribed_media(surface: str, payload: Mapping[str, object]) -> str:
                 f"{where}described ({described}) is not short of binaries ({binaries}) — "
                 "only an item still owing a description belongs here",
             )
+        describe = f"bin/dex enrich item describe {item} --of <file> --file cache/description.md"
         shortfall = (
             f"{described} of {kernel.plural(binaries, 'media file')} described — view the "
-            f"rest and write {kernel.code(f'enrichment/{item}/media-<n>.md')}"
+            f"rest and write each description through {kernel.code(describe)}"
         )
         rows.append((item, shortfall))
     if not rows:
@@ -931,13 +932,19 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
     return "\n".join(lines)
 
 
-# The lens check's repair, carried by both surfaces that show its finding:
-# the lens is the owner's statement, so a session writes it only on their
-# word or on a directive's, the engine's own decision.
+# The lens note, as both surfaces that carry it say it. The lens is the
+# owner's statement, so a session writes it only on their word or on a
+# directive's, the engine's own decision, and never to clear the note.
 _LENS_REPAIR = (
-    "the owner fills in `lens.md` with what this instance reads for, and a session "
-    "writes it only when the owner asks or a directive's instructions name it"
+    "the owner fills in or deletes `lens.md`, and a session writes it only when the owner "
+    "asks or a directive's instructions name it"
 )
+
+
+def _lens_note(note: str) -> str:
+    """The lens note's line: what the check found, then whose it is to act on."""
+    return f"{kernel.bold('Lens note')} — {note}; {_LENS_REPAIR}"
+
 
 # ---------------------------------------------------------------------------
 # sync-report
@@ -947,11 +954,6 @@ _LENS_REPAIR = (
 # a bare `docs/connect.md` would be a path to nothing on the machine reading
 # this line.
 _CONNECT_DOC = "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md"
-
-_DIRECTIVES_WHEN = (
-    "The run performs these after its pull, in this order, working from `bin/dex directive "
-    "list`: another machine may have completed one, and the pull brings its record."
-)
 
 # What sync found about this machine's chat clients, as the offer the session
 # reading it makes. Addressed to that session, not to the owner: the owner is
@@ -1003,8 +1005,9 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
               "intent": str}
           ],
           "machinery_changes": int,   # template files written + retired skills removed
-          "lens": str,                # optional: the lens check's finding, when
-                                      #   lens.md states nothing (never a failure)
+          "lens": str,                # optional: the lens check's note, when
+                                      #   lens.md holds placeholder lines or will
+                                      #   not read (informational, never a failure)
           "connect": [               # optional: one per client with a gap
              {"client": str,         # "desktop" | "code"
               "gap": str}            # "unconnected" | "unlisted" | "broken"
@@ -1081,26 +1084,23 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
 
 
 def _sync_lens(surface: str, payload: Mapping[str, object]) -> list[str]:
-    """The lens finding as its own line; nothing at all when the lens states something."""
+    """The lens note as its own line; nothing at all when there is no note."""
     if "lens" not in payload:
         return []
-    finding = _str_at(surface, payload, "lens")
-    return [
-        "",
-        (
-            f"{kernel.bold('Lens')} — {finding}: every judgment in a run reads through the "
-            f"lens, so {_LENS_REPAIR}"
-        ),
-    ]
+    return ["", _lens_note(_str_at(surface, payload, "lens"))]
 
 
 def _sync_directives(surface: str, payload: Mapping[str, object]) -> list[str]:
-    """The pending directives as a section; nothing at all when none are pending."""
+    """The pending directives as a section of information; nothing when none are pending.
+
+    It says nothing of how to perform them: `bin/dex directive list` does,
+    and the content commands refuse until they are done.
+    """
     rows = _obj_list_at(surface, payload, "directives", required=False)
     if not rows:
         return []
     heading = kernel.heading(f"Directives pending — {len(rows)}", level=3)
-    return ["", heading, "", *_sync_directive_rows(surface, rows), "", _DIRECTIVES_WHEN]
+    return ["", heading, "", *_sync_directive_rows(surface, rows)]
 
 
 def _sync_directive_rows(surface: str, rows: list[Mapping[str, object]]) -> list[str]:
@@ -1263,7 +1263,7 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
 
 _HEALTH_OPTIONAL = frozenset(
     {
-        "lens_error",
+        "lens_note",
         "broken_links",
         "reserved_links",
         "bad_citations",
@@ -1318,11 +1318,12 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     Payload::
 
         {
-          # lens.md states nothing (missing, unreadable, empty, or the
-          # seed's placeholder lines left) — renders loud, in either shape
-          "lens_error": str,
+          # lens.md reads as general knowledge though it is there (the
+          # seed's placeholder lines left, or unreadable) — informational,
+          # never a failure, in either shape
+          "lens_note": str,
           # EITHER the pre-taxonomy shape, travelling alone but for the
-          # lens — the two states before state/taxonomy.json exists, when
+          # lens note — the two states before state/taxonomy.json exists, when
           # no other check has run and a full payload would claim checks
           # that never did:
           "pre_taxonomy": {"stranded": [str]},   # [] = fresh instance;
@@ -1417,15 +1418,15 @@ def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
 
     The key travels alone — no check beyond the corpus glob has run, and a
     full payload beside it would render checks that never did. The lens
-    finding is the one exception, because the lens needs no taxonomy to
-    be checked. The heading still names the scale it has in hand: the
-    corpus item count.
+    note is the one exception, because the lens needs no taxonomy to be
+    read. The heading still names the scale it has in hand: the corpus
+    item count.
     """
     _check_keys(
         surface,
         payload,
         required=frozenset({"pre_taxonomy"}),
-        optional=frozenset({"lens_error"}),
+        optional=frozenset({"lens_note"}),
     )
     inner = payload["pre_taxonomy"]
     if not isinstance(inner, Mapping):
@@ -1458,17 +1459,10 @@ def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
 
 
 def _health_lens(surface: str, payload: Mapping[str, object]) -> list[str]:
-    """The lens failure row, above every section: each of them reads through the lens."""
-    if "lens_error" not in payload:
+    """The lens note's row, above every section: it says how the whole dex reads."""
+    if "lens_note" not in payload:
         return []
-    return [
-        "",
-        kernel.bullet(
-            f"{kernel.bold('LENS FAILURE')} — every judgment in a run reads through the "
-            f"lens, so {_LENS_REPAIR}"
-        ),
-        kernel.bullet(_str_at(surface, payload, "lens_error"), depth=1),
-    ]
+    return ["", kernel.bullet(_lens_note(_str_at(surface, payload, "lens_note")))]
 
 
 def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> list[str]:

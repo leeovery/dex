@@ -24,7 +24,7 @@ It is one command, however many clients they say yes to.
 - **Which clients are actually here.** Ask about nothing else:
 
   ```bash
-  ls "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+  command ls "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
   command -v claude
   ```
 
@@ -50,8 +50,8 @@ An instance root holds `bin/dex`, `corpus/` and `state/`, and carries a
 `~/Code/dex`, one directory per instance, so look there first and then wider:
 
 ```bash
-ls -d ~/Code/dex/*/ 2>/dev/null
-find ~ -maxdepth 4 -name .dex-engine-pin -not -path '*/.*' 2>/dev/null
+command ls -d ~/Code/dex/*/ 2>/dev/null
+command find ~ -maxdepth 4 -name .dex-engine-pin -not -path '*/.*' 2>/dev/null
 ```
 
 Then **confirm the list with the owner** before writing anything. Show the

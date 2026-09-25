@@ -469,7 +469,7 @@ class TestDirectivesInTheReport:
             report
         )
         assert "done on another machine" not in report
-        assert "after its pull" in report
+        assert "- **directive 3** — rewrite the readme\n\n**Machinery changes**" in report
 
     def test_nothing_pending_is_no_section_at_all(self, inst, template):
         append_done(directives_log(inst.root), number=1, engine=RUNNING, date=TODAY)
@@ -502,32 +502,46 @@ class TestDirectivesInTheReport:
 
 
 class TestLensInTheReport:
-    """The report carries the lens check's finding, so it shows before any work."""
+    """The report carries the lens note, so it shows before any work; no lens is no line."""
 
-    def lens_line(self, inst, template) -> str:
+    def report(self, inst, template) -> str:
         channel, _ = make_channel(listing_for("v0.1.0"))
         report, _ = run(inst, channel, template, migrate=lambda _root: [], shipped=[])
         assert report is not None
-        return next((line for line in report.split("\n") if line.startswith("**Lens**")), "")
+        return report
+
+    def lens_line(self, inst, template) -> str:
+        lines = self.report(inst, template).split("\n")
+        return next((line for line in lines if line.startswith("**Lens note**")), "")
 
     def test_a_filled_lens_is_no_line_at_all(self, inst, template):
         assert self.lens_line(inst, template) == ""
 
-    def test_a_missing_lens_is_a_line_and_never_a_failure(self, inst, template):
-        (inst.root / "lens.md").unlink()
-        assert self.lens_line(inst, template) == (
-            "**Lens** — `lens.md` is missing: every judgment in a run reads through the lens, "
-            "so the owner fills in `lens.md` with what this instance reads for, and a session "
-            "writes it only when the owner asks or a directive's instructions name it"
-        )
+    @pytest.mark.parametrize("text", [None, "", "\n  \n"], ids=["missing", "empty", "blank"])
+    def test_no_lens_is_a_general_knowledge_dex_and_no_line(self, inst, template, text):
+        if text is None:
+            (inst.root / "lens.md").unlink()
+        else:
+            (inst.root / "lens.md").write_text(text)
+        assert "lens" not in self.report(inst, template).lower()
 
-    def test_an_unfilled_lens_names_the_placeholders_left(self, inst, template):
+    def test_an_unfilled_lens_is_a_note_naming_the_placeholders_left(self, inst, template):
         (inst.root / "lens.md").write_text(
             FILLED_LENS + "\n## Set aside\n<what to look at hardest>\n"
         )
+        assert self.lens_line(inst, template) == (
+            "**Lens note** — `lens.md` still holds the seed's placeholder text "
+            "(`<what to look at hardest>`): until the placeholders are replaced (or the file "
+            "deleted), this dex reads as general knowledge; the owner fills in or deletes "
+            "`lens.md`, and a session writes it only when the owner asks or a directive's "
+            "instructions name it"
+        )
+
+    def test_an_unreadable_lens_is_a_note(self, inst, template):
+        (inst.root / "lens.md").write_bytes(b"\xff\xfe not text")
         assert self.lens_line(inst, template).startswith(
-            "**Lens** — `lens.md` still holds the seed's placeholder text: "
-            "`<what to look at hardest>`: "
+            "**Lens note** — `lens.md` is unreadable (UnicodeDecodeError): until it can be "
+            "read (or the file deleted), this dex reads as general knowledge; "
         )
 
     def test_the_placeholders_come_from_the_running_template(self, inst, template):

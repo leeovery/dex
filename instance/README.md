@@ -3,8 +3,7 @@
 A private **[dex](https://github.com/leeovery/dex)** instance: a knowledge base
 maintained by Claude.
 
-What this dex reads for is its lens: [`lens.md`](./lens.md). Ask Claude to
-change it whenever you like.
+<what this dex reads for>
 
 **How to use it** (no technical steps, ever):
 

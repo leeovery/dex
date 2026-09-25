@@ -30,6 +30,10 @@ date}`` record per directive: appended by ``directive done`` only after the
 check passes, and seeded with every shipped number when ``dex-new`` creates
 an instance, which is born in the shape directives exist to reach.
 
+While any directive is pending, the content commands refuse through
+:func:`refuse_while_pending`, so no content is processed before the
+instance reaches the shape the directives exist to give it.
+
 Authoring rules. A directive does one job over one source and accounts for
 all of it. It is instance-blind: it never names an instance, an owner or a
 path outside the instance, and it copes with shapes nobody maintaining the
@@ -50,21 +54,36 @@ from importlib import import_module, resources
 from pathlib import Path
 
 from dex_engine import numbered_log
+from dex_engine.render.kernel import plural
 
 __all__ = [
+    "PENDING_REFUSAL",
     "Directive",
     "DirectiveError",
+    "DirectivesPendingError",
     "append_done",
     "discover",
     "log_path",
     "pending",
     "read_done",
     "record_shipped",
+    "refuse_while_pending",
 ]
+
+# Phrased as the session's next step, because the command is not broken:
+# the directives come first.
+PENDING_REFUSAL = (
+    "this instance has {count} pending, and directives come before any content work: run "
+    "`bin/dex directive list` and follow it, then run this command again"
+)
 
 
 class DirectiveError(RuntimeError):
     """A directive, or the completed-directives log, is in a state code cannot fix."""
+
+
+class DirectivesPendingError(RuntimeError):
+    """Content work was asked of an instance that still has directives pending."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -195,6 +214,29 @@ def pending(root: Path, shipped: Sequence[Directive] | None = None) -> list[Dire
     return _ascending(
         directive for directive in _or_discovered(shipped) if directive.number not in done
     )
+
+
+def refuse_while_pending(root: Path, shipped: Sequence[Directive] | None = None) -> None:
+    """Refuse content work on the instance at ``root`` while any directive is pending.
+
+    Every content command calls this before it touches anything. It is the
+    engine's own word, so a session holding instructions older than the
+    engine it just synced still meets the directives before any content.
+
+    Args:
+        root: The instance root.
+        shipped: Override for tests; ``None`` discovers the engine's own set.
+
+    Raises:
+        DirectivesPendingError: A directive is pending; the message is
+            :data:`PENDING_REFUSAL` with the count filled in.
+        DirectiveError: The log is corrupt, or discovery met a packaging bug.
+    """
+    waiting = pending(root, shipped)
+    if waiting:
+        raise DirectivesPendingError(
+            PENDING_REFUSAL.format(count=plural(len(waiting), "directive"))
+        )
 
 
 def record_shipped(

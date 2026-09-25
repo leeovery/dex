@@ -14,9 +14,10 @@ Flow::
        while git history does not hold what it would replace; the README,
        lens.md and every other instance-owned file are never touched)
     5. render the sync report (one surface): the pending directives for the
-       run to perform after its pull, the lens check's finding when lens.md
-       states nothing, and whatever a read of the desktop app's own config
-       says about this instance's reach into chat
+       run to perform after its pull, the lens check's note when lens.md
+       still holds the seed's placeholder lines or will not read as text,
+       and whatever a read of the desktop app's own config says about this
+       instance's reach into chat
 
 ``.dex-engine-pin`` is one line at the instance root — ``<tag> <commit>`` —
 committed, instance-owned: sync writes its *value* — it is not a
@@ -51,7 +52,7 @@ from pathlib import Path
 
 from dex_engine import atomic, directives, migrations
 from dex_engine.directives import Directive
-from dex_engine.lens import lens_finding
+from dex_engine.lens import read_lens
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
@@ -687,7 +688,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied=applied,
         waiting=waiting,
         machinery_changes=len(refresh.changed),
-        lens=lens_finding(instance, tpl),
+        lens=read_lens(instance, tpl).note,
         connect=connect_gaps(root),
         notes=notes,
     )

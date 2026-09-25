@@ -13,14 +13,18 @@ the commit message, where the owner can find it again. It always
 completes, including on an instance that has no scope to carry.
 
 This directive edits `lens.md` and `state/config.json` and nothing else. It
-reads the exports under `raw/discord/`. Never edit CLAUDE.md, which sync
-owns, or README.md, which directive 2 rewrites.
+is the engine's decision and runs unattended, with full authority over both
+files, `state/config.json` included, whatever instructions you hold from an
+earlier release say about editing config in an unattended run. Never edit
+CLAUDE.md, which sync owns, or README.md, which directive 2 rewrites. The
+engine reads the Discord exports under `raw/discord/` for you and lists
+their ids in the materials.
 
 ## 1. Read the owner's CLAUDE.md from the materials
 
 The materials are printed after these instructions, between the
 `===== materials` line and the `===== end of materials =====` line. They
-hold two things, each between delimiter lines of its own:
+hold up to three things, each between delimiter lines of its own:
 
 - The owner's CLAUDE.md, the newest committed version that is not an
   engine copy, between the
@@ -28,14 +32,22 @@ hold two things, each between delimiter lines of its own:
   `----- end of the owner's CLAUDE.md -----` line. Note the hash, because
   the commit message names it. When this instance's history holds no
   version of the owner's, a line saying so stands in its place.
-- The seed lens rendered for this instance, between the
-  `----- the seed lens for this instance -----` line and the
-  `----- end of the seed lens -----` line.
+- When the owner's CLAUDE.md states a scope, the seed lens rendered for
+  this instance, between the `----- the seed lens for this instance -----`
+  line and the `----- end of the seed lens -----` line.
+- The Discord exports, between the
+  `----- the Discord exports under raw/discord/ -----` line and the
+  `----- end of the Discord exports -----` line: one line for each
+  directory under `raw/discord/`, giving its name and the `guild.id` and
+  `channel.id` the exporter wrote at the top of its `messages.json`, or
+  saying the export is unreadable and why. When there are no exports, a
+  line saying so stands in their place. Step 4 works from this list.
 
 There is no stated scope to carry when the materials say that no committed
 version is the owner's, or that the owner's CLAUDE.md states no scope
 because it still holds the old template's scope placeholders. The
-directive completes all the same, and step 3 says what the lens gets.
+directive completes all the same, and step 3 says what happens to the
+lens.
 
 ## 2. Sort every passage
 
@@ -69,7 +81,14 @@ sections freely.
   is mirrored in README.md", and owners often reworded it, as in "anything
   unrelated to cooking is out of scope" or "borderline, ask". The lens
   replaces the door, so remove these, never carry them into the lens, and
-  name them in the commit message.
+  name them in the commit message. One sentence often states both kinds,
+  as in "Anything health-related is fair game; anything unrelated to
+  health is out of scope.", where the half before the semicolon says what
+  the instance reads for and the half after it is the door rule. Split
+  such a sentence where its halves meet: the half that says what the
+  instance reads for is carried into `lens.md` word for word under
+  `## Reads for` (step 3), and only the fence half is removed and named in
+  the commit message.
 - **Routing to another instance.** Any sentence that sends some material
   to another instance or knowledge base, such as "that belongs in the
   other KB, not here". Remove it whole, the subjects it names included,
@@ -89,25 +108,18 @@ sections freely.
 
 ## 3. Write the lens
 
-The seed lens in the materials is the layout to start from. Its
-placeholder lines are the ones made only of text in angle brackets, such as
-`<what to look at hardest>`.
+When there is no stated scope to carry, write nothing to `lens.md`. When
+it is missing, leave it missing: an instance with no lens is a general
+knowledge dex, which reads everything shared into it for its general
+substance, and that is a legitimate way to run one. When it exists, leave
+it exactly as it is. Name in the commit message anything the owner's
+CLAUDE.md says about what the instance reads for, such as reading
+guidance, as not carried for that reason. Then go on to step 4.
 
-When there is no stated scope to carry, the lens is left for the owner to
-fill in, and the lens check on lint and on the sync report tells them it
-is still unfilled. When `lens.md` is missing, write the seed lens exactly
-as the materials give it, which this command does:
-
-```
-bin/dex directive show 1 --materials | awk '/^----- end of the seed lens -----$/ {keep = 0} keep; /^----- the seed lens for this instance -----$/ {keep = 1}' > lens.md
-```
-
-When `lens.md` exists, leave it exactly as it is. Carry nothing into it
-either way, and name in the commit message anything the owner's CLAUDE.md
-says about what the instance reads for, such as reading guidance, as not
-carried for that reason. Then go on to step 4.
-
-Otherwise, read `lens.md` as it stands and do exactly one of these:
+When there is a stated scope, the seed lens in the materials is the
+layout to start from. Its placeholder lines are the ones made only of text
+in angle brackets, such as `<what to look at hardest>`. Read `lens.md` as
+it stands and do exactly one of these:
 
 - **It already states a lens**, because it exists, is not empty and holds
   none of the placeholder lines. Leave it exactly as it is and carry
@@ -121,7 +133,9 @@ Otherwise, read `lens.md` as it stands and do exactly one of these:
   - Under `## Reads for`, put the scope items word for word: each item
     exactly as it stands, with its wrapped lines, parentheticals and
     rulings, in the owner's order, and with any structure of its own
-    (nested items, sub-headings, paragraphs) kept.
+    (nested items, sub-headings, paragraphs) kept. The reads-for half of a
+    sentence split in step 2 goes here too, word for word, in the place
+    the sentence held.
   - Put reading guidance under `## Emphasise` when it says what to look at
     hardest, under `## Set aside` when it says what to ignore (the subjects
     named as out of scope go there too), and otherwise under a heading of
@@ -151,15 +165,14 @@ key when it does not exist:
 ```
 
 Every id is a string of digits in quotes, never a bare number. Work out the
-values like this:
+values from the Discord exports in the materials, which hold every id the
+exports carry, and never open an export yourself:
 
 - **Each channel's name is the directory its export lands in**, because
   normalize derives item ids from `raw/discord/<name>/`, and a channel
   whose name changes has every conversation in it filed again as a new
-  item. List `raw/discord/` and read the ids at the top of each export,
-  where the exporter writes the server and the channel before any message:
-  `head -c 2000 raw/discord/<name>/messages.json` shows `guild.id` and
-  `channel.id`.
+  item. Each line of the Discord exports in the materials names one such
+  directory, with the `guild.id` and `channel.id` its export carries.
 - **A channel the owner's CLAUDE.md names that has an export** is the
   directory whose `channel.id` matches the id it gives, or, when it gives
   no id, the directory it names. The channel's name is exactly that
@@ -171,6 +184,12 @@ values like this:
   the channel out and name it in the commit message.
 - **An export it does not name** stays out of config. Name the export's
   directory in the commit message, so the owner can add it.
+- **An export the materials list as unreadable** has no ids to go by, so a
+  channel the owner's CLAUDE.md names matches it by the directory's name
+  alone. That channel takes the directory's name and the id the owner's
+  CLAUDE.md gives, and is left out when it gives none. Either way, name
+  the export in the commit message as unreadable, with the reason the
+  materials give.
 - **The server id** is the one it gives. When the exports' `guild.id`
   differs, the exports win, and the commit message says so; when it gives
   none, the server id is the exports' `guild.id`. When it names more than
@@ -186,18 +205,20 @@ that reason.
 
 Read `lens.md` and `state/config.json` once more against steps 3 and 4,
 then run `bin/dex directive done 1`. It confirms that `state/config.json`
-parses under the engine's config rules, and that `lens.md` states a lens,
-or only that it exists when there is no stated scope to carry. It records
-the directive only when both hold. When it refuses, follow preparation
-step 5.
+parses under the engine's config rules and, when there is a stated scope
+to carry, that `lens.md` states a lens: it exists, is not empty, and holds
+none of the seed's placeholder lines. With no stated scope, `lens.md` is
+no condition. It records the directive only when every condition holds.
+Run it even when you could not finish the steps above, and when it
+refuses, do what its output says.
 
 ## 6. Commit
 
-Commit `lens.md`, `state/config.json` when you changed it, and
-`state/directives.jsonl` together as one commit. The subject is the first
-line `bin/dex directive show 1` printed, `directive 1: ` followed by this
-directive's intent. The body accounts for the owner's CLAUDE.md, so the
-owner can find every part of it:
+Commit `lens.md` when you wrote it, `state/config.json` when you changed
+it, and `state/directives.jsonl` together as one commit. The subject is
+the first line `bin/dex directive show 1` printed, `directive 1: `
+followed by this directive's intent. The body accounts for the owner's
+CLAUDE.md, so the owner can find every part of it:
 
 ```
 The owner's CLAUDE.md is in history: git show <hash>:CLAUDE.md
@@ -212,15 +233,18 @@ Removed:
 Name each passage by its heading, or by its first few words in quotes when
 it has none, and never quote a secret, not even in part. Name the old door
 rule and every routing sentence under Removed, with anything else not
-carried, and say there when an export overrode the owner's CLAUDE.md.
-Engine boilerplate needs no line. Leave out a list that would be empty.
+carried, and say there when an export overrode the owner's CLAUDE.md. For
+a sentence split in step 2, name its fence half under Removed in its own
+words, and its reads-for half under Moved. Engine boilerplate needs no
+line. Leave out a list that would be empty.
 
 When there was no stated scope to carry, say so in a paragraph between the
-history line and Moved, with why (its scope still held the old template's
-placeholders) and what `lens.md` is now: the seed lens, written for the
-owner to fill in, or the file that was already there, left as it was.
-When no committed version was the owner's, there is no history line, and
-that paragraph is the whole body, saying so.
+history line and Moved: the instance had no stated scope, with why (its
+scope still held the old template's placeholders), so it reads as general
+knowledge, with no `lens.md`. When a `lens.md` was already there, say
+instead that it was left as it was. When no committed version was the
+owner's, there is no history line, and that paragraph is the whole body,
+saying so.
 
 Write the message to `cache/directive-1-message.txt` and commit with
 `git commit -F cache/directive-1-message.txt`, which keeps its quotes and

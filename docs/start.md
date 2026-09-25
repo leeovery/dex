@@ -74,12 +74,16 @@ at a time (use your ask-user tool where available):
 
 1. **Name** — suggest `dex-<domain>` (dex-cooking, dex-travel). Keep the
    dex brand; the domain is the qualifier. Set `{name}` = the answer.
-2. **What it reads for**: the dex's lens, free-form and in the owner's own
-   words. Sentences, a list or examples all work, and an example often
-   says it best ("a site like this, for its type pairing, not its
-   products"). The seed `lens.md` has three headings you can use as
-   prompts: what it reads for, what to look at hardest, and what to set
-   aside even when it is the subject.
+2. **Its lens**: what this dex should read things for. Ask it plainly, in
+   words like: "When you share something into this dex, what do you want
+   it to take from it, and is there anything it should ignore, even when
+   that's what the thing is about?" An example helps the owner answer: a
+   design dex reads a gardening site for its layout and type, never its
+   plants. Write the answer into `lens.md` in the owner's own words,
+   whether sentences, a list or examples. If it comes back as a bare list
+   of subjects, one follow-up is fine: what should the dex take from those
+   things? A general knowledge dex, with no lens, reading everything for
+   its plain substance, is a legitimate answer too.
 3. **GitHub** — private repo (default), or local-only for now. Local-only
    is a supported state, not a half-setup: runs skip pulls, pushes and the
    inbox release checks (skipped, not passed) until a repo exists, and the
@@ -102,7 +106,16 @@ and engine-owned, so it is never personalised. Then:
 
 - Write the lens: the owner's answer to question 2 goes into `lens.md` in
   place of the seed's placeholder lines. Keep, rename or drop the seed's
-  headings as the answer suits, and keep the owner's own words.
+  headings as the answer suits, and keep the owner's own words. For a
+  general knowledge dex, delete the seeded `lens.md` instead, and in
+  README.md replace the two lines that begin
+  `What this dex reads for is its lens:` with these two, exactly, so the
+  README links no file that is not there:
+
+  ```
+  This dex has no lens, so it is a general knowledge dex that reads anything
+  shared into it. Ask Claude to give it one whenever you like.
+  ```
 - Fill the `<owner>/<repo>` placeholder in README.md's "Run it on another
   machine" prompt. That prompt is what a second machine or a second person
   pastes, so it has to name the real repo. If GitHub was declined, delete
@@ -111,9 +124,11 @@ and engine-owned, so it is never personalised. Then:
   was wanted: `gh repo create {name} --private --source . --push`, then
   `bin/dex inbox ensure` — creates the standing "inbox" release that
   binary captures stage into.
-- Sanity check: `bin/dex lint` (prints a fresh-instance notice). It fails
-  while `lens.md` still holds one of the seed's placeholder lines, which
-  means the lens step is unfinished: finish it, commit, and run lint again.
+- Sanity check: `bin/dex lint` (prints a fresh-instance notice). A
+  **Lens note** on it means `lens.md` still holds one of the seed's
+  placeholder lines, so the dex would read as general knowledge and the
+  lens step is unfinished: fill in the lens, or delete the file for a
+  general knowledge dex, then commit and run lint again.
 
 → Proceed to **Step 5**.
 
@@ -210,8 +225,9 @@ instance's dex-run skill (`.claude/skills/dex-run/SKILL.md`).
 ## Step 9: Hand-Off
 
 End your final message with, in a few lines: `{instance}` (where it
-lives), its lens as written, the schedule it runs on, how to save things
-(the shortcut, or "add this to dex" in a session — either way the save is
+lives), its lens as written (or that it is a general knowledge dex), the
+schedule it runs on, how to save things (the shortcut, or "add this to
+dex" in a session — either way the save is
 instant and processing happens on the schedule), and how to ask questions —
 including, if they declined the chat connection in Step 7, that asking for the
 `docs/connect.md` paste again is all it takes to set it up later.

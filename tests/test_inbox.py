@@ -18,6 +18,7 @@ from dex_engine.inbox import (
     parse_capture,
     reconcile,
 )
+from dex_engine.pipeline.types import Instance
 from tests.capabilities.conftest import fixture_bytes
 from tests.drivers.conftest import truncating_server
 
@@ -81,7 +82,7 @@ class FakeGithub:
     def git(self, args):
         self.git_calls.append(list(args))
         self.ops.append(("git", *args))
-        if args[0] == "remote":
+        if args == ["config", "--get", "remote.origin.url"]:
             return 0, f"git@github.com:{REPO}.git\n"
         if args[0] == "check-attr":
             return 0, f"{args[-1]}: filter: {'lfs' if self.lfs_ok else 'unspecified'}\n"
@@ -314,7 +315,7 @@ class TestReconcileModes:
         gh = FakeGithub()
 
         def no_remote(args):
-            if args[0] == "remote":
+            if args == ["config", "--get", "remote.origin.url"]:
                 return 1, ""
             return gh.git(args)
 
@@ -428,6 +429,7 @@ class TestParser:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["reconcile-harder"])
 
+    @pytest.mark.usefixtures("no_directives_pending")
     def test_main_exits_with_a_message_not_a_traceback(self, instance, monkeypatch):
         monkeypatch.chdir(instance.root)
 
@@ -438,6 +440,43 @@ class TestParser:
         with pytest.raises(SystemExit) as excinfo:
             main([])
         assert "dex-inbox: disk trouble" in str(excinfo.value)
+
+
+@pytest.mark.usefixtures("no_directives_pending")
+class TestMain:
+    @pytest.fixture
+    def verb(self, instance, monkeypatch):
+        """Stand in for one verb: record what main hands it, answer with ``code``."""
+
+        def use(name: str, code: int) -> list[tuple[Instance, GithubSeams]]:
+            calls: list[tuple[Instance, GithubSeams]] = []
+
+            def fake(given: Instance, seams: GithubSeams) -> int:
+                calls.append((given, seams))
+                return code
+
+            monkeypatch.setattr(f"dex_engine.inbox.{name}", fake)
+            monkeypatch.chdir(instance.root)
+            return calls
+
+        return use
+
+    @pytest.mark.parametrize(("argv", "name"), [([], "reconcile"), (["ensure"], "ensure")])
+    def test_the_verb_gets_the_instance_at_cwd_and_its_code_is_the_exit(
+        self, verb, instance, argv, name
+    ):
+        calls = verb(name, 3)
+        with pytest.raises(SystemExit) as exited:
+            main(argv)
+        assert exited.value.code == 3
+        [(given, seams)] = calls
+        assert given.root == instance.root
+        assert isinstance(seams, GithubSeams)
+
+    def test_a_clean_reconcile_returns_without_exiting(self, verb):
+        calls = verb("reconcile", 0)
+        main([])
+        assert len(calls) == 1
 
 
 class TestCaptureShape:

@@ -1,10 +1,11 @@
-"""Directive 2: the README rewritten from the engine's template, linking the lens.
+"""Directive 2: the README rewritten from the engine's template, in place of the scope list.
 
-An instance's README used to mirror its scope list. The scope is ``lens.md``
-now, after directive 1, and the template links to it. The session replaces
-the README once with the template rendered for this instance, the text its
-materials carry, and names in the commit whatever the old README held
-beyond it.
+An instance's README used to mirror its scope list. What the instance
+reads for is ``lens.md`` now, after directive 1, and the template's lens
+line links to it, or names a general knowledge dex when directive 1 left
+no ``lens.md``. The session replaces the README once with the template
+rendered for this instance, the text its materials carry, and names in the
+commit whatever the old README held beyond it.
 """
 
 from collections.abc import Callable
@@ -17,7 +18,7 @@ from dex_engine.template import bundled_template
 
 __all__ = ["INTENT", "check", "materials", "unmet"]
 
-INTENT = "Rewrite README.md from the engine's template, linking the lens"
+INTENT = "Rewrite README.md from the engine's template, which replaces the scope list"
 
 _REWRITE = "write it with `bin/dex directive show 2 --materials > README.md`"
 

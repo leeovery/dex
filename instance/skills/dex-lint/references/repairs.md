@@ -3,6 +3,14 @@
 Fix, in order (state before wiki — a broken ledger blocks the verbs the
 other repairs need):
 
+- **Lens note**: never a failure, and never a session's repair. The
+  row says `lens.md` still holds the seed's placeholder lines or cannot
+  be read, so this dex reads as general knowledge until the owner fills
+  in or deletes the file. It is the owner's: pass it on in the report,
+  and write `lens.md` only when the owner asks or a directive's
+  instructions name it. A missing or empty `lens.md` raises no row at
+  all, because an instance with no lens is a general knowledge dex, which
+  is a legitimate way to run one.
 - **Ledger schema failure** — repair before anything else touches
   state; the advice splits by fault. A line that is valid JSON but
   violates the schema is stale vocabulary: the message names the file,

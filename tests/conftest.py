@@ -1,12 +1,14 @@
 """Shared fixtures for the engine test suite.
 
 ``instance`` builds the corpus/state/enrichment/cache skeleton in a tmp
-dir; ``own_git`` runs git in tmp repositories, kept apart from the
+dir, and ``no_directives_pending`` records every shipped directive in it;
+``own_git`` runs git in tmp repositories, kept apart from the
 machine's config; ``FakeDriver`` is the scriptable driver the pipeline tests drive;
 ``FlippableProvider`` is the availability seam the waiting-cohort tests
 toggle.
 """
 
+import datetime
 import os
 import shutil
 import subprocess
@@ -26,6 +28,7 @@ if "MUTANT_UNDER_TEST" in os.environ:
     settings.register_profile("mutmut", suppress_health_check=[HealthCheck.differing_executors])
     settings.load_profile("mutmut")
 
+from dex_engine.directives import record_shipped
 from dex_engine.pipeline.types import (
     Availability,
     Content,
@@ -71,6 +74,17 @@ def instance(tmp_path: Path) -> Instance:
     for directory in (inst.corpus_dir, inst.state_dir, inst.enrichment_dir, inst.cache_dir):
         directory.mkdir()
     return inst
+
+
+@pytest.fixture
+def no_directives_pending(instance: Instance) -> Instance:
+    """The skeleton instance with every shipped directive recorded, as ``dex-new`` leaves one.
+
+    The content commands refuse while a directive is pending, so a test that
+    drives one through its ``main`` starts from here.
+    """
+    record_shipped(instance.root, engine="0.0.0", date=datetime.date(2026, 1, 1))
+    return instance
 
 
 def _default_fetch(_unit: WorkUnit) -> Content:

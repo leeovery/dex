@@ -6,6 +6,9 @@ Never skip steps; never invent inputs. All commands run from the instance
 root. Code writes frontmatter and state; you write prose and judgment.
 Every judgment below reads the item through this instance's lens, the
 owner's `lens.md` at the instance root, taken whole as the contract says.
+An instance with no lens is a general knowledge dex, which the contract
+also defines: there every judgment reads the item for its general
+substance, the facts the source yields and the subject it is about.
 
 ## 1. Corpus item (mechanical: the verb writes it)
 
@@ -166,6 +169,10 @@ one link away, like a post whose whole point is the article it links to,
 so judge the item by everything harvest brought in, never by a site root
 or an index page alone.
 
+In a general knowledge dex the question is whether the item has any
+substance, so the only drop there is content with nothing in it at all,
+such as chatter.
+
 If there is anything, however little, the item goes on to its digest: a
 thin yield is a `signal: low` digest, perhaps filed in
 `uncategorized-shares`, and never a drop. If there is nothing, drop the
@@ -201,6 +208,10 @@ reaches:
 - content the engine could not reach, such as a paywall, a blocked fetch
   or a dead link, which is a fetch problem for the parking lanes and the
   heal procedure below, never a drop;
+- an aspect the lens reads for that the capture could not carry, such as
+  a page's look when only its text landed, which is a capture gap like a
+  paywall and never a drop: the item goes on to its digest from what
+  landed and the owner's note;
 - a parked item (waiting, blocked, manual), which gets no verdict until
   its sources land, just as it gets no digest;
 - an item whose every unit is dead or skipped, or whose landed content
@@ -239,7 +250,9 @@ Extract the facts the source yields through this instance's lens, with
 enough about its subject to say what the item is, and choose its topics
 along the lens too. Judge `signal` by the same measure: a design mockup
 with no product behind it is thin evidence to a business lens and rich
-material to a design one.
+material to a design one. In a general knowledge dex, extract the facts
+the source yields about its own subject, choose topics along that
+subject, and judge `signal` by how much substance the source carries.
 
 Each fact carries concrete specifics and reads without the source in front
 of you. No target count: a rich paper earns many bullets and a two-line
@@ -292,11 +305,12 @@ grows topics like typography and landing-page layout, where a marketing
 instance files them under social proof and sales copy.
 
 Create a new topic only once several items justify a page; the
-several-items rule governs page creation, never taxonomy existence. When
-you do create one, sweep the existing digests (`state/digests/`) for
-items that belong to it — including `uncategorized-shares` — and move
-them in with `place` plus `unplace` in the one payload: a new topic
-usually reveals items that were previously overlooked or coarsely filed.
+several-items rule governs page creation, never whether
+`state/taxonomy.json` exists. When you do create one, sweep the existing
+digests (`state/digests/`) for items that belong to it — including
+`uncategorized-shares` — and move them in with `place` plus `unplace` in
+the one payload: a new topic usually reveals items that were previously
+overlooked or coarsely filed.
 Full payload shape — definitions, moves, drops, and what the verb
 refuses — in `state-formats.md` (this directory).
 

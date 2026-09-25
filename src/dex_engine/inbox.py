@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from email.message import Message as HTTPMessage
 
 from . import atomic
+from .directives import refuse_while_pending
 from .drivers.transport import normalize_httplib_errors
 from .origin import github_repo
 from .pipeline.capture import parse_capture
@@ -345,7 +346,9 @@ class _Reconcile:
         return staged.startswith("version https://git-lfs")
 
     def repo(self) -> str | None:
-        code, out = self.seams.git(["remote", "get-url", "origin"])
+        # The stored URL: `remote get-url` expands insteadOf rewrites, and the
+        # inbox release lives on GitHub however this machine fetches.
+        code, out = self.seams.git(["config", "--get", "remote.origin.url"])
         return github_repo(out) if code == 0 else None
 
 
@@ -592,6 +595,7 @@ def main(argv: list[str] | None = None) -> None:
     instance = Instance(root=Path.cwd())
     seams = default_seams()
     try:
+        refuse_while_pending(instance.root)
         code = ensure(instance, seams) if args.command == "ensure" else reconcile(instance, seams)
     except (OSError, ValueError, RuntimeError) as e:
         sys.exit(f"dex-inbox: {e}")

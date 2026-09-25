@@ -3593,7 +3593,7 @@ class TestUndescribedMedia:
         assert "### Describe these — 1 item carries media nobody has described" in report
         assert f"- **{PHOTO_ITEM}**" in report
         assert "1 of 3 media files described" in report
-        assert f"enrichment/{PHOTO_ITEM}/media-<n>.md" in report
+        assert f"bin/dex enrich item describe {PHOTO_ITEM} --of <file>" in report
 
     def test_listed_though_the_item_is_enriched_and_digested(self, instance):
         # The whole point: an item whose units have all landed leaves the

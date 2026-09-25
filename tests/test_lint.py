@@ -123,61 +123,97 @@ class TestPreTaxonomy:
         assert "… and 5 more, not listed" in outcome.report
 
 
-LENS_ROW = (
-    "- **LENS FAILURE** — every judgment in a run reads through the lens, so the owner fills "
-    "in `lens.md` with what this instance reads for, and a session writes it only when the "
-    "owner asks or a directive's instructions name it"
+LENS_REPAIR = (
+    "; the owner fills in or deletes `lens.md`, and a session writes it only when the owner "
+    "asks or a directive's instructions name it"
+)
+PLACEHOLDER_NOTE = (
+    "- **Lens note** — `lens.md` still holds the seed's placeholder text "
+    "(`<what this instance takes from whatever is shared into it>`, "
+    "`<what to look at hardest>`, `<what to ignore, even when it is the subject>`): until "
+    "the placeholders are replaced (or the file deleted), this dex reads as general knowledge"
+    f"{LENS_REPAIR}\n"
 )
 
 
+def seed_lens(instance: Instance) -> None:
+    instance.lens_path.write_text((TEMPLATE / "lens.md").read_text(encoding="utf-8"))
+
+
 class TestLens:
-    """A lens that states nothing fails the check: every judgment reads through it."""
+    """The lens is never a failure: at most a note, for a lens.md that reads as nothing."""
 
     def test_a_filled_lens_raises_no_row(self, instance):
         write_taxonomy(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 0
-        assert "LENS FAILURE" not in outcome.report
+        assert "Lens note" not in outcome.report
 
-    def test_a_missing_lens_fails_with_the_row_and_its_repair(self, instance):
+    @pytest.mark.parametrize("text", [None, "", "  \n\n"], ids=["missing", "empty", "blank"])
+    def test_no_lens_is_a_general_knowledge_dex_and_no_row(self, instance, text):
         write_taxonomy(instance)
-        instance.lens_path.unlink()
+        if text is None:
+            instance.lens_path.unlink()
+        else:
+            instance.lens_path.write_text(text)
         outcome = lint(instance)
-        assert outcome.exit_code == 1
-        assert f"{LENS_ROW}\n  - `lens.md` is missing\n" in outcome.report
+        assert outcome.exit_code == 0
+        assert "lens" not in outcome.report.lower()
 
-    def test_the_row_opens_the_report_above_every_section(self, instance):
+    def test_the_seed_left_as_it_was_is_a_note_and_never_a_failure(self, instance):
         write_taxonomy(instance)
-        instance.lens_path.write_text("   \n")
+        seed_lens(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert f"\n{PLACEHOLDER_NOTE}" in outcome.report
+
+    def test_the_note_opens_the_report_above_every_section(self, instance):
+        write_taxonomy(instance)
+        seed_lens(instance)
         report = lint(instance).report
-        assert report.index("LENS FAILURE") < report.index("### Wiki")
-        assert "  - `lens.md` is empty\n" in report
+        assert report.index("Lens note") < report.index("### Wiki")
 
-    def test_the_seed_left_as_it_was_names_its_placeholders(self, instance):
+    def test_an_unreadable_lens_is_a_note_and_never_a_failure(self, instance):
         write_taxonomy(instance)
-        instance.lens_path.write_text((TEMPLATE / "lens.md").read_text(encoding="utf-8"))
+        instance.lens_path.write_bytes(b"\xff\xfe not text")
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert (
+            "- **Lens note** — `lens.md` is unreadable (UnicodeDecodeError): until it can be "
+            f"read (or the file deleted), this dex reads as general knowledge{LENS_REPAIR}\n"
+        ) in outcome.report
+
+    def test_the_other_findings_still_decide_the_exit(self, instance):
+        write_taxonomy(instance)
+        seed_lens(instance)
+        page = instance.wiki_dir / "topics" / "brewing.md"
+        page.parent.mkdir(parents=True)
+        page.write_text("---\ntopic: brewing\n---\nSee [[nowhere]].\n")
         outcome = lint(instance)
         assert outcome.exit_code == 1
-        assert "still holds the seed's placeholder text: `<what this instance takes" in (
-            outcome.report
+        assert "Lens note" in outcome.report
+
+    def test_a_fresh_instance_carries_the_note_and_passes(self, instance):
+        seed_lens(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert outcome.report.startswith(
+            f"## Health check — fresh instance, 0 corpus items\n\n{PLACEHOLDER_NOTE}"
         )
 
-    def test_a_fresh_instance_with_no_lens_fails_before_any_taxonomy(self, instance):
-        # The first run already reads everything through the lens, so the
-        # check cannot wait for placement to have happened.
+    def test_a_fresh_instance_with_no_lens_passes_with_no_row(self, instance):
         instance.lens_path.unlink()
         outcome = lint(instance)
-        assert outcome.exit_code == 1
-        assert outcome.report.startswith("## Health check — fresh instance, 0 corpus items\n")
-        assert f"{LENS_ROW}\n  - `lens.md` is missing\n" in outcome.report
+        assert outcome.exit_code == 0
+        assert "lens" not in outcome.report.lower()
 
-    def test_a_stranded_corpus_carries_the_lens_row_too(self, instance):
+    def test_a_stranded_corpus_carries_the_note_and_fails_for_itself(self, instance):
         write_corpus_stub(instance)
-        instance.lens_path.unlink()
+        seed_lens(instance)
         outcome = lint(instance)
         assert outcome.exit_code == 1
         assert "BROKEN MID-INGEST" in outcome.report
-        assert "`lens.md` is missing" in outcome.report
+        assert PLACEHOLDER_NOTE in outcome.report
 
 
 class TestMalformedTaxonomy:

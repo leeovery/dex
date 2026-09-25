@@ -4,10 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.seeds import NAME_PLACEHOLDER, REPO_PLACEHOLDER, instance_readme, lens, readme
+from dex_engine.seeds import (
+    GENERAL_LINE,
+    LENS_LINE,
+    LENS_PLACEHOLDER,
+    NAME_PLACEHOLDER,
+    REPO_PLACEHOLDER,
+    instance_readme,
+    lens,
+    readme,
+)
 
 # The repo's template tree — what the wheel bundles as dex_engine/instance.
 TEMPLATE = Path(__file__).resolve().parent.parent / "instance"
+START = Path(__file__).resolve().parent.parent / "docs" / "start.md"
+LENS_LINK = "(./lens.md)"
 JOIN_HEADING = "## Run it on another machine"
 PROMPT_TAIL = "this is an existing dex at {repo}."
 
@@ -28,6 +39,13 @@ def template_with(tmp_path: Path, readme_text: str) -> Path:
     return tree
 
 
+def with_lens(root: Path) -> Path:
+    """``root`` made an instance holding a ``lens.md``, as dex-new leaves one."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "lens.md").write_text("# dex-cooking\n\nWeeknight recipes.\n", encoding="utf-8")
+    return root
+
+
 class TestLens:
     def test_the_seed_is_titled_with_the_name_and_otherwise_unchanged(self):
         seed = (TEMPLATE / "lens.md").read_text(encoding="utf-8")
@@ -36,12 +54,21 @@ class TestLens:
 
 
 class TestReadme:
-    def test_the_new_instance_readme_is_named_and_keeps_the_repo_for_setup(self):
+    def test_the_new_instance_readme_is_named_links_the_lens_and_keeps_the_repo(self):
+        # dex-new always seeds lens.md, so its README always links it.
         text = readme(TEMPLATE, "dex-cooking")
-        assert text == template_readme().replace(NAME_PLACEHOLDER, "dex-cooking")
+        assert text == template_readme().replace(NAME_PLACEHOLDER, "dex-cooking").replace(
+            LENS_PLACEHOLDER, LENS_LINE
+        )
         assert text.startswith("# dex-cooking\n")
         assert NAME_PLACEHOLDER not in text
+        assert LENS_PLACEHOLDER not in text
         assert PROMPT_TAIL.format(repo=REPO_PLACEHOLDER) in text
+
+    def test_the_template_holds_the_lens_line_once_as_a_paragraph_of_its_own(self):
+        lines = template_readme().splitlines()
+        [at] = [n for n, line in enumerate(lines) if LENS_PLACEHOLDER in line]
+        assert lines[at - 1 : at + 2] == ["", LENS_PLACEHOLDER, ""]
 
     def test_the_template_holds_the_repo_once_inside_the_join_section_it_ends_on(self):
         lines = template_readme().splitlines()
@@ -63,7 +90,7 @@ class TestInstanceReadme:
         ids=["ssh", "ssh-bare", "https", "https-bare"],
     )
     def test_a_github_origin_fills_the_join_prompt(self, tmp_path, url):
-        root = tmp_path / "dex-cooking"
+        root = with_lens(tmp_path / "dex-cooking")
         text = instance_readme(TEMPLATE, root, origin=origin_of(url))
         assert text == readme(TEMPLATE, "dex-cooking").replace(
             REPO_PLACEHOLDER, "someone/dex-cooking"
@@ -77,7 +104,7 @@ class TestInstanceReadme:
         ids=["no-origin", "elsewhere", "local-path"],
     )
     def test_without_a_github_origin_the_join_section_goes_whole(self, tmp_path, url):
-        root = tmp_path / "dex-cooking"
+        root = with_lens(tmp_path / "dex-cooking")
         text = instance_readme(TEMPLATE, root, origin=origin_of(url))
         before_join = readme(TEMPLATE, "dex-cooking").split(f"\n{JOIN_HEADING}\n")[0]
         assert text == before_join.rstrip("\n") + "\n"
@@ -102,6 +129,53 @@ class TestInstanceReadme:
 
         instance_readme(TEMPLATE, tmp_path / "dex-cooking", origin=origin)
         assert asked == [tmp_path / "dex-cooking"]
+
+
+class TestTheLensLine:
+    """A README links lens.md only when the instance has one, never a dead link."""
+
+    def test_an_instance_with_a_lens_links_it(self, tmp_path):
+        root = with_lens(tmp_path / "dex-cooking")
+        text = instance_readme(TEMPLATE, root, origin=origin_of(None))
+        assert f"\n\n{LENS_LINE}\n\n" in text
+        assert GENERAL_LINE not in text
+
+    def test_an_instance_with_no_lens_is_a_general_knowledge_dex_with_no_link(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        root.mkdir()
+        text = instance_readme(TEMPLATE, root, origin=origin_of(None))
+        assert f"\n\n{GENERAL_LINE}\n\n" in text
+        assert LENS_LINK not in text
+        assert LENS_PLACEHOLDER not in text
+
+    def test_the_two_renders_differ_only_in_the_lens_line(self, tmp_path):
+        bare = tmp_path / "dex-cooking"
+        bare.mkdir()
+        general = instance_readme(TEMPLATE, bare, origin=origin_of(None))
+        linked = instance_readme(TEMPLATE, with_lens(bare), origin=origin_of(None))
+        assert general.replace(GENERAL_LINE, LENS_LINE) == linked
+
+    def test_an_empty_lens_md_is_still_a_file_to_link(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        root.mkdir()
+        (root / "lens.md").write_text("", encoding="utf-8")
+        assert LENS_LINE in instance_readme(TEMPLATE, root, origin=origin_of(None))
+
+    def test_only_the_instance_s_own_lens_md_counts(self, tmp_path):
+        (tmp_path / "lens.md").write_text("a lens beside the instance\n", encoding="utf-8")
+        root = tmp_path / "dex-cooking"
+        root.mkdir()
+        assert GENERAL_LINE in instance_readme(TEMPLATE, root, origin=origin_of(None))
+
+    def test_the_setup_guide_gives_the_general_line_exactly(self):
+        # docs/start.md tells setup to swap the line in by hand when the
+        # owner deletes the seeded lens; its text must be the render's.
+        guide = START.read_text(encoding="utf-8")
+        block = ["```", *GENERAL_LINE.split("\n"), "```"]
+        assert "\n".join(f"  {line}" for line in block) in guide
+        replaced = "What this dex reads for is its lens:"
+        assert f"`{replaced}`" in guide
+        assert LENS_LINE.startswith(replaced)
 
 
 class TestDroppingTheJoinSection:

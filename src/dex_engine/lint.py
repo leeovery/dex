@@ -2,10 +2,13 @@
 
 Checks:
 
-  lens — ``lens.md`` missing, unreadable, empty, or still holding the
-  seed's placeholder lines (:func:`dex_engine.lens.lens_finding`). Asked
-  before the taxonomy exists too: a fresh instance's first run already
-  reads everything through the lens.
+  lens — a note, never a failure, when ``lens.md`` still holds the seed's
+  placeholder lines or will not read as text, so the instance reads as
+  general knowledge until the owner fills it in or deletes it
+  (:func:`dex_engine.lens.read_lens`). A missing or empty ``lens.md`` is
+  no finding at all: an instance with no lens is a general knowledge dex.
+  Asked before the taxonomy exists too, so the note shows from the first
+  check.
 
   wiki — broken wikilinks (vs reserved/unbuilt), citations of ids not in the
   corpus, shortid-shaped citations (backticked 6-hex is a probable malformed
@@ -62,8 +65,8 @@ staleness reference, and resetting them would mask exactly what the stale
 check exists to find.
 
 Output renders through the ``health-report`` surface. Exit 1 on hard
-failures: a lens that states nothing, broken wikilinks, bad citations, a
-ledger schema error, a malformed taxonomy or entity-members file, an
+failures: broken wikilinks, bad citations, a ledger schema error, a
+malformed taxonomy or entity-members file, an
 unparseable pass record, a malformed digest, and the pre-taxonomy
 broken-mid-ingest state (corpus items but no ``state/taxonomy.json`` —
 placement never ran). Every one
@@ -84,7 +87,7 @@ from pathlib import Path
 
 from . import corpus, frontmatter, instance_map
 from .capabilities import Capabilities
-from .lens import lens_finding
+from .lens import read_lens
 from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.digest import item_media
@@ -185,8 +188,8 @@ def run_lint(
     Returns:
         The outcome: rendered report and exit code.
     """
-    lens_error = lens_finding(instance, template if template is not None else bundled_template())
-    special = _pre_taxonomy_outcome(instance, lens_error)
+    lens_note = read_lens(instance, template if template is not None else bundled_template()).note
+    special = _pre_taxonomy_outcome(instance, lens_note)
     if special is not None:
         return special
     taxonomy, taxonomy_error = _load_taxonomy(instance)
@@ -243,8 +246,8 @@ def run_lint(
         "count_drift": scan.count_drift,
         "restated": scan.restated,
     }
-    if lens_error is not None:
-        payload["lens_error"] = lens_error
+    if lens_note is not None:
+        payload["lens_note"] = lens_note
     if taxonomy_error is not None:
         payload["taxonomy_error"] = taxonomy_error
     if entity_members_error is not None:
@@ -265,8 +268,7 @@ def run_lint(
         payload["notes"] = scan.notes
 
     failed = bool(
-        lens_error
-        or scan.broken_links
+        scan.broken_links
         or scan.bad_citations
         or ledger_error
         or taxonomy_error
@@ -387,22 +389,22 @@ def _topic_members(taxonomy: dict[str, object]) -> dict[str, set[str]]:
     return members
 
 
-def _pre_taxonomy_outcome(instance: Instance, lens_error: str | None) -> LintOutcome | None:
+def _pre_taxonomy_outcome(instance: Instance, lens_note: str | None) -> LintOutcome | None:
     """The two pre-taxonomy states: fresh instance, or broken mid-ingest.
 
     Rendered through the health-report surface's pre-taxonomy shape like
-    every other report — never hand-drawn. The lens finding travels with
-    it, since no taxonomy is needed to read everything through the lens.
+    every other report — never hand-drawn. The lens note travels with it,
+    since no taxonomy is needed to read the lens.
     """
     if instance.taxonomy_path.exists():
         return None
     stranded = sorted(path.stem for path in instance.corpus_dir.glob("*/*.md"))
     payload: dict[str, object] = {"pre_taxonomy": {"stranded": stranded}}
-    if lens_error is not None:
-        payload["lens_error"] = lens_error
+    if lens_note is not None:
+        payload["lens_note"] = lens_note
     return LintOutcome(
         report=surfaces.render("health-report", payload),
-        exit_code=1 if stranded or lens_error else 0,
+        exit_code=1 if stranded else 0,
     )
 
 

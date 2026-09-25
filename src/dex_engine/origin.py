@@ -27,11 +27,15 @@ def github_repo(url: str) -> str | None:
 
 
 def origin_url(root: Path) -> str | None:
-    """The URL of the ``origin`` remote of the repository at ``root``.
+    """The URL of the ``origin`` remote of the repository at ``root``, as configured.
+
+    The stored value, never ``git remote get-url``'s answer: that expands
+    ``url.<base>.insteadOf`` rewrites, and a machine that rewrites GitHub
+    to a mirror or a local path would read as naming no GitHub repository.
 
     Returns:
         The URL, or ``None`` when there is no origin to read: no such
         remote, no repository at ``root``, or no git to ask.
     """
-    url = git_output(root, ["remote", "get-url", "origin"])
+    url = git_output(root, ["config", "--get", "remote.origin.url"])
     return None if url is None else url.strip()

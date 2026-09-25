@@ -928,7 +928,7 @@ class TestResources:
         # A young instance grows a taxonomy before it grows a wiki or a
         # compiled map.
         (roots[1] / "state" / "taxonomy.json").write_text("{}")
-        server = build_server(build_roster(roots))
+        server = build_server(build_roster(roots), template=TEMPLATE)
         listed = drive(server, lambda client: client.list_resources())
         uris = [str(resource.uri) for resource in listed.resources]
         assert f"dex://{BOOKS}/state/taxonomy.json" in uris

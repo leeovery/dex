@@ -58,17 +58,31 @@ the engine stays unaware of which ones exist.
     lists the pending ones, the run session performs them after the pull,
     `dex-directive done` records each in `state/directives.jsonl` only
     once its check passes, and `dex-new` records every shipped one as
-    done. A directive always completes unattended and never waits on the
-    owner. Directive 1 rehomes an owner-written CLAUDE.md, which its code
-    finds in git history and prints in its materials (scope into
-    `lens.md`, Discord facts into config; with no stated scope to carry,
-    the seed lens stands in for the owner to fill); directive 2 rewrites
-    the README from the template.
+    done. While any is pending, `dex-inbox`, `dex-normalize`, `dex-enrich`
+    and `dex-exclude` refuse through the package's one gate,
+    `refuse_while_pending`, called from each CLI's `main`. The procedure
+    lives in the commands' output, never in the synced skills: `list`
+    says how to perform the pending ones, and `done`, refusing an unmet
+    check, says what the run does next, so a session holding instructions
+    older than the engine it just synced still does it right. A directive
+    always completes unattended and never waits on the owner. Directive 1
+    rehomes an owner-written CLAUDE.md, which its code finds in git
+    history and prints in its materials beside the server and channel
+    ids read from the head of each Discord export (scope into `lens.md`,
+    Discord facts into config; with no stated scope to carry, it writes
+    no `lens.md`, and the instance is a general knowledge dex). Its
+    instructions claim authority over config in their own text, because
+    the first run after the release still holds the previous release's
+    instructions, which forbid editing config unattended. Directive 2
+    rewrites the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
-  - `lens.py` — the ONE lens check (is `lens.md` missing, empty, or still
-    holding the seed's placeholder lines), shared by lint and sync.
+  - `lens.py` — the ONE lens check (does `lens.md` state a lens: missing
+    or empty is a general knowledge dex and no finding, while the seed's
+    placeholder lines left or an unreadable file are a note, never a
+    failure), shared by lint, sync, the server's instructions and
+    directive 1's check.
   - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
     and the map compiler share it).
   - `instance_map.py` — `dex-map`: compiles `state/map.json` (topics,
@@ -78,11 +92,14 @@ the engine stays unaware of which ones exist.
     regenerated whole at every compile, never hand-edited, unpinnable.
   - `seeds.py` — the ONE render of the owner's two seeds, `README.md` and
     `lens.md`, for one instance: named for its directory, the README's
-    join prompt either left for setup to fill (`dex-new`) or filled from
-    the `origin` remote, the whole section dropped without a GitHub
+    lens line linking `lens.md` (always for `dex-new`, which seeds one)
+    or, for an instance with none, naming a general knowledge dex, and
+    its join prompt either left for setup to fill (`dex-new`) or filled
+    from the `origin` remote, the whole section dropped without a GitHub
     origin (directive 2).
   - `origin.py` — the ONE reading of the `origin` remote as a GitHub
-    `owner/repo` (the inbox's release checks and the README render).
+    `owner/repo` (the inbox's release checks and the README render),
+    always the stored URL, never one an `insteadOf` rewrite expanded.
   - `gitread.py` — read-only git queries (`git -C <root> …`): what git
     printed, or `None` when it cannot answer; the default git seam for
     `origin.py` and directive 1.
@@ -106,10 +123,11 @@ the engine stays unaware of which ones exist.
   `dex-new` through `seeds.py`, each with the instance's name filled in,
   and never copied by sync, because both are the owner's: `README.md`,
   how the instance shows on GitHub, and `lens.md`, the seed lens whose
-  placeholder lines the lens check reads. An instance older than the lens
-  reaches the same shape through directives 1 and 2, which render the
-  same two seeds. Everything instance-specific lives in `lens.md` and
-  `state/config.json`.
+  placeholder lines the lens check reads, which an owner who wants a
+  general knowledge dex deletes. An instance older than the lens reaches
+  the same shape through directives 1 and 2, which render the same two
+  seeds (directive 1's only when there is a scope to carry). Everything
+  instance-specific lives in `lens.md` and `state/config.json`.
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,
   capture), `shortcut.md` (build the phone shortcut), `capture.md` (the

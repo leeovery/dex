@@ -39,6 +39,18 @@ a run reads content through. It is free-form and owned by the owner, so
 edit it only when the owner asks or a directive's instructions name it,
 and read it as one coherent statement, never section by section.
 
+An instance with no lens is a general knowledge dex, which is a legitimate
+way to run one and never a fault to repair. When `lens.md` is missing or
+empty, the instance reads for anything: every share is read for its
+general substance, the facts the source yields, and the lens verdict drops
+only content with nothing in it at all, such as chatter. A `lens.md` still
+holding any of the seed's placeholder lines (the lines made only of text
+in angle brackets, such as `<what to look at hardest>`) reads the same way
+until the placeholders are replaced or the file is deleted, because a
+placeholder line is never read as a lens, and so does a `lens.md` that
+cannot be read. Lint and the sync report carry a note for those two cases,
+which is the owner's to act on and never a session's repair.
+
 Sharing something into this instance is the curation: the owner has
 already decided it belongs here, so a session never rejects a share for
 its subject, and a gardening site shared into a design instance is read

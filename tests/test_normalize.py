@@ -786,6 +786,7 @@ class TestRegeneration:
         assert corpus.read_item(path).status == "raw"
 
 
+@pytest.mark.usefixtures("no_directives_pending")
 class TestCli:
     def test_parser_takes_no_flags(self):
         build_parser().parse_args([])
@@ -797,6 +798,23 @@ class TestCli:
         write_export(instance, [message("m1", "https://example.test/post")])
         main([])
         assert "discord/general: 1 items written" in capsys.readouterr().out
+
+    def test_main_normalizes_the_instance_at_cwd_and_prints_one_line_each(
+        self, instance, monkeypatch, capsys
+    ):
+        given: list[tuple[Instance, Config]] = []
+
+        def normalized(inst: Instance, config: Config) -> list[str]:
+            given.append((inst, config))
+            return ["first", "second"]
+
+        monkeypatch.setattr("dex_engine.normalize.run_normalize", normalized)
+        monkeypatch.chdir(instance.root)
+        main([])
+        assert capsys.readouterr().out == "first\nsecond\n"
+        [(inst, config)] = given
+        assert inst.root == instance.root
+        assert config == Config.load(instance.config_path)
 
     def test_main_without_exports_exits_loud(self, instance, monkeypatch):
         monkeypatch.chdir(instance.root)

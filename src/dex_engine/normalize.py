@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import atomic, corpus
+from .directives import refuse_while_pending
 from .pipeline.capture import URL_RE, slugify
 from .pipeline.detect import detect_kind
 from .pipeline.registry import default_drivers
@@ -661,6 +662,7 @@ def main(argv: list[str] | None = None) -> None:
     build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     try:
+        refuse_while_pending(instance.root)
         config = Config.load(instance.config_path)
         lines = run_normalize(instance, config)
     except (OSError, ValueError, RuntimeError) as e:
