@@ -143,7 +143,9 @@ desktop app (Code tab → Routines → New routine → Local), which runs the
 instance's dex-run skill on the owner's machine with their full
 environment. The task:
 
-- Name `{name}-run`; the chosen frequency; instructions exactly:
+- Name `{name}-run`; description `Unattended run of the {name} knowledge
+  base instance ({instance})`, followed by the chosen frequency (the form
+  requires a description); the chosen frequency; instructions exactly:
   "Work in the folder {instance}.
   This is a scheduled, unattended run. Read .claude/skills/dex-run/SKILL.md
   and perform its Every run section exactly. Never ask the owner
@@ -158,10 +160,14 @@ environment. The task:
   say so rather than implying portability is verified.
 - In a desktop session that can create scheduled tasks, create it
   yourself; otherwise hand the owner those exact values for the
-  New-routine form (Local; worktree off; permission mode Auto).
-- The created task's Folder field will show the session's folder, not the
-  instance. Walk the owner through fixing it: open the task → Edit → the
-  Folder field sits below the prompt → set it to `{instance}` → save.
+  New-routine form (Local; worktree off; permission mode Auto), plus its
+  folder: the folder control under the Instructions box, beside the
+  branch control and the Worktree checkbox, set to `{instance}`.
+- A task created from a session shows the session's folder in its Folder
+  field, not the instance. Walk the owner through fixing it: open the
+  task → Edit → the Folder field sits below the prompt → set it to
+  `{instance}` → save. A task the owner filled in by hand already has
+  the right folder.
 - Then have the owner Run now once, answering permission prompts with
   "always allow", so scheduled firings never stall on approval.
 - Local tasks fire only while the app is open and the machine awake; a

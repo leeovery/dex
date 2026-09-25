@@ -42,6 +42,10 @@ no longer true.
   one catch-up run on wake covers the most recent miss (7-day window).
 - Tasks pin to the creating session's launch folder — there is no folder
   parameter, and an in-session re-anchor does not change it.
+- The hand-filled New-routine form sets the folder at creation: a folder
+  control sits under the Instructions box, beside the branch control and
+  the Worktree checkbox. Its Description field is required. (Verified on
+  screen 2026-09-24.)
 
 ## Claude Desktop MCP servers (verified 2026-08-30)
 
