@@ -229,6 +229,13 @@ class TestRepo:
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
         assert body_of(result) == "x" * 60_000
 
+    def test_a_blank_readme_is_no_readme(self):
+        driver = driver_for(
+            {REPO_ARGS: gh_ok(fixture_text("github", "repo.json")), README_ARGS: gh_ok(" \n\n")}
+        )
+        result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
+        assert body_of(result) == "(no README)"
+
     def test_deleted_repo_is_dead(self):
         driver = driver_for({("api", "repos/acme/gone"): gh_fail("gh: Not Found (HTTP 404)")})
         result = driver.fetch(make_unit("https://github.com/acme/gone", Kind.GITHUB))
@@ -470,7 +477,7 @@ class TestDirectory:
     def test_a_directory_is_its_readme_and_its_listing(self):
         # The field case: this link ledgered the repo's ROOT README as done,
         # and nothing said the linked directory never landed.
-        driver = driver_for({self.CONTENTS: self.LISTING, self.README: gh_ok("# Mods")})
+        driver = driver_for({self.CONTENTS: self.LISTING, self.README: gh_ok("# Mods\n")})
         result = content_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
         assert result.meta == {"title": "anthropics/claude-code/mods"}
         assert body_of(result) == f"## README\n\n# Mods\n\n## Contents\n\n{self.ENTRIES}"
@@ -527,7 +534,7 @@ class TestRepoAtRef:
             {
                 self.ROOT: gh_listing(("README.md", "file")),
                 REPO_ARGS: gh_ok(fixture_text("github", "repo.json")),
-                self.README: gh_ok("# pipeline-kit v2"),
+                self.README: gh_ok("# pipeline-kit v2\n\n"),
             }
         )
         url = f"https://github.com/acme/pipeline-kit/{view}/v2"

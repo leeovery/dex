@@ -335,7 +335,7 @@ def _unrouted(shape: str) -> Unusable:
 
 
 def _readme_body(readme: str | None) -> str:
-    return (readme or "(no README)")[:_MAX_README_CHARS]
+    return (readme or "")[:_MAX_README_CHARS].rstrip() or "(no README)"
 
 
 def _gist_id(segments: list[str]) -> str | None:
