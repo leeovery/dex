@@ -4,6 +4,8 @@ import json
 
 from dex_engine.drivers.x import HOP_SLEEP, MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
+from dex_engine.pipeline.detect import canonical_url
+from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Content, Kind, Missing, Refused, Unusable
 from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import (
@@ -281,9 +283,23 @@ class TestArticles:
         assert "## Why the knowledge stays trapped" in body
         assert "- Corrections live in private threads" in body
         assert "> A company brain is the difference" in body
-        # Ordered items number in sequence, and a blank block ends the list.
+        # Ordered items number in sequence, and a blank block ends the list,
+        # leaving nothing of its own.
         assert "1. Collect every correction the team made this week" in body
-        assert "3. Hand that document to every agent on Monday" in body
+        assert "3. Hand that document to every agent on Monday\n\nDo that for a quarter" in body
+
+    def test_an_article_relaying_no_content_stands_on_its_preview(self):
+        tweet = json.loads(fixture_text("fxtwitter", "article-700.json"))["tweet"]
+        del tweet["article"]["content"]
+        responses = {API + "status/700": json_response({"tweet": tweet})}
+        body = body_of(driver_for(responses).fetch(make_unit(self.URL, Kind.X)))
+        assert "retry-forever bucket" in body
+
+    def test_an_article_without_images_pools_no_media(self):
+        # `cover_media` arrives as {} on an article without one.
+        responses = {API + "status/702": api_fixture("article-blocks-702.json")}
+        result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
+        assert content_of(result).media == []
 
     def test_an_expanded_link_only_body_is_not_content(self):
         # The guard was t.co-only; fxtwitter hands over the expanded URL, so
@@ -338,6 +354,207 @@ class TestArticles:
         result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
         assert isinstance(result, Content)
         assert "finally up" in body_of(result)
+
+
+class TestArticleEntities:
+    """An article's atomic blocks and links render from `content.entityMap`.
+
+    The fixture is a trimmed real payload. Its one hand edit is the emoji
+    opening the "01." section's paragraph, with that block's ranges moved
+    by the two UTF-16 units it costs: the real article has no character
+    outside the BMP ahead of a link.
+    """
+
+    URL = "https://x.com/0xCodila/status/2100984487802708306"
+    COVER = "https://pbs.twimg.com/media/HSgY7VCXUAAWG9f.jpg"
+    FIRST_FIGURE = "https://pbs.twimg.com/media/HSgq7fkWMAAagx3.jpg"
+    SECOND_FIGURE = "https://pbs.twimg.com/media/HSgsuSvWMAAUmht.jpg"
+    UNPLACED = "https://pbs.twimg.com/media/HSgsVsUW4AALdJK.jpg"
+
+    def tweet(self) -> dict:
+        return json.loads(fixture_text("fxtwitter", "article-entities-2100984487802708306.json"))[
+            "tweet"
+        ]
+
+    def result(self, tweet: dict | None = None) -> Content:
+        payload = {"tweet": tweet or self.tweet()}
+        responses = {API + "status/2100984487802708306": json_response(payload)}
+        return content_of(driver_for(responses).fetch(make_unit(self.URL, Kind.X)))
+
+    def body(self, tweet: dict | None = None) -> str:
+        return body_of(self.result(tweet))
+
+    def with_blocks(self, blocks: list[dict], entity_map: list | None = None) -> dict:
+        tweet = self.tweet()
+        tweet["article"]["content"] = {"blocks": blocks, "entityMap": entity_map or []}
+        return tweet
+
+    def test_a_code_listing_lands_verbatim_under_its_label(self):
+        body = self.body()
+        assert (
+            "macOS / Linux:\n\n```\nmkdir jev-starter\ncd jev-starter\npython3 -m venv .venv\n"
+            ".venv/bin/python -m pip install --upgrade typesafe-sdk\n```"
+        ) in body
+
+    def test_links_keep_their_targets_inline(self):
+        body = self.body()
+        assert "- Open the [TypeSafe Playground](https://console.typesafe.ai/playground)." in body
+        # Two links in one block, the second spliced after the first.
+        assert "a key from [key settings](https://console.typesafe.ai/settings/keys)." in body
+        assert "Install [Python](https://www.python.org/downloads/) 3.12" in body
+        assert "→ [@0xCodila](https://x.com/@0xCodila)" in body
+
+    def test_a_link_reading_as_its_own_url_stays_bare(self):
+        body = self.body()
+        assert "fresh alpha - https://substack.com/@0xcodila" in body
+        assert "[https://substack.com" not in body
+
+    def test_a_link_after_an_emoji_still_wraps_its_own_anchor(self):
+        # Offsets are UTF-16 units: sliced as code points, the anchor would
+        # come out one character late.
+        body = self.body()
+        assert (
+            "in prose. [TypeSafe's launch essay]"
+            "(https://typesafe.ai/blog/introducing-system-one-models-and-jev)"
+        ) in body
+
+    def test_atomic_blocks_render_in_place(self):
+        # Divider, figure, embedded post — in the order the article has them.
+        body = self.body()
+        assert (
+            "https://substack.com/@0xcodila\n\n---\n\n"
+            f"![figure]({self.FIRST_FIGURE})\n\n"
+            "https://x.com/i/status/2100411066966749359\n\n"
+            "## 01. Find the part"
+        ) in body
+        assert f"typesafe-sdk\n```\n\n![figure]({self.SECOND_FIGURE})\n\n> Bookmark" in body
+
+    def test_figures_pool_in_reading_order_after_the_cover(self):
+        # `media_entities` lists the figures out of reading order; an image
+        # no block places still pools, behind the placed ones.
+        assert self.result().media == [
+            self.COVER,
+            self.FIRST_FIGURE,
+            self.SECOND_FIGURE,
+            self.UNPLACED,
+        ]
+
+    def test_a_figure_marker_names_the_unit_its_download_is(self):
+        # A media unit is keyed on its raw URL and a harvest promotion on the
+        # URL's canonical form. The two agreeing is what makes a promoted
+        # marker the media unit already held, never a second fetch.
+        drivers = default_drivers()
+        for url in self.result().media:
+            assert canonical_url(url, drivers) == url
+
+    def test_a_cover_already_listed_among_the_figures_pools_once(self):
+        tweet = self.tweet()
+        tweet["article"]["cover_media"] = tweet["article"]["media_entities"][0]
+        assert self.result(tweet).media == [
+            self.SECOND_FIGURE,
+            self.FIRST_FIGURE,
+            self.UNPLACED,
+        ]
+
+    def test_a_figure_naming_no_listed_image_leaves_no_marker(self):
+        entity = {
+            "key": "7",
+            "value": {
+                "type": "MEDIA",
+                "mutability": "Immutable",
+                "data": {"mediaItems": [{"mediaId": "404"}, {"localMediaId": "9"}]},
+            },
+        }
+        atomic = {"type": "atomic", "text": " ", "entityRanges": [{"key": 7, "offset": 0}]}
+        prose = {"type": "unstyled", "text": "Prose after it.", "entityRanges": []}
+        body = self.body(self.with_blocks([atomic, prose], [entity]))
+        assert "(from scratch)\n\nProse after it.\n\nJev is the" in body
+
+    def test_a_gallery_places_each_of_its_figures(self):
+        tweet = self.tweet()
+        gallery = next(
+            pair["value"]["data"]["mediaItems"]
+            for pair in tweet["article"]["content"]["entityMap"]
+            if pair["key"] == "2"
+        )
+        gallery.append({"localMediaId": "16", "mediaId": "2100977977353756672"})
+        result = self.result(tweet)
+        assert f"![figure]({self.FIRST_FIGURE})\n![figure]({self.UNPLACED})\n\n" in body_of(result)
+        assert result.media == [self.COVER, self.FIRST_FIGURE, self.UNPLACED, self.SECOND_FIGURE]
+
+    def test_an_image_with_no_url_is_neither_marked_nor_pooled(self):
+        tweet = self.tweet()
+        for media in tweet["article"]["media_entities"]:
+            if media["media_id"] == "2100976427742932992":
+                media["media_info"]["original_img_url"] = ""
+        tweet["article"]["cover_media"]["media_info"]["original_img_url"] = None
+        result = self.result(tweet)
+        assert "![figure]()" not in body_of(result)
+        assert result.media == [self.SECOND_FIGURE, self.UNPLACED]
+
+    def test_an_atomic_block_this_driver_cannot_draw_leaves_nothing(self):
+        entities = [
+            {"key": "1", "value": {"type": "POLL", "data": {"choices": ["a"]}}},
+            {"key": "2", "value": {"type": "TWEET", "data": {}}},
+            {"key": "3", "value": {"type": "MARKDOWN", "data": {}}},
+        ]
+        blocks = [
+            {"type": "atomic", "text": " ", "entityRanges": [{"key": 1, "offset": 0, "length": 1}]},
+            {"type": "atomic", "text": " ", "entityRanges": [{"key": 2, "offset": 0, "length": 1}]},
+            {"type": "atomic", "text": " ", "entityRanges": [{"key": 3, "offset": 0, "length": 1}]},
+            {"type": "atomic", "text": " ", "entityRanges": []},
+            {"type": "unstyled", "text": "Only this.", "entityRanges": []},
+        ]
+        body = self.body(self.with_blocks(blocks, entities))
+        assert "(from scratch)\n\nOnly this.\n\nJev is the" in body
+
+    def test_ranges_this_driver_cannot_place_are_passed_over(self):
+        link = {"type": "LINK", "mutability": "Mutable", "data": {"url": "https://a.test/"}}
+        entities = [
+            "not a pair",
+            {"key": "2", "value": None},
+            {"key": "3", "value": {"type": "LINK", "data": {"url": ""}}},
+            {"key": "4", "value": {"type": "LINK", "data": {"url": 5}}},
+            {"key": "1", "value": link},
+        ]
+        ranges = [
+            {"key": 1, "offset": -1, "length": 3},
+            {"key": 1, "offset": 4, "length": 0},
+            {"key": 1, "offset": "4", "length": 3},
+            *({"key": key, "offset": 4, "length": 3} for key in (2, 3, 4, 9)),
+            # The ones it can, after them: at the text's first unit, and one unit long.
+            {"key": 1, "offset": 0, "length": 3},
+            {"key": 1, "offset": 8, "length": 1},
+        ]
+        block = {"type": "unstyled", "text": "one two 3", "entityRanges": ranges}
+        body = self.body(self.with_blocks([block], entities))
+        assert "\n\n[one](https://a.test/) two [3](https://a.test/)\n\n" in body
+
+    def test_a_range_splitting_an_emoji_never_fails_the_fetch(self):
+        entities = [{"key": "1", "value": {"type": "LINK", "data": {"url": "https://a.test/"}}}]
+        ranges = [{"key": 1, "offset": 1, "length": 2}]  # from inside the emoji's pair
+        block = {"type": "unstyled", "text": "\U0001f9e0ab", "entityRanges": ranges}
+        assert "a](https://a.test/)b" in self.body(self.with_blocks([block], entities))
+
+    def test_a_run_of_code_block_lines_is_one_listing_keeping_its_indentation(self):
+        lines = ["def ready(state):", "", "    return state.done", "  # two-space comment"]
+        blocks = [{"type": "code-block", "text": line, "entityRanges": []} for line in lines]
+        blocks.append({"type": "unstyled", "text": "After the listing.", "entityRanges": []})
+        body = self.body(self.with_blocks(blocks))
+        assert (
+            "```\ndef ready(state):\n\n    return state.done\n  # two-space comment\n```\n\n"
+            "After the listing."
+        ) in body
+
+    def test_a_blank_code_block_run_renders_nothing(self):
+        blocks = [
+            {"type": "ordered-list-item", "text": "first", "entityRanges": []},
+            {"type": "code-block", "text": "  ", "entityRanges": []},
+            {"type": "ordered-list-item", "text": "again", "entityRanges": []},
+        ]
+        body = self.body(self.with_blocks(blocks))
+        assert "```" not in body
+        assert "1. first\n\n1. again" in body  # the blank run still ends the list
 
 
 class TestClassifiedFailures:

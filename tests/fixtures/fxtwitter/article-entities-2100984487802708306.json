@@ -1,0 +1,454 @@
+{
+  "code": 200,
+  "message": "OK",
+  "tweet": {
+    "url": "https://x.com/0xCodila/status/2100984487802708306",
+    "id": "2100984487802708306",
+    "text": "Jev is the \"Internet\" moment for the AI industry\n\nIt tells your agents and LLMs what to do next, in milliseconds and at almost zero cost\n\nIf you set it up correctly, you will have the AI engineer’s stack for 2028\n\nIn this article, I show you how https://x.com/i/article/2077744776565149697",
+    "raw_text": {
+      "text": "Jev is the \"Internet\" moment for the AI industry\n\nIt tells your agents and LLMs what to do next, in milliseconds and at almost zero cost\n\nIf you set it up correctly, you will have the AI engineer’s stack for 2028\n\nIn this article, I show you how https://t.co/x3qn41ejnr",
+      "display_text_range": [
+        0,
+        269
+      ],
+      "facets": [
+        {
+          "type": "url",
+          "indices": [
+            246,
+            269
+          ],
+          "original": "https://t.co/x3qn41ejnr",
+          "replacement": "https://x.com/i/article/2077744776565149697",
+          "display": "x.com/i/article/2077…"
+        }
+      ]
+    },
+    "created_at": "Fri Sep 18 16:25:10 +0000 2026",
+    "created_timestamp": 1789748710,
+    "lang": "en",
+    "replying_to": null,
+    "replying_to_status": null,
+    "source": "Twitter Web App",
+    "author": {
+      "screen_name": "0xCodila",
+      "url": "https://x.com/0xCodila",
+      "id": "3430298277",
+      "name": "codila"
+    },
+    "article": {
+      "created_at": "2026-09-18T16:25:10.000Z",
+      "modified_at": "2026-09-18T16:25:10.000Z",
+      "id": "2077744776565149697",
+      "title": "Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)",
+      "preview_text": "The Jevons Paradox (he's on picture) is a rule stating that an increase in the efficiency of a resource's use does not reduce, but rather increases, its overall consumption\n\n- That's the global",
+      "cover_media": {
+        "id": "QXBpTWVkaWE6DAAFCgABHSgY7VCXUAAKAAIAAAAAzHYypQAA",
+        "media_id": "2100956633706745856",
+        "media_info": {
+          "__typename": "ApiImage",
+          "original_img_height": 793,
+          "original_img_url": "https://pbs.twimg.com/media/HSgY7VCXUAAWG9f.jpg",
+          "original_img_width": 1983
+        },
+        "media_key": "3_2100956633706745856"
+      },
+      "content": {
+        "blocks": [
+          {
+            "data": {
+              "mentions": [
+                {
+                  "fromIndex": 239,
+                  "text": "typesafeai",
+                  "toIndex": 250
+                },
+                {
+                  "fromIndex": 500,
+                  "text": "0xcodila",
+                  "toIndex": 509
+                }
+              ],
+              "urls": [
+                {
+                  "fromIndex": 479,
+                  "text": "https://substack.com/@0xcodila",
+                  "toIndex": 509
+                }
+              ]
+            },
+            "entityRanges": [
+              {
+                "key": 0,
+                "length": 30,
+                "offset": 479
+              }
+            ],
+            "inlineStyleRanges": [
+              {
+                "length": 131,
+                "offset": 42,
+                "style": "Italic"
+              },
+              {
+                "length": 51,
+                "offset": 176,
+                "style": "Bold"
+              },
+              {
+                "length": 4,
+                "offset": 232,
+                "style": "Bold"
+              },
+              {
+                "length": 68,
+                "offset": 411,
+                "style": "Bold"
+              }
+            ],
+            "key": "7fpe6",
+            "text": "The Jevons Paradox (he's on picture) is a rule stating that an increase in the efficiency of a resource's use does not reduce, but rather increases, its overall consumption\n\n- That's the global problem for AI: LLMs and Agents \n\nAnd Jev by @typesafeai is built to save 101% of your money, time and will improve your efficiency of using AI\n\nSo trust me - this is the 2030 setup that you need to install right now\nbefore the alpha -  subscribe to my substack for more fresh alpha - https://substack.com/@0xcodila",
+            "type": "unstyled"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 1,
+                "length": 1,
+                "offset": 0
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "4v5c9",
+            "text": " ",
+            "type": "atomic"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 2,
+                "length": 1,
+                "offset": 0
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "ac0jd",
+            "text": " ",
+            "type": "atomic"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 3,
+                "length": 1,
+                "offset": 0
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "2cpkf",
+            "text": " ",
+            "type": "atomic"
+          },
+          {
+            "data": {},
+            "entityRanges": [],
+            "inlineStyleRanges": [],
+            "key": "4e7kt",
+            "text": "01. Find the part of your agent Jev can take over",
+            "type": "header-two"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 5,
+                "length": 23,
+                "offset": 218
+              }
+            ],
+            "inlineStyleRanges": [
+              {
+                "length": 16,
+                "offset": 24,
+                "style": "Bold"
+              }
+            ],
+            "key": "8samg",
+            "text": "🧠 Jev is TypeSafe AI's System One model: you provide information and predefined questions, it returns typed answers with probabilities. It cannot write your briefing, generate code, or explain its reasoning in prose. TypeSafe's launch essay",
+            "type": "unstyled"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 8,
+                "length": 19,
+                "offset": 9
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "58ssr",
+            "text": "Open the TypeSafe Playground. Sign in and complete the access process if your account requires it.",
+            "type": "unordered-list-item"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 12,
+                "length": 12,
+                "offset": 67
+              },
+              {
+                "key": 13,
+                "length": 6,
+                "offset": 129
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "ask8p",
+            "text": "You need a TypeSafe account with API access enabled and a key from key settings. API calls are billed to that account. \n\nInstall Python 3.12 or newer, then open Terminal on macOS/Linux or PowerShell on Windows.",
+            "type": "unstyled"
+          },
+          {
+            "data": {},
+            "entityRanges": [],
+            "inlineStyleRanges": [
+              {
+                "length": 14,
+                "offset": 0,
+                "style": "Bold"
+              }
+            ],
+            "key": "7l0d5",
+            "text": "macOS / Linux:",
+            "type": "unstyled"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 14,
+                "length": 1,
+                "offset": 0
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "c7llb",
+            "text": " ",
+            "type": "atomic"
+          },
+          {
+            "data": {},
+            "entityRanges": [
+              {
+                "key": 17,
+                "length": 1,
+                "offset": 0
+              }
+            ],
+            "inlineStyleRanges": [],
+            "key": "47r93",
+            "text": " ",
+            "type": "atomic"
+          },
+          {
+            "data": {
+              "mentions": [
+                {
+                  "fromIndex": 49,
+                  "text": "0xCodila",
+                  "toIndex": 58
+                }
+              ]
+            },
+            "entityRanges": [
+              {
+                "key": 63,
+                "length": 9,
+                "offset": 49
+              }
+            ],
+            "inlineStyleRanges": [
+              {
+                "length": 49,
+                "offset": 0,
+                "style": "Bold"
+              },
+              {
+                "length": 9,
+                "offset": 49,
+                "style": "Italic"
+              }
+            ],
+            "key": "37qd1",
+            "text": "Bookmark this playbook before your next agent  → @0xCodila",
+            "type": "blockquote"
+          }
+        ],
+        "entityMap": [
+          {
+            "key": "12",
+            "value": {
+              "data": {
+                "url": "https://console.typesafe.ai/settings/keys"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "8",
+            "value": {
+              "data": {
+                "url": "https://console.typesafe.ai/playground"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "13",
+            "value": {
+              "data": {
+                "url": "https://www.python.org/downloads/"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "5",
+            "value": {
+              "data": {
+                "url": "https://typesafe.ai/blog/introducing-system-one-models-and-jev"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "1",
+            "value": {
+              "data": {},
+              "mutability": "Immutable",
+              "type": "DIVIDER"
+            }
+          },
+          {
+            "key": "17",
+            "value": {
+              "data": {
+                "entityKey": "3d386ee0-0da4-45a5-b806-07d4c1eb86b7",
+                "mediaItems": [
+                  {
+                    "localMediaId": "18",
+                    "mediaCategory": "DraftTweetImage",
+                    "mediaId": "2100978399984365568"
+                  }
+                ]
+              },
+              "mutability": "Immutable",
+              "type": "MEDIA"
+            }
+          },
+          {
+            "key": "14",
+            "value": {
+              "data": {
+                "markdown": "```\nmkdir jev-starter\ncd jev-starter\npython3 -m venv .venv\n.venv/bin/python -m pip install --upgrade typesafe-sdk\n```"
+              },
+              "mutability": "Mutable",
+              "type": "MARKDOWN"
+            }
+          },
+          {
+            "key": "0",
+            "value": {
+              "data": {
+                "url": "https://substack.com/@0xcodila"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "2",
+            "value": {
+              "data": {
+                "entityKey": "05b5b5ce-0dd4-4270-b267-2afd21274584",
+                "mediaItems": [
+                  {
+                    "localMediaId": "6",
+                    "mediaCategory": "DraftTweetImage",
+                    "mediaId": "2100976427742932992"
+                  }
+                ]
+              },
+              "mutability": "Immutable",
+              "type": "MEDIA"
+            }
+          },
+          {
+            "key": "63",
+            "value": {
+              "data": {
+                "url": "https://x.com/@0xCodila"
+              },
+              "mutability": "Mutable",
+              "type": "LINK"
+            }
+          },
+          {
+            "key": "3",
+            "value": {
+              "data": {
+                "tweetId": "2100411066966749359"
+              },
+              "mutability": "Immutable",
+              "type": "TWEET"
+            }
+          }
+        ]
+      },
+      "media_entities": [
+        {
+          "id": "QXBpTWVkaWE6DAAFCgABHSgsuSvWMAAKAAIAAAAAzHYypQAA",
+          "media_id": "2100978399984365568",
+          "media_info": {
+            "__typename": "ApiImage",
+            "original_img_height": 2160,
+            "original_img_url": "https://pbs.twimg.com/media/HSgsuSvWMAAUmht.jpg",
+            "original_img_width": 3840
+          },
+          "media_key": "3_2100978399984365568"
+        },
+        {
+          "id": "QXBpTWVkaWE6DAAFCgABHSgsVsUW4AAKAAIAAAAAzHYypQAA",
+          "media_id": "2100977977353756672",
+          "media_info": {
+            "__typename": "ApiImage",
+            "original_img_height": 1000,
+            "original_img_url": "https://pbs.twimg.com/media/HSgsVsUW4AALdJK.jpg",
+            "original_img_width": 1536
+          },
+          "media_key": "3_2100977977353756672"
+        },
+        {
+          "id": "QXBpTWVkaWE6DAAFCgABHSgq7fkWMAAKAAIAAAAAzHYypQAA",
+          "media_id": "2100976427742932992",
+          "media_info": {
+            "__typename": "ApiImage",
+            "original_img_height": 941,
+            "original_img_url": "https://pbs.twimg.com/media/HSgq7fkWMAAagx3.jpg",
+            "original_img_width": 1672
+          },
+          "media_key": "3_2100976427742932992"
+        }
+      ]
+    }
+  }
+}

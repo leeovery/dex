@@ -28,6 +28,12 @@ has one the article IS the post: its ``content.blocks[]`` render as the
 body, falling back to ``preview_text`` where fxtwitter relays no blocks.
 The announcement's own ``text`` is never the answer — it is a link to the
 article and nothing more, and reading it first threw whole articles away.
+An article is more than its prose blocks: an ``atomic`` block renders from
+the ``content.entityMap`` entry it names — a code listing verbatim, a rule,
+an embedded post as its status link, a figure as an image marker where it
+sat — and a link keeps its target inline, because harvest reads links out
+of the stored body. The figures themselves, and the cover, join the post's
+media pool in reading order.
 
 A body that is nothing but a link is not content in any spelling: not
 x's own ``t.co``, and not the expanded ``x.com/i/article/<id>`` fxtwitter
@@ -37,11 +43,12 @@ id is not a status id, and fxtwitter will not resolve one to the post
 that announced it.
 """
 
+import itertools
 import json
 import re
 import time
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.types import Content, Kind, Outcome, Status, Unusable, WorkUnit
@@ -102,7 +109,6 @@ _BLOCK_PREFIX = {
     "header-six": "###### ",
     "unordered-list-item": "- ",
     "blockquote": "> ",
-    "code-block": "    ",
 }
 
 # fxtwitter nests a post's media under `photos` and `videos`, and repeats
@@ -146,7 +152,7 @@ class XDriver:
         """Status URLs collapse to ``https://x.com/i/status/<id>`` — the id is the identity."""
         status_id = _status_id(url)
         if status_id is not None:
-            return f"https://x.com/i/status/{status_id}"
+            return _status_url(status_id)
         return base_canonical(url)
 
     def fetch(self, unit: WorkUnit) -> Outcome:
@@ -235,6 +241,10 @@ def _status_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _status_url(status_id: str) -> str:
+    return f"https://x.com/i/status/{status_id}"
+
+
 def _render(
     captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]
 ) -> Content | Unusable:
@@ -319,16 +329,14 @@ def _article_text(post: dict) -> str:
 
 def _article_blocks(article: dict) -> str:
     """``content.blocks[]`` rendered as markdown, or "" when there are none."""
-    content = article.get("content")
-    blocks = content.get("blocks") if isinstance(content, dict) else None
-    if not isinstance(blocks, list):
-        return ""
+    blocks, entities = _article_content(article)
+    images = _article_images(article)
     lines: list[str] = []
     ordinal = 0
-    for block in blocks:
-        text = str(block.get("text") or "").strip() if isinstance(block, dict) else ""
-        kind = str(block.get("type") or "") if isinstance(block, dict) else ""
-        if not text:
+    for block in _code_runs(blocks):
+        kind = str(block.get("type") or "")
+        text = _block_markdown(block, kind, entities, images)
+        if not text.strip():
             ordinal = 0  # a blank block ends whatever list was running
             continue
         if kind == "ordered-list-item":
@@ -338,6 +346,185 @@ def _article_blocks(article: dict) -> str:
         ordinal = 0
         lines.append(_BLOCK_PREFIX.get(kind, "") + text)
     return "\n\n".join(lines)
+
+
+def _article_content(article: dict) -> tuple[list[dict], dict[str, dict]]:
+    """The article's draft.js blocks and its entities, keyed as a range names them.
+
+    fxtwitter relays ``entityMap`` as a list of ``{"key", "value"}`` pairs,
+    and a range's integer ``key`` names the pair whose ``key`` string
+    matches — never a list position: a real article's first pair is "45".
+    """
+    content = article.get("content")
+    if not isinstance(content, dict) or not isinstance(content.get("blocks"), list):
+        return [], {}
+    pairs = content.get("entityMap")
+    entities = {
+        str(pair.get("key")): pair["value"]
+        for pair in (pairs if isinstance(pairs, list) else [])
+        if isinstance(pair, dict) and isinstance(pair.get("value"), dict)
+    }
+    return [block for block in content["blocks"] if isinstance(block, dict)], entities
+
+
+def _code_runs(blocks: list[dict]) -> Iterator[dict]:
+    """The blocks, each run of ``code-block`` lines merged into one block.
+
+    draft.js keeps a listing one line to a block and draws a run of them as
+    one ``<pre>``; rendered a block at a time, every line of it would stand
+    as a listing of its own.
+    """
+    for is_code, run in itertools.groupby(
+        blocks, key=lambda block: block.get("type") == "code-block"
+    ):
+        if is_code:
+            lines = [str(line.get("text") or "") for line in run]
+            yield {"type": "code-block", "text": "\n".join(lines)}
+        else:
+            yield from run
+
+
+def _block_markdown(
+    block: dict, kind: str, entities: dict[str, dict], images: dict[str, str]
+) -> str:
+    """One block as markdown, ahead of any heading, list or quote prefix."""
+    match kind:
+        case "atomic":
+            return _atomic_markdown(_atomic_entity(block, entities), images)
+        case "code-block":
+            # Verbatim, never stripped: a listing's indentation is its meaning.
+            return f"```\n{block['text']}\n```" if block["text"].strip() else ""
+        case _:
+            return _linked_text(block, entities).strip()
+
+
+def _atomic_markdown(entity: dict, images: dict[str, str]) -> str:
+    """What an ``atomic`` block shows, or "" for an entity this driver cannot draw.
+
+    Its own text is a lone space; what it holds lives in its one entity.
+    A figure keeps its URL in the marker: that is the URL the media pool
+    fetches, so the marker and the download are one unit, never a second
+    one for harvest to promote.
+    """
+    data = entity.get("data")
+    data = data if isinstance(data, dict) else {}
+    match entity.get("type"):
+        case "MARKDOWN":
+            return str(data.get("markdown") or "")
+        case "DIVIDER":
+            return "---"
+        case "TWEET":
+            tweet_id = data.get("tweetId")
+            return _status_url(str(tweet_id)) if tweet_id else ""
+        case "MEDIA":
+            return "\n".join(f"![figure]({url})" for url in _figures(entity, images))
+        case _:
+            return ""
+
+
+def _linked_text(block: dict, entities: dict[str, dict]) -> str:
+    """The block's text with each range naming a URL spelled as a markdown link.
+
+    Ranges count UTF-16 code units, as JavaScript strings do, and Python
+    counts code points: every emoji ahead of a range shifts it one unit
+    further, so both ends convert before they slice.
+    """
+    text = str(block.get("text") or "")
+    pieces: list[str] = []
+    cursor = 0
+    for entity_range in _ranges(block):
+        url = _link_url(_entity_of(entity_range, entities))
+        span = _span(text, entity_range)
+        if url is None or span is None:
+            continue
+        start, end = span
+        anchor = text[start:end]
+        pieces += [text[cursor:start], url if anchor == url else f"[{anchor}]({url})"]
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _ranges(block: dict) -> list[dict]:
+    ranges = block.get("entityRanges")
+    return [r for r in ranges if isinstance(r, dict)] if isinstance(ranges, list) else []
+
+
+def _entity_of(entity_range: dict, entities: dict[str, dict]) -> dict:
+    return entities.get(str(entity_range.get("key")), {})
+
+
+def _atomic_entity(block: dict, entities: dict[str, dict]) -> dict:
+    """The entity an ``atomic`` block renders from — the one its lone range names."""
+    ranges = _ranges(block)
+    return _entity_of(ranges[0], entities) if ranges else {}
+
+
+def _link_url(entity: dict) -> str | None:
+    data = entity.get("data")
+    url = data.get("url") if isinstance(data, dict) else None
+    return url if isinstance(url, str) and url else None
+
+
+def _span(text: str, entity_range: dict) -> tuple[int, int] | None:
+    """A range's ``offset``/``length`` as code-point indexes into ``text``."""
+    offset, length = entity_range.get("offset"), entity_range.get("length")
+    if not isinstance(offset, int) or not isinstance(length, int) or offset < 0 or length <= 0:
+        return None
+    return _code_points(text, offset), _code_points(text, offset + length)
+
+
+def _code_points(text: str, units: int) -> int:
+    """How many characters of ``text`` its first ``units`` UTF-16 code units hold."""
+    return len(text.encode("utf-16-le")[: 2 * units].decode("utf-16-le", errors="ignore"))
+
+
+def _figures(entity: dict, images: dict[str, str]) -> list[str]:
+    """The image URLs a MEDIA entity places, in its own order."""
+    data = entity.get("data")
+    items = data.get("mediaItems") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    ids = [str(item["mediaId"]) for item in items if isinstance(item, dict) and "mediaId" in item]
+    return [images[media_id] for media_id in ids if media_id in images]
+
+
+def _article_images(article: dict) -> dict[str, str]:
+    """Every image ``media_entities`` lists, media id to URL."""
+    listed = article.get("media_entities")
+    return {
+        str(media.get("media_id")): url
+        for media in (listed if isinstance(listed, list) else [])
+        if isinstance(media, dict) and (url := _image_url(media)) is not None
+    }
+
+
+def _image_url(media: object) -> str | None:
+    info = media.get("media_info") if isinstance(media, dict) else None
+    url = info.get("original_img_url") if isinstance(info, dict) else None
+    return url if isinstance(url, str) and url else None
+
+
+def _article_media(post: dict) -> list[str]:
+    """An article's images in reading order: the cover, then each figure where it sits.
+
+    ``media_entities`` lists them in no reading order — a figure's place is
+    the atomic block naming it — and need not list the cover. An image no
+    block places still pools, after the placed ones.
+    """
+    article = post.get("article")
+    if not isinstance(article, dict):
+        return []
+    blocks, entities = _article_content(article)
+    images = _article_images(article)
+    placed = [
+        url
+        for block in blocks
+        if block.get("type") == "atomic"
+        for url in _figures(_atomic_entity(block, entities), images)
+    ]
+    ordered = [_image_url(article.get("cover_media")), *placed, *images.values()]
+    return list(dict.fromkeys(url for url in ordered if url is not None))
 
 
 def _raw_text(post: dict) -> str:
@@ -362,8 +549,8 @@ def _media_entries(post: dict) -> list[dict]:
 
 
 def _media_urls(post: dict) -> list[str]:
-    """The post's media URLs, photos and videos alike — the media stage's input."""
-    return [entry["url"] for entry in _media_entries(post)]
+    """The post's media URLs, photos, videos and article images alike — the media stage's input."""
+    return [entry["url"] for entry in _media_entries(post)] + _article_media(post)
 
 
 def _media_note(post: dict) -> str | None:
