@@ -14,7 +14,8 @@ the instance's standing ``inbox`` release::
 Run from the instance root (``bin/dex inbox``), reconcile:
 
   1. downloads each staged asset to ``media/<item-id>/<name>``
-     (item-id = sha1("media/<name>")[:6] — the id ``enrich item new`` uses),
+     (item-id = sha1("asset/<asset-id>")[:6], the asset id being the number
+     that ends its URL — the id ``enrich item new`` uses),
   2. git-adds it so the LFS clean filter applies (and verifies it did),
   3. deletes the release asset,
   4. rewrites the capture frontmatter to ``media: media/<item-id>/<name>``.
@@ -73,7 +74,7 @@ API = "https://api.github.com"
 TAG = "inbox"
 UA = "dex-engine-inbox"
 
-_ASSET_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+")
+_ASSET_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/(\d+)")
 
 
 class ApiCall(Protocol):
@@ -241,6 +242,18 @@ def _rewrite_pointer(path: Path, frontmatter: dict[str, str], rel: str, body: st
 # ---------------------------------------------------------------------------
 
 
+def _media_path(asset_id: str, name: str) -> str:
+    """Where a staged asset materializes: ``media/<item-id>/<name>``.
+
+    Keyed by the asset, never the file name: one name is staged again and
+    again (a generic ``screenshot.png``), and a directory shared with an
+    earlier capture would pass that capture's bytes off as the new one's,
+    or overwrite them.
+    """
+    item_id = hashlib.sha1(f"asset/{asset_id}".encode()).hexdigest()[:6]  # noqa: S324 — content key, not a security context
+    return f"media/{item_id}/{name}"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Reconcile:
     """One reconcile run over the instance's inbox."""
@@ -251,7 +264,8 @@ class _Reconcile:
     def materialize(self, path: Path, frontmatter: dict[str, str], body: str, token: str) -> bool:
         echo = self.seams.echo
         asset_url = frontmatter["asset"]
-        if not _ASSET_URL_RE.fullmatch(asset_url):
+        asset = _ASSET_URL_RE.fullmatch(asset_url)
+        if asset is None:
             echo(
                 f"  FAIL {path.name}: malformed asset URL {asset_url!r} — the capture "
                 f"client's upload step likely failed; the binary may be lost"
@@ -262,8 +276,7 @@ class _Reconcile:
         if not name:
             echo(f"  FAIL {path.name}: pointer has no name and asset lookup returned {status}")
             return False
-        item_id = hashlib.sha1(f"media/{name}".encode()).hexdigest()[:6]  # noqa: S324 — content key, not a security context
-        rel = f"media/{item_id}/{name}"
+        rel = _media_path(asset.group(1), name)
         dest = self.instance.root / rel
 
         if status == 404:  # noqa: PLR2004 — HTTP status codes are self-naming
@@ -290,7 +303,12 @@ class _Reconcile:
         return False
 
     def _fetched(self, path: Path, asset_url: str, token: str, dest: Path, size: int) -> bool:
-        """Ensure the asset's bytes are on disk, size-verified."""
+        """Ensure the asset's bytes are on disk, size-verified.
+
+        A file already at ``dest`` is this asset's own download from an
+        interrupted run — the directory is the asset's alone, and the write
+        is atomic — so a matching size is the whole check.
+        """
         if dest.exists() and dest.stat().st_size == size:
             return True
         data = self.seams.download(asset_url, token)
