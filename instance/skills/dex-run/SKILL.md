@@ -121,5 +121,6 @@ surface output rather than pasting it.
 ## Backfills (exports in raw/)
 
 Exports land in `raw/` and go through `bin/dex normalize`. When exports
-are waiting there, read `references/backfills.md` — where exports come
-from, the converted-export contract, and the flow at scale.
+are waiting there, or the owner asks for a Discord pull, read
+`references/backfills.md`: where exports come from, how a Discord pull
+is set up and run, the converted-export contract, and the flow at scale.

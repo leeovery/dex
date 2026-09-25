@@ -3,6 +3,7 @@
 import dataclasses
 import datetime
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from dex_engine.pipeline.types import (
     Cap,
     Config,
     Content,
+    DiscordSource,
     Format,
     Instance,
     Job,
@@ -48,6 +50,17 @@ BASE_ENTRY = LedgerEntry(
 
 def entry(**overrides: object) -> LedgerEntry:
     return dataclasses.replace(BASE_ENTRY, **overrides)
+
+
+GUILD = "100000000000000001"
+CHANNELS = {"general": "100000000000000002", "show-and-tell": "100000000000000003"}
+DISCORD = {"guild": GUILD, "channels": CHANNELS}
+
+
+def load_discord(tmp_path: Path, discord: object) -> Config:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"discord": discord}))
+    return Config.load(path)
 
 
 class TestEnums:
@@ -466,6 +479,7 @@ class TestConfig:
         assert config.instagram_base_url is None
         assert config.report_issues is True
         assert config.providers == {}
+        assert config.discord is None
         assert config.internal_domains == []
         assert config.noise_prefixes == []
 
@@ -480,6 +494,7 @@ class TestConfig:
                     "instagram_base_url": "https://mirror.test",
                     "report_issues": False,
                     "providers": {"transcribe": ["whisper-api", "whisper-local"]},
+                    "discord": DISCORD,
                     "internal_domains": ["example.internal"],
                     "noise_prefixes": ["Updated room membership"],
                 }
@@ -492,6 +507,7 @@ class TestConfig:
         assert config.instagram_base_url == "https://mirror.test"
         assert config.report_issues is False
         assert config.providers == {"transcribe": ["whisper-api", "whisper-local"]}
+        assert config.discord == DiscordSource(guild=GUILD, channels=CHANNELS)
         assert config.internal_domains == ["example.internal"]
         assert config.noise_prefixes == ["Updated room membership"]
 
@@ -561,6 +577,118 @@ class TestConfig:
         path.write_text(json.dumps({"providers": {"transcibe": ["whisper-local"]}}))
         with pytest.raises(ValueError, match="transcibe"):
             Config.load(path)
+
+
+class TestDiscordConfig:
+    def test_an_absent_key_means_discord_is_not_configured(self, tmp_path: Path):
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"internal_domains": []}))
+        assert Config.load(path).discord is None
+
+    def test_a_valid_key_parses_to_a_discord_source(self, tmp_path: Path):
+        assert load_discord(tmp_path, DISCORD).discord == DiscordSource(
+            guild="100000000000000001",
+            channels={"general": "100000000000000002", "show-and-tell": "100000000000000003"},
+        )
+
+    @pytest.mark.parametrize(
+        ("discord", "kind"), [(None, "NoneType"), (GUILD, "str"), ([GUILD, CHANNELS], "list")]
+    )
+    def test_a_value_that_is_not_an_object_is_loud(
+        self, tmp_path: Path, discord: object, kind: str
+    ):
+        with pytest.raises(ValueError, match=f"discord must be an object, got {kind}$"):
+            load_discord(tmp_path, discord)
+
+    @pytest.mark.parametrize(
+        "discord",
+        [
+            {**DISCORD, "guild": "my-server"},
+            {**DISCORD, "channels": {}},
+            {**DISCORD, "channels": {"general": "general"}},
+        ],
+        ids=["guild", "channels", "channel-id"],
+    )
+    def test_a_refusal_names_the_config_file(self, tmp_path: Path, discord: object):
+        path = tmp_path / "config.json"
+        with pytest.raises(ValueError, match=f"^{re.escape(str(path))}: discord"):
+            load_discord(tmp_path, discord)
+
+    @pytest.mark.parametrize(("missing", "kept"), [("guild", "channels"), ("channels", "guild")])
+    def test_a_missing_sub_key_is_loud(self, tmp_path: Path, missing: str, kept: str):
+        discord = {key: value for key, value in DISCORD.items() if key != missing}
+        with pytest.raises(ValueError, match=rf"exactly guild and channels, got keys \['{kept}'\]"):
+            load_discord(tmp_path, discord)
+
+    def test_an_extra_sub_key_is_loud(self, tmp_path: Path):
+        # The likeliest extra is the token itself, which belongs in .env:
+        # config is committed.
+        with pytest.raises(
+            ValueError,
+            match=r"exactly guild and channels, got keys \['channels', 'guild', 'token'\]",
+        ):
+            load_discord(tmp_path, {**DISCORD, "token": "not-a-real-token"})
+
+    @pytest.mark.parametrize(
+        "guild",
+        [
+            "",
+            "my-server",
+            "10000000000000000x",
+            " 100000000000000001",
+            "100000000000000001\n",
+            "-1",
+            "\u0661\u0662",
+        ],
+        ids=[
+            "empty",
+            "a-name",
+            "trailing-letter",
+            "leading-space",
+            "trailing-newline",
+            "signed",
+            "non-ascii-digits",
+        ],
+    )
+    def test_a_guild_that_is_not_a_string_of_digits_is_loud(self, tmp_path: Path, guild: str):
+        with pytest.raises(ValueError, match=r"discord\.guild must be a Discord id"):
+            load_discord(tmp_path, {**DISCORD, "guild": guild})
+
+    def test_a_guild_written_as_a_number_is_loud(self, tmp_path: Path):
+        with pytest.raises(
+            ValueError,
+            match=r"discord\.guild must be a Discord id written as a string of digits, "
+            r"got 100000000000000001$",
+        ):
+            load_discord(tmp_path, {**DISCORD, "guild": 100000000000000001})
+
+    @pytest.mark.parametrize(
+        "channels", [{}, ["general"], "general"], ids=["empty", "list", "string"]
+    )
+    def test_channels_that_are_not_a_non_empty_object_are_loud(
+        self, tmp_path: Path, channels: object
+    ):
+        with pytest.raises(ValueError, match=r"discord\.channels must be a non-empty object"):
+            load_discord(tmp_path, {**DISCORD, "channels": channels})
+
+    def test_an_empty_channel_name_is_loud(self, tmp_path: Path):
+        channels = {**CHANNELS, "": "100000000000000004"}
+        with pytest.raises(ValueError, match=r"discord\.channels holds an empty channel name"):
+            load_discord(tmp_path, {**DISCORD, "channels": channels})
+
+    @pytest.mark.parametrize(
+        "channel_id",
+        [100000000000000004, None, "", "announcements", "#100000000000000004"],
+        ids=["number", "null", "empty", "a-name", "prefixed"],
+    )
+    def test_a_channel_id_that_is_not_a_string_of_digits_is_loud(
+        self, tmp_path: Path, channel_id: object
+    ):
+        channels = {**CHANNELS, "announcements": channel_id}
+        with pytest.raises(
+            ValueError, match=r"discord\.channels\['announcements'\] must be a Discord id"
+        ):
+            load_discord(tmp_path, {**DISCORD, "channels": channels})
 
 
 class TestVersions:
