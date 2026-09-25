@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import ssl
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -1923,22 +1924,19 @@ class TestMediaStage:
         ]
         return driver
 
-    def _redrain_after_crash(self, instance, driver, body: bytes) -> None:
-        """Redrain the media unit: drop its outcome line, serve ``body`` again."""
-        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
-        assert json.loads(lines[-1])["hash"] == work_hash(self.IMG2)
-        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")
+    def _redownload(self, instance, driver, body: bytes) -> None:
+        """Fetch the landed media unit again (``enrich fetch`` on its URL), serving ``body``."""
         transport = FakeTransport(
             {self.IMG2: HttpResponse(status=200, content_type="image/jpeg", body=body)}
         )
-        run_mod.run(make_ctx(instance, driver, transport=transport))
+        run_mod.fetch_urls(make_ctx(instance, driver, transport=transport), ITEM, [self.IMG2])
 
     def test_a_redownload_in_a_new_format_replaces_the_slot(self, instance):
         # The slot names the file and the bytes name its extension, so a
         # CDN that switches format between runs must not leave `media-0.png`
         # standing beside `media-0.jpg` — two files in one slot, both
         # spending the item's media cap.
-        self._redrain_after_crash(instance, self._jpeg_in_the_slot(instance), PNG_BYTES)
+        self._redownload(instance, self._jpeg_in_the_slot(instance), PNG_BYTES)
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG2)]
         assert entry.status is Status.DONE
         assert entry.path == f"enrichment/{ITEM}/media-0.png"
@@ -1954,7 +1952,7 @@ class TestMediaStage:
         described = instance.enrichment_dir / ITEM / "media-0.md"
         described.write_text("the photographed page, described\n", encoding="utf-8")
 
-        self._redrain_after_crash(instance, driver, PNG_BYTES)
+        self._redownload(instance, driver, PNG_BYTES)
         assert described.read_text() == "the photographed page, described\n"
         assert sorted(p.name for p in described.parent.glob("media-0.*")) == [
             "media-0.md",
@@ -1969,7 +1967,7 @@ class TestMediaStage:
         orphan = instance.enrichment_dir / ITEM / f"media-0.jpg.a1b2c3d4{atomic.TEMP_SUFFIX}"
         orphan.write_bytes(b"half a download")
 
-        self._redrain_after_crash(instance, driver, PNG_BYTES)
+        self._redownload(instance, driver, PNG_BYTES)
         assert not orphan.exists()
         assert sorted(p.name for p in orphan.parent.glob("media-0.*")) == ["media-0.png"]
 
@@ -2011,6 +2009,25 @@ class TestMediaStage:
         skipped = [entries[work_hash(url)] for url in urls[MEDIA_MAX_FILES:]]
         assert all(e.status is Status.SKIPPED for e in skipped)
         assert all(e.reason == f"media cap ({MEDIA_MAX_FILES} files) reached" for e in skipped)
+
+    def test_a_redownload_at_the_cap_overwrites_in_place(self, instance):
+        # The item is full, but the unit's own file stands in its slot:
+        # replacing it spends nothing, so the cap has nothing to refuse —
+        # and a refusal here is terminal, over a file the item still holds.
+        write_item(instance)
+        urls = [f"https://cdn.example.test/img-{n}.png" for n in range(MEDIA_MAX_FILES)]
+        responses = {
+            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
+        }
+        driver = FakeDriver(fetch_fn=self.media_fetch(urls))
+        run_mod.run(make_ctx(instance, driver, transport=FakeTransport(responses)))
+        responses[urls[0]] = HttpResponse(status=200, content_type="image/png", body=PNG_BYTES)
+        ctx = make_ctx(instance, driver, transport=FakeTransport(responses))
+        run_mod.fetch_urls(ctx, ITEM, [urls[0]])
+        entry = entry_for(ctx, urls[0])
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert (instance.root / entry.path).read_bytes() == PNG_BYTES
 
     @pytest.mark.parametrize("kind", [Kind.INSTAGRAM, Kind.X])
     def test_pooled_media_kinds_carry_the_whole_post(self, instance, kind):
@@ -2234,27 +2251,53 @@ class TestMediaStage:
         run_mod.run(make_ctx(instance, driver, transport=transport))
         assert ledger.load(instance.ledger_path)[work_hash(bad)].status is Status.MANUAL
 
-    def test_crash_window_redrain_overwrites_its_own_media_file(self, instance):
-        # Birth line, file written, crash before the outcome line. The
-        # redrain must overwrite media-0 — never write media-1 beside the
-        # orphan a disk scan would take for someone else's slot.
+    @staticmethod
+    def _crash_before_the_outcome_line(instance, unit_hash: str) -> None:
+        """Drop the unit's done line: its file written, its outcome never recorded."""
+        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
+        assert json.loads(lines[-1])["hash"] == unit_hash
+        assert json.loads(lines[-1])["status"] == "done"
+        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")
+
+    def test_a_redownload_a_crash_cut_short_still_overwrites_its_own_file(self, instance):
+        # Requeued, re-downloaded, killed before the outcome line: the live
+        # line is the requeue, which carries no path, and the line that
+        # named the unit's file is the superseded one — the redrain reads
+        # its slot there and lands over the file, never beside it.
+        driver = self._jpeg_in_the_slot(instance)
+        self._redownload(instance, driver, PNG_BYTES)
+        self._crash_before_the_outcome_line(instance, work_hash(self.IMG2))
+        transport = FakeTransport(
+            {self.IMG2: HttpResponse(status=200, content_type="image/png", body=PNG_BYTES)}
+        )
+        run_mod.run(make_ctx(instance, driver, transport=transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(self.IMG2)]
+        assert entry.status is Status.DONE
+        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
+            "media-0.png"
+        ]
+
+    def test_a_file_no_path_names_is_never_taken_over(self, instance):
+        # A first download killed before its outcome line leaves a file no
+        # line names — and nothing says whose it is, so the redrain lands
+        # beside it. Assuming a slot's file was the unit's own is what let
+        # one download sweep away a sibling's landed file.
         write_item(instance)
         transport = FakeTransport(
             {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
         )
         driver = FakeDriver(fetch_fn=self.media_fetch([self.IMG1]))
         run_mod.run(make_ctx(instance, driver, transport=transport))
-        lines = [line for line in instance.ledger_path.read_text().split("\n") if line.strip()]
-        assert json.loads(lines[-1])["hash"] == work_hash(self.IMG1)
-        instance.ledger_path.write_text("\n".join(lines[:-1]) + "\n")  # the crash
-        assert (instance.enrichment_dir / ITEM / "media-0.png").exists()
+        self._crash_before_the_outcome_line(instance, work_hash(self.IMG1))
 
         run_mod.run(make_ctx(instance, driver, transport=transport))
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.DONE
-        assert entry.path == f"enrichment/{ITEM}/media-0.png"
+        assert entry.path == f"enrichment/{ITEM}/media-1.png"
         assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*")) == [
-            "media-0.png"
+            "media-0.png",
+            "media-1.png",
         ]
 
     def test_media_does_not_count_toward_the_url_cap(self, instance):
@@ -2272,6 +2315,171 @@ class TestMediaStage:
         run_mod.fetch_urls(ctx, ITEM, ["https://example.test/docs"])
         drain = run_mod._Drain(ctx=ctx)  # noqa: SLF001 — asserting the counting rule directly
         assert drain.fetched_count(ITEM) == 2  # seed + child; media excluded
+
+
+class TestMediaSlots:
+    """A media slot belongs to the unit whose recorded path names it."""
+
+    PAGE = "https://example.test/article"
+    HERO = "https://cdn.example.test/hero.webp?v=20260916"
+    SHOT = "https://cdn.example.test/shot"  # no extension: detection types it web
+    WEBP_BYTES = b"RIFF\x10\x00\x00\x00WEBPVP8 " + b"\x00" * 16
+    GONE = HttpResponse(status=404, content_type="text/html", body=b"")
+    BUSY = HttpResponse(status=503, content_type="text/html", body=b"busy")
+
+    def _page(self, *media: str) -> HttpResponse:
+        head = "".join(f'<meta property="og:image" content="{url}">' for url in media)
+        body = f"<html><head>{head}</head><body>page</body></html>".encode()
+        return HttpResponse(status=200, content_type="text/html", body=body)
+
+    def _transport(self, served: dict[str, HttpResponse] | None = None) -> FakeTransport:
+        """The post, the article whose og:image is the hero, both images; ``served`` over them."""
+        wayback = "https://archive.org/wayback/available?url="
+        responses = {
+            URL: self._page(),
+            self.PAGE: self._page(self.HERO),
+            self.HERO: HttpResponse(status=200, content_type="image/webp", body=self.WEBP_BYTES),
+            self.SHOT: HttpResponse(status=200, content_type="image/png", body=PNG_BYTES),
+            wayback + urllib.parse.quote(self.SHOT, safe=""): self.GONE,
+        }
+        responses.update(served or {})
+        return FakeTransport(responses)
+
+    def _ctx(self, instance, transport: FakeTransport) -> RunContext:
+        web = WebDriver(transport=transport, extract=lambda _html: "extracted body " * 40)
+        return make_ctx(instance, FakeDriver(), drivers=[web], transport=transport)
+
+    def _landed(self, instance) -> dict[str, str | None]:
+        entries = ledger.load(instance.ledger_path)
+        return {url: entries[work_hash(url)].path for url in (self.HERO, self.SHOT)}
+
+    def _on_disk(self, instance) -> list[str]:
+        return sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*"))
+
+    def _both_landed_in_one_batch(self, instance) -> None:
+        """The field shape: one ``enrich fetch`` promoting a page and a bare image."""
+        write_item(instance)
+        ctx = self._ctx(instance, self._transport())
+        run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, [self.PAGE, self.SHOT])
+
+    def test_a_unit_rerouted_to_the_media_stage_never_takes_a_siblings_slot(self, instance):
+        # The bare image is admitted before the page's hero is emitted, and
+        # joins the media stage only when its body turns out to be a
+        # picture. Counted by ledger position, both units came to slot 0,
+        # and the second download swept the first one's file away.
+        self._both_landed_in_one_batch(instance)
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def _shot_joins_a_run_later(self, instance) -> None:
+        """The hero lands in the first run; the captured image, busy then, in the second."""
+        write_item(instance, urls=[URL, self.SHOT])
+        post = self._page(self.HERO)
+        run_mod.run(self._ctx(instance, self._transport({URL: post, self.SHOT: self.BUSY})))
+        assert ledger.load(instance.ledger_path)[work_hash(self.SHOT)].status is Status.BLOCKED
+        run_mod.run(self._ctx(instance, self._transport({URL: post})))
+
+    def test_a_unit_that_joins_the_media_stage_a_run_later_takes_a_free_slot(self, instance):
+        self._shot_joins_a_run_later(instance)
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def test_a_landed_unit_fetched_again_keeps_its_slot(self, instance):
+        # The captured image now precedes the hero in the ledger AND is a
+        # media unit, so a slot counted by position moved the hero to 1 —
+        # over the image's file — the next time it was fetched.
+        self._shot_joins_a_run_later(instance)
+        run_mod.fetch_urls(self._ctx(instance, self._transport()), ITEM, [self.HERO])
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def test_a_refetch_that_parks_keeps_its_slot_for_the_next_run(self, instance):
+        # The blocked line carries no path and the run that drains it loads
+        # the ledger afresh: the unit's slot is read off the superseded
+        # line that landed its file, still standing in the slot.
+        self._both_landed_in_one_batch(instance)
+        busy = self._transport({self.HERO: self.BUSY})
+        run_mod.fetch_urls(self._ctx(instance, busy), ITEM, [self.HERO])
+        assert ledger.load(instance.ledger_path)[work_hash(self.HERO)].status is Status.BLOCKED
+        run_mod.run(self._ctx(instance, self._transport()))
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def test_a_refetch_leaves_a_slot_another_unit_names(self, instance):
+        # What the slot-by-position drain left in the field: both done
+        # lines name slot 0, and only the second unit's file survived.
+        # Fetching the first again lands it in a free slot rather than
+        # beside — or over — the file the other line names.
+        self._both_landed_in_one_batch(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        (item_dir / "media-0.webp").unlink()
+        (item_dir / "media-1.png").rename(item_dir / "media-0.png")
+        shot = ledger.load(instance.ledger_path)[work_hash(self.SHOT)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                shot, path=f"enrichment/{ITEM}/media-0.png", at=NOW + datetime.timedelta(seconds=1)
+            ),
+        )
+
+        run_mod.fetch_urls(self._ctx(instance, self._transport()), ITEM, [self.HERO])
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-1.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-0.png",
+        }
+        assert self._on_disk(instance) == ["media-0.png", "media-1.webp"]
+        assert (item_dir / "media-0.png").read_bytes() == PNG_BYTES
+
+    def test_a_slot_whose_file_is_gone_is_still_its_units(self, instance):
+        # An empty slot is not a free one: a new webp landing in slot 0
+        # would take the very name the hero's done line records, and that
+        # line would then vouch for bytes it never fetched.
+        self._both_landed_in_one_batch(instance)
+        (instance.enrichment_dir / ITEM / "media-0.webp").unlink()
+        more, poster = "https://example.test/more", "https://cdn.example.test/poster.webp"
+        transport = self._transport(
+            {
+                more: self._page(poster),
+                poster: HttpResponse(status=200, content_type="image/webp", body=self.WEBP_BYTES),
+            }
+        )
+        run_mod.fetch_urls(self._ctx(instance, transport), ITEM, [more])
+        landed = ledger.load(instance.ledger_path)[work_hash(poster)]
+        assert landed.path == f"enrichment/{ITEM}/media-2.webp"
+        assert self._on_disk(instance) == ["media-1.png", "media-2.webp"]
+
+    def test_another_items_slots_are_not_this_ones(self, instance):
+        other_item, other_post = "2026-08-19-other-11ff22", "https://example.test/other"
+        other_image = "https://cdn.example.test/other.webp"
+        write_item(instance)
+        write_item(instance, other_item, urls=[other_post])
+        transport = self._transport(
+            {
+                URL: self._page(self.HERO),
+                other_post: self._page(other_image),
+                other_image: HttpResponse(
+                    status=200, content_type="image/webp", body=self.WEBP_BYTES
+                ),
+            }
+        )
+        run_mod.run(self._ctx(instance, transport))
+        assert sorted(
+            p.relative_to(instance.enrichment_dir).as_posix()
+            for p in instance.enrichment_dir.glob("*/media-*")
+        ) == [f"{ITEM}/media-0.webp", f"{other_item}/media-0.webp"]
 
 
 class TestFetchedCountStaysARecount:
@@ -4012,11 +4220,11 @@ class TestOwnershipIsTheCorpusAnswer:
         out.write_bytes(body)
 
     def test_a_new_media_unit_never_takes_a_landed_siblings_slot(self, instance):
-        # The slot is the unit's position among the item's media units, and
-        # the item is the OWNING one on both sides. Counted off the stored
-        # string, a sibling that landed before the rename is invisible to
-        # a unit ledgered after it, which then claims slot 0 and overwrites
-        # the sibling's file in place.
+        # A sibling's recorded path claims its slot, and the item is the
+        # OWNING one on both sides. Asked of the stored string, a sibling
+        # that landed before the rename is invisible to a unit ledgered
+        # after it, which then takes slot 0 and overwrites the sibling's
+        # file in place.
         self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
         landed, fresh = "https://example.test/a.png", "https://example.test/b.png"
         self._landed_media(instance, landed, OLD_ITEM, 0, b"first")
