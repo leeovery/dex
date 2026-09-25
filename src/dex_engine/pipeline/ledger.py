@@ -28,7 +28,7 @@ every reader resolves and not every reader has a clock to hand.
 import datetime
 import json
 import os
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
@@ -46,6 +46,7 @@ __all__ = [
     "compact",
     "drop_items",
     "from_line",
+    "latest_outputs",
     "latest_readable",
     "load",
     "resolution_key",
@@ -327,11 +328,42 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
             migration), so every verb that dies on this load dies naming
             them.
     """
-    entries: dict[str, LedgerEntry] = {}
     if not path.exists():
-        return entries
-    moment = now()
-    winning: dict[str, tuple[datetime.datetime, int]] = {}
+        return {}
+    return _latest(_records(path), now=now())
+
+
+def latest_outputs(
+    path: Path, *, now: Callable[[], datetime.datetime] = _utc_now
+) -> dict[str, LedgerEntry]:
+    """The latest line per hash that recorded an output, superseded or not.
+
+    Outputs are success-only, so a unit re-queued since it landed has a
+    live line carrying no path while the file it landed still stands. The
+    line that named the file is audit trail from then on, and stays in the
+    file until ``compact`` drops it — this reads it there, resolved by the
+    rule ``load`` resolves live lines by.
+
+    Args:
+        path: The ledger file; a missing file records nothing.
+        now: The reader's clock, as for :func:`load`.
+
+    Returns:
+        Entries keyed by hash, each the latest line of that hash carrying a
+        ``path``; a hash that never recorded one is absent.
+
+    Raises:
+        LedgerSchemaError: A line does not conform, exactly as :func:`load`
+            raises it.
+    """
+    if not path.exists():
+        return {}
+    landed = ((lineno, entry) for lineno, entry in _records(path) if entry.path is not None)
+    return _latest(landed, now=now())
+
+
+def _records(path: Path) -> Iterator[tuple[int, LedgerEntry]]:
+    """Every record in the file with its line number; a nonconforming line raises."""
     # JSONL records are delimited by "\n" alone: str.splitlines() would also
     # split on unicode line separators (U+0085, U+2028, ...) INSIDE a JSON
     # string field and shear records apart (caught by the round-trip property).
@@ -342,14 +374,24 @@ def load(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> dict
             entry = from_line(line)
         except LedgerSchemaError as e:
             raise LedgerSchemaError(f"{path}:{lineno}: {e}") from e
-        key = resolution_key(entry, lineno, now=moment)
+        yield lineno, entry
+
+
+def _latest(
+    records: Iterable[tuple[int, LedgerEntry]], *, now: datetime.datetime
+) -> dict[str, LedgerEntry]:
+    """The latest of ``records`` per hash (:func:`resolution_key`), in first-seen-hash order."""
+    latest: dict[str, LedgerEntry] = {}
+    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    for position, entry in records:
+        key = resolution_key(entry, position, now=now)
         if entry.hash in winning and key < winning[entry.hash]:
             continue
         # Reassigning an existing key keeps its insertion position, so a
         # loser landing after its winner does not reorder the ledger.
-        entries[entry.hash] = entry
+        latest[entry.hash] = entry
         winning[entry.hash] = key
-    return entries
+    return latest
 
 
 class Appender:
@@ -570,8 +612,11 @@ def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEn
     Not ``load`` itself: one hand-tampered line would abort the purge, and a
     line this code cannot read names no item it can judge.
     """
-    latest: dict[str, LedgerEntry] = {}
-    winning: dict[str, tuple[datetime.datetime, int]] = {}
+    return _latest(_readable_records(text), now=now)
+
+
+def _readable_records(text: str) -> Iterator[tuple[int, LedgerEntry]]:
+    """Every record that parses, with its line number; the rest are passed over."""
     for lineno, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
@@ -579,12 +624,7 @@ def _latest_readable(text: str, *, now: datetime.datetime) -> dict[str, LedgerEn
             entry = from_line(line)
         except LedgerSchemaError:
             continue
-        key = resolution_key(entry, lineno, now=now)
-        if entry.hash in winning and key < winning[entry.hash]:
-            continue
-        latest[entry.hash] = entry
-        winning[entry.hash] = key
-    return latest
+        yield lineno, entry
 
 
 def _names_hash(line: str, hashes: Collection[str]) -> bool:
