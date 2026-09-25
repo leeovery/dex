@@ -38,8 +38,8 @@ __all__ = [
     "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
-    "acquire_instagram_audio",
     "acquire_podcast_audio",
+    "acquire_post_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
     "keep_first_tokens",
@@ -154,36 +154,36 @@ def acquire_podcast_audio(
     )
 
 
-def acquire_instagram_audio(
+def acquire_post_audio(
     entry: LedgerEntry, enrichment_path: Path, cache_dir: Path, transport: Transport
 ) -> Acquired | Classification:
-    """Acquire an instagram unit's video from the media proxy the park recorded.
+    """Acquire a post's video — an instagram reel's, an x post's — from the URL its park recorded.
 
-    The proxy URL and the caption come from the enrichment file the
-    instagram driver's park wrote; a cached download under the entry hash
-    is reused. The video is downloaded as it stands — the transcribers
-    decode a video container as readily as an audio one — and the caption
-    primes the prompt behind the author, who is the post's only name.
+    The video URL and the post's text come from the enrichment file the
+    driver's park wrote; a cached download under the entry hash is reused.
+    The video is downloaded as it stands — the transcribers decode a video
+    container as readily as an audio one — and the post's text primes the
+    prompt behind the author, who is the post's only name.
 
-    A 404 from the proxy classifies ``dead`` but is returned as ``manual``
-    by the caller's mapping: the URL that died is an unmaintained proxy's,
-    and it says nothing about the reel.
+    A 404 classifies ``dead`` but is returned as ``manual`` by the caller's
+    mapping: the URL that died is the video's — for a reel, an
+    unmaintained proxy's — and it says nothing about the post.
 
     Args:
         entry: The waiting ledger entry.
-        enrichment_path: ``enrichment/<item>/instagram-<hash6>.md``.
+        enrichment_path: ``enrichment/<item>/<kind>-<hash6>.md``.
         cache_dir: ``cache/audio/``.
-        transport: The HTTP seam for the proxy GET.
+        transport: The HTTP seam for the video GET.
 
     Returns:
         The acquisition, or the classified failure.
     """
-    parked = _parked_enclosure(enrichment_path, "instagram")
+    parked = _parked_enclosure(enrichment_path, entry.kind.value)
     if isinstance(parked, Classification):
         return parked
     prompt = _prompt(parked.fields.get("author"), None, parked.prefix)
-    # The proxy's `/videos/<code>/<n>` carries no extension of its own; mp4
-    # is what it redirects to, and the decoders sniff the bytes anyway.
+    # The instagram proxy's `/videos/<code>/<n>` carries no extension of its
+    # own; mp4 is what it redirects to, and the decoders sniff the bytes anyway.
     return _acquire_parked_audio(
         entry, parked, cache_dir, transport, prompt=prompt, default_ext="mp4"
     )

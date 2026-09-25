@@ -52,9 +52,9 @@ from .detect import (
     sniff_media_ext,
 )
 from .enrichment import (
-    instagram_body,
     mask_fetched,
     podcast_body,
+    post_body,
     read_enrichment,
     render_enrichment,
     youtube_body,
@@ -64,8 +64,8 @@ from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
     Acquired,
-    acquire_instagram_audio,
     acquire_podcast_audio,
+    acquire_post_audio,
     acquire_youtube_audio,
 )
 from .types import (
@@ -237,20 +237,25 @@ def _is_transcribe_job(entry: LedgerEntry) -> bool:
     return entry.status in (Status.WAITING, Status.BLOCKED) and entry.needs is Need.TRANSCRIBE
 
 
+# What a post's transcribe park stored beside its video, as the manual park
+# a silent video meets names it.
+_STORED_WITH_THE_VIDEO = {Kind.INSTAGRAM: "the caption", Kind.X: "the post"}
+
+
 def _provider_input_reason(entry: LedgerEntry, error: ProviderInputError) -> str:
     """The manual-park reason for input a provider could not use.
 
-    The provider's own words lead, always. An instagram unit then carries
-    the disposition it usually needs: silent and music-only reels are a
-    large share of what Instagram holds, so "heard no speech" is a standing
-    outcome there rather than a fault to chase — and the caption the park
+    The provider's own words lead, always. A post's video then carries the
+    disposition it usually needs: silent and music-only video is a large
+    share of what Instagram and X hold, so "heard no speech" is a standing
+    outcome there rather than a fault to chase — and the text the park
     already stored is a record of the post on its own.
     """
     reason = scrub(str(error))
-    if entry.kind is Kind.INSTAGRAM:
+    stored = _STORED_WITH_THE_VIDEO.get(entry.kind)
+    if stored is not None:
         reason += (
-            " — the caption is already stored; mark done to keep it as the record, "
-            "or rescue by hand"
+            f" — {stored} is already stored; mark done to keep it as the record, or rescue by hand"
         )
     return reason
 
@@ -1125,8 +1130,8 @@ class _Drain:
                 body = youtube_body(acquired.prefix, transcript)
             case Kind.PODCAST:
                 body = podcast_body(acquired.prefix, transcript)
-            case Kind.INSTAGRAM:
-                body = instagram_body(acquired.prefix, transcript)
+            case Kind.INSTAGRAM | Kind.X:
+                body = post_body(acquired.prefix, transcript)
             case _:
                 raise RuntimeError(
                     f"no transcript body for kind '{entry.kind}' — _acquire_audio "
@@ -1168,14 +1173,14 @@ class _Drain:
                 return acquire_youtube_audio(entry, enrichment, audio_dir, self.ctx.download_audio)
             case Kind.PODCAST:
                 return acquire_podcast_audio(entry, enrichment, audio_dir, self.ctx.transport)
-            case Kind.INSTAGRAM:
-                return acquire_instagram_audio(entry, enrichment, audio_dir, self.ctx.transport)
+            case Kind.INSTAGRAM | Kind.X:
+                return acquire_post_audio(entry, enrichment, audio_dir, self.ctx.transport)
             case _:
                 return Classification(
                     status=Status.MANUAL,
                     reason=(
                         f"no audio-acquisition path for kind '{entry.kind}' — "
-                        "transcription covers youtube, podcast and instagram work"
+                        "transcription covers youtube, podcast, instagram and x work"
                     ),
                 )
 
@@ -1214,6 +1219,18 @@ class _Drain:
                         f"the media proxy stopped serving the video ({failure.reason}) — "
                         "requeue the unit so the instagram driver re-resolves it, or point "
                         "instagram_base_url at another host"
+                    ),
+                )
+            case Status.DEAD if entry.kind is Kind.X:
+                # A post's video can go while the post stands, and the post
+                # the park already stored is a record of it either way.
+                self.record_outcome(
+                    entry,
+                    status=Status.MANUAL,
+                    reason=(
+                        f"the post's video stopped serving ({failure.reason}) — requeue the "
+                        "unit so the x driver re-resolves it, or mark done to keep the stored "
+                        "post as the record"
                     ),
                 )
             case Status.DEAD | Status.MANUAL:

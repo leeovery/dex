@@ -37,9 +37,9 @@ __all__ = [
     "DESCRIPTION_HEADING",
     "TRANSCRIPT_HEADING",
     "description_section",
-    "instagram_body",
     "mask_fetched",
     "podcast_body",
+    "post_body",
     "pre_transcript",
     "read_enrichment",
     "read_enrichment_fields",
@@ -242,9 +242,9 @@ def podcast_body(show_notes: str, transcript: str) -> str:
     return _notes_then_transcript(show_notes, transcript)
 
 
-def instagram_body(caption: str, transcript: str) -> str:
-    """The post's attributed caption followed by the transcript section."""
-    return _notes_then_transcript(caption, transcript)
+def post_body(text: str, transcript: str) -> str:
+    """An instagram or x post's attributed text followed by the transcript section."""
+    return _notes_then_transcript(text, transcript)
 
 
 def _notes_then_transcript(notes: str, transcript: str) -> str:

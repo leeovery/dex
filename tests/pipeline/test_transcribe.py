@@ -15,6 +15,7 @@ from dex_engine.drivers.instagram import InstagramDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.web import WebDriver
+from dex_engine.drivers.x import XDriver
 from dex_engine.drivers.youtube import YouTubeDriver, _video_meta
 from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio, cached_audio
 from dex_engine.pipeline import ledger
@@ -56,6 +57,7 @@ from tests.drivers.conftest import (
     FakeTransport,
     fixture_text,
     html_response,
+    json_response,
     truncating_server,
 )
 from tests.drivers.test_instagram import BASE as PROXY_BASE
@@ -1079,6 +1081,128 @@ class TestInstagramDrain:
         assert self.CAPTION in self.record(instance, entry_for(ctx, self.POST_URL)).read_text(
             encoding="utf-8"
         )
+
+
+class TestXDrain:
+    """An x post's video parks with the post's body and its URL, then transcribes."""
+
+    POST_URL = "https://x.com/i/status/800"
+    ENCLOSURE = "https://video.example.test/ext_tw_video/800/vid/1280x720/v800.mp4"
+    PARKED_BODY = "@ines — Sat Aug 22 14:40:00 +0000 2026\n\n(video post)"
+
+    def responses(self) -> dict[str, HttpResponse]:
+        payload = json.loads(fixture_text("fxtwitter", "video-800.json"))
+        return {"https://api.fxtwitter.com/status/800": json_response(payload)}
+
+    def video(self) -> HttpResponse:
+        return HttpResponse(
+            status=200, content_type="video/mp4", body=b"\x00\x00\x00\x18ftypmp42VIDEO-BYTES"
+        )
+
+    def ctx(self, instance, transport, **capability) -> run_mod.RunContext:
+        return make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=[XDriver(transport=transport, pace=lambda _seconds: None)],
+            transport=transport,
+            **capability,
+        )
+
+    def park_via_driver(self, instance) -> run_mod.RunContext:
+        """Run the real x driver so the park writes its video pointer."""
+        write_item(instance, urls=[self.POST_URL])
+        ctx = self.ctx(instance, FakeTransport(self.responses()))
+        run_mod.run(ctx)
+        return ctx
+
+    def drain(self, instance, *, transcriber=None, transport=None) -> run_mod.RunContext:
+        if transport is None:
+            transport = FakeTransport({self.ENCLOSURE: self.video()})
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        run_mod.run_transcribe(ctx)
+        return ctx
+
+    def test_one_run_takes_a_video_post_from_fetch_to_transcript(self, instance):
+        # The field defect: the video landed as a media file owing only a
+        # description, and a talking-head clip was digested from sampled
+        # frames while its substance, all of it in the audio, went unheard.
+        write_item(instance, urls=[self.POST_URL])
+        transport = FakeTransport({**self.responses(), self.ENCLOSURE: self.video()})
+        transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
+        caps = Capabilities(transcribers=(transcriber,), extractors=())
+        ctx = self.ctx(instance, transport, capabilities=caps, provider_available=caps.available)
+        run_mod.run(ctx)
+
+        entries = ledger.load(instance.ledger_path)
+        post = entries[work_hash(self.POST_URL)]
+        assert post.status is Status.DONE
+        fields, body = read_enrichment(instance.root / str(post.path))
+        assert body == f"{self.PARKED_BODY}\n\n## Transcript\n\nClip words."
+        assert fields["via"] == "whisper-local"
+        assert fields["model"] == "medium"
+        assert fields["enclosure"] == self.ENCLOSURE  # the re-fetch pointer survives
+        assert fields["author"] == "Ines Duarte (@ines)"
+        # The author anchors the prompt, last; the post's text is the vocabulary.
+        assert transcriber.calls[0][1].endswith(" — Ines Duarte (@ines)")
+        assert transcriber.calls[0][0].name == f"{post.hash}.mp4"
+        # Heard, never pooled: no media unit, no file owing a description.
+        assert [entry for entry in entries.values() if entry.job is Job.MEDIA] == []
+        assert audio_files(instance) == []  # the transcript superseded the video
+
+    def test_the_park_carries_no_transcript_stamp(self, instance):
+        # A park carrying `via` tells the drain its body already holds a
+        # transcript, and the drain then reads the body by its heading.
+        ctx = self.park_via_driver(instance)
+        parked = entry_for(ctx, self.POST_URL)
+        assert parked.status is Status.WAITING
+        assert parked.needs is Need.TRANSCRIBE
+        fields, body = read_enrichment(
+            instance.root / "enrichment" / ITEM / f"x-{parked.hash[:6]}.md"
+        )
+        assert "via" not in fields
+        assert fields["enclosure"] == self.ENCLOSURE
+        assert body == self.PARKED_BODY
+
+    def test_missing_enrichment_record_names_the_x_driver(self, instance):
+        write_item(instance, urls=[self.POST_URL])
+        seed_waiting(instance, self.POST_URL, kind=Kind.X)
+        entry = entry_for(self.drain(instance), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert "no enrichment record" in (entry.reason or "")
+        assert "x driver re-resolves" in (entry.reason or "")
+
+    def test_a_dead_video_url_is_manual_never_dead(self, instance):
+        # The post was fetched and stored; its video going says nothing
+        # about the post.
+        self.park_via_driver(instance)
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        entry = entry_for(
+            self.drain(instance, transport=FakeTransport({self.ENCLOSURE: gone})), self.POST_URL
+        )
+        assert entry.status is Status.MANUAL
+        assert "the post's video stopped serving (HTTP 404" in (entry.reason or "")
+        assert "x driver re-resolves" in (entry.reason or "")
+        assert "mark done to keep the stored post as the record" in (entry.reason or "")
+
+    def test_a_video_error_page_is_blocked_and_retried(self, instance):
+        self.park_via_driver(instance)
+        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+        entry = entry_for(
+            self.drain(instance, transport=FakeTransport({self.ENCLOSURE: page})), self.POST_URL
+        )
+        assert entry.status is Status.BLOCKED
+        assert entry.needs is Need.TRANSCRIBE
+
+    def test_no_speech_parks_manual_saying_the_post_is_the_record(self, instance):
+        self.park_via_driver(instance)
+        silent = FakeTranscriber(
+            raise_=ProviderInputError("whisper-local heard no speech in the audio")
+        )
+        entry = entry_for(self.drain(instance, transcriber=silent), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith("whisper-local heard no speech in the audio")
+        assert "the post is already stored" in (entry.reason or "")
+        assert "mark done to keep it as the record" in (entry.reason or "")
 
 
 class TestCorrectedUnitLandsItsTranscript:
