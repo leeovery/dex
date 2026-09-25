@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from dex_engine import seeds
+from dex_engine.directives import discover, pending
 from dex_engine.directives import log_path as directives_log
-from dex_engine.directives import pending
 from dex_engine.lens import lens_finding
 from dex_engine.new import EPHEMERAL, NAMED_SEEDS, SEEDS, TREE, build_parser, main, scaffold
 from dex_engine.pipeline.types import Config, Instance
@@ -92,6 +93,12 @@ class TestScaffold:
         # The repo is only known once setup settles GitHub.
         assert "an existing dex at <owner>/<repo>." in readme
 
+    def test_the_named_seeds_are_the_shared_renders_byte_for_byte(self, tmp_path):
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        assert (root / "README.md").read_bytes() == seeds.readme(TEMPLATE, "dex-cooking").encode()
+        assert (root / "lens.md").read_bytes() == seeds.lens(TEMPLATE, "dex-cooking").encode()
+
     def test_claude_md_is_the_template_s_own(self, tmp_path):
         root = tmp_path / "dex-cooking"
         scaffold(root, run=RecordingRun(), template=TEMPLATE)
@@ -159,6 +166,17 @@ class TestScaffold:
             {"number": 2, "engine": "0.2.0", "date": "2026-09-24"},
         ]
         assert pending(root, shipped) == []
+
+    def test_the_engines_own_directives_are_recorded_done_at_birth(self, tmp_path):
+        # An instance born from this template is already in the shape both
+        # directives convert an older one to: its own lens.md, and the
+        # template's README.
+        root = tmp_path / "dex-cooking"
+        scaffold(root, run=RecordingRun(), template=TEMPLATE)
+        records = [json.loads(line) for line in directives_log(root).read_text().splitlines()]
+        assert [record["number"] for record in records] == [1, 2]
+        assert [record["number"] for record in records] == [d.number for d in discover()]
+        assert pending(root) == []
 
     def test_an_engine_shipping_no_directives_writes_no_log(self, tmp_path):
         root = tmp_path / "dex-cooking"

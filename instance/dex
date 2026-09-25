@@ -1,6 +1,6 @@
 #!/bin/sh
 # dex engine dispatcher — run from the instance root.
-#   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass|place|item] | lint [--write] | map | exclude <file.json> | inbox [ensure] | sync | directive [list|show <n>|done <n>] | render --file <payload> | new <name> | issue --file <payload.json> | serve --instance <path> | connect --instance <path> [--client <name>]
+#   bin/dex normalize | enrich [run|status|transcribe|fetch|compact|mark|pass|place|item] | lint [--write] | map | exclude <file.json> | inbox [ensure] | sync | directive [list|show <n> [--materials]|done <n>] | render --file <payload> | new <name> | issue --file <payload.json> | serve --instance <path> | connect --instance <path> [--client <name>]
 # Runs the release pinned in .dex-engine-pin, read from THIS shim's instance
 # root and never from the working directory: chat clients spawn `serve` from
 # wherever the session happens to be, and a pin looked up there is never

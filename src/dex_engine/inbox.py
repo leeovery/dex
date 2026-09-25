@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
 from . import atomic
 from .drivers.transport import normalize_httplib_errors
+from .origin import github_repo
 from .pipeline.capture import parse_capture
 from .pipeline.detect import sniff_format
 from .pipeline.types import Instance
@@ -72,7 +73,6 @@ TAG = "inbox"
 UA = "dex-engine-inbox"
 
 _ASSET_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/releases/assets/\d+")
-_REMOTE_RE = re.compile(r"github\.com[:/]([^/]+/[^/\s]+?)(?:\.git)?$")
 
 
 class ApiCall(Protocol):
@@ -346,10 +346,7 @@ class _Reconcile:
 
     def repo(self) -> str | None:
         code, out = self.seams.git(["remote", "get-url", "origin"])
-        if code != 0:
-            return None
-        match = _REMOTE_RE.search(out.strip())
-        return match.group(1) if match else None
+        return github_repo(out) if code == 0 else None
 
 
 def _note_document_format(dest: Path, *, echo: Callable[[str], None]) -> None:

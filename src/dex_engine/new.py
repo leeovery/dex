@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
+from . import seeds
 from .directives import Directive, record_shipped
 from .sync import sync
 from .template import bundled_template
@@ -54,10 +55,12 @@ SEEDS = {
     "re-apply these.\n",
 }
 
-# Template files written once, with the instance's name in place of the
-# placeholder, and the owner's from then on: sync never touches either.
-NAMED_SEEDS = ("README.md", "lens.md")
-_NAME_PLACEHOLDER = "<instance name>"
+# Template files written once, with the instance's name filled in, and the
+# owner's from then on: sync never touches either.
+NAMED_SEEDS: dict[str, Callable[[Traversable, str], str]] = {
+    "README.md": seeds.readme,
+    "lens.md": seeds.lens,
+}
 
 
 def _run(args: list[str], cwd: Path) -> None:
@@ -110,9 +113,8 @@ def scaffold(  # noqa: PLR0913 — the seams are the signature: subprocess, temp
     for rel, content in SEEDS.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(content)
-    for rel in NAMED_SEEDS:
-        seed = (template / rel).read_text(encoding="utf-8")
-        (root / rel).write_text(seed.replace(_NAME_PLACEHOLDER, root.name), encoding="utf-8")
+    for rel, render in NAMED_SEEDS.items():
+        (root / rel).write_text(render(template, root.name), encoding="utf-8")
     sync(root, template=template)
     record_shipped(root, engine=version(), date=today(), shipped=shipped)
     run(["git", "init", "-q"], root)

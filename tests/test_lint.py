@@ -126,7 +126,7 @@ class TestPreTaxonomy:
 LENS_ROW = (
     "- **LENS FAILURE** — every judgment in a run reads through the lens, so the owner fills "
     "in `lens.md` with what this instance reads for, and a session writes it only when the "
-    "owner asks"
+    "owner asks or a directive's instructions name it"
 )
 
 

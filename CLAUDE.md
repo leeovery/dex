@@ -51,11 +51,19 @@ the engine stays unaware of which ones exist.
     touches state.
   - `directives/` — numbered directives: judgment work on an instance's
     own files that a migration may not do. Each is `directive_<n>.py`
-    (its intent and a check that names every unmet condition) with its
-    instructions beside it as `directive_<n>.md`. Sync lists the pending
-    ones, the run session performs them after the pull, `dex-directive
-    done` records each in `state/directives.jsonl` only once its check
-    passes, and `dex-new` records every shipped one as done.
+    (its intent, a check that names every unmet condition, and optional
+    materials: text rendered for the instance, which `dex-directive show`
+    prints between marker lines, and `show <n> --materials` alone, byte
+    for byte) with its instructions beside it as `directive_<n>.md`. Sync
+    lists the pending ones, the run session performs them after the pull,
+    `dex-directive done` records each in `state/directives.jsonl` only
+    once its check passes, and `dex-new` records every shipped one as
+    done. A directive always completes unattended and never waits on the
+    owner. Directive 1 rehomes an owner-written CLAUDE.md, which its code
+    finds in git history and prints in its materials (scope into
+    `lens.md`, Discord facts into config; with no stated scope to carry,
+    the seed lens stands in for the owner to fill); directive 2 rewrites
+    the README from the template.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -68,6 +76,16 @@ the engine stays unaware of which ones exist.
     same compile, both deterministic to the byte, from taxonomy,
     entity-members, corpus and wiki. The index is a rendered surface —
     regenerated whole at every compile, never hand-edited, unpinnable.
+  - `seeds.py` — the ONE render of the owner's two seeds, `README.md` and
+    `lens.md`, for one instance: named for its directory, the README's
+    join prompt either left for setup to fill (`dex-new`) or filled from
+    the `origin` remote, the whole section dropped without a GitHub
+    origin (directive 2).
+  - `origin.py` — the ONE reading of the `origin` remote as a GitHub
+    `owner/repo` (the inbox's release checks and the README render).
+  - `gitread.py` — read-only git queries (`git -C <root> …`): what git
+    printed, or `None` when it cannot answer; the default git seam for
+    `origin.py` and directive 1.
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·
@@ -85,10 +103,12 @@ the engine stays unaware of which ones exist.
   with their `references/` — each dir synced recursively into
   `.claude/skills/`; the `dex-` skill namespace is engine-owned and sync
   retires skills the template drops). Two seeds are written once by
-  `dex-new`, each with the instance's name filled in, and never copied by
-  sync, because both are the owner's: `README.md`, how the instance shows
-  on GitHub, and `lens.md`, the seed lens whose placeholder lines the lens
-  check reads. Everything instance-specific lives in `lens.md` and
+  `dex-new` through `seeds.py`, each with the instance's name filled in,
+  and never copied by sync, because both are the owner's: `README.md`,
+  how the instance shows on GitHub, and `lens.md`, the seed lens whose
+  placeholder lines the lens check reads. An instance older than the lens
+  reaches the same shape through directives 1 and 2, which render the
+  same two seeds. Everything instance-specific lives in `lens.md` and
   `state/config.json`.
 - `docs/` — human guides only: `start.md` (the single entry point, fetched
   raw by the getting-started prompt: dependencies, create or join, schedule,

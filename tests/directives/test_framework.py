@@ -100,6 +100,28 @@ class TestDiscover:
         with pytest.raises(DirectiveError, match=r"check\(root\) -> list\[str\]"):
             discover(package)
 
+    def test_a_directive_carries_its_materials(self, fixture_package, tmp_path):
+        source = directive_module("readme") + (
+            "\n\ndef materials(root):\n    return f'# {root.name}\\n'\n"
+        )
+        package = fixture_package({"directive_1.py": source, "directive_1.md": "do it"})
+        [directive] = discover(package)
+        assert directive.materials is not None
+        assert directive.materials(tmp_path / "dex-cooking") == "# dex-cooking\n"
+
+    def test_materials_are_optional(self, fixture_package):
+        package = fixture_package(
+            {"directive_1.py": directive_module("one"), "directive_1.md": "do it"}
+        )
+        [directive] = discover(package)
+        assert directive.materials is None
+
+    def test_materials_that_are_not_callable_are_loud(self, fixture_package):
+        source = directive_module("one") + "\nmaterials = '# the readme'\n"
+        package = fixture_package({"directive_1.py": source, "directive_1.md": "do it"})
+        with pytest.raises(DirectiveError, match=r"not as materials\(root\) -> str"):
+            discover(package)
+
     def test_the_engines_own_set_discovers_cleanly(self):
         # Whatever ships: every shipped directive loads its intent, check and
         # instructions, and the numbers run ascending without repeats.
