@@ -260,7 +260,7 @@ fatal in an instance, and nothing downstream will catch one.
 never a gate). `pytest -m live` watches third parties for drift, which happens
 on their clock and has nothing to do with release timing. The workflow splits
 in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
-lookup, the six GitHub contents/matching-refs checks through an authenticated
+lookup, the eight GitHub contents/matching-refs checks through an authenticated
 `gh`, the Wikipedia page-audio extraction) fail the run and mail the
 maintainer, which is
 GitHub's own default for a failed scheduled workflow and needs no robot in the
