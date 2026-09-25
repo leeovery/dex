@@ -121,7 +121,7 @@ other repairs need):
   document already extracted, and owe nothing. The repair is the work
   itself — view or read the media and write the missing descriptions
   through `bin/dex enrich item describe` per dex-run's
-  `references/ingest-item.md` (step 4), one per file; the verb takes the
+  `references/ingest-item.md` (step 3), one per file; the verb takes the
   slot and refreshes the item's frontmatter. Nothing mechanical clears
   this row; a bulk-ingested backlog stands here until a session looks at
   it.

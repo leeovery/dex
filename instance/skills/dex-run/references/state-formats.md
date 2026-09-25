@@ -21,7 +21,7 @@ engine serialize it:
  "signal": "high",
  "topics": ["agent-architecture"],
  "entities": ["claude-code"],
- "facts": ["one standalone fact per fact the source actually yields, with concrete specifics, readable without the source in front of you",
+ "facts": ["one standalone fact per fact the source yields through this instance's lens, with concrete specifics, readable without the source in front of you",
            "..."]}
 ```
 
@@ -48,7 +48,7 @@ media:                            # omitted when the item has no media
   - media/<id>/photo.jpg          #   the item's own paths, then the
   - enrichment/<id>/media-0.png   #   media files in enrichment/<id>/
 ---
-- one standalone fact bullet per fact the source actually yields.
+- one standalone fact bullet per fact the source yields through the lens.
 ```
 
 `bin/dex lint` checks the same shape, and it checks three different things.
@@ -114,16 +114,17 @@ the gate stops only the upstream filing, and the local record still
 lands (marked `filed: false`) so nothing observed is lost; `gh` trouble
 is a stated line in the verb's output and never stops the run.
 
-## `bin/dex exclude` — purging out-of-scope items
+## `bin/dex exclude`: dropping items that yield nothing through the lens
 
 Exclusion goes through the verb, never by deleting files. The batch is a
 JSON list of records:
 
 ```json
-[{"id": "<corpus item id>", "reason": "why it is out of scope"}]
+[{"id": "<corpus item id>", "reason": "what it is, and why the lens finds nothing in it"}]
 ```
 
-then `bin/dex exclude cache/exclusions.json`. `reason` is optional and
+then `bin/dex exclude cache/exclusions.json`. A lens drop always states
+its reason in lens terms, since the run report names it; left out, `reason`
 defaults to "out of scope". The batch is validated whole and refused
 whole — an id must be a corpus item id, never a path — and one id twice
 collapses to one entry with the count stated. The verb records each

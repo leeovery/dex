@@ -26,11 +26,12 @@ instructions apply when its step is reached.
    says how to recover. Pending directives are performed after the pull
    and before the inbox, in order, each as its own commit.
 
-2. **Process.** Read `references/processing.md` now and perform its three
-   steps: items created from every in-scope capture, then `bin/dex enrich
-   run` with its report completed section by section, then the `bin/dex
-   enrich status` backstop. It dispatches the per-item cognitive work —
-   scope check through receipt — to `references/ingest-item.md`.
+2. **Process.** Read `references/processing.md` now and perform its four
+   steps: an item created from every capture, then `bin/dex enrich run`
+   with its report completed section by section, then the `bin/dex enrich
+   status` backstop, then the reconcile. It dispatches the per-item work,
+   from the corpus item through the lens verdict to the receipt, to
+   `references/ingest-item.md`.
 
 3. **Compile the map.** Run `bin/dex map`. The placement and exclusion
    verbs recompile on their own writes, but wiki pages are edited
@@ -49,10 +50,11 @@ instructions apply when its step is reached.
 6. **Report.** Close with one report to the owner. Its content is fixed;
    its form is yours. Cover: which directives were performed, which are
    still pending, and any that failed, with what its check reported; what
-   was ingested (full item ids), what was parked and why, what the health
+   was ingested (full item ids), what was parked and why, each item the
+   lens verdict dropped (full item id) with its reason, what the health
    check found or why it was not due, any engine defect filed, any config
    change proposed, and the end state (pushed commit, or clean with
-   nothing to push) — or "nothing to do", which covers every empty
+   nothing to push). "Nothing to do" covers every empty
    section in one line. Shape the rest to the run — prose where there is
    substance, bullets where there is little — but item ids, URLs, and
    paths reach the owner whole, never truncated. Report any failure —
@@ -76,7 +78,9 @@ instructions apply when its step is reached.
   the run's own judgment, so it does not apply to a directive: a
   directive is the engine's decision, not the run's, and has full
   authority over every file its instructions name.
-- Borderline scope calls are skipped and reported, never guessed
+- The lens verdict is the run's own judgment, made without asking: an
+  item that yields nothing through the lens is dropped and named in the
+  report, never skipped or left waiting for an attended decision
   (details in `references/ingest-item.md`).
 - Cap-fired events (depth/URL caps) are internal — they live in the
   ledger for the health check. An `enrich fetch` refusal is already
