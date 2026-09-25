@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-25
+
+✨ Added
+- Directives: numbered, engine-shipped judgment tasks that run unattended on an instance's own files after every pull, with `bin/dex directive list|show|done` to inspect and record them.
+- The lens: every instance now reads through `lens.md`, a free-form owner statement of what it takes from what's shared into it, replacing the old scope list — a dex with no lens is a general knowledge dex that reads everything for its plain substance.
+- Directive 1 rehomes an owner's existing CLAUDE.md into `lens.md` and moves Discord server/channel facts into `state/config.json`'s new `discord` key; directive 2 rewrites `README.md` from the engine's template.
+- `bin/dex directive`, wired through the standard entry-point/shim/README plumbing, joins the command set.
+
+🔧 Changed
+- CLAUDE.md is now identical and engine-owned across every instance (imports the contract and `lens.md`); sync only overwrites it once git history holds the previous copy, leaving an uncommitted edit untouched with a note on the report.
+- Harvest no longer narrows by lens — everything a page's subject rule would promote still gets fetched, and the lens verdict judges what landed only after harvest completes.
+- `bin/dex exclude` now drops an item's media files, pass records, and everything else it left behind (not just corpus/enrichment/digest/ledger), still refusing the batch whole if a corpus file needed to settle ownership can't be read.
+- Capture and inbox routing ask the owner which instance a save belongs to instead of judging it from content or scope.
+- `dex-inbox` and README join prompts read the GitHub repo from the stored `origin` remote URL rather than `git remote get-url`, so `insteadOf` rewrites (mirrors, local paths) no longer hide the real repository.
+- `bin/dex inbox`, `normalize`, `enrich`, and `exclude` now refuse up front while any directive is pending, pointing at `bin/dex directive list`.
+- `dex-new` seeds `lens.md` and `README.md` from shared templates and records every shipped directive as already done on a fresh instance.
+- Sync and lint reports gain a non-failing **Lens note** when `lens.md` still holds the seed's placeholder text or can't be read, and a **Directives pending** section listing what's left to perform.
+- The MCP server's connect-time instructions and steering prose now route by each instance's lens instead of its scope, and read `lens.md` rather than CLAUDE.md.
+
+🐛 Fixed
+- `docs/connect.md` invocations of `ls` and `find` now run via `command` so a shell alias of either name can't change their behavior during setup.
+
 ## [0.1.17] - 2026-09-16
 
 🔧 Changed
