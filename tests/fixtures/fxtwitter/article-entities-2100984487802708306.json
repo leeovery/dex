@@ -155,6 +155,20 @@
           {
             "data": {},
             "entityRanges": [],
+            "inlineStyleRanges": [
+              {
+                "length": 42,
+                "offset": 0,
+                "style": "Bold"
+              }
+            ],
+            "key": "c66ql",
+            "text": "Jev gives those decisions their own model\n\n Your writing agent keeps writing. Your research agent keeps researching. The small judgments between them become a separate component you can inspect, price, and change.",
+            "type": "blockquote"
+          },
+          {
+            "data": {},
+            "entityRanges": [],
             "inlineStyleRanges": [],
             "key": "4e7kt",
             "text": "01. Find the part of your agent Jev can take over",

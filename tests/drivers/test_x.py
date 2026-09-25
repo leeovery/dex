@@ -425,7 +425,7 @@ class TestArticleEntities:
             "https://substack.com/@0xcodila\n\n---\n\n"
             f"![figure]({self.FIRST_FIGURE})\n\n"
             "https://x.com/i/status/2100411066966749359\n\n"
-            "## 01. Find the part"
+            "> Jev gives those decisions"
         ) in body
         assert f"typesafe-sdk\n```\n\n![figure]({self.SECOND_FIGURE})\n\n> Bookmark" in body
 
@@ -555,6 +555,40 @@ class TestArticleEntities:
         body = self.body(self.with_blocks(blocks))
         assert "```" not in body
         assert "1. first\n\n1. again" in body  # the blank run still ends the list
+
+    def test_a_quote_holding_paragraphs_stays_one_quote(self):
+        # The real block: its second paragraph fell out of the quote when
+        # only the block's head carried the marker.
+        body = self.body()
+        assert (
+            "\n\n> Jev gives those decisions their own model\n>\n>  Your writing agent keeps "
+            "writing. Your research agent keeps researching. The small judgments between them "
+            "become a separate component you can inspect, price, and change.\n\n## 01."
+        ) in body
+
+    def test_a_list_items_later_lines_sit_under_it(self):
+        blocks = [
+            {
+                "type": "unordered-list-item",
+                "text": "Corrections\nlive privately",
+                "entityRanges": [],
+            },
+            {"type": "ordered-list-item", "text": "Collect\n\n  them weekly", "entityRanges": []},
+            {"type": "ordered-list-item", "text": "Fold\n \nthem in", "entityRanges": []},
+        ]
+        body = self.body(self.with_blocks(blocks))
+        assert (
+            "\n\n- Corrections\n  live privately\n\n"
+            "1. Collect\n\n     them weekly\n\n"
+            "2. Fold\n\n   them in\n\n"
+        ) in body
+
+    def test_a_heading_and_a_paragraph_keep_their_line_breaks_as_they_are(self):
+        blocks = [
+            {"type": "header-two", "text": "Two\nlines", "entityRanges": []},
+            {"type": "unstyled", "text": "Soft\nbreak", "entityRanges": []},
+        ]
+        assert "\n\n## Two\nlines\n\nSoft\nbreak\n\n" in self.body(self.with_blocks(blocks))
 
 
 class TestClassifiedFailures:

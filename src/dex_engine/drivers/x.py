@@ -341,11 +341,31 @@ def _article_blocks(article: dict) -> str:
             continue
         if kind == "ordered-list-item":
             ordinal += 1
-            lines.append(f"{ordinal}. {text}")
-            continue
-        ordinal = 0
-        lines.append(_BLOCK_PREFIX.get(kind, "") + text)
+            prefix = f"{ordinal}. "
+        else:
+            ordinal = 0
+            prefix = _BLOCK_PREFIX.get(kind, "")
+        lines.append(_prefixed(kind, prefix, text))
     return "\n\n".join(lines)
+
+
+def _prefixed(kind: str, prefix: str, text: str) -> str:
+    """A block's markdown under its prefix, carried onto every line the text breaks to.
+
+    A block's text can hold line breaks, and prefixed at its head alone a
+    quote's second paragraph falls out of the quote and a list item's
+    continuation breaks the list. So every quote line carries the marker
+    (a blank one bare, keeping the quote whole) and a list item's later
+    lines sit indented under it.
+    """
+    lines = text.split("\n")
+    if kind == "blockquote":
+        return "\n".join(prefix + line if line.strip() else prefix.rstrip() for line in lines)
+    if kind.endswith("list-item"):
+        indent = " " * len(prefix)
+        continuation = (indent + line if line.strip() else "" for line in lines[1:])
+        return "\n".join([prefix + lines[0], *continuation])
+    return prefix + text
 
 
 def _article_content(article: dict) -> tuple[list[dict], dict[str, dict]]:
