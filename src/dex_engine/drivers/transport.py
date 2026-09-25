@@ -71,6 +71,7 @@ class HttpResponse:
     content_type: str  # lowercased media type, parameters stripped ("text/html")
     body: bytes
     content_length: int | None = None  # declared Content-Length, when the server sent one
+    url: str | None = None  # where the body came from, redirects followed, when known
 
     @property
     def ok(self) -> bool:
@@ -270,6 +271,7 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
                     content_type=_media_type(response.headers.get("Content-Type")),
                     body=body,
                     content_length=_content_length(response.headers.get("Content-Length")),
+                    url=response.url,
                 )
         except urllib.error.HTTPError as e:
             body = b""

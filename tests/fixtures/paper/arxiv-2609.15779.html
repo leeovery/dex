@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="content-type">
+<title>EvoOntology: A Self-Evolving Ontology Layer for Data Agents</title>
+</head>
+<body>
+<div class="ltx_page_main">
+<div class="ltx_page_content">
+<article class="ltx_document ltx_authors_1line">
+<h1 class="ltx_title ltx_title_document">EvoOntology: A Self-Evolving Ontology Layer for Data Agents</h1>
+<section id="Sx3.SSx2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">Evidence-Grounded Ontology Initialization</h3>
+
+<div id="Sx3.SSx2.p3" class="ltx_para">
+<p id="Sx3.SSx2.p3.1" class="ltx_p"><span id="Sx3.SSx2.p3.1.1" class="ltx_text ltx_font_bold">Evidence-Grounded Commitment.</span> Only candidates supported by their probe results are committed to the initial Content Layer:</p>
+<table id="Sx3.E1" class="ltx_equationgroup ltx_eqn_table">
+<tbody>
+<tr id="Sx3.E1X" class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_td ltx_align_right ltx_eqn_cell"><math id="Sx3.E1X.m2" class="ltx_Math" alttext="\displaystyle\mathcal{C}^{+}" display="inline" intent=":literal"><semantics><msup><mi class="ltx_font_mathcaligraphic">𝒞</mi><mo>+</mo></msup><annotation encoding="application/x-tex">\displaystyle\mathcal{C}^{+}</annotation></semantics></math></td>
+<td class="ltx_td ltx_align_left ltx_eqn_cell"><math id="Sx3.E1X.m3" class="ltx_Math" alttext="\displaystyle=\left\{c\in\mathcal{C}\,\middle|\,\mathrm{verify}\!\left(\mathrm{probe}(c,\mathcal{D})\right)=1\right\}," display="inline" intent=":literal"><semantics><mrow><mrow><mphantom></mphantom><mo>=</mo><mrow><mo>{</mo><mrow><mi>c</mi><mo>∈</mo><mi class="ltx_font_mathcaligraphic">𝒞</mi></mrow><mo lspace="0.170em" rspace="0.170em" stretchy="true">|</mo><mrow><mrow><mpadded style="width:2.763em;" width="2.763em"><mi>verify</mi></mpadded><mo>⁡</mo><mrow><mo>(</mo><mrow><mi>probe</mi><mo>⁡</mo><mrow><mo stretchy="false">(</mo><mi>c</mi><mo>,</mo><mi class="ltx_font_mathcaligraphic">𝒟</mi><mo stretchy="false">)</mo></mrow></mrow><mo>)</mo></mrow></mrow><mo>=</mo><mn>1</mn></mrow><mo>}</mo></mrow></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">\displaystyle=\left\{c\in\mathcal{C}\,\middle|\,\mathrm{verify}\!\left(\mathrm{probe}(c,\mathcal{D})\right)=1\right\},</annotation></semantics></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="2" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equationgroup ltx_align_right">(1)</span></td></tr>
+<tr id="Sx3.E1Xa" class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_td ltx_align_right ltx_eqn_cell"><math id="Sx3.E1Xa.m2" class="ltx_Math" alttext="\displaystyle\mathcal{S}_{0}" display="inline" intent=":literal"><semantics><msub><mi class="ltx_font_mathcaligraphic">𝒮</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\displaystyle\mathcal{S}_{0}</annotation></semantics></math></td>
+<td class="ltx_td ltx_align_left ltx_eqn_cell"><math id="Sx3.E1Xa.m3" class="ltx_Math" alttext="\displaystyle=\mathrm{construct}\!\left(\mathcal{C}^{+},\mathcal{D};\Gamma_{0}\right)." display="inline" intent=":literal"><semantics><mrow><mrow><mphantom></mphantom><mo>=</mo><mrow><mpadded style="width:4.023em;" width="4.023em"><mi>construct</mi></mpadded><mo>⁡</mo><mrow><mo>(</mo><msup><mi class="ltx_font_mathcaligraphic">𝒞</mi><mo>+</mo></msup><mo>,</mo><mi class="ltx_font_mathcaligraphic">𝒟</mi><mo>,</mo><msub><mi mathvariant="normal">Γ</mi><mn>0</mn></msub><mo>)</mo></mrow></mrow></mrow><mo lspace="0em">.</mo></mrow><annotation encoding="application/x-tex">\displaystyle=\mathrm{construct}\!\left(\mathcal{C}^{+},\mathcal{D};\Gamma_{0}\right).</annotation></semantics></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td></tr></tbody>
+</table>
+<p id="Sx3.SSx2.p3.2" class="ltx_p">Here, <math id="Sx3.SSx2.p3.m1" class="ltx_Math" alttext="\mathrm{verify}(\cdot)" display="inline" intent=":literal"><semantics><mrow><mi>verify</mi><mo>⁡</mo><mrow><mo stretchy="false">(</mo><mo lspace="0em" rspace="0em">⋅</mo><mo stretchy="false">)</mo></mrow></mrow><annotation encoding="application/x-tex">\mathrm{verify}(\cdot)</annotation></semantics></math> checks the declared type, filter, and value-distribution requirements. Verified candidates are instantiated under <math id="Sx3.SSx2.p3.m2" class="ltx_Math" alttext="\Gamma_{0}" display="inline" intent=":literal"><semantics><msub><mi mathvariant="normal">Γ</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\Gamma_{0}</annotation></semantics></math>, with their supporting records retained as Evidence. Together with the default Tool Layer <math id="Sx3.SSx2.p3.m3" class="ltx_Math" alttext="\mathcal{R}_{0}" display="inline" intent=":literal"><semantics><msub><mi class="ltx_font_mathcaligraphic">ℛ</mi><mn>0</mn></msub><annotation encoding="application/x-tex">\mathcal{R}_{0}</annotation></semantics></math>, they form the initial state
+<math id="Sx3.SSx2.p3.m4" class="ltx_Math" alttext="\mathcal{L}_{0}=(\mathcal{S}_{0},\Gamma_{0},\mathcal{R}_{0})" display="inline" intent=":literal"><semantics><mrow><msub><mi class="ltx_font_mathcaligraphic">ℒ</mi><mn>0</mn></msub><mo>=</mo><mrow><mo stretchy="false">(</mo><msub><mi class="ltx_font_mathcaligraphic">𝒮</mi><mn>0</mn></msub><mo>,</mo><msub><mi mathvariant="normal">Γ</mi><mn>0</mn></msub><mo>,</mo><msub><mi class="ltx_font_mathcaligraphic">ℛ</mi><mn>0</mn></msub><mo stretchy="false">)</mo></mrow></mrow><annotation encoding="application/x-tex">\mathcal{L}_{0}=(\mathcal{S}_{0},\Gamma_{0},\mathcal{R}_{0})</annotation></semantics></math>.</p>
+</div>
+</section>
+<section id="Sx4.SSx3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">Main Results</h3>
+
+<figure id="Sx4.T1" class="ltx_table">
+<table id="Sx4.T1.1" class="ltx_tabular ltx_centering ltx_align_middle">
+<tr id="Sx4.T1.1.1" class="ltx_tr">
+<td id="Sx4.T1.1.1.1" class="ltx_td ltx_align_left ltx_border_tt" style="padding-left:2.0pt;padding-right:2.0pt;">Method</td>
+<td id="Sx4.T1.1.1.2" class="ltx_td ltx_align_left ltx_border_tt" style="padding-left:2.0pt;padding-right:2.0pt;">Backbone</td>
+<td id="Sx4.T1.1.1.3" class="ltx_td ltx_align_center ltx_border_tt" style="padding-left:2.0pt;padding-right:2.0pt;"><span id="Sx4.T1.1.1.3.1" class="ltx_text"></span> <span id="Sx4.T1.1.1.3.2" class="ltx_text">
+<span id="Sx4.T1.1.1.3.2.1" class="ltx_tabular ltx_align_middle">
+<span id="Sx4.T1.1.1.3.2.1.1" class="ltx_tr">
+<span id="Sx4.T1.1.1.3.2.1.1.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">Msg-Wise</span></span>
+<span id="Sx4.T1.1.1.3.2.1.2" class="ltx_tr">
+<span id="Sx4.T1.1.1.3.2.1.2.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">(%, <math id="Sx4.T1.m1" class="ltx_Math" alttext="\uparrow" display="inline" intent=":literal"><semantics><mo stretchy="false">↑</mo><annotation encoding="application/x-tex">\uparrow</annotation></semantics></math>)</span></span>
+</span></span><span id="Sx4.T1.1.1.3.3" class="ltx_text"></span></td>
+<td id="Sx4.T1.1.1.4" class="ltx_td ltx_align_center ltx_border_tt" style="padding-left:2.0pt;padding-right:2.0pt;"><span id="Sx4.T1.1.1.4.1" class="ltx_text"></span> <span id="Sx4.T1.1.1.4.2" class="ltx_text">
+<span id="Sx4.T1.1.1.4.2.1" class="ltx_tabular ltx_align_middle">
+<span id="Sx4.T1.1.1.4.2.1.1" class="ltx_tr">
+<span id="Sx4.T1.1.1.4.2.1.1.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">Traj-Wise</span></span>
+<span id="Sx4.T1.1.1.4.2.1.2" class="ltx_tr">
+<span id="Sx4.T1.1.1.4.2.1.2.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">(%, <math id="Sx4.T1.m2" class="ltx_Math" alttext="\uparrow" display="inline" intent=":literal"><semantics><mo stretchy="false">↑</mo><annotation encoding="application/x-tex">\uparrow</annotation></semantics></math>)</span></span>
+</span></span><span id="Sx4.T1.1.1.4.3" class="ltx_text"></span></td>
+<td id="Sx4.T1.1.1.5" class="ltx_td ltx_align_center ltx_border_tt" style="padding-left:2.0pt;padding-right:2.0pt;"><span id="Sx4.T1.1.1.5.1" class="ltx_text"></span> <span id="Sx4.T1.1.1.5.2" class="ltx_text">
+<span id="Sx4.T1.1.1.5.2.1" class="ltx_tabular ltx_align_middle">
+<span id="Sx4.T1.1.1.5.2.1.1" class="ltx_tr">
+<span id="Sx4.T1.1.1.5.2.1.1.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">Overall</span></span>
+<span id="Sx4.T1.1.1.5.2.1.2" class="ltx_tr">
+<span id="Sx4.T1.1.1.5.2.1.2.1" class="ltx_td ltx_nopad_r ltx_align_center" style="padding-left:2.0pt;padding-right:2.0pt;">(%, <math id="Sx4.T1.m3" class="ltx_Math" alttext="\uparrow" display="inline" intent=":literal"><semantics><mo stretchy="false">↑</mo><annotation encoding="application/x-tex">\uparrow</annotation></semantics></math>)</span></span>
+</span></span><span id="Sx4.T1.1.1.5.3" class="ltx_text"></span></td></tr>
+<tr id="Sx4.T1.1.10" class="ltx_tr">
+<td id="Sx4.T1.1.10.1" class="ltx_td ltx_align_left ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;"><span id="Sx4.T1.1.10.1.1" class="ltx_text"><span id="Sx4.T1.1.10.1.1.1" class="ltx_text"></span><span id="Sx4.T1.1.10.1.1.2" class="ltx_text">
+<span id="Sx4.T1.1.10.1.1.2.1" class="ltx_tabular ltx_align_middle">
+<span id="Sx4.T1.1.10.1.1.2.1.1" class="ltx_tr">
+<span id="Sx4.T1.1.10.1.1.2.1.1.1" class="ltx_td ltx_nopad_r ltx_align_left" style="padding-left:2.0pt;padding-right:2.0pt;">Baseline</span></span>
+<span id="Sx4.T1.1.10.1.1.2.1.2" class="ltx_tr">
+<span id="Sx4.T1.1.10.1.1.2.1.2.1" class="ltx_td ltx_nopad_r ltx_align_left" style="padding-left:2.0pt;padding-right:2.0pt;">(ReAct</span></span>
+<span id="Sx4.T1.1.10.1.1.2.1.3" class="ltx_tr">
+<span id="Sx4.T1.1.10.1.1.2.1.3.1" class="ltx_td ltx_nopad_r ltx_align_left" style="padding-left:2.0pt;padding-right:2.0pt;">w/o Ontology)</span></span>
+</span></span><span id="Sx4.T1.1.10.1.1.3" class="ltx_text"></span></span></td>
+<td id="Sx4.T1.1.10.2" class="ltx_td ltx_align_left ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">GPT-5.5</td>
+<td id="Sx4.T1.1.10.3" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">60.6</td>
+<td id="Sx4.T1.1.10.4" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">64.2</td>
+<td id="Sx4.T1.1.10.5" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">62.4</td></tr>
+<tr id="Sx4.T1.1.22" class="ltx_tr">
+<td id="Sx4.T1.1.22.1" class="ltx_td ltx_align_left ltx_border_bb ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;"><span id="Sx4.T1.1.22.1.1" class="ltx_text ltx_font_bold">EvoOntology</span></td>
+<td id="Sx4.T1.1.22.2" class="ltx_td ltx_align_left ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">GPT-5.5</td>
+<td id="Sx4.T1.1.22.3" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">74.0 (+13.4)</td>
+<td id="Sx4.T1.1.22.4" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">90.9 (+26.7)</td>
+<td id="Sx4.T1.1.22.5" class="ltx_td ltx_align_center ltx_border_t" style="padding-left:2.0pt;padding-right:2.0pt;">82.5 (+20.1)</td></tr>
+</table>
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">Table 1: </span>Main results on the DDR-Bench 10-K scenario. Parentheses report the gain over the Baseline result.</figcaption>
+</figure>
+<div id="Sx4.SSx3.p1" class="ltx_para">
+<p id="Sx4.SSx3.p1.1" class="ltx_p"><span id="Sx4.SSx3.p1.1.1" class="ltx_text ltx_font_bold">Capability on Multi-Source Data Research.</span> Table <a href="#Sx4.T1" title="Table 1 ‣ Main Results ‣ Experiments ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">1</span></a> reports DDR-Bench results across six LLM backbones. EvoOntology improves Trajectory-Wise accuracy on all six backbones, with an average gain of <math id="Sx4.SSx3.p1.m1" class="ltx_Math" alttext="+17.8" display="inline" intent=":literal"><semantics><mrow><mo>+</mo><mn>17.8</mn></mrow><annotation encoding="application/x-tex">+17.8</annotation></semantics></math> points over Baseline. The improvement ranges from <math id="Sx4.SSx3.p1.m2" class="ltx_Math" alttext="+4.8" display="inline" intent=":literal"><semantics><mrow><mo>+</mo><mn>4.8</mn></mrow><annotation encoding="application/x-tex">+4.8</annotation></semantics></math> on Qwen3.5-Flash to <math id="Sx4.SSx3.p1.m3" class="ltx_Math" alttext="+26.7" display="inline" intent=":literal"><semantics><mrow><mo>+</mo><mn>26.7</mn></mrow><annotation encoding="application/x-tex">+26.7</annotation></semantics></math> on GPT-5.5, indicating that the ontology remains effective across backbones with substantially different baseline capabilities. In contrast, <em id="Sx4.SSx3.p1.1.2" class="ltx_emph ltx_font_italic">Baseline + SL</em>, which injects the semantic layer into the context as a static prompt, does not consistently improve over the un-mediated agent and even drops by <math id="Sx4.SSx3.p1.m4" class="ltx_Math" alttext="-15.0" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>15.0</mn></mrow><annotation encoding="application/x-tex">-15.0</annotation></semantics></math> points on Claude-Sonnet-5. The gap between Baseline + SL and EvoOntology stems from how the layer is used: a static prompt fragment competes with the agent’s other instructions and cannot be pruned per turn, whereas EvoOntology exposes the same content through MCP tools that the agent actively queries, retrieving only the terms and mappings relevant to the current step. We additionally compare against <em id="Sx4.SSx3.p1.1.3" class="ltx_emph ltx_font_italic">ReAct + Memory</em> <cite class="ltx_cite ltx_citemacro_citep">(<a href="#bib.bib26" title="" class="ltx_ref">Shinn et al. 2023</a>; <a href="#bib.bib28" title="" class="ltx_ref">Wang et al. 2023</a>; <a href="#bib.bib27" title="" class="ltx_ref">Madaan et al. 2023</a>)</cite>, which stores past trajectories as retrievable episodes. As shown in Table <a href="#Sx4.T2" title="Table 2 ‣ Main Results ‣ Experiments ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">2</span></a>, memory-based persistence lifts Trajectory-Wise from <math id="Sx4.SSx3.p1.m5" class="ltx_Math" alttext="69.5" display="inline" intent=":literal"><semantics><mn>69.5</mn><annotation encoding="application/x-tex">69.5</annotation></semantics></math> to <math id="Sx4.SSx3.p1.m6" class="ltx_Math" alttext="75.8" display="inline" intent=":literal"><semantics><mn>75.8</mn><annotation encoding="application/x-tex">75.8</annotation></semantics></math> but remains <math id="Sx4.SSx3.p1.m7" class="ltx_Math" alttext="13.7" display="inline" intent=":literal"><semantics><mn>13.7</mn><annotation encoding="application/x-tex">13.7</annotation></semantics></math> points below EvoOntology, because episodic memory only replays what has been done and does not expose typed, composable structure.</p>
+</div>
+</section>
+<section id="Sx5.SSx2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">Ablation Study on Evolution Loop</h3>
+
+<div id="Sx5.SSx2.p1" class="ltx_para">
+<p id="Sx5.SSx2.p1.1" class="ltx_p">The relative contribution of the four steps in the evolution loop (diagnose, attribute, patch, gate) is assessed by disabling each step in turn and comparing the resulting final Evolved score on DDR-Bench, averaged across the four backbones.The disabled variant of each step is: <em id="Sx5.SSx2.p1.1.1" class="ltx_emph ltx_font_italic">w/o Diagnose</em> skips the failure-trace clustering step and asks the evolution agent to propose an edit from a random sample of recent traces; <em id="Sx5.SSx2.p1.1.2" class="ltx_emph ltx_font_italic">w/o Attribution</em> drops the level tag and lets the agent commit an edit at any level without stating a hypothesis; <em id="Sx5.SSx2.p1.1.3" class="ltx_emph ltx_font_italic">w/o Patch stage</em> replaces the typed, hypothesis-conditioned edit with a free-form ontology rewrite that the evolution agent produces directly from the diagnosis; <em id="Sx5.SSx2.p1.1.4" class="ltx_emph ltx_font_italic">w/o Gate</em> accepts every candidate patch. As shown in Table <a href="#Sx5.T5" title="Table 5 ‣ Ablation Study on Evolution Loop ‣ Analyses ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">5</span></a>, removing the gate causes the largest drop (<math id="Sx5.SSx2.p1.m1" class="ltx_Math" alttext="-11.2" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>11.2</mn></mrow><annotation encoding="application/x-tex">-11.2</annotation></semantics></math> Traj-Wise), because unfiltered candidates admit regressions that the next round cannot always undo. Removing the attribution step drops by <math id="Sx5.SSx2.p1.m2" class="ltx_Math" alttext="-6.3" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>6.3</mn></mrow><annotation encoding="application/x-tex">-6.3</annotation></semantics></math>, because without a level tag the loop tends to make content edits when the failure is a manifest problem, and vice versa. Removing the diagnose step drops by <math id="Sx5.SSx2.p1.m3" class="ltx_Math" alttext="-4.8" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>4.8</mn></mrow><annotation encoding="application/x-tex">-4.8</annotation></semantics></math>, and replacing the typed patch with a free-form rewrite drops by <math id="Sx5.SSx2.p1.m4" class="ltx_Math" alttext="-1.7" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>1.7</mn></mrow><annotation encoding="application/x-tex">-1.7</annotation></semantics></math>. The results show that the gate and attribution are the two load-bearing pieces, which validates the design of an evolution loop that is more selective than iterative.</p>
+</div>
+<figure id="Sx5.T5" class="ltx_table">
+<table id="Sx5.T5.1" class="ltx_tabular ltx_centering ltx_align_middle">
+<tr id="Sx5.T5.1.1" class="ltx_tr">
+<td id="Sx5.T5.1.1.1" class="ltx_td ltx_align_left ltx_border_tt">Variant</td>
+<td id="Sx5.T5.1.1.2" class="ltx_td ltx_align_center ltx_border_tt">Traj-Wise (%, <math id="Sx5.T5.m1" class="ltx_Math" alttext="\uparrow" display="inline" intent=":literal"><semantics><mo stretchy="false">↑</mo><annotation encoding="application/x-tex">\uparrow</annotation></semantics></math>)</td>
+<td id="Sx5.T5.1.1.3" class="ltx_td ltx_align_center ltx_border_tt"><math id="Sx5.T5.m2" class="ltx_Math" alttext="\Delta" display="inline" intent=":literal"><semantics><mi mathvariant="normal">Δ</mi><annotation encoding="application/x-tex">\Delta</annotation></semantics></math></td></tr>
+<tr id="Sx5.T5.1.2" class="ltx_tr">
+<td id="Sx5.T5.1.2.1" class="ltx_td ltx_align_left ltx_border_t">Full loop</td>
+<td id="Sx5.T5.1.2.2" class="ltx_td ltx_align_center ltx_border_t"><span id="Sx5.T5.1.2.2.1" class="ltx_text ltx_font_bold">89.5</span></td>
+<td id="Sx5.T5.1.2.3" class="ltx_td ltx_align_center ltx_border_t">–</td></tr>
+<tr id="Sx5.T5.1.3" class="ltx_tr">
+<td id="Sx5.T5.1.3.1" class="ltx_td ltx_align_left">   w/o Gate</td>
+<td id="Sx5.T5.1.3.2" class="ltx_td ltx_align_center"><math id="Sx5.T5.m3" class="ltx_Math" alttext="78.3" display="inline" intent=":literal"><semantics><mn>78.3</mn><annotation encoding="application/x-tex">78.3</annotation></semantics></math></td>
+<td id="Sx5.T5.1.3.3" class="ltx_td ltx_align_center"><math id="Sx5.T5.m4" class="ltx_Math" alttext="-11.2" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>11.2</mn></mrow><annotation encoding="application/x-tex">-11.2</annotation></semantics></math></td></tr>
+<tr id="Sx5.T5.1.4" class="ltx_tr">
+<td id="Sx5.T5.1.4.1" class="ltx_td ltx_align_left">   w/o Attribution</td>
+<td id="Sx5.T5.1.4.2" class="ltx_td ltx_align_center"><math id="Sx5.T5.m5" class="ltx_Math" alttext="83.2" display="inline" intent=":literal"><semantics><mn>83.2</mn><annotation encoding="application/x-tex">83.2</annotation></semantics></math></td>
+<td id="Sx5.T5.1.4.3" class="ltx_td ltx_align_center"><math id="Sx5.T5.m6" class="ltx_Math" alttext="-6.3" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>6.3</mn></mrow><annotation encoding="application/x-tex">-6.3</annotation></semantics></math></td></tr>
+<tr id="Sx5.T5.1.5" class="ltx_tr">
+<td id="Sx5.T5.1.5.1" class="ltx_td ltx_align_left">   w/o Diagnose</td>
+<td id="Sx5.T5.1.5.2" class="ltx_td ltx_align_center"><math id="Sx5.T5.m7" class="ltx_Math" alttext="84.7" display="inline" intent=":literal"><semantics><mn>84.7</mn><annotation encoding="application/x-tex">84.7</annotation></semantics></math></td>
+<td id="Sx5.T5.1.5.3" class="ltx_td ltx_align_center"><math id="Sx5.T5.m8" class="ltx_Math" alttext="-4.8" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>4.8</mn></mrow><annotation encoding="application/x-tex">-4.8</annotation></semantics></math></td></tr>
+<tr id="Sx5.T5.1.6" class="ltx_tr">
+<td id="Sx5.T5.1.6.1" class="ltx_td ltx_align_left ltx_border_bb">   w/o Patch (free-form)</td>
+<td id="Sx5.T5.1.6.2" class="ltx_td ltx_align_center ltx_border_bb"><math id="Sx5.T5.m9" class="ltx_Math" alttext="87.8" display="inline" intent=":literal"><semantics><mn>87.8</mn><annotation encoding="application/x-tex">87.8</annotation></semantics></math></td>
+<td id="Sx5.T5.1.6.3" class="ltx_td ltx_align_center ltx_border_bb"><math id="Sx5.T5.m10" class="ltx_Math" alttext="-1.7" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>1.7</mn></mrow><annotation encoding="application/x-tex">-1.7</annotation></semantics></math></td></tr>
+</table>
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_table">Table 5: </span>Ablation on the four steps of the evolution loop, averaged across four backbones.</figcaption>
+</figure>
+</section>
+<section id="Sx5.SSx4" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection">Divergence across Backbones</h3>
+
+<div id="Sx5.SSx4.p1" class="ltx_para">
+<p id="Sx5.SSx4.p1.1" class="ltx_p">We investigate whether different backbones converge to similar ontologies or develop distinct ones by comparing the pairwise Jaccard overlap of their accepted Term-identifier sets on DDR-Bench. As shown in Figure <a href="#Sx5.F5.sf1" title="In Figure 5 ‣ Divergence across Backbones ‣ Analyses ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">5(a)</span></a>, no pair exceeds <math id="Sx5.SSx4.p1.m1" class="ltx_Math" alttext="0.62" display="inline" intent=":literal"><semantics><mn>0.62</mn><annotation encoding="application/x-tex">0.62</annotation></semantics></math> overlap, and the two Claude backbones share less with each other (<math id="Sx5.SSx4.p1.m2" class="ltx_Math" alttext="0.55" display="inline" intent=":literal"><semantics><mn>0.55</mn><annotation encoding="application/x-tex">0.55</annotation></semantics></math>) than the two GPT backbones do (<math id="Sx5.SSx4.p1.m3" class="ltx_Math" alttext="0.61" display="inline" intent=":literal"><semantics><mn>0.61</mn><annotation encoding="application/x-tex">0.61</annotation></semantics></math>). The accepted edits also differ across backbones. For example, Claude-Opus-4.8 retains more detailed manifest variants than Claude-Sonnet-5, while GPT-5.5 introduces short SQL fragment libraries under Evidence that do not appear in the Claude-Opus-4.8 ontology. However, identifier overlap alone cannot determine semantic equivalence, since different identifiers may encode similar concepts. We further evaluate cross-backbone transfer by applying each evolved store to all four backbones and measuring Traj-Wise performance on DDR-Bench. As shown in Figure <a href="#Sx5.F5.sf2" title="In Figure 5 ‣ Divergence across Backbones ‣ Analyses ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">5(b)</span></a>, the diagonal is uniformly the highest entry of its column, and every off-diagonal drops by at least <math id="Sx5.SSx4.p1.m4" class="ltx_Math" alttext="6.6" display="inline" intent=":literal"><semantics><mn>6.6</mn><annotation encoding="application/x-tex">6.6</annotation></semantics></math> points relative to the same-backbone store; the average column drop from diagonal to off-diagonal ranges from <math id="Sx5.SSx4.p1.m5" class="ltx_Math" alttext="-6.6" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>6.6</mn></mrow><annotation encoding="application/x-tex">-6.6</annotation></semantics></math> (Sonnet-5) to <math id="Sx5.SSx4.p1.m6" class="ltx_Math" alttext="-10.9" display="inline" intent=":literal"><semantics><mrow><mo>−</mo><mn>10.9</mn></mrow><annotation encoding="application/x-tex">-10.9</annotation></semantics></math> (GPT-5.5). These results show that different backbones produce different evolved ontology stores from the same initialization. The cross-backbone transfer results further indicate that backbone-specific evolution is beneficial.</p>
+</div>
+</section>
+<section id="bib" class="ltx_bibliography">
+<h2 class="ltx_title ltx_title_bibliography">References</h2>
+
+<ul id="bib.L1" class="ltx_biblist">
+<li id="bib.bib25" class="ltx_bibitem ltx_bib_inproceedings"><span class="ltx_tag ltx_bib_author-year ltx_role_refnum ltx_tag_bibitem">Asai <span class="ltx_text ltx_bib_etal">et al.</span> (2024)</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_author">A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi</span>
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_title">Self-rag: learning to retrieve, generate, and critique through self-reflection</span>.
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_bib_inbook">International conference on learning representations</span>,
+</span>
+<span class="ltx_bibblock">Vol. <span class="ltx_text ltx_bib_volume">2024</span>, <span class="ltx_text ltx_bib_pages">pp. 9112–9141</span>.
+</span>
+<span class="ltx_bibblock ltx_bib_cited">Cited by: <a href="#Sx2.p2.1" title="Related Work ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_title">Related Work</span></a>.
+</span></li>
+<li id="bib.bib36" class="ltx_bibitem ltx_bib_article"><span class="ltx_tag ltx_bib_author-year ltx_role_refnum ltx_tag_bibitem">Caferoğlu and Ulusoy (2024)</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_author">H. A. Caferoğlu and Ö. Ulusoy</span>
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_title">E-sql: direct schema linking via question enrichment in text-to-sql</span>.
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_journal">arXiv:2409.16751</span>.
+</span>
+<span class="ltx_bibblock ltx_bib_cited">Cited by: <a href="#Sx2.p1.1" title="Related Work ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_title">Related Work</span></a>,
+<a href="#Sx4.SSx2.p2.1" title="Experimental Setup ‣ Experiments ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_title">Experimental Setup</span></a>.
+</span></li>
+</ul>
+</section>
+<section id="A3" class="ltx_appendix">
+<h2 class="ltx_title ltx_title_appendix"><span class="ltx_tag ltx_tag_appendix">Appendix C </span>Attribution across Editable Levels</h2>
+
+<div id="A3.p1" class="ltx_para">
+<p id="A3.p1.1" class="ltx_p">We next examine how the accepted evolution gain is distributed across
+the three editable levels. Each accepted round is grouped by its
+attribution tag, and the paired-evaluation improvement contributed by
+each group is aggregated across the four backbones. As shown in Figure <a href="#A3.F7" title="Figure 7 ‣ Appendix C Attribution across Editable Levels ‣ EvoOntology: A Self-Evolving Ontology Layer for Data Agents" class="ltx_ref"><span class="ltx_text ltx_ref_tag">7</span></a>, Tool-level edits account for <math id="A3.p1.m1" class="ltx_Math" alttext="57\%" display="inline" intent=":literal"><semantics><mrow><mn>57</mn><mo>%</mo></mrow><annotation encoding="application/x-tex">57\%</annotation></semantics></math> of the cumulative gain across six accepted rounds. These edits mainly improve how existing ontology content is exposed through the manifest and MCP tools. Content-level edits contribute <math id="A3.p1.m2" class="ltx_Math" alttext="34\%" display="inline" intent=":literal"><semantics><mrow><mn>34</mn><mo>%</mo></mrow><annotation encoding="application/x-tex">34\%</annotation></semantics></math>
+across eleven accepted rounds by adding or refining <em id="A3.p1.1.1" class="ltx_emph ltx_font_italic">Terms</em>,
+<em id="A3.p1.1.2" class="ltx_emph ltx_font_italic">Mappings</em>, <em id="A3.p1.1.3" class="ltx_emph ltx_font_italic">Constraints</em>, <em id="A3.p1.1.4" class="ltx_emph ltx_font_italic">Evidence</em>, and
+<em id="A3.p1.1.5" class="ltx_emph ltx_font_italic">Semantic Relations</em> identified from interaction trajectories.
+Schema-level edits contribute the remaining <math id="A3.p1.m3" class="ltx_Math" alttext="9\%" display="inline" intent=":literal"><semantics><mrow><mn>9</mn><mo>%</mo></mrow><annotation encoding="application/x-tex">9\%</annotation></semantics></math> across three accepted
+rounds by changing the representational structure of the ontology. Content edits are more frequent, while Tool edits contribute the largest
+share of the accumulated gain. Schema edits are less common but address
+limitations that cannot be resolved by modifying instantiated content
+alone. This distribution is consistent with the three levels serving
+distinct and complementary roles during evolution.</p>
+</div>
+</section>
+</article>
+</div>
+</div>
+</body>
+</html>

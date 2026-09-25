@@ -8,6 +8,8 @@ and this file pins it through the driver that reads every page that way.
 import socket
 import urllib.parse
 
+import pytest
+
 from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
@@ -50,6 +52,15 @@ def substantial_extract(_html: str) -> str:
 
 def driver_for(responses: dict, extract=substantial_extract) -> WebDriver:
     return WebDriver(transport=FakeTransport(responses), extract=extract)
+
+
+def markdown_response(text: str, *, status: int = 200) -> HttpResponse:
+    return HttpResponse(status=status, content_type="text/markdown", body=text.encode("utf-8"))
+
+
+def declaring(link: str) -> str:
+    """The article fixture with ``link`` in its head."""
+    return ARTICLE.replace("</head>", f"{link}</head>")
 
 
 class TestIdentity:
@@ -255,6 +266,22 @@ class TestSuccessfulFetch:
     def test_non_http_og_image_is_not_media(self):
         assert self.og_image_media("data:image/png;base64,iVBOR") == []
 
+    def test_a_relative_og_image_resolves_against_the_page_the_body_came_from(self):
+        # After a redirect the page's own URL is where it landed: resolved
+        # against the URL asked for, a relative image names another host.
+        html = (
+            '<html><head><meta property="og:image" content="/img/hero.png">'
+            "</head><body>body</body></html>"
+        )
+        response = HttpResponse(
+            status=200,
+            content_type="text/html",
+            body=html.encode(),
+            url="https://www.example.test/blog/post",
+        )
+        result = content_of(driver_for({URL: response}).fetch(make_unit(URL, Kind.WEB)))
+        assert result.media == ["https://www.example.test/img/hero.png"]
+
     def test_a_wrapped_content_attribute_yields_no_media_at_all(self):
         # Truncating at the line break left "https://cdn.example.test/" — a
         # well-formed request for a resource that does not exist, ledgered
@@ -339,6 +366,218 @@ class TestDescriptionMeta:
         capped = self.meta_for(f'<meta property="og:description" content="{deck}">')["description"]
         assert len(capped) == 300
         assert capped.startswith("deck deck deck")
+
+
+DOCS_URL = "https://docs.typesafe.ai/model-jaggedness/jev-1.13"
+DOCS_SOURCE_URL = "https://docs.typesafe.ai/model-jaggedness/jev-1.13.md"
+SOURCE_LINK = '<link rel="alternate" type="text/markdown" href="/post.md">'
+SOURCE_URL = "https://example.test/post.md"
+SOURCE = "# The post, as its author wrote it\n\n" + "A line of the markdown source.\n" * 30
+
+
+class TestMarkdownAlternate:
+    """A page that declares the markdown it was rendered from is stored from that markdown.
+
+    The field case: a Mintlify cookbook stored as 10.7KB of prose with none
+    of its code blocks, while the markdown its head declared held 48.5KB
+    and all 22 fences.
+    """
+
+    def fetch(self, page: str, source: HttpResponse | Exception, *, extract=substantial_extract):
+        responses = {URL: html_response(page), SOURCE_URL: source}
+        return driver_for(responses, extract=extract).fetch(make_unit(URL, Kind.WEB))
+
+    def test_the_declared_source_is_stored_over_the_extraction(self):
+        page = fixture_text("web", "markdown-alternate.html")
+        source = fixture_text("web", "markdown-alternate.md")
+        responses = {DOCS_URL: html_response(page), DOCS_SOURCE_URL: markdown_response(source)}
+        driver = driver_for(responses, extract=trafilatura_extract)
+        result = content_of(driver.fetch(make_unit(DOCS_URL, Kind.WEB)))
+        # As published: Mintlify's index note for agents and its MDX
+        # components stay, because nothing downstream is harmed by them.
+        assert result.body == source.strip()
+        assert "| 9 | [Generation](#generation)" in result.body
+        assert "```python theme={null}\nfrom typesafe_sdk import Noul" in result.body
+
+    def test_the_frontmatter_and_media_still_come_from_the_html(self):
+        page = fixture_text("web", "markdown-alternate.html")
+        source = fixture_text("web", "markdown-alternate.md")
+        responses = {DOCS_URL: html_response(page), DOCS_SOURCE_URL: markdown_response(source)}
+        result = content_of(driver_for(responses).fetch(make_unit(DOCS_URL, Kind.WEB)))
+        assert result.meta == {
+            "title": "Jev 1.13 jaggedness - TypeSafe AI",
+            "description": (
+                "Jev isn't perfect. Here are some jagged edges we are aware of with jev-1.13."
+                " Many of these will be fixed in later versions."
+            ),
+        }
+        assert len(result.media) == 1
+        assert result.media[0].startswith("https://ts-docs.mintlify.app/mintlify-assets/")
+
+    def test_the_source_is_fetched_where_the_page_says_never_guessed(self):
+        # GitHub Docs points at an API path and Fern at another slug: a
+        # guessed `<url>.md` fetches the wrong document or nothing.
+        href = "https://docs.github.com/api/article/body?pathname=/en/get-started/hello-world"
+        transport = FakeTransport(
+            {
+                URL: html_response(
+                    declaring(f'<link rel="alternate" type="text/markdown" href="{href}">')
+                ),
+                href: markdown_response(SOURCE),
+            }
+        )
+        driver = WebDriver(transport=transport, extract=substantial_extract)
+        result = content_of(driver.fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == SOURCE.strip()
+        assert transport.calls == [("GET", URL), ("GET", href)]
+
+    def test_a_plain_http_source_is_fetched_as_declared(self):
+        href = "http://mirror.example.test/post.md"
+        link = f'<link rel="alternate" type="text/markdown" href="{href}">'
+        responses = {URL: html_response(declaring(link)), href: markdown_response(SOURCE)}
+        result = content_of(driver_for(responses).fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == SOURCE.strip()
+
+    def test_an_escaped_href_is_fetched_unescaped(self):
+        link = '<link rel="alternate" type="text/markdown" href="/post.md?lang=en&amp;v=2">'
+        responses = {
+            URL: html_response(declaring(link)),
+            "https://example.test/post.md?lang=en&v=2": markdown_response(SOURCE),
+        }
+        result = content_of(driver_for(responses).fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == SOURCE.strip()
+
+    def test_a_relative_href_resolves_against_the_page_the_body_came_from(self):
+        # A redirect moves the base: against the URL that was asked for, a
+        # relative href names another page's source.
+        landed = "https://docs.example.test/docs/create/code"
+        page = declaring('<link rel="alternate" type="text/markdown" href="code.md">')
+        responses = {
+            URL: HttpResponse(status=200, content_type="text/html", body=page.encode(), url=landed),
+            "https://docs.example.test/docs/create/code.md": markdown_response(SOURCE),
+        }
+        result = content_of(driver_for(responses).fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == SOURCE.strip()
+
+    @pytest.mark.parametrize(
+        "link",
+        [
+            '<link rel="alternate" type="text/markdown" href="/post.md">',
+            "<link href='/post.md' type='text/markdown' rel='alternate'/>",
+            "<LINK REL=Alternate TYPE=Text/Markdown HREF=/post.md>",
+            '<link rel="nofollow alternate" type="text/markdown; charset=utf-8" href="/post.md">',
+        ],
+        ids=["canonical", "reordered-single-quoted", "uppercase-unquoted", "rel-list-type-params"],
+    )
+    def test_the_declaration_is_read_however_it_is_spelled(self, link):
+        result = content_of(self.fetch(declaring(link), markdown_response(SOURCE)))
+        assert result.body == SOURCE.strip()
+
+    @pytest.mark.parametrize(
+        "link",
+        [
+            '<link rel="alternate" type="application/rss+xml" href="/post.md">',
+            '<link rel="alternate" hreflang="fr" href="/post.md">',
+            '<link rel="preload" type="text/markdown" href="/post.md">',
+            '<link type="text/markdown" href="/post.md">',
+            '<link rel="alternate" type="text/markdown">',
+            '<link rel="alternate" type="text/markdown" href="">',
+            '<link rel="alternate" type="text/markdown" href="javascript:void(0)">',
+        ],
+        ids=[
+            "another-type",
+            "no-type",
+            "not-alternate",
+            "no-rel",
+            "no-href",
+            "empty-href",
+            "not-http",
+        ],
+    )
+    def test_nothing_but_a_markdown_alternate_is_followed(self, link):
+        transport = FakeTransport({URL: html_response(declaring(link))})
+        driver = WebDriver(transport=transport, extract=substantial_extract)
+        result = content_of(driver.fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == substantial_extract("")
+        assert transport.calls == [("GET", URL)]
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            markdown_response("Not Found", status=404),
+            TimeoutError("timed out"),
+            ValueError("host is not encodable for DNS"),
+        ],
+        ids=["http-404", "connection", "unencodable-host"],
+    )
+    def test_a_source_that_cannot_be_fetched_leaves_the_extraction(self, failure):
+        result = content_of(self.fetch(declaring(SOURCE_LINK), failure))
+        assert result.body == substantial_extract("")
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            HttpResponse(status=200, content_type="text/html", body=SOURCE.encode()),
+            markdown_response("<!DOCTYPE html><html><body>" + "Sign in. " * 80 + "</body></html>"),
+        ],
+        ids=["declared-html", "html-bytes"],
+    )
+    def test_an_answer_that_is_html_is_not_the_source(self, answer):
+        # A soft 404 or a login wall arrives with a 200 all the same.
+        result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
+        assert result.body == substantial_extract("")
+
+    @pytest.mark.parametrize(
+        ("source_chars", "stored"),
+        [(599, "extraction"), (600, "source")],
+    )
+    def test_a_source_shorter_than_the_extraction_is_thin(self, source_chars, stored):
+        # The source is what the page was rendered from, so a faithful one
+        # holds at least every character extraction kept.
+        extraction = substantial_extract("")
+        assert len(extraction) == 600
+        source = "s" * source_chars
+        result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
+        assert result.body == {"extraction": extraction, "source": source}[stored]
+
+    def test_a_source_rescues_a_page_whose_html_extracts_thin(self):
+        # docs.perplexity.ai: 692 characters of extraction against 19KB of source.
+        result = self.fetch(
+            declaring(SOURCE_LINK), markdown_response(SOURCE), extract=lambda _: None
+        )
+        assert content_of(result).body == SOURCE.strip()
+
+    def test_a_source_below_the_substantial_bar_rescues_nothing(self):
+        result = self.fetch(
+            declaring(SOURCE_LINK), markdown_response("s" * 299), extract=lambda _: None
+        )
+        assert result == Unusable(evidence="thin-extraction")
+
+    def test_a_source_at_the_substantial_bar_is_the_body(self):
+        result = self.fetch(
+            declaring(SOURCE_LINK), markdown_response("s" * 300), extract=lambda _: None
+        )
+        assert content_of(result).body == "s" * 300
+
+    def test_a_wayback_rescue_reads_the_snapshot_alone(self):
+        snapshot = "https://web.archive.org/web/2026/https://example.test/post"
+        transport = FakeTransport(
+            {
+                URL: html_response("gone", status=404),
+                wayback_lookup_url(URL): json_response(
+                    {"archived_snapshots": {"closest": {"available": True, "url": snapshot}}}
+                ),
+                snapshot: html_response(declaring(SOURCE_LINK)),
+            }
+        )
+        driver = WebDriver(transport=transport, extract=substantial_extract)
+        result = content_of(driver.fetch(make_unit(URL, Kind.WEB)))
+        assert result.body == substantial_extract("")
+        assert transport.calls == [
+            ("GET", URL),
+            ("GET", wayback_lookup_url(URL)),
+            ("GET", snapshot),
+        ]
 
 
 class TestClassifiedFailures:
@@ -500,6 +739,18 @@ class TestExtractionFidelity:
             "## What It Costs",
         ]
 
+    @pytest.mark.parametrize("level", range(1, 7))
+    def test_every_heading_level_is_repaired(self, level):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f'      <h{level}>Ledger Rules <a href="#ledger-rules">#</a></h{level}>\n'
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert [line for line in body.split("\n") if "Ledger Rules" in line] == [
+            f"{'#' * level} Ledger Rules"
+        ]
+
     def test_the_glyph_drop_reaches_nothing_an_author_wrote(self):
         # The rails on that repair, all three. An anchor with words in it
         # is a link somebody meant, heading or not; a lone `#` is only
@@ -571,3 +822,87 @@ class TestExtractionFidelity:
         # Preparation is a repair, never a gate: whatever lxml cannot read
         # goes through as it arrived and the extractor decides.
         assert trafilatura_extract("") is None
+
+    def test_a_scroll_areas_table_and_code_block_survive(self):
+        # docs.typesafe.ai (Mintlify) wraps every table and code block in a
+        # scroll area styled `base-ui-disable-scrollbar`, and the extractor
+        # discards a class holding `bar` anywhere as navigation: the page
+        # came back as prose, its 9-row failure-mode table and its Python
+        # block gone.
+        page = fixture_text("web", "mintlify-scroll-areas.html")
+        body = trafilatura_extract(page) or ""
+        assert "| 1 | [Literal reading](#literal-reading) |" in body
+        assert "| 9 | [Generation](#generation) | Use a generative model |" in body
+        assert "```\nfrom typesafe_sdk import Noul, TypeSafeClient\n" in body
+        assert "count = sum(result.nouls" in body
+
+    def test_a_sidebar_that_scrolls_is_still_a_sidebar(self):
+        # The rail on that repair: only the scrollbar token goes, and the
+        # rest of the class still names what the element is.
+        chrome = "every post in this series, listed for navigation, one after another."
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f'      <div class="sidebar overflow-y-auto custom-scrollbar"><p>Sidebar: {chrome}'
+            f'</p></div>\n      <div class="overflow-y-auto custom-scrollbar"><p>Scroller: {chrome}'
+            "</p></div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Sidebar:" not in body
+        assert f"Scroller: {chrome}" in body
+
+    def test_katex_math_reads_as_its_tex_source(self):
+        # docusaurus.io renders KaTeX, which writes no alttext: the TeX sits
+        # in an annotation, and the MathML's own text writes the prime as a
+        # glyph. Before, each formula vanished or came back as three copies
+        # run together.
+        page = fixture_text("web", "katex-math.html")
+        body = trafilatura_extract(page) or ""
+        assert "Let $f\\colon[a,b] \\to \\R$ be Riemann integrable." in body
+        assert "differentiable at $x$ with $F'(x)=f(x)$." in body
+        assert "F′" not in body
+
+    @pytest.mark.parametrize(
+        ("math", "rendered"),
+        [
+            ("<math><mi>x</mi><mo>=</mo><mn>2</mn></math>", "$x=2$"),
+            (
+                (
+                    "<math><semantics><mrow><mi>x</mi><mo>=</mo><mn>2</mn></mrow>"
+                    '<annotation-xml encoding="MathML-Content"><apply><eq/><ci>y</ci><cn>3</cn>'
+                    "</apply></annotation-xml></semantics></math>"
+                ),
+                "$x=2$",
+            ),
+            ('<math display="block" alttext="E=mc^{2}"><mi>E</mi></math>', "$$E=mc^{2}$$"),
+        ],
+        ids=["text-only", "content-annotation", "display-block"],
+    )
+    def test_mathml_reads_as_its_formula_between_dollar_signs(self, math, rendered):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <p>The ledger balances at {math} and at no other point on the curve"
+            " that the pipeline draws.</p>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert f"The ledger balances at {rendered} and at no other point" in body
+
+    def test_a_formula_with_no_source_leaves_no_empty_delimiters(self):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <p>The ledger balances at <math></math> and at no other point on the curve"
+            " that the pipeline draws.</p>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "The ledger balances at and at no other point" in body
+        assert "$" not in body
+
+    def test_spans_named_like_a_table_without_latexml_markers_stay_text(self):
+        # The tabular rebuild keys on LaTeXML's own `ltx_` classes.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <p><span class="tabular"><span class="tr"><span class="td">Cell one</span>'
+            '<span class="td">Cell two</span></span></span> stay inline text.</p>\n'
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Cell oneCell two stay inline text." in body

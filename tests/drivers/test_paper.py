@@ -1,8 +1,11 @@
 """Tests for drivers/paper.py: arxiv API + full text, the article route."""
 
+import re
+
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
+from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.paper import PaperDriver
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.pipeline.types import Content, Kind, Missing, Refused
@@ -15,6 +18,11 @@ HTML_URL = "https://arxiv.org/html/2408.12345"
 AR5IV_URL = "https://ar5iv.labs.arxiv.org/html/2408.12345"
 FEED = fixture_text("paper", "arxiv-feed.xml")
 EMPTY_FEED = fixture_text("paper", "arxiv-empty-feed.xml")
+# arXiv's own HTML renderings (LaTeXML), trimmed to the parts that lost
+# content in the field: 2609.15779 lost every inline value and its ablation
+# cells, 2609.30094 its equations and its table-only appendices.
+EVO_ONTOLOGY = fixture_text("paper", "arxiv-2609.15779.html")
+PRIV_DRIFT = fixture_text("paper", "arxiv-2609.30094.html")
 
 
 def xml_response(text: str, *, status: int = 200) -> HttpResponse:
@@ -265,6 +273,17 @@ class TestArxiv:
         assert isinstance(result, Content)
         assert "## Full text" in body_of(result)
 
+    def test_the_full_text_runs_through_the_real_extractor(self):
+        # No extractor injected: the driver's own wiring is under test, and
+        # the page preparation reaches the arXiv rendering through it.
+        responses = {API_URL: xml_response(FEED), HTML_URL: html_page(PRIV_DRIFT)}
+        driver = PaperDriver(transport=FakeTransport(responses))
+        body = body_of(driver.fetch(make_unit(ABS_URL, Kind.PAPER)))
+        full_text = body[body.index("## Full text") :]
+        assert "We generate $N=1000$ controlled dialogues" in full_text
+        assert "## Appendix A Dataset Characterization" in full_text
+        assert "| 0 | 197 | 44.29 | 43.00 | 59.05 | 57.33 |" in full_text
+
     def test_thin_full_text_degrades_to_abstract_only_with_note(self):
         responses = {
             API_URL: xml_response(FEED),
@@ -293,6 +312,130 @@ class TestArxiv:
         result = driver_for(responses).fetch(make_unit(ABS_URL, Kind.PAPER))
         assert isinstance(result, Refused)
         assert "unparseable XML" in result.evidence
+
+
+class TestFullTextFidelity:
+    """What an arXiv rendering keeps through extraction.
+
+    LaTeXML writes every formula as MathML, every numbered equation as a
+    table, and a table that sits inside running text as spans — three
+    shapes the extractor deleted or emptied.
+    """
+
+    def test_inline_math_keeps_the_values_the_prose_reports(self):
+        body = trafilatura_extract(EVO_ONTOLOGY) or ""
+        assert "with an average gain of $+17.8$ points over Baseline" in body
+        assert "removing the gate causes the largest drop ($-11.2$ Traj-Wise)" in body
+        assert "Removing the attribution step drops by $-6.3$" in body
+        assert (
+            "no pair exceeds $0.62$ overlap, and the two Claude backbones share less with"
+            " each other ($0.55$) than the two GPT backbones do ($0.61$)"
+        ) in body
+        assert "Tool-level edits account for $57\\%$ of the cumulative gain" in body
+
+    def test_an_ablation_tables_cells_keep_their_values(self):
+        body = trafilatura_extract(EVO_ONTOLOGY) or ""
+        for row in (
+            "| w/o Gate | $78.3$ | $-11.2$ |",
+            "| w/o Attribution | $83.2$ | $-6.3$ |",
+            "| w/o Diagnose | $84.7$ | $-4.8$ |",
+            "| w/o Patch (free-form) | $87.8$ | $-1.7$ |",
+        ):
+            assert row in body
+
+    def test_a_stacked_header_cell_stays_inside_its_cell(self):
+        # "Msg-Wise" over "(%, ↑)" is a tabular nested in a table cell, and a
+        # table inside a cell has no markdown form: it stays that cell's text.
+        body = trafilatura_extract(EVO_ONTOLOGY) or ""
+        assert (
+            "| Method | Backbone | Msg-Wise (%, $\\uparrow$) | Traj-Wise (%, $\\uparrow$)"
+            " | Overall (%, $\\uparrow$) |"
+        ) in body
+
+    def test_an_equation_table_is_display_math_not_empty_cells(self):
+        body = trafilatura_extract(PRIV_DRIFT) or ""
+        assert (
+            "$$d\\sim\\begin{cases}0&\\text{with }p=0.2,\\\\ \\mathrm{Uniform}\\{2,3,4,5,6\\}"
+            "&\\text{with }p=0.8.\\end{cases}$$ (1)"
+        ) in body
+        assert not re.search(r"^\|(\s*\|)+\s*(\(\d+\)\s*\|)?\s*$", body, re.MULTILINE)
+
+    def test_an_equation_row_without_math_keeps_its_text(self):
+        # A row can carry words between the lines of an aligned equation.
+        table = (
+            '<table class="ltx_equation ltx_eqn_table"><tbody>'
+            '<tr class="ltx_equation ltx_eqn_row"><td class="ltx_eqn_cell"></td>'
+            '<td class="ltx_eqn_cell"><math alttext="L(d)\\leq\\delta" display="block">'
+            "<mi>L</mi></math></td>"
+            '<td class="ltx_eqn_cell ltx_eqn_eqno"><span class="ltx_tag">(9)</span></td></tr>'
+            '<tr class="ltx_eqn_row"><td class="ltx_eqn_cell">for every drift length observed,</td>'
+            "</tr></tbody></table>"
+        )
+        body = trafilatura_extract(in_paper(table)) or ""
+        assert "$$L(d)\\leq\\delta$$ (9)\n\nfor every drift length observed,\n" in body
+
+    def test_an_aligned_equations_cells_join_into_one_display_block(self):
+        # An aligned equation puts each side in its own cell; the row is
+        # still one formula, and its number follows it.
+        body = trafilatura_extract(EVO_ONTOLOGY) or ""
+        assert (
+            "$$\\displaystyle\\mathcal{C}^{+} \\displaystyle=\\left\\{c\\in\\mathcal{C}\\,"
+            "\\middle|\\,\\mathrm{verify}\\!\\left(\\mathrm{probe}(c,\\mathcal{D})\\right)=1"
+            "\\right\\},$$ (1)"
+        ) in body
+
+    def test_table_only_appendices_after_the_references_survive(self):
+        # Their tables went with the figures that float them, the bare
+        # headings left behind trailed the page, and trailing headings are
+        # stripped: both appendices vanished whole.
+        body = trafilatura_extract(PRIV_DRIFT) or ""
+        references = body.index("## References")
+        appendix_a = body.index("## Appendix A Dataset Characterization")
+        appendix_b = body.index("## Appendix B Additional Effect Sizes")
+        assert references < appendix_a < appendix_b
+        assert "| 0 | 197 | 44.29 | 43.00 | 59.05 | 57.33 |" in body[appendix_a:appendix_b]
+        assert "| DeepSeek-R1 | Secret type | 0.5871 | Large |" in body[appendix_b:]
+
+    def test_a_span_tabular_in_the_body_is_a_table(self):
+        body = trafilatura_extract(PRIV_DRIFT) or ""
+        assert "| Total dialogues | 1,000 |" in body
+        assert "| Drift lengths | $0,2,3,4,5,6$ |" in body
+
+    def test_a_tabulars_rows_may_sit_straight_under_it(self):
+        # Head and body wrappers are LaTeXML's option, not a rule.
+        tabular = latexml_tabular(("Msg-Wise", "Traj-Wise"), ("(%, up)", "(%, down)"))
+        body = trafilatura_extract(in_paper(f'<p class="ltx_p">{tabular}</p>')) or ""
+        assert "| Msg-Wise | Traj-Wise |" in body
+        assert "| (%, up) | (%, down) |" in body
+
+    def test_a_tabular_inside_a_header_cell_stays_that_cells_text(self):
+        stacked = latexml_tabular(("Msg-Wise",), ("(%, up)",))
+        table = (
+            '<table class="ltx_tabular"><tr class="ltx_tr">'
+            f'<th class="ltx_td">{stacked}</th><th class="ltx_td">Backbone</th></tr>'
+            '<tr class="ltx_tr"><td class="ltx_td">74.0</td><td class="ltx_td">GPT-5.5</td></tr>'
+            "</table>"
+        )
+        body = trafilatura_extract(in_paper(table)) or ""
+        assert "| Msg-Wise (%, up) | Backbone |" in body
+
+
+def latexml_tabular(*rows: tuple[str, ...]) -> str:
+    """A span-typeset LaTeXML tabular, its rows straight under it."""
+    spans = "".join(
+        '<span class="ltx_tr">'
+        + "".join(f'<span class="ltx_td ltx_align_center">{cell}</span>' for cell in row)
+        + "</span>\n"
+        for row in rows
+    )
+    return f'<span class="ltx_tabular ltx_align_middle">\n{spans}</span>'
+
+
+def in_paper(markup: str) -> str:
+    """The 2609.30094 rendering with ``markup`` as a paragraph of its section 3.2."""
+    return PRIV_DRIFT.replace(
+        '<figure id="S3.T1"', f'<div class="ltx_para">{markup}</div>\n<figure id="S3.T1"', 1
+    )
 
 
 class TestArticleRoute:
