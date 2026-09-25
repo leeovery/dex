@@ -1,13 +1,18 @@
-"""The github driver: repos / profiles / gists / issues / blobs via the gh CLI.
+"""The github driver: repos, profiles, gists, issues, files and directories via the gh CLI.
 
 Every route goes through :mod:`dex_engine.drivers.gh`, the authenticated
 seam this driver shares with the file driver. That module owns the ``gh``
-invocation, the failure classification, and the whole blob round trip
-including where a blob URL's ref stops and its path starts; this driver
-owns only what a github URL's *shape* means and what to do with the bytes
-that come back.
+invocation, the failure classification, and the whole path round trip
+including where a blob, raw or tree URL's ref stops and its path starts;
+this driver owns only what a github URL's *shape* means and what to do
+with what comes back.
 
-Blob bytes are sniffed *by name* before they are fenced: a document
+A shape is read only by a route written for it. A repo link that is not
+the repo itself, a path in it, an issue or a download — a commit, a
+release page, a wiki — parks for judgment naming its shape, rather than
+reading the repo's root README, which is not what the link points at.
+
+File bytes are sniffed *by name* before they are fenced: a document
 committed to a repo re-detects to ``file`` work — the file driver reads the
 bytes back through the same seam, so extraction runs on the committed file
 itself. Any other binary parks ``manual`` naming what it is, never a code
@@ -21,21 +26,45 @@ import re
 import urllib.parse
 
 from dex_engine.pipeline.classify import Classification
-from dex_engine.pipeline.detect import sniff_format
-from dex_engine.pipeline.types import Content, Kind, Outcome, Redetected, Unusable, WorkUnit
+from dex_engine.pipeline.detect import format_of_name, sniff_format
+from dex_engine.pipeline.types import (
+    Content,
+    Job,
+    Kind,
+    Outcome,
+    Redetected,
+    Unusable,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical, host_of
 
-from .gh import BlobRef, Gh, blob_ref, fetch_blob, gh_api, gh_api_list, run_gh
+from .gh import (
+    Blob,
+    Gh,
+    RefPath,
+    Tree,
+    fetch_path,
+    fetch_readme,
+    gh_api,
+    gh_api_list,
+    ref_path,
+    run_gh,
+)
 
 __all__ = ["GitHubDriver"]
 
 _HOSTS = frozenset({"github.com", "gist.github.com"})
 
+_ATTACHMENTS = "user-attachments"
+
 # First path segments github.com reserves for its own product surfaces.
 # None of them can be a user or an org, so none of them is repo or profile
 # work: the API 404s them while a browser renders them fine, which turned
 # a live marketing or topic page into a `dead` ledger line. Declining them
-# hands the URL to the web driver, which extracts the page like any other.
+# hands the URL to the web driver, which extracts the page like any other —
+# and a user-attachments link, which serves a file rather than a page, is
+# rerouted on from there: a document by detection's HEAD sniff, a picture
+# by the web driver's own look at the body.
 _RESERVED_SEGMENTS = frozenset(
     {
         "about",
@@ -81,6 +110,7 @@ _RESERVED_SEGMENTS = frozenset(
         "team",
         "topics",
         "trending",
+        _ATTACHMENTS,
         "wiki",
     }
 )
@@ -100,7 +130,7 @@ _TOPIC_LIMIT = 8
 
 
 class GitHubDriver:
-    """Fetch GitHub content by URL shape: gist, profile, blob, issue/PR, repo."""
+    """Fetch GitHub content by URL shape: gist, profile, repo, file, directory, issue/PR."""
 
     kind: Kind = Kind.GITHUB
     sleep: float = 0.3
@@ -137,15 +167,16 @@ class GitHubDriver:
             # The root addresses no content unit, and no judgment could
             # pull one out of it either.
             return Unusable(evidence="github root url — nothing to fetch", rescuable=False)
+        if segments[0].lower() == _ATTACHMENTS:
+            # `matches` declines these now, but a unit ledgered github before
+            # it did never re-detects: a requeue drives it by its stored kind.
+            return _attachment(segments[1:])
         if len(segments) == 1:
             return self._fetch_profile(segments[0])
-        owner, repo = segments[0], segments[1]
-        blob = blob_ref(unit.url)
-        if blob is not None:
-            return self._fetch_blob(blob)
-        if len(segments) >= 4 and segments[2] in ("issues", "pull"):  # noqa: PLR2004
-            return self._fetch_issue(owner, repo, segments[3])
-        return self._fetch_repo(owner, repo)
+        address = ref_path(unit.url)
+        if address is not None:
+            return self._fetch_path(address)
+        return self._fetch_repo_page(segments[0], segments[1], segments[2:])
 
     # -- routes ----------------------------------------------------------
 
@@ -178,32 +209,39 @@ class GitHubDriver:
         )
         return Content(meta=meta, body=body)
 
-    def _fetch_blob(self, ref: BlobRef) -> Outcome:
-        blob = fetch_blob(self._gh, ref)
-        if isinstance(blob, Classification):
-            return blob.to_outcome()
-        # Named, because a signature is not always there to find: an
-        # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
-        # for a document, and a CSV has no signature at all. Unnamed, both
-        # decoded cleanly and fenced — the pointer text presented as the
-        # document it stands for.
-        fmt = sniff_format(blob.data, name=blob.path)
-        if fmt is not None:
-            # A document committed to a repo IS extractable work: the file
-            # driver reaches these bytes back through the shared seam, so
-            # the refusal that used to park this manual ("no other driver
-            # can re-fetch a blob URL") no longer holds. An LFS pointer that
-            # sniffs by name is caught there, before any extractor sees it.
-            return Redetected(kind=Kind.FILE, format=fmt)
-        try:
-            text = blob.data.decode("utf-8")
-        except UnicodeDecodeError:
-            # Decoding with errors="replace" fenced 40k characters of
-            # replacement-character soup and ledgered it done.
-            return Unusable(
-                evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
-            )
-        return Content(meta={"file": blob.path}, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
+    def _fetch_repo_page(self, owner: str, repo: str, rest: list[str]) -> Outcome:
+        """Everything a repo URL addresses beyond a path at a ref; no route, no read."""
+        match rest:
+            case []:
+                return self._fetch_repo(owner, repo)
+            case ["issues" | "pull", number, *_] if number.isdigit():
+                return self._fetch_issue(owner, repo, number)
+            case ["releases", "download", _, *_, asset]:
+                return _download(asset)
+            case ["archive", *_, name]:
+                return _download(name)
+            case _:
+                return _unrouted(rest[0])
+
+    def _fetch_path(self, address: RefPath) -> Outcome:
+        found = fetch_path(self._gh, address)
+        if isinstance(found, Classification):
+            return found.to_outcome()
+        if isinstance(found, Blob):
+            return _file_outcome(found)
+        if not found.path:
+            return self._fetch_repo(address.owner, address.repo, ref=found.ref)
+        return self._fetch_directory(address, found)
+
+    def _fetch_directory(self, address: RefPath, tree: Tree) -> Outcome:
+        readme = fetch_readme(self._gh, address.owner, address.repo, ref=tree.ref, path=tree.path)
+        if isinstance(readme, Classification):
+            return readme.to_outcome()
+        listing = "\n".join(f"- `{name}`" for name in tree.entries)
+        return Content(
+            meta={"title": f"{address.owner}/{address.repo}/{tree.path}"},
+            body=f"## README\n\n{_readme_body(readme)}\n\n## Contents\n\n{listing}",
+        )
 
     def _fetch_issue(self, owner: str, repo: str, number: str) -> Outcome:
         payload = self._api(f"repos/{owner}/{repo}/issues/{number}")
@@ -214,10 +252,13 @@ class GitHubDriver:
             body=payload.get("body") or "(no body)",
         )
 
-    def _fetch_repo(self, owner: str, repo: str) -> Outcome:
+    def _fetch_repo(self, owner: str, repo: str, *, ref: str | None = None) -> Outcome:
         payload = self._api(f"repos/{owner}/{repo}")
         if isinstance(payload, Classification):
             return payload.to_outcome()
+        readme = fetch_readme(self._gh, owner, repo, ref=ref)
+        if isinstance(readme, Classification):
+            return readme.to_outcome()
         meta: dict[str, str | int | None] = {
             "title": payload.get("full_name"),
             "description": payload.get("description") or None,
@@ -225,14 +266,76 @@ class GitHubDriver:
             "archived": "true" if payload.get("archived") else None,
             "topics": ", ".join((payload.get("topics") or [])[:_TOPIC_LIMIT]) or None,
         }
-        readme = self._gh(
-            ["api", f"repos/{owner}/{repo}/readme", "-H", "Accept: application/vnd.github.raw+json"]
-        )
-        body = readme.stdout if readme.returncode == 0 else "(no README)"
-        return Content(meta=meta, body=body[:_MAX_README_CHARS])
+        return Content(meta=meta, body=_readme_body(readme))
 
     def _api(self, endpoint: str) -> dict | Classification:
         return gh_api(self._gh, endpoint)
+
+
+def _file_outcome(blob: Blob) -> Outcome:
+    """A file fenced as source, re-detected as a document, or parked as any other binary."""
+    # Named, because a signature is not always there to find: an
+    # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
+    # for a document, and a CSV has no signature at all. Unnamed, both
+    # decoded cleanly and fenced — the pointer text presented as the
+    # document it stands for.
+    fmt = sniff_format(blob.data, name=blob.path)
+    if fmt is not None:
+        # A document committed to a repo IS extractable work: the file
+        # driver reaches these bytes back through the shared seam, so
+        # the refusal that used to park this manual ("no other driver
+        # can re-fetch a blob URL") no longer holds. An LFS pointer that
+        # sniffs by name is caught there, before any extractor sees it.
+        return Redetected(kind=Kind.FILE, format=fmt)
+    try:
+        text = blob.data.decode("utf-8")
+    except UnicodeDecodeError:
+        # Decoding with errors="replace" fenced 40k characters of
+        # replacement-character soup and ledgered it done.
+        return Unusable(
+            evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
+        )
+    return Content(meta={"file": blob.path}, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
+
+
+def _attachment(rest: list[str]) -> Outcome:
+    """What a user-attachments link serves: a file to extract, or a picture to keep."""
+    match rest:
+        case ["files", _, name]:
+            return _download(name)
+        case ["assets", _]:
+            # Media work, named directly: correcting to web would have the
+            # web driver correct it again once it saw the picture, and a
+            # second correction of one unit in one run parks as a loop.
+            return Redetected(kind=Kind.WEB, job=Job.MEDIA)
+        case _:
+            return _unrouted(_ATTACHMENTS)
+
+
+def _download(name: str) -> Outcome:
+    """File work for a download named as a document; a park for any other."""
+    # Screened by name before a byte moves: the file driver reads a URL's
+    # whole body before it can sniff it, and a release asset is as often
+    # a 200MB installer as a PDF.
+    name = urllib.parse.unquote(name)
+    fmt = format_of_name(name)
+    if fmt is None:
+        return Unusable(evidence=f"{name} is a download, not a document the file driver extracts")
+    return Redetected(kind=Kind.FILE, format=fmt)
+
+
+def _unrouted(shape: str) -> Unusable:
+    """The park for a github link no route reads: a commit, a release page, a wiki."""
+    return Unusable(
+        evidence=(
+            f"github /{shape}/ link — the driver reads repos, directories, files and issues, "
+            "and has no route for this one"
+        )
+    )
+
+
+def _readme_body(readme: str | None) -> str:
+    return (readme or "(no README)")[:_MAX_README_CHARS]
 
 
 def _gist_id(segments: list[str]) -> str | None:
