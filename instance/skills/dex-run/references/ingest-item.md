@@ -335,7 +335,9 @@ money, what a piece of copy achieves.
 Splice cited sentence(s) into affected pages — rewrite-not-append when
 "current state" changes. Pages citing a media item should usually embed it
 (relative image links). `wiki/index.md` needs nothing — it is rendered by
-the engine, and step 7's `place` already recompiled it. Append a
+the engine, and step 7's `place` already recompiled it. Set `generated:`
+to today on every page you rewrite, because lint never moves an existing
+date and reads a page older than its newest member as stale. Append a
 `wiki/log.md` line. Then `bin/dex enrich pass <item-id> --stage wiki`.
 
 Citation rules:

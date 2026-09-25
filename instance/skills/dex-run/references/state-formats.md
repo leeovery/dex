@@ -296,7 +296,9 @@ items: 215                    # the page's MEMBER count — the taxonomy
 `bin/dex lint` verifies `items:` against the member count and flags drift;
 `lint --write` reconciles it mechanically and adds a missing `generated:`
 (existing `generated:` dates are never rewritten — they are the staleness
-reference). Maintain page *bodies* by hand; leave these fields to lint.
+reference). Maintain page *bodies* by hand, and set `generated:` to today
+whenever you rewrite one, since lint never moves an existing date; leave
+`items:` to lint.
 
 ## `lens.md`: the instance's lens, owner-owned
 
