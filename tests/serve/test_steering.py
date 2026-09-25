@@ -3,8 +3,8 @@
 Prose is not asserted word for word. What is contract here is that each slot
 says its own thing — the doctrine in the instructions, the next move in a
 footer, and neither in the other — that the roster carries every instance's
-own words untouched, and that the procedure is the bundled skill itself
-rather than a copy of it.
+lens untouched, that the routing states the capture rule whole, and that the
+procedure is the bundled skill itself rather than a copy of it.
 """
 
 import pytest
@@ -12,7 +12,7 @@ import pytest
 from dex_engine.serve import steering
 from dex_engine.serve.roster import build_roster
 
-from .conftest import BOOKS, COFFEE, SCOPE, TEMPLATE
+from .conftest import BOOKS, COFFEE, LENS, TEMPLATE
 
 
 def block(instructions: str, name: str) -> str:
@@ -50,28 +50,79 @@ class TestDoctrine:
         assert "cite the item ids" in instructions
 
     def test_nudges_toward_dex_before_general_knowledge(self, instructions):
-        assert "search dex before answering" in instructions
+        assert "search those instances before answering" in instructions
         assert "from general knowledge" in instructions
 
-    def test_routes_a_capture_by_the_same_scopes(self, instructions):
-        assert "save this to my dex" in instructions
-        assert "name the instance whose scope it belongs to" in instructions
+    def test_routes_a_question_to_the_lenses_it_touches(self, instructions):
+        assert "When a question touches the lens of one or more of those instances" in (
+            instructions
+        )
+
+    def test_never_says_scope(self, instructions):
+        # An instance's lens is the angle it reads through, never a door
+        # a share has to fit through.
+        assert "scope" not in instructions.lower()
+
+
+class TestCaptureRouting:
+    """Where a capture goes is the owner's word, never the content's."""
+
+    def test_the_instance_the_owner_names(self, instructions):
+        assert '("save this to my dex"), capture it into the instance the owner names.' in (
+            instructions
+        )
+
+    def test_a_single_instance_server_captures_without_asking(self, instructions):
+        assert "When this server serves a single instance, capture there without asking." in (
+            instructions
+        )
+
+    def test_otherwise_ask_which_instance_or_which_ones(self, instructions):
+        assert (
+            "Otherwise ask the owner which instance, or which ones, before saving" in instructions
+        )
+
+    def test_never_chosen_from_the_content(self, instructions):
+        assert (
+            "never choose from the content: any link can belong in any instance, depending on "
+            "the lens the owner wants it read through."
+        ) in instructions
+
+    def test_the_rule_is_stated_in_that_order(self, instructions):
+        named = instructions.index("the instance the owner names")
+        single = instructions.index("serves a single instance")
+        ask = instructions.index("Otherwise ask the owner")
+        assert named < single < ask
 
 
 class TestRoster:
-    def test_an_instance_speaks_in_its_own_words_verbatim(self, instructions):
-        assert block(instructions, COFFEE) == SCOPE.strip()
+    def test_an_instance_states_its_lens_verbatim(self, instructions):
+        assert block(instructions, COFFEE) == LENS.strip()
 
-    def test_an_instance_with_no_claude_md_says_so_in_one_line(self, instructions):
+    def test_the_lens_is_read_from_lens_md_and_never_claude_md(self, roots):
+        (roots[0] / "CLAUDE.md").write_text("# identity only\n", encoding="utf-8")
+        said = block(steering.instructions(build_roster(roots)), COFFEE)
+        assert said == LENS.strip()
+
+    def test_an_instance_with_no_lens_md_is_undeclared_in_one_line(self, instructions):
         said = block(instructions, BOOKS)
         assert "\n" not in said
-        assert "no CLAUDE.md" in said
+        assert said == (
+            "This instance has no readable lens.md, so its lens is undeclared: search it "
+            "whenever a question might touch it."
+        )
 
-    def test_an_unreadable_claude_md_reads_as_undeclared(self, roots):
+    def test_an_unreadable_lens_md_reads_as_undeclared(self, roots):
         # A server that refused to start over one unreadable file would take
         # every other instance down with it.
-        (roots[0] / "CLAUDE.md").write_bytes(b"\xff\xfe not text")
-        assert "no CLAUDE.md" in block(steering.instructions(build_roster(roots)), COFFEE)
+        (roots[0] / "lens.md").write_bytes(b"\xff\xfe not text")
+        said = block(steering.instructions(build_roster(roots)), COFFEE)
+        assert "its lens is undeclared" in said
+
+    def test_an_empty_lens_md_reads_as_undeclared(self, roots):
+        (roots[0] / "lens.md").write_text("  \n\n", encoding="utf-8")
+        said = block(steering.instructions(build_roster(roots)), COFFEE)
+        assert "its lens is undeclared" in said
 
     def test_each_instance_is_its_own_block(self, instructions):
         assert f'</instance>\n<instance name="{BOOKS}">' in instructions
@@ -79,8 +130,8 @@ class TestRoster:
     def test_the_roster_is_fenced_off_from_the_prose_around_it(self, instructions):
         # Markdown blocks: run the roster into the doctrine or the nudge and
         # the owner's own words stop reading as the owner's own words.
-        assert "\n\nWhat is in each instance" in instructions
-        assert "</instance>\n\nIf a question falls inside" in instructions
+        assert "\n\nWhat each instance reads for, in the owner's own words:" in instructions
+        assert "</instance>\n\nWhen a question touches the lens" in instructions
 
     def test_instances_come_in_roster_order(self, instructions):
         assert instructions.index(f'name="{COFFEE}"') < instructions.index(f'name="{BOOKS}"')

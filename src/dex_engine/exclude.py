@@ -1,17 +1,22 @@
-"""dex-exclude: purge out-of-scope corpus items, permanently and on the record.
+"""dex-exclude: drop corpus items that yield nothing through the lens, on the record.
 
 ``bin/dex exclude <exclusions.json>`` — the file is a JSON list of
-``{"id": ..., "reason": ...}`` records, written by the scope-filter pass.
+``{"id": ..., "reason": ...}`` records, written by the lens verdict: the
+judgment, made once an item's content has landed, that reading it through
+this instance's lens yields nothing.
 
 Each exclusion appends to ``state/exclusions.tsv`` (consulted by
-``normalize.py`` so excluded clusters are never regenerated), removes
-``corpus/<year>/<id>.md``, removes ``enrichment/<id>/``, removes
-``state/digests/<id>.md``, and removes the item's ledger entries — the
-item is gone, so seeding will never raise that work again and the lines
-would otherwise linger forever. The digest goes with the rest: it is a
-permanent fact index over content this instance has just ruled out of
-scope, and nothing else ever deletes one, so leaving it behind keeps a
-permanently excluded item feeding query and wiki forever.
+``normalize.py`` so excluded clusters are never regenerated), removes the
+media files the item's corpus frontmatter lists under ``media/`` and the
+directory that held them once it is empty, removes
+``corpus/<year>/<id>.md``, ``enrichment/<id>/`` and
+``state/digests/<id>.md``, and purges the item's records from
+``state/passes.jsonl`` and its ledger entries — the item is gone, so
+seeding will never raise that work again and the lines would otherwise
+linger forever. The digest goes with the rest: it is a permanent fact
+index over content this instance has just ruled yields nothing, and
+nothing else ever deletes one, so leaving it behind keeps a permanently
+excluded item feeding query and wiki forever.
 
 Except the work another live corpus item still claims. A work unit is
 keyed by URL, not by item, so two items listing one URL share one ledger
@@ -22,11 +27,26 @@ resolution every ledger reader routes through
 alone: a child promoted under the excluded item appears in no ``urls:``/
 ``media:``, so its only corpus answer travels its ``parent`` chain — where
 the chain ends at work a survivor lists, the child is the survivor's too.
-The summary states both counts — this
-runs in bulk from the scope-filter pass, so that line is the owner's only
-signal. A corpus file that cannot be read claims nothing, which would make
-that veto fail open toward deletion, so a batch that meets one purges no
-ledger entries at all and the summary says why.
+The summary states both counts, because a pull's chatter is dropped in
+bulk and that line is the owner's only signal. A corpus file that cannot
+be read claims nothing, which would make that veto fail open toward
+deletion, so a batch that meets one purges no ledger entries at all and
+the summary says why.
+
+Media is claimed the same way, by the corpus. ``dex inbox`` keys a
+capture's directory by a hash of its file's name, so two captures of one
+``screenshot.png`` list the same file, and a file any surviving item lists
+is kept. Only an item's corpus file says which media it carries, so the
+media is read before that file goes, and a batch whose media cannot be
+settled is refused whole: one of its own corpus files that cannot be read,
+or a survivor's while the batch carries media, would leave either a file
+no later run could ever find or a deletion from under an item that lists
+it. The ledger veto can wait for a re-run because the ledger keeps the
+lines; nothing keeps the media list.
+
+Pass records go by the item's id, and by its trailing shortid where no
+live item carries it, which is how the pass readers resolve a record
+written before a rename.
 
 The purge judges every line against the whole exclusions record, never
 this batch's ids alone. A kept line still names the item it was seeded
@@ -70,11 +90,11 @@ import json
 import re
 import shutil
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import corpus, instance_map
+from . import atomic, corpus, instance_map
 from .pipeline import ledger
 from .pipeline.ownership import unit_owners
 from .pipeline.registry import default_drivers
@@ -84,7 +104,7 @@ from .version import engine_version
 
 __all__ = ["build_parser", "main", "run_exclude"]
 
-_DEFAULT_REASON = "out of scope"
+_DEFAULT_REASON = "yields nothing through this instance's lens"
 
 
 def _today() -> datetime.date:
@@ -114,6 +134,33 @@ class _Exclusion:
     digest_path: Path
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Survey:
+    """One read of the corpus, made before anything is removed.
+
+    ``media`` holds each batch item's files under ``media/`` and
+    ``claimed`` every such file a surviving item lists, both resolved. The
+    corpus files no reader could parse are split by whether this batch
+    removes them.
+    """
+
+    media: dict[str, tuple[Path, ...]]
+    claimed: frozenset[Path]
+    unreadable_batch: tuple[Path, ...]
+    unreadable_survivors: tuple[Path, ...]
+
+
+@dataclass(slots=True, kw_only=True)
+class _Removed:
+    """What the purge took, counted for the summary."""
+
+    items: int = 0
+    missing: int = 0
+    digests: int = 0
+    media: int = 0
+    passes: int = 0
+
+
 def run_exclude(
     instance: Instance,
     entries: list[dict[str, object]],
@@ -122,7 +169,7 @@ def run_exclude(
     now: Callable[[], datetime.datetime] = _utc_now,
     version: Callable[[], str] = engine_version,
 ) -> str:
-    """Exclude the given items: record why, delete item, enrichment, digest and ledger entries.
+    """Exclude the given items: record why, then purge everything each one left behind.
 
     Args:
         instance: The instance.
@@ -138,9 +185,10 @@ def run_exclude(
     Raises:
         ValueError: An entry is not an object, has no ``id``, has an ``id``
             that is not a corpus item id or resolves outside the instance,
-            or has a non-string ``reason``. The whole batch is refused
-            before anything is written or deleted. Also raised when the
-            purge landed and the map then failed to recompile — the
+            or has a non-string ``reason``; or a corpus file that cannot be
+            read leaves the batch's media unsettled. The whole batch is
+            refused before anything is written or deleted. Also raised when
+            the purge landed and the map then failed to recompile — the
             message carries the summary, so the deletions that happened
             are never un-reported.
     """
@@ -159,9 +207,11 @@ def _excluded(
     now: Callable[[], datetime.datetime],
     version: Callable[[], str],
 ) -> str:
-    """The purge itself: record, remove, sweep the ledger, re-queue strands."""
+    """The purge itself: record, remove, sweep the passes and the ledger, re-queue strands."""
     validated = _deduplicated([_validated(instance, entry) for entry in entries])
-    removed, missing, digests = _record_and_remove(instance, validated)
+    survey = _survey(instance, validated)
+    _refuse_unsettled_media(instance, survey)
+    removed = _record_and_remove(instance, validated, survey)
     # One rewrite for the whole batch, after the TSV record lands: an
     # interruption before it leaves the entries in place, and the re-run
     # (which the TSV makes idempotent) purges them.
@@ -175,17 +225,13 @@ def _excluded(
     on_record = {exclusion.item_id for exclusion in validated} | _on_record(
         instance.state_dir / "exclusions.tsv"
     )
-    collapsed = len(entries) - len(validated)
-    counted = f"{len(validated)}"
-    if collapsed:
-        counted += f" ({collapsed} duplicate id(s) collapsed)"
-    summary = (
-        f"excluded {counted}: removed {removed} items ({missing} already gone), {digests} digests, "
+    removed.passes = _drop_pass_records(instance, on_record)
+    summary = _removal_counts(
+        asked=len(entries), excluded=len(validated), removed=removed, survey=survey
     )
     if not instance.ledger_path.exists():
         return summary + _purge_counts(0, 0)
-    unreadable = _unreadable_corpus_items(instance.root)
-    if unreadable:
+    if survey.unreadable_survivors:
         # The claim veto decides a deletion, and a corpus file that cannot
         # be read cannot say which work it claims: purging anyway would
         # take a live item's history and report a clean drop. So nothing is
@@ -194,8 +240,9 @@ def _excluded(
         return (
             summary
             + _purge_counts(0, 0)
-            + f"; {unreadable} corpus file(s) could not be read, so no ledger entries "
-            "were purged — repair them (dex-lint names them) and re-run"
+            + f"; {len(survey.unreadable_survivors)} corpus file(s) could not be read "
+            f"({_listed(instance, survey.unreadable_survivors)}), so no ledger entries were "
+            "purged — repair them and re-run"
         )
     claimed = _surviving_claims(instance, now=now)
     dropped, kept = ledger.drop_items(instance.ledger_path, on_record, claimed=claimed, now=now)
@@ -212,31 +259,207 @@ def _excluded(
     return summary
 
 
-def _record_and_remove(instance: Instance, validated: list[_Exclusion]) -> tuple[int, int, int]:
-    """Record each exclusion and remove what it owns; return the three counts.
+def _record_and_remove(
+    instance: Instance, validated: list[_Exclusion], survey: _Survey
+) -> _Removed:
+    """Record each exclusion and remove what it owns; return the counts.
 
     The TSV record lands first for every entry, because it is what makes a
     re-run idempotent: an interruption after it leaves an id recorded whose
-    deletions the re-run finishes.
+    deletions the re-run finishes. Each item's media goes before its corpus
+    file, the only record of which media it carries, so an interruption
+    between the two still leaves the re-run a list to finish from.
     """
     exclusions = instance.state_dir / "exclusions.tsv"
     existing = _on_record(exclusions)
-    removed = missing = digests = 0
     exclusions.parent.mkdir(parents=True, exist_ok=True)
     with exclusions.open("a", encoding="utf-8") as f:
         for exclusion in validated:
             if exclusion.item_id not in existing:
                 f.write(f"{exclusion.item_id}\t{exclusion.reason}\n")
-            if exclusion.item_path.exists():
-                exclusion.item_path.unlink()
-                removed += 1
-            else:
-                missing += 1
-            shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
-            if exclusion.digest_path.exists():
-                exclusion.digest_path.unlink()
-                digests += 1
-    return removed, missing, digests
+    removed = _Removed()
+    media_root = _media_root(instance.root)
+    for exclusion in validated:
+        files = survey.media.get(exclusion.item_id, ())
+        removed.media += _remove_media(files, survey.claimed, media_root)
+        if exclusion.item_path.exists():
+            exclusion.item_path.unlink()
+            removed.items += 1
+        else:
+            removed.missing += 1
+        shutil.rmtree(exclusion.enrichment_path, ignore_errors=True)
+        if exclusion.digest_path.exists():
+            exclusion.digest_path.unlink()
+            removed.digests += 1
+    return removed
+
+
+def _survey(instance: Instance, validated: list[_Exclusion]) -> _Survey:
+    """Read every corpus file once, before the batch removes any of them.
+
+    A batch item's media is read here because its corpus file is the only
+    record of it, and the survivors' claims because a file one of them
+    lists stays. Survivors are told from the batch by resolved path, the
+    form :func:`_validated` resolved each item's path to.
+
+    A file that cannot be read is listed, never skipped. The corpus claims
+    under ``unit_owners`` skip one silently, rightly for their other
+    callers, but here every claim decides a deletion, and a claim no reader
+    can see fails open: the shared unit, or the shared media file, reads as
+    claimed by nobody and goes, reported as a clean drop.
+    """
+    batch = {exclusion.item_path: exclusion.item_id for exclusion in validated}
+    media_root = _media_root(instance.root)
+    media: dict[str, tuple[Path, ...]] = {}
+    claimed: set[Path] = set()
+    unreadable_batch: list[Path] = []
+    unreadable_survivors: list[Path] = []
+    for path in sorted(instance.corpus_dir.glob("*/*.md")):
+        owner = batch.get(path.resolve())
+        try:
+            item = corpus.read_item(path)
+        except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
+            (unreadable_survivors if owner is None else unreadable_batch).append(path)
+            continue
+        files = _media_files(instance.root, media_root, item.media)
+        if owner is None:
+            claimed.update(files)
+        else:
+            media[owner] = files
+    return _Survey(
+        media=media,
+        claimed=frozenset(claimed),
+        unreadable_batch=tuple(unreadable_batch),
+        unreadable_survivors=tuple(unreadable_survivors),
+    )
+
+
+def _media_root(root: Path) -> Path:
+    return (root / "media").resolve()
+
+
+def _media_files(root: Path, media_root: Path, stated: list[str]) -> tuple[Path, ...]:
+    """The stated media paths that resolve to a file inside ``media/``.
+
+    Frontmatter is owner-editable data, never a path to trust: a stated
+    path that climbs out of ``media/``, or names ``media/`` itself, is
+    nothing this purge may delete.
+    """
+    resolved = (resolve_repo_path(root, repo_path) for repo_path in stated)
+    return tuple(
+        path
+        for path in resolved
+        if path is not None and path != media_root and path.is_relative_to(media_root)
+    )
+
+
+def _refuse_unsettled_media(instance: Instance, survey: _Survey) -> None:
+    """Refuse the batch when a corpus file that cannot be read leaves its media unsettled.
+
+    A batch item's own unreadable file hides which media it carries, and a
+    survivor's hides which of the batch's media it lists. Neither can wait
+    for a re-run the way the ledger veto does: the batch's corpus files go
+    in this run, and nothing else records which media they carried.
+
+    Raises:
+        ValueError: Naming each unreadable file; nothing has been written.
+    """
+    carries_media = any(survey.media.values())
+    unsettled = [
+        *survey.unreadable_batch,
+        *(survey.unreadable_survivors if carries_media else ()),
+    ]
+    if unsettled:
+        raise ValueError(
+            f"nothing was excluded: {len(unsettled)} corpus file(s) cannot be read "
+            f"({_listed(instance, unsettled)}), and only a readable corpus says which "
+            "media this batch may delete; repair them and re-run"
+        )
+
+
+def _remove_media(files: tuple[Path, ...], claimed: frozenset[Path], media_root: Path) -> int:
+    """Delete an item's media files no survivor lists; return how many went.
+
+    Each file's directory goes too once nothing is left in it, which is
+    also how a re-run finishes a directory an interruption left empty.
+    """
+    removed = 0
+    for path in files:
+        if path in claimed:
+            continue
+        if path.is_file():
+            path.unlink()
+            removed += 1
+        directory = path.parent
+        if directory != media_root and directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
+    return removed
+
+
+def _drop_pass_records(instance: Instance, on_record: set[str]) -> int:
+    """Drop the pass records of every item excluded on the record; return how many went.
+
+    A record names its item as of the day it was written, and the pass
+    readers resolve a dead id by its trailing shortid, which a rename
+    keeps. So a record goes when it names an excluded id outright, or a
+    dead id whose shortid is an excluded item's and no live item carries,
+    which is that item's record from before a rename. A record naming a
+    live id stays, and so does a line this cannot read: it names no item
+    this can judge.
+
+    Judged against the whole record, like the ledger purge, so any batch
+    sweeps the records an earlier purge left behind.
+    """
+    path = instance.passes_path
+    if not path.exists():
+        return 0
+    live = {item.stem for item in instance.corpus_dir.glob("*/*.md")}
+    orphaned = {_shortid(item) for item in on_record} - {_shortid(item) for item in live}
+    return atomic.drop_lines(
+        path, lambda line: _names_excluded(_pass_item(line), live, on_record, orphaned)
+    )
+
+
+def _names_excluded(
+    item: str | None, live: set[str], on_record: set[str], orphaned: set[str]
+) -> bool:
+    """Whether a pass record's item is an excluded item: see :func:`_drop_pass_records`."""
+    if item is None or item in live:
+        return False
+    return item in on_record or _shortid(item) in orphaned
+
+
+def _pass_item(line: str) -> str | None:
+    """The item a pass record names, or ``None`` for a line that names none."""
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    item = record.get("item") if isinstance(record, dict) else None
+    return item if isinstance(item, str) else None
+
+
+def _shortid(item_id: str) -> str:
+    return item_id.rsplit("-", 1)[-1]
+
+
+def _listed(instance: Instance, paths: Sequence[Path]) -> str:
+    return ", ".join(str(path.relative_to(instance.root)) for path in paths)
+
+
+def _removal_counts(*, asked: int, excluded: int, removed: _Removed, survey: _Survey) -> str:
+    """The summary's opening: the batch, then what the removal pass took."""
+    counted = f"{excluded}"
+    if asked > excluded:
+        counted += f" ({asked - excluded} duplicate id(s) collapsed)"
+    media = f"{removed.media} media files"
+    shared = {path for files in survey.media.values() for path in files} & survey.claimed
+    if shared:
+        media += f" ({len(shared)} kept, listed by another live corpus item)"
+    return (
+        f"excluded {counted}: removed {removed.items} items ({removed.missing} already gone), "
+        f"{removed.digests} digests, {media}, {removed.passes} pass records, "
+    )
 
 
 def _on_record(exclusions: Path) -> set[str]:
@@ -469,37 +692,13 @@ def _validated(instance: Instance, entry: object) -> _Exclusion:
     )
 
 
-def _unreadable_corpus_items(root: Path) -> int:
-    """How many corpus files cannot be read at all.
-
-    The corpus claims under ``unit_owners`` skip them silently
-    (``corpus_claims``), rightly for its other callers — but here its map
-    is a delete decision, and it fails OPEN: a hash claimed only by an item
-    whose frontmatter will not parse reads as claimed by nobody, and the
-    hash's whole history goes, reported as a clean drop. Counted separately
-    (a second parse, on a command that runs rarely and in bulk) rather than
-    by changing what that map means to every caller.
-    """
-    corpus_dir = root / "corpus"
-    if not corpus_dir.is_dir():
-        return 0
-    return sum(1 for path in sorted(corpus_dir.glob("*/*.md")) if not _readable(path))
-
-
-def _readable(path: Path) -> bool:
-    try:
-        corpus.read_item(path)
-    except (OSError, UnicodeDecodeError, corpus.CorpusSchemaError):
-        return False
-    return True
-
-
 def build_parser() -> argparse.ArgumentParser:
     """The argparse tree: dex-exclude <exclusions.json>."""
     parser = argparse.ArgumentParser(
         prog="dex-exclude",
-        description="Permanently exclude out-of-scope corpus items "
-        '(JSON list of {"id", "reason"}); survives re-normalization.',
+        description="Permanently drop corpus items that yield nothing through this "
+        "instance's lens, with their media, enrichment, digest, pass records and "
+        'ledger entries (JSON list of {"id", "reason"}); survives re-normalization.',
     )
     parser.add_argument("file", type=Path, help="the exclusions JSON file")
     return parser

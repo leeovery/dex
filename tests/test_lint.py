@@ -20,6 +20,17 @@ DRIVERS = default_drivers()
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 ITEM = "2026-08-19-example-55ad7b"
+# The tree's own instance/, whose lens.md is the seed the lens check reads
+# its placeholder lines from — a source checkout bundles it nowhere else.
+TEMPLATE = Path(__file__).resolve().parent.parent / "instance"
+FILLED_LENS = "# dex-coffee\n\n## Reads for\nBrewing technique, recipes and gear.\n"
+
+
+@pytest.fixture
+def instance(instance: Instance) -> Instance:
+    """The shared skeleton, stating its lens as every healthy instance does."""
+    instance.lens_path.write_text(FILLED_LENS, encoding="utf-8")
+    return instance
 
 
 def never_cognitive(_need, _fmt=None):
@@ -31,7 +42,9 @@ def always_cognitive(_need, _fmt=None):
 
 
 def lint(instance: Instance, *, is_cognitive=never_cognitive, write=False) -> LintOutcome:
-    return run_lint(instance, is_cognitive=is_cognitive, today=lambda: TODAY, write=write)
+    return run_lint(
+        instance, is_cognitive=is_cognitive, today=lambda: TODAY, write=write, template=TEMPLATE
+    )
 
 
 def write_taxonomy(instance: Instance, topics=None, entities=None) -> None:
@@ -108,6 +121,63 @@ class TestPreTaxonomy:
         outcome = lint(instance)
         assert "broken mid-ingest, 25 corpus items" in outcome.report
         assert "… and 5 more, not listed" in outcome.report
+
+
+LENS_ROW = (
+    "- **LENS FAILURE** — every judgment in a run reads through the lens, so the owner fills "
+    "in `lens.md` with what this instance reads for, and a session writes it only when the "
+    "owner asks"
+)
+
+
+class TestLens:
+    """A lens that states nothing fails the check: every judgment reads through it."""
+
+    def test_a_filled_lens_raises_no_row(self, instance):
+        write_taxonomy(instance)
+        outcome = lint(instance)
+        assert outcome.exit_code == 0
+        assert "LENS FAILURE" not in outcome.report
+
+    def test_a_missing_lens_fails_with_the_row_and_its_repair(self, instance):
+        write_taxonomy(instance)
+        instance.lens_path.unlink()
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert f"{LENS_ROW}\n  - `lens.md` is missing\n" in outcome.report
+
+    def test_the_row_opens_the_report_above_every_section(self, instance):
+        write_taxonomy(instance)
+        instance.lens_path.write_text("   \n")
+        report = lint(instance).report
+        assert report.index("LENS FAILURE") < report.index("### Wiki")
+        assert "  - `lens.md` is empty\n" in report
+
+    def test_the_seed_left_as_it_was_names_its_placeholders(self, instance):
+        write_taxonomy(instance)
+        instance.lens_path.write_text((TEMPLATE / "lens.md").read_text(encoding="utf-8"))
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "still holds the seed's placeholder text: `<what this instance takes" in (
+            outcome.report
+        )
+
+    def test_a_fresh_instance_with_no_lens_fails_before_any_taxonomy(self, instance):
+        # The first run already reads everything through the lens, so the
+        # check cannot wait for placement to have happened.
+        instance.lens_path.unlink()
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert outcome.report.startswith("## Health check — fresh instance, 0 corpus items\n")
+        assert f"{LENS_ROW}\n  - `lens.md` is missing\n" in outcome.report
+
+    def test_a_stranded_corpus_carries_the_lens_row_too(self, instance):
+        write_corpus_stub(instance)
+        instance.lens_path.unlink()
+        outcome = lint(instance)
+        assert outcome.exit_code == 1
+        assert "BROKEN MID-INGEST" in outcome.report
+        assert "`lens.md` is missing" in outcome.report
 
 
 class TestMalformedTaxonomy:
@@ -2086,6 +2156,11 @@ class TestUnrecordedTopics:
 
 
 class TestCli:
+    @pytest.fixture(autouse=True)
+    def _bundled_seed(self, monkeypatch):
+        """The CLI reads the seed lens from the bundled template, absent from a checkout."""
+        monkeypatch.setattr("dex_engine.lint.bundled_template", lambda: TEMPLATE)
+
     def test_write_flag_parses(self):
         assert build_parser().parse_args(["--write"]).write is True
         assert build_parser().parse_args([]).write is False

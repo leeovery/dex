@@ -931,6 +931,13 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
     return "\n".join(lines)
 
 
+# The lens check's repair, carried by both surfaces that show its finding:
+# the lens is the owner's statement, so a session writes it only on their word.
+_LENS_REPAIR = (
+    "the owner fills in `lens.md` with what this instance reads for, and a session "
+    "writes it only when the owner asks"
+)
+
 # ---------------------------------------------------------------------------
 # sync-report
 # ---------------------------------------------------------------------------
@@ -972,7 +979,7 @@ _CONNECT_OFFERS = {
 
 
 def _render_sync_report(payload: Mapping[str, object]) -> str:
-    """Render the sync report: pin state, migrations, pending directives, machinery.
+    """Render the sync report: pin state, migrations, pending directives, machinery, lens.
 
     Payload::
 
@@ -995,6 +1002,8 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
               "intent": str}
           ],
           "machinery_changes": int,   # template files written + retired skills removed
+          "lens": str,                # optional: the lens check's finding, when
+                                      #   lens.md states nothing (never a failure)
           "connect": [               # optional: one per client with a gap
              {"client": str,         # "desktop" | "code"
               "gap": str}            # "unconnected" | "unlisted" | "broken"
@@ -1010,7 +1019,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "major", "directives", "connect", "notes"}),
+        optional=frozenset({"pin", "previous", "major", "directives", "lens", "connect", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
@@ -1024,6 +1033,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
     directives = _sync_directives(surface, payload)
     machinery_changes = _int_at(surface, payload, "machinery_changes")
+    lens = _sync_lens(surface, payload)
     connect = _sync_connect(surface, payload)
     notes = _str_list_at(surface, payload, "notes")
 
@@ -1062,10 +1072,25 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         blocks.append("No migrations to apply — state was already current.")
     blocks += directives
     blocks += ["", f"{kernel.bold('Machinery changes')} — {machinery_changes}"]
+    blocks += lens
     if connect:
         blocks += ["", *connect]
     blocks += _note_section("Notes", notes)
     return kernel.document(blocks)
+
+
+def _sync_lens(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The lens finding as its own line; nothing at all when the lens states something."""
+    if "lens" not in payload:
+        return []
+    finding = _str_at(surface, payload, "lens")
+    return [
+        "",
+        (
+            f"{kernel.bold('Lens')} — {finding}: every judgment in a run reads through the "
+            f"lens, so {_LENS_REPAIR}"
+        ),
+    ]
 
 
 def _sync_directives(surface: str, payload: Mapping[str, object]) -> list[str]:
@@ -1237,6 +1262,7 @@ def _render_ingest_receipt(payload: Mapping[str, object]) -> str:
 
 _HEALTH_OPTIONAL = frozenset(
     {
+        "lens_error",
         "broken_links",
         "reserved_links",
         "bad_citations",
@@ -1291,9 +1317,13 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
     Payload::
 
         {
-          # EITHER the pre-taxonomy shape, travelling alone — the two
-          # states before state/taxonomy.json exists, when no other check
-          # has run and a full payload would claim checks that never did:
+          # lens.md states nothing (missing, unreadable, empty, or the
+          # seed's placeholder lines left) — renders loud, in either shape
+          "lens_error": str,
+          # EITHER the pre-taxonomy shape, travelling alone but for the
+          # lens — the two states before state/taxonomy.json exists, when
+          # no other check has run and a full payload would claim checks
+          # that never did:
           "pre_taxonomy": {"stranded": [str]},   # [] = fresh instance;
                                                  # ids = broken mid-ingest
           # OR the full shape:
@@ -1368,6 +1398,7 @@ def _render_health_report(payload: Mapping[str, object]) -> str:
         ]
     )
     blocks = [kernel.heading(f"Health check — {scale}")]
+    blocks += _health_lens(surface, payload)
     blocks += _health_wiki(surface, payload, _int_at(surface, summary, "pages", "summary."))
     blocks += _health_state(surface, payload)
     blocks += _health_digests(surface, payload)
@@ -1384,19 +1415,28 @@ def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
     """The two states before a taxonomy exists: fresh instance, broken mid-ingest.
 
     The key travels alone — no check beyond the corpus glob has run, and a
-    full payload beside it would render checks that never did. The heading
-    still names the scale it has in hand: the corpus item count.
+    full payload beside it would render checks that never did. The lens
+    finding is the one exception, because the lens needs no taxonomy to
+    be checked. The heading still names the scale it has in hand: the
+    corpus item count.
     """
-    _check_keys(surface, payload, required=frozenset({"pre_taxonomy"}))
+    _check_keys(
+        surface,
+        payload,
+        required=frozenset({"pre_taxonomy"}),
+        optional=frozenset({"lens_error"}),
+    )
     inner = payload["pre_taxonomy"]
     if not isinstance(inner, Mapping):
         _fail(surface, f"pre_taxonomy must be an object, got {type(inner).__name__}")
     _check_keys(surface, inner, required=frozenset({"stranded"}), where="pre_taxonomy.")
     stranded = _str_list_at(surface, inner, "stranded", "pre_taxonomy.")
+    lens = _health_lens(surface, payload)
     if not stranded:
         return kernel.document(
             [
                 kernel.heading("Health check — fresh instance, 0 corpus items"),
+                *lens,
                 "",
                 "No `state/taxonomy.json` yet — nothing to lint.",
             ]
@@ -1404,6 +1444,7 @@ def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
     scale = kernel.plural(len(stranded), "corpus item")
     blocks = [
         kernel.heading(f"Health check — broken mid-ingest, {scale}"),
+        *lens,
         "",
         kernel.bullet(
             f"{kernel.bold('BROKEN MID-INGEST')} — {scale} but no "
@@ -1413,6 +1454,20 @@ def _health_pre_taxonomy(surface: str, payload: Mapping[str, object]) -> str:
     blocks += [kernel.bullet(kernel.bold(item), depth=1) for item in stranded[:_HEALTH_LIST_CAP]]
     blocks += _health_elided(len(stranded))
     return kernel.document(blocks)
+
+
+def _health_lens(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The lens failure row, above every section: each of them reads through the lens."""
+    if "lens_error" not in payload:
+        return []
+    return [
+        "",
+        kernel.bullet(
+            f"{kernel.bold('LENS FAILURE')} — every judgment in a run reads through the "
+            f"lens, so {_LENS_REPAIR}"
+        ),
+        kernel.bullet(_str_at(surface, payload, "lens_error"), depth=1),
+    ]
 
 
 def _health_wiki(surface: str, payload: Mapping[str, object], pages: int) -> list[str]:

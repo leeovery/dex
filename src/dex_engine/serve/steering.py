@@ -51,22 +51,27 @@ calls is rarely the end of it.
 - Answer only from material you actually fetched, and cite the item ids it \
 came from."""
 
-_SCOPES_LEAD = "What is in each instance, in its own words:"
+_LENSES_LEAD = "What each instance reads for, in the owner's own words:"
 
-_NUDGE = """\
-If a question falls inside one of those scopes, search dex before answering \
-from general knowledge: what the owner saved and concluded outranks what you \
-already know. A capture — "save this to my dex" — routes by the same scopes, \
-so name the instance whose scope it belongs to."""
+_ROUTING = """\
+When a question touches the lens of one or more of those instances, search \
+those instances before answering from general knowledge: what the owner saved \
+and concluded outranks what you already know.
+
+To save something ("save this to my dex"), capture it into the instance the \
+owner names. When this server serves a single instance, capture there without \
+asking. Otherwise ask the owner which instance, or which ones, before saving, \
+and never choose from the content: any link can belong in any instance, \
+depending on the lens the owner wants it read through."""
 
 # A tag rather than a markdown heading: what it wraps is the owner's own
-# CLAUDE.md, headings and fences included, and the delimiter has to be one the
+# lens.md, headings and fences included, and the delimiter has to be one the
 # enclosed markdown cannot accidentally close.
-_SCOPE_OPEN = '<instance name="{name}">'
-_SCOPE_CLOSE = "</instance>"
+_LENS_OPEN = '<instance name="{name}">'
+_LENS_CLOSE = "</instance>"
 _UNDECLARED = (
-    "This instance ships no CLAUDE.md, so its scope is undeclared — "
-    "search it when a question might belong to it."
+    "This instance has no readable lens.md, so its lens is undeclared: search it "
+    "whenever a question might touch it."
 )
 
 _SEARCH_NEXT = (
@@ -120,12 +125,13 @@ def instructions(roster: Roster) -> str:
     """The connect-time instructions for a server holding ``roster``.
 
     Args:
-        roster: The served instances, whose scopes the model routes by.
+        roster: The served instances, whose lenses the model routes questions by.
 
     Returns:
-        The doctrine, then every instance's declared scope, then the nudge.
+        The doctrine, then every instance's lens, then the routing of
+        questions and captures.
     """
-    return "\n\n".join((_DOCTRINE, _SCOPES_LEAD, _scopes(roster), _NUDGE))
+    return "\n\n".join((_DOCTRINE, _LENSES_LEAD, _lenses(roster), _ROUTING))
 
 
 def search_next(*, shown: int, total: int) -> str:
@@ -177,26 +183,26 @@ def procedure(template: Traversable) -> str:
     return frontmatter.body(skill.read_text(encoding="utf-8"))
 
 
-def _scopes(roster: Roster) -> str:
-    """Every served instance's scope, in roster order."""
-    return "\n".join(_scope(name, instance) for name, instance in roster.instances.items())
+def _lenses(roster: Roster) -> str:
+    """Every served instance's lens, in roster order."""
+    return "\n".join(_lens(name, instance) for name, instance in roster.instances.items())
 
 
-def _scope(name: str, instance: Instance) -> str:
-    """One instance's CLAUDE.md verbatim, delimited and named."""
+def _lens(name: str, instance: Instance) -> str:
+    """One instance's lens.md verbatim, delimited and named."""
     return "\n".join(
-        (_SCOPE_OPEN.format(name=name), _declared(instance) or _UNDECLARED, _SCOPE_CLOSE)
+        (_LENS_OPEN.format(name=name), _declared(instance) or _UNDECLARED, _LENS_CLOSE)
     )
 
 
 def _declared(instance: Instance) -> str:
-    """What an instance says it is, or "" when it says nothing.
+    """What an instance reads for, or "" when it says nothing.
 
-    An instance that will not read is an instance with no declared scope: a
-    server that refused to start over one unreadable CLAUDE.md would take
-    every other instance down with it.
+    An instance whose lens will not read is an instance with no declared
+    lens: a server that refused to start over one unreadable lens.md would
+    take every other instance down with it.
     """
     try:
-        return (instance.root / "CLAUDE.md").read_text(encoding="utf-8").strip()
+        return instance.lens_path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return ""

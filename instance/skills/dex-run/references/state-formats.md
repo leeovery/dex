@@ -125,14 +125,21 @@ JSON list of records:
 
 then `bin/dex exclude cache/exclusions.json`. A lens drop always states
 its reason in lens terms, since the run report names it; left out, `reason`
-defaults to "out of scope". The batch is validated whole and refused
-whole — an id must be a corpus item id, never a path — and one id twice
-collapses to one entry with the count stated. The verb records each
-exclusion in `state/exclusions.tsv` (below), removes the corpus file,
-`enrichment/<id>/` and `state/digests/<id>.md`, purges the item's
-ledger entries except the work another live item still claims, and
-recompiles `state/map.json` and `wiki/index.md`; the summary line states
-every count. What
+defaults to "yields nothing through this instance's lens". The batch is
+validated whole and refused whole — an id must be a corpus item id, never
+a path — and one id twice collapses to one entry with the count stated.
+The verb records each exclusion in `state/exclusions.tsv` (below); removes
+the media files the item's corpus frontmatter lists under `media/`, and
+their `media/<id>/` directory once it is empty; removes the corpus file,
+`enrichment/<id>/` and `state/digests/<id>.md`; drops the item's records
+from `state/passes.jsonl`; purges the item's ledger entries; and
+recompiles `state/map.json` and `wiki/index.md`. The summary line states
+every count. What another live item still claims stays: the ledger work it
+shares, and a media file its own frontmatter lists (two captures of one
+file name share one). Only the corpus says which media an item carries, so
+the verb refuses the batch, naming the file, when a corpus file it cannot
+read is one of the batch's own, or is any other while the batch carries
+media; repair it and run the batch again. What
 the purge leaves is the item's entry in `state/taxonomy.json` and any
 membership in `state/entity-members.json` — placement ids are never
 checked against the corpus, so lint's ghost-members row names each
@@ -286,6 +293,20 @@ items: 215                    # the page's MEMBER count — the taxonomy
 (existing `generated:` dates are never rewritten — they are the staleness
 reference). Maintain page *bodies* by hand; leave these fields to lint.
 
+## `lens.md`: the instance's lens, owner-owned
+
+`lens.md` at the instance root is the owner's statement of what this
+instance reads for. It is free-form: the seed's headings (Reads for,
+Emphasise, Set aside) are prompts the owner may write under in any form,
+rename or delete, and nothing in the engine parses it by section. Every
+session reads it whole, as one coherent statement. It is the owner's, so a
+session writes it only when the owner asks or a directive's instructions
+name it, and `bin/dex sync` never writes it, whether it exists or not.
+`bin/dex lint` fails when it is missing, unreadable, empty, or still holds
+any of the seed's placeholder lines (the lines that are only `<...>`), and
+the sync report carries the same finding, so a lens that states nothing
+shows before any work starts.
+
 ## `state/config.json` — instance configuration, owner-editable
 
 Renamed from `normalize-config.json` (migration 1). Parsed loudly: an
@@ -356,7 +377,8 @@ a malformed record impossible:
   ran"; `rules` versions the harvest rules). Written by
   `bin/dex enrich pass`; the digest pass is recorded by `enrich item
   digest` itself, in the same call as the file (`enrich pass --stage
-  digest` remains the manual re-record).
+  digest` remains the manual re-record). `bin/dex exclude` drops a dropped
+  item's records, including those under its id from before a rename.
 - `state/migrations.jsonl` — applied-migrations log `{number, engine,
   date}`. Written by sync's migration runner.
 - `state/directives.jsonl` — completed-directives log `{number, engine,
@@ -390,10 +412,10 @@ a malformed record impossible:
   items stay excluded across re-normalization. Like the `state/*.jsonl`
   files it merges as a union across machines, and every reader answers
   by id, so a doubled ruling is harmless. The verb purges the item
-  completely — corpus file, `enrichment/<id>/`, `state/digests/<id>.md`,
-  and the item's ledger entries — and states both the entry count it
-  dropped and the count it kept because another live item still claims
-  the work; git history keeps them.
+  completely — its media, corpus file, `enrichment/<id>/`,
+  `state/digests/<id>.md`, pass records and ledger entries — and states
+  both the entry count it dropped and the count it kept because another
+  live item still claims the work; git history keeps them.
 
 ## `cache/` — ephemeral, gitignored
 

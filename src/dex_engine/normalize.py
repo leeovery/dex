@@ -16,10 +16,10 @@ A cluster's local attachments are copied out of the export into
 pipeline seeds file work from; ``attachments:`` is exporter provenance and
 nothing reads it.
 
-Out-of-scope clusters are excluded via ``state/exclusions.tsv`` (id + reason
-per line, tab-separated), curated by the scope-filter pass and matched on
-the item id's trailing shortid so exclusions survive slug changes. See
-``exclude.py``.
+A cluster whose item was dropped through ``bin/dex exclude`` is never
+regenerated: ``state/exclusions.tsv`` (id + reason per line, tab-separated)
+records each drop, matched here on the item id's trailing shortid so an
+exclusion survives slug changes. See ``exclude.py``.
 """
 
 import argparse

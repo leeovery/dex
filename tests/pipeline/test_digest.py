@@ -10,7 +10,7 @@ from dex_engine.pipeline.digest import DigestPayloadError, item_digest
 from dex_engine.pipeline.run import digest_orphans
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import make_ctx
-from tests.test_lint import lint, write_index, write_taxonomy
+from tests.test_lint import FILLED_LENS, lint, write_index, write_taxonomy
 
 ITEM = "2026-08-19-example-55ad7b"
 
@@ -368,6 +368,11 @@ class TestTheItemMustExist:
 
 class TestLintAgrees:
     """A digest that went through the verb cannot fail the health check."""
+
+    @pytest.fixture(autouse=True)
+    def _stated_lens(self, instance):
+        """Healthy but for the digest under test, so the lens states what it reads for."""
+        instance.lens_path.write_text(FILLED_LENS, encoding="utf-8")
 
     def test_a_verb_written_digest_passes_the_real_lint(self, instance):
         write_taxonomy(instance)

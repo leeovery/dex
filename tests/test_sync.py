@@ -31,6 +31,10 @@ from tests.directives.conftest import make_directive
 RUNNING = "0.1.0"
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
+SEED_LENS = (Path(__file__).resolve().parent.parent / "instance" / "lens.md").read_text(
+    encoding="utf-8"
+)
+FILLED_LENS = "# dex-coffee\n\n## Reads for\nBrewing technique, recipes and gear.\n"
 
 
 def fixed_today() -> datetime.date:
@@ -109,13 +113,16 @@ def template(tmp_path: Path) -> Path:
     (tpl / "dex-contract.md").write_text("contract\n")
     (tpl / "dex").write_text("#!/bin/sh\nshim\n")
     (tpl / "gitattributes").write_text("state/*.jsonl merge=union\n")
+    (tpl / "lens.md").write_text(SEED_LENS)
     return tpl
 
 
 @pytest.fixture
 def inst(tmp_path: Path) -> Instance:
+    """An instance root that states its lens, as every healthy instance does."""
     root = tmp_path / "instance"
     root.mkdir()
+    (root / "lens.md").write_text(FILLED_LENS)
     return Instance(root=root)
 
 
@@ -488,6 +495,49 @@ class TestDirectivesInTheReport:
             run(inst, channel, template, migrate=lambda _root: [], shipped=[make_directive(1)])
 
 
+class TestLensInTheReport:
+    """The report carries the lens check's finding, so it shows before any work."""
+
+    def lens_line(self, inst, template) -> str:
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(inst, channel, template, migrate=lambda _root: [], shipped=[])
+        assert report is not None
+        return next((line for line in report.split("\n") if line.startswith("**Lens**")), "")
+
+    def test_a_filled_lens_is_no_line_at_all(self, inst, template):
+        assert self.lens_line(inst, template) == ""
+
+    def test_a_missing_lens_is_a_line_and_never_a_failure(self, inst, template):
+        (inst.root / "lens.md").unlink()
+        assert self.lens_line(inst, template) == (
+            "**Lens** — `lens.md` is missing: every judgment in a run reads through the lens, "
+            "so the owner fills in `lens.md` with what this instance reads for, and a session "
+            "writes it only when the owner asks"
+        )
+
+    def test_an_unfilled_lens_names_the_placeholders_left(self, inst, template):
+        (inst.root / "lens.md").write_text(
+            FILLED_LENS + "\n## Set aside\n<what to look at hardest>\n"
+        )
+        assert self.lens_line(inst, template).startswith(
+            "**Lens** — `lens.md` still holds the seed's placeholder text: "
+            "`<what to look at hardest>`: "
+        )
+
+    def test_the_placeholders_come_from_the_running_template(self, inst, template):
+        (template / "lens.md").write_text("<only this prompt>\n")
+        (inst.root / "lens.md").write_text("<what to look at hardest>\n")
+        assert self.lens_line(inst, template) == ""
+
+    def test_the_bundled_seed_is_read_when_no_template_is_given(self, inst, template, monkeypatch):
+        (inst.root / "lens.md").write_text("<only this prompt>\n")
+        (template / "lens.md").write_text("<only this prompt>\n")
+        monkeypatch.setattr("dex_engine.sync.bundled_template", lambda: template)
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(inst, channel, None, migrate=lambda _root: [], shipped=[])
+        assert "`<only this prompt>`" in report
+
+
 class TestTemplateSync:
     def test_copies_skills_recursively_and_machinery(self, inst, template):
         changed = sync(inst.root, template=template)
@@ -633,6 +683,15 @@ class TestTemplateSync:
         sync(inst.root, template=template)
         assert (inst.root / "CLAUDE.md").read_text() == "mine\n"
         assert read_pin(inst.root) == "v0.1.0"  # the pin is instance-owned
+        assert (inst.root / "lens.md").read_text() == FILLED_LENS
+
+    def test_the_seed_lens_never_reaches_an_instance(self, inst, template):
+        # The template ships lens.md as the seed, and the lens is the
+        # owner's: sync neither writes one where it is missing nor counts it.
+        (inst.root / "lens.md").unlink()
+        changed = sync(inst.root, template=template)
+        assert not (inst.root / "lens.md").exists()
+        assert not any("lens" in change for change in changed)
 
     def test_refreshed_files_appear_in_the_report_notes(self, inst, template):
         channel, _ = make_channel("")

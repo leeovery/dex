@@ -534,18 +534,8 @@ def drop_items(
     kept_units = len(purged) - len(orphaned)
     if not orphaned:
         return 0, kept_units
-    kept: list[str] = []
-    removed = 0
-    for line in text.split("\n"):
-        if not line.strip():
-            continue
-        if _names_hash(line, orphaned):
-            removed += 1
-            continue
-        kept.append(line)
     # Atomic: a crash mid-write must never lose the ledger.
-    atomic.write_text(path, "".join(line + "\n" for line in kept))
-    return removed, kept_units
+    return atomic.drop_lines(path, lambda line: _names_hash(line, orphaned)), kept_units
 
 
 def latest_readable(

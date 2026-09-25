@@ -26,18 +26,37 @@ OTHER = "2026-08-19-other-11ff22"
 SHARED_URL = "https://example.test/shared-by-two"
 
 
-def write_item_stub(instance: Instance, item_id: str = ITEM, *, urls: tuple[str, ...] = ()) -> None:
+def write_item_stub(
+    instance: Instance,
+    item_id: str = ITEM,
+    *,
+    urls: tuple[str, ...] = (),
+    media: tuple[str, ...] = (),
+) -> None:
     path = instance.corpus_dir / item_id[:4] / f"{item_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     url_lines = "".join(f"  - {url}\n" for url in urls)
+    media_lines = "".join(f"  - {repo_path}\n" for repo_path in media)
     path.write_text(
         "---\n"
         f"id: {item_id}\n"
         "source: manual\nchannel: inbox\nshared_by: alex\ndate: 2026-08-19\n"
         + (f"urls:\n{url_lines}" if url_lines else "")
+        + (f"media:\n{media_lines}" if media_lines else "")
         + "kinds: [web]\nstatus: raw\nenrichment: []\n---\n**alex**: note\n",
         encoding="utf-8",
     )
+
+
+def write_media(instance: Instance, *repo_paths: str) -> list[Path]:
+    """Real files at each repo path, the way `dex inbox` lands a capture's binary."""
+    files = []
+    for repo_path in repo_paths:
+        path = instance.root / repo_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x89PNG not really")
+        files.append(path)
+    return files
 
 
 def ledger_entry(  # noqa: PLR0913 — one keyword per ledger identity slot
@@ -74,8 +93,9 @@ class TestRunExclude:
         (enrichment / "web-abc123.md").write_text("fetched")
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert summary == (
-            "excluded 1: removed 1 items (0 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims); map and index recompiled"
+            "excluded 1: removed 1 items (0 already gone), 0 digests, 0 media files, 0 pass "
+            "records, 0 ledger entries dropped, 0 kept (work another live corpus item still "
+            "claims); map and index recompiled"
         )
         assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
         assert not enrichment.exists()
@@ -84,8 +104,8 @@ class TestRunExclude:
 
     def test_the_digest_goes_with_the_item(self, instance):
         # An excluded item that had been digested left `state/digests/<id>.md`
-        # behind: a permanent fact index over content ruled permanently out
-        # of scope, still feeding query and wiki, and lint's digest check is
+        # behind: a permanent fact index over content ruled to yield nothing,
+        # still feeding query and wiki, and lint's digest check is
         # shape-only so nothing ever named it.
         write_item_stub(instance)
         digest = instance.digests_dir / f"{ITEM}.md"
@@ -112,13 +132,15 @@ class TestRunExclude:
     def test_missing_reason_defaults(self, instance):
         write_item_stub(instance)
         run_exclude(instance, [{"id": ITEM}])
-        assert "\tout of scope\n" in (instance.state_dir / "exclusions.tsv").read_text()
+        recorded = (instance.state_dir / "exclusions.tsv").read_text()
+        assert recorded == f"{ITEM}\tyields nothing through this instance's lens\n"
 
     def test_already_gone_items_counted_not_fatal(self, instance):
         summary = run_exclude(instance, [{"id": ITEM}])
         assert summary == (
-            "excluded 1: removed 0 items (1 already gone), 0 digests, 0 ledger entries "
-            "dropped, 0 kept (work another live corpus item still claims); map and index recompiled"
+            "excluded 1: removed 0 items (1 already gone), 0 digests, 0 media files, 0 pass "
+            "records, 0 ledger entries dropped, 0 kept (work another live corpus item still "
+            "claims); map and index recompiled"
         )
 
     def test_re_excluding_never_duplicates_the_record(self, instance):
@@ -150,7 +172,8 @@ class TestRunExclude:
     def test_whitespace_only_reason_falls_back_to_the_default(self, instance):
         write_item_stub(instance)
         run_exclude(instance, [{"id": ITEM, "reason": " \n\t "}])
-        assert f"{ITEM}\tout of scope\n" in (instance.state_dir / "exclusions.tsv").read_text()
+        recorded = (instance.state_dir / "exclusions.tsv").read_text()
+        assert recorded == f"{ITEM}\tyields nothing through this instance's lens\n"
 
 
 class TestLedgerPurge:
@@ -636,8 +659,8 @@ class TestADuplicateIdInsideOneBatch:
         summary = run_exclude(instance, [{"id": ITEM}, {"id": ITEM}])
         assert summary == (
             "excluded 1 (1 duplicate id(s) collapsed): removed 1 items (0 already gone), "
-            "0 digests, 0 ledger entries dropped, 0 kept (work another live corpus item "
-            "still claims); map and index recompiled"
+            "0 digests, 0 media files, 0 pass records, 0 ledger entries dropped, 0 kept "
+            "(work another live corpus item still claims); map and index recompiled"
         )
 
     def test_a_genuinely_absent_item_is_still_counted_gone(self, instance):
@@ -648,6 +671,22 @@ class TestADuplicateIdInsideOneBatch:
         assert summary.startswith(
             "excluded 2 (1 duplicate id(s) collapsed): removed 1 items (1 already gone), "
         )
+
+
+class TestTheCountsAddUp:
+    """Every count is a tally across the batch, never the last item's alone."""
+
+    def test_two_removed_items_and_their_digests(self, instance):
+        for item_id in (ITEM, OTHER):
+            write_item_stub(instance, item_id)
+            instance.digests_dir.mkdir(parents=True, exist_ok=True)
+            (instance.digests_dir / f"{item_id}.md").write_text("# facts\n", encoding="utf-8")
+        summary = run_exclude(instance, [{"id": ITEM}, {"id": OTHER}])
+        assert summary.startswith("excluded 2: removed 2 items (0 already gone), 2 digests, ")
+
+    def test_two_items_already_gone(self, instance):
+        summary = run_exclude(instance, [{"id": ITEM}, {"id": OTHER}])
+        assert summary.startswith("excluded 2: removed 0 items (2 already gone), 0 digests, ")
 
 
 class TestTheBatchIsRefusedWhole:
@@ -703,7 +742,9 @@ class TestUnreadableCorpusFiles:
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert set(ledger.load(instance.ledger_path)) == {shared}
         assert "0 ledger entries dropped, 0 kept" in summary
-        assert "1 corpus file(s) could not be read" in summary
+        # Named, because nothing else names it: lint never reads a corpus
+        # file's frontmatter whole.
+        assert f"1 corpus file(s) could not be read (corpus/2026/{OTHER}.md)" in summary
 
     def test_a_readable_corpus_still_purges(self, instance):
         write_item_stub(instance)
@@ -711,6 +752,274 @@ class TestUnreadableCorpusFiles:
         summary = run_exclude(instance, [{"id": ITEM, "reason": "meme thread"}])
         assert "1 ledger entries dropped" in summary
         assert "could not be read" not in summary
+
+
+PHOTO = "media/55ad7b/photo.jpg"
+SCAN = "media/55ad7b/scan.png"
+SIBLING_MEDIA = "media/11ff22/sibling.png"
+# `dex inbox` keys a capture's directory by its file's name, so two captures
+# of one `screenshot.png` land on, and both list, this one file.
+SHARED_MEDIA = "media/9c1d3e/screenshot.png"
+
+
+class TestMediaPurge:
+    """The media a dead item carried goes with it, unless a survivor lists it."""
+
+    def test_the_items_media_and_its_emptied_directory_go(self, instance):
+        write_item_stub(instance, media=(PHOTO, SCAN))
+        write_media(instance, PHOTO, SCAN)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not (instance.root / "media" / "55ad7b").exists()
+        assert (instance.root / "media").is_dir()
+        assert "2 media files, " in summary
+
+    def test_a_sibling_items_media_is_untouched(self, instance):
+        write_item_stub(instance, media=(PHOTO,))
+        write_item_stub(instance, OTHER, media=(SIBLING_MEDIA,))
+        [photo, sibling] = write_media(instance, PHOTO, SIBLING_MEDIA)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not photo.exists()
+        assert sibling.read_bytes() == b"\x89PNG not really"
+
+    def test_a_file_another_live_item_lists_is_kept(self, instance):
+        write_item_stub(instance, media=(SHARED_MEDIA,))
+        write_item_stub(instance, OTHER, media=(SHARED_MEDIA,))
+        [shared] = write_media(instance, SHARED_MEDIA)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert shared.exists()
+        assert "0 media files (1 kept, listed by another live corpus item), " in summary
+
+    def test_a_file_only_the_batch_lists_goes_once(self, instance):
+        # Both claimants are excluded together, so nothing survives to keep it.
+        write_item_stub(instance, media=(SHARED_MEDIA,))
+        write_item_stub(instance, OTHER, media=(SHARED_MEDIA,))
+        [shared] = write_media(instance, SHARED_MEDIA)
+        summary = run_exclude(instance, [{"id": ITEM}, {"id": OTHER}])
+        assert not shared.exists()
+        assert "1 media files, " in summary
+
+    def test_a_directory_still_holding_a_file_stays(self, instance):
+        write_item_stub(instance, media=(PHOTO,))
+        [photo, unlisted] = write_media(instance, PHOTO, SCAN)
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not photo.exists()
+        assert unlisted.exists()
+
+    def test_a_kept_file_never_stops_the_items_other_media_going(self, instance):
+        write_item_stub(instance, media=(SHARED_MEDIA, PHOTO))
+        write_item_stub(instance, OTHER, media=(SHARED_MEDIA,))
+        [shared, photo] = write_media(instance, SHARED_MEDIA, PHOTO)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert shared.exists()
+        assert not photo.exists()
+        assert "1 media files (1 kept, listed by another live corpus item), " in summary
+
+    def test_a_file_already_gone_still_clears_its_empty_directory(self, instance):
+        # What an interruption between the unlink and the rmdir leaves: the
+        # re-run reads the same list and finishes the directory.
+        write_item_stub(instance, media=(PHOTO,))
+        (instance.root / "media" / "55ad7b").mkdir(parents=True)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not (instance.root / "media" / "55ad7b").exists()
+        assert "0 media files, " in summary
+
+    def test_a_file_directly_under_media_never_takes_media_with_it(self, instance):
+        write_item_stub(instance, media=("media/photo.jpg",))
+        [photo] = write_media(instance, "media/photo.jpg")
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not photo.exists()
+        assert (instance.root / "media").is_dir()
+
+    def test_a_stated_path_outside_media_is_never_deleted(self, instance, tmp_path_factory):
+        # Frontmatter is owner-editable: a path that climbs out of media/, or
+        # names another part of the instance, or media/ itself, is not media.
+        outside = tmp_path_factory.mktemp("outside") / "keepsake.png"
+        outside.write_bytes(b"not this instance's to delete")
+        climb = os.path.relpath(outside, instance.root)
+        write_item_stub(instance, media=(climb, "state/config.json", "media", "media/../media"))
+        (instance.state_dir / "config.json").write_text("{}\n")
+        (instance.root / "media").mkdir()
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert outside.exists()
+        assert (instance.state_dir / "config.json").exists()
+        assert (instance.root / "media").is_dir()
+        assert "0 media files, " in summary
+
+    def test_the_summary_states_every_count(self, instance):
+        write_item_stub(instance, media=(PHOTO, SCAN))
+        write_media(instance, PHOTO, SCAN)
+        write_passes(instance, {"stage": "harvest", "item": ITEM, "date": "2026-08-20", "rules": 2})
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert summary == (
+            "excluded 1: removed 1 items (0 already gone), 0 digests, 2 media files, 1 pass "
+            "records, 0 ledger entries dropped, 0 kept (work another live corpus item still "
+            "claims); map and index recompiled"
+        )
+
+
+class TestUnsettledMedia:
+    """Only a readable corpus says which media a batch may delete."""
+
+    def test_an_unreadable_survivor_refuses_a_batch_carrying_media(self, instance):
+        # The survivor may list the file, and deferring to a re-run is no
+        # answer: the batch's corpus file, the only list of its media, goes.
+        write_item_stub(instance, media=(PHOTO,))
+        write_item_stub(instance, OTHER)
+        (instance.corpus_dir / "2026" / f"{OTHER}.md").write_text("no frontmatter here\n")
+        [photo] = write_media(instance, PHOTO)
+        with pytest.raises(ValueError, match="nothing was excluded") as excinfo:
+            run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert f"corpus/2026/{OTHER}.md" in str(excinfo.value)
+        assert photo.exists()
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+        assert not instance.map_path.exists()
+
+    def test_every_unreadable_file_is_read_past_and_named(self, instance):
+        # The two unreadable survivors sort before the batch item, so the
+        # scan has to read on past them to learn that the batch carries media.
+        first, second = "2026-08-19-aaa-000001", "2026-08-19-bbb-000002"
+        for broken in (first, second):
+            write_item_stub(instance, broken)
+            (instance.corpus_dir / "2026" / f"{broken}.md").write_text("no frontmatter\n")
+        write_item_stub(instance, media=(PHOTO,))
+        write_media(instance, PHOTO)
+        with pytest.raises(ValueError, match="nothing was excluded") as excinfo:
+            run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert f"(corpus/2026/{first}.md, corpus/2026/{second}.md)" in str(excinfo.value)
+
+    def test_the_batch_items_own_unreadable_file_refuses_the_batch(self, instance):
+        # Its media cannot be read off it, and nothing else would ever
+        # find that media again once the file is gone.
+        write_item_stub(instance)
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").write_bytes(b"\xff\xfe not text")
+        with pytest.raises(ValueError, match=f"corpus/2026/{ITEM}.md"):
+            run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert not (instance.state_dir / "exclusions.tsv").exists()
+
+    def test_an_unreadable_survivor_leaves_a_batch_without_media_to_the_ledger_veto(self, instance):
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        (instance.corpus_dir / "2026" / f"{OTHER}.md").write_text("no frontmatter here\n")
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert not (instance.corpus_dir / "2026" / f"{ITEM}.md").exists()
+        assert summary.startswith("excluded 1: removed 1 items")
+
+
+def write_passes(instance: Instance, *records: dict[str, object] | str) -> None:
+    """``state/passes.jsonl`` as given: a dict is a record, a string a raw line."""
+    lines = [record if isinstance(record, str) else json.dumps(record) for record in records]
+    instance.passes_path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+
+def pass_items(instance: Instance) -> list[str]:
+    return [json.loads(line)["item"] for line in instance.passes_path.read_text().splitlines()]
+
+
+class TestPassPurge:
+    """A dead item's pass records go; every other line stays as it was."""
+
+    def test_the_items_records_go_and_anothers_stay(self, instance):
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        write_passes(
+            instance,
+            {"stage": "harvest", "item": ITEM, "date": "2026-08-20", "rules": 2},
+            {"stage": "harvest", "item": OTHER, "date": "2026-08-20", "rules": 2},
+            {"stage": "digest", "item": ITEM, "date": "2026-08-21"},
+        )
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert pass_items(instance) == [OTHER]
+        assert "2 pass records, " in summary
+
+    def test_a_record_from_before_a_rename_goes_with_the_item(self, instance):
+        # A rename keeps the shortid, and the pass readers resolve the old
+        # id by it: with the item gone, nothing live carries it.
+        write_item_stub(instance)
+        write_passes(instance, {"stage": "harvest", "item": "2026-08-01-old-slug-55ad7b"})
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert pass_items(instance) == []
+
+    def test_a_shortid_a_live_item_carries_keeps_its_old_records(self, instance):
+        # Two captures of one file name share a shortid. The excluded
+        # item's own record goes by its id; a dead id the survivor still
+        # answers for, by shortid, is the survivor's history.
+        survivor = "2026-09-01-sibling-55ad7b"
+        write_item_stub(instance)
+        write_item_stub(instance, survivor)
+        write_passes(
+            instance,
+            {"stage": "harvest", "item": ITEM},
+            {"stage": "harvest", "item": "2026-07-01-sibling-old-55ad7b"},
+            {"stage": "digest", "item": survivor},
+        )
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert pass_items(instance) == ["2026-07-01-sibling-old-55ad7b", survivor]
+
+    def test_a_live_id_on_the_record_keeps_its_records(self, instance):
+        # Re-created after an old exclusion: the id is on the record, and
+        # it is live again, so its records are its own.
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        (instance.state_dir / "exclusions.tsv").write_text(f"{ITEM}\told ruling\n")
+        write_passes(instance, {"stage": "harvest", "item": ITEM})
+        run_exclude(instance, [{"id": OTHER, "reason": "meme"}])
+        assert pass_items(instance) == [ITEM]
+
+    def test_an_earlier_exclusions_records_are_swept_too(self, instance):
+        # Judged against the whole record, like the ledger purge: records an
+        # exclusion before this purge existed left behind go with any batch.
+        write_item_stub(instance)
+        (instance.state_dir / "exclusions.tsv").write_text(f"{OTHER}\tspam\n")
+        write_passes(instance, {"stage": "harvest", "item": OTHER})
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert pass_items(instance) == []
+        assert "1 pass records, " in summary
+
+    def test_lines_that_name_no_item_are_kept_verbatim(self, instance):
+        torn = '{"stage": "harvest", "item": "2026-08-19-exa'
+        write_item_stub(instance)
+        write_passes(
+            instance,
+            {"stage": "harvest", "item": ITEM},
+            torn,
+            "[1, 2]",
+            {"stage": "harvest"},
+            {"stage": "harvest", "item": 7},
+        )
+        run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert instance.passes_path.read_text().splitlines() == [
+            torn,
+            "[1, 2]",
+            '{"stage": "harvest"}',
+            '{"stage": "harvest", "item": 7}',
+        ]
+
+    def test_a_file_with_nothing_to_drop_is_not_rewritten(self, instance):
+        write_item_stub(instance)
+        write_item_stub(instance, OTHER)
+        write_passes(instance, {"stage": "harvest", "item": OTHER})
+        before = instance.passes_path.stat().st_ino
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert instance.passes_path.stat().st_ino == before
+        assert "0 pass records, " in summary
+
+    def test_an_id_with_no_shortid_to_split_off_is_judged_whole(self, instance):
+        # An id is any single path component, so one with no dash is legal;
+        # its trailing "shortid" is the whole id, never an index error.
+        write_passes(
+            instance, {"stage": "harvest", "item": "loose"}, {"stage": "harvest", "item": "kept"}
+        )
+        summary = run_exclude(instance, [{"id": "loose", "reason": "meme"}])
+        assert pass_items(instance) == ["kept"]
+        assert "1 pass records, " in summary
+
+    def test_a_missing_passes_file_is_not_an_error(self, instance):
+        write_item_stub(instance)
+        summary = run_exclude(instance, [{"id": ITEM, "reason": "meme"}])
+        assert "0 pass records, " in summary
+        assert not instance.passes_path.exists()
 
 
 class TestCli:

@@ -10,10 +10,12 @@ Flow::
        then read which directives the instance has yet to complete
     4. refresh engine-managed machinery from the running — pinned — version's
        bundled template: .claude/skills/dex-*, .claude/dex-contract.md,
-       bin/dex, .gitattributes (instance-owned files are never touched)
+       bin/dex, .gitattributes (instance-owned files are never touched,
+       lens.md among them)
     5. render the sync report (one surface): the pending directives for the
-       run to perform after its pull, and whatever a read of the desktop
-       app's own config says about this instance's reach into chat
+       run to perform after its pull, the lens check's finding when lens.md
+       states nothing, and whatever a read of the desktop app's own config
+       says about this instance's reach into chat
 
 ``.dex-engine-pin`` is one line at the instance root — ``<tag> <commit>`` —
 committed, instance-owned: sync writes its *value* — it is not a
@@ -48,6 +50,7 @@ from pathlib import Path
 
 from dex_engine import atomic, directives, migrations
 from dex_engine.directives import Directive
+from dex_engine.lens import lens_finding
 from dex_engine.migrations import AppliedMigration
 from dex_engine.pipeline.types import Instance, parse_version
 from dex_engine.render import surfaces
@@ -400,8 +403,8 @@ def sync(root: Path, template: Traversable | None = None) -> list[str]:
     in place would keep loading its stale procedure in sessions). Also
     ensures the gitignored ``cache/`` directory exists — every render
     receipt goes through it, and a pre-existing instance never scaffolded.
-    Instance-owned files (CLAUDE.md, README, content, ``.dex-engine-pin``,
-    non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
+    Instance-owned files (CLAUDE.md, README, ``lens.md``, content,
+    ``.dex-engine-pin``, non-``dex-`` skills) are never touched. ``dex-new`` calls this directly
     to seed a fresh instance.
 
     Args:
@@ -531,6 +534,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         echo: Where progress and the loud major announcement go (print in
             production) — distinct from the returned report.
         template: Template override for tests; ``None`` uses the bundled one.
+            The lens check reads the seed's placeholder lines from it too.
         previous_pin: Set by the re-exec after a pin bump (via
             ``--previous-pin``) so the report can show the transition.
         migrate: Migration-runner override for tests; ``None`` runs the
@@ -570,7 +574,8 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
     else:
         applied = migrations.run_pending(root, today=today, now=now, engine_version=running_version)
     waiting = directives.pending(root, shipped)
-    changed = sync(root, template=template)
+    tpl = template if template is not None else bundled_template()
+    changed = sync(root, template=tpl)
     notes.extend(rel if rel.startswith("removed ") else f"refreshed: {rel}" for rel in changed)
     if changed or _pin_fields(root) != pin_line:
         notes.append("review + commit the refreshed files and the pin")
@@ -580,6 +585,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied=applied,
         waiting=waiting,
         machinery_changes=len(changed),
+        lens=lens_finding(instance, tpl),
         connect=connect_gaps(root),
         notes=notes,
     )
@@ -593,6 +599,7 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
     applied: list[AppliedMigration],
     waiting: list[Directive],
     machinery_changes: int,
+    lens: str | None,
     connect: list[dict[str, str]],
     notes: list[str],
 ) -> dict[str, object]:
@@ -614,6 +621,8 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
         payload["directives"] = [
             {"number": directive.number, "intent": directive.intent} for directive in waiting
         ]
+    if lens is not None:
+        payload["lens"] = lens
     if connect:
         payload["connect"] = connect
     if pin is not None:

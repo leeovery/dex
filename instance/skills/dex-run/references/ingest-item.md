@@ -183,8 +183,9 @@ bin/dex exclude cache/exclusions.json
 ```
 
 The verb records the drop in `state/exclusions.tsv` and removes the item
-with its enrichment and ledger entries (the full behaviour is in
-`state-formats.md`, this directory). A dropped item gets no digest,
+with everything it left behind: its media, enrichment, digest, pass
+records and ledger entries (the full behaviour is in `state-formats.md`,
+this directory). A dropped item gets no digest,
 placement, wiki work or receipt, and the closing report (dex-run step 6)
 names it with its reason.
 

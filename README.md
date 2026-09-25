@@ -294,12 +294,12 @@ launch — and falls back to the tag for a pin an older sync wrote:
 | `dex-enrich item describe` | write an item's description of one media file it carries from a text file — the reading is the judgment, the `media-<n>.md` slot and the first line naming the file are the engine's; the item's frontmatter is refreshed in the same call |
 | `dex-enrich place` | apply placement judgment to `state/taxonomy.json` and `state/entity-members.json` from a JSON payload — define topics and entities, place/unplace items, drop fold-aways; validated whole and refused whole, both files rewritten deterministically, the map and index recompiled |
 | `dex-normalize` | raw chat exports to corpus items (DiscordChatExporter JSON) |
-| `dex-lint` | mechanical health check: wikilinks, citations (shortid flags included), orphans, map and index freshness (a byte diff against an in-memory recompile), stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, media drift and placement advisories, pass records (`--write` reconciles derived wiki frontmatter) |
+| `dex-lint` | mechanical health check: the lens (`lens.md` missing, empty or still the seed's placeholders fails it), wikilinks, citations (shortid flags included), orphans, map and index freshness (a byte diff against an in-memory recompile), stale pages, count drift, restated-fact warnings, ledger schema, ledger↔corpus integrity, cap fires, thread-completeness markers, digest shape, media drift and placement advisories, pass records (`--write` reconciles derived wiki frontmatter) |
 | `dex-map` | compile the instance map into `state/map.json` — every topic and entity with counts, members and has-page, plus the typed relation graph (directed wikilink edges, weighted shared-member edges) — and render `wiki/index.md` from the same compile; both deterministic to the byte, from taxonomy, entity-members, corpus and wiki |
-| `dex-exclude <json>` | permanently purge out-of-scope items — corpus file, enrichment, ledger entries — surviving re-normalization |
+| `dex-exclude <json>` | permanently drop items that yield nothing through the instance's lens, with their media, enrichment, digest, pass records and ledger entries, surviving re-normalization |
 | `dex-issue` | file one session-observed engine defect upstream from a JSON payload — mechanics only, refused whole on any content leak; the local record lands in `state/issue-reports.jsonl` |
 | `dex-inbox` | materialize staged binary captures: release asset to `media/<id>/` (LFS), asset deleted (`ensure` creates the standing inbox release) |
-| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report (pending directives included): step 0 of every run |
+| `dex-sync` | pin check and engine upgrade, migrations, machinery refresh, sync report (pending directives included, and the lens when `lens.md` states nothing): step 0 of every run |
 | `dex-directive` | the engine's directives, performed by the run after its pull: `list` the pending ones in order, `show <n>` one's instructions, `done <n>` to run its check and record it in `state/directives.jsonl` only when every condition holds |
 | `dex-render` | render a named report surface from a JSON payload as markdown, verbatim (state-bearing reports are never hand-drawn) |
 | `dex-new <name>` | scaffold a new instance from the engine's bundled template |
@@ -338,8 +338,10 @@ PDF, any file) stages it as an asset on the repo's standing `inbox` release and
 references it in frontmatter. Your knowledge base runs no server-side machinery
 at all — no Actions, no webhooks, nothing writing to it but you and your own
 sessions: the PUT is the commit, and the next run moves staged binaries into
-`media/` where LFS applies. Suggestion is untrusted by design, so scope filtering happens at
-processing time, inside the instance. Full protocol: `docs/capture.md`.
+`media/` where LFS applies. Sharing is the curation, so nothing is judged at
+the door: every capture becomes an item, and the instance reads it through its
+lens once its content has landed, dropping it only when that yields nothing.
+Full protocol: `docs/capture.md`.
 
 Query surface: `dex-serve` is an MCP server — one process serving several
 instances, stateless between calls, every call a fresh read of disk. Seven
@@ -352,11 +354,12 @@ as resources. Hands, not an
 agent: no model runs on that side and nothing is ranked, so the calling chat
 does the searching with its own inference. What keeps an impatient caller
 probing is prose rather than machinery (`serve/steering.py`) — connect-time
-instructions carrying the doctrine and every instance's declared scope
-verbatim, one next-move line on each result, and a `dex-query` prompt read from
-the wheel-bundled skill template (`template.py`) so that procedure keeps a
-single home. `dex-connect` writes the client-side half, for every chat
-client on the machine: one `mcpServers.dex` entry per client, the same
+instructions carrying the doctrine, every instance's lens verbatim and the
+rule that a capture goes where the owner says, one next-move line on each
+result, and a `dex-query` prompt read from the wheel-bundled skill template
+(`template.py`) so that procedure keeps a single home. `dex-connect` writes
+the client-side half, for every chat client on the machine: one
+`mcpServers.dex` entry per client, the same
 launcher in each — an anchor instance's `bin/dex`, so the anchor's pin stays
 the only version authority. The desktop app's copy is a merge into the JSON
 file it owns, carrying an `env.PATH` captured from the installing shell
@@ -371,6 +374,7 @@ the connection rather than the owner having to know it exists. Setup:
 `docs/connect.md`.
 
 Instance layout: `CLAUDE.md` (identity and scope; imports the synced contract) ·
+`lens.md` (what the instance reads for; the owner's, never synced) ·
 `.claude/` (synced skills + `dex-contract.md`) · `bin/dex` (the shim) ·
 `inbox/` (pending captures) · `raw/` (verbatim exports) · `corpus/`
 (append-only items) · `enrichment/` · `media/` (captured binaries, LFS) ·

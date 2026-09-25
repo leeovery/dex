@@ -59,6 +59,8 @@ the engine stays unaware of which ones exist.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
+  - `lens.py` — the ONE lens check (is `lens.md` missing, empty, or still
+    holding the seed's placeholder lines), shared by lint and sync.
   - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
     and the map compiler share it).
   - `instance_map.py` — `dex-map`: compiles `state/map.json` (topics,
@@ -77,7 +79,9 @@ the engine stays unaware of which ones exist.
   instance's CLAUDE.md), and `skills/` (`dex-capture`, `dex-query`, and
   `dex-run` + `dex-lint` each with their `references/` — each dir synced
   recursively into `.claude/skills/`; the `dex-` skill namespace is
-  engine-owned and sync retires skills the template drops). `CLAUDE.md` and `README.md` are
+  engine-owned and sync retires skills the template drops), and `lens.md`,
+  the seed lens whose placeholder lines the lens check reads; sync never
+  copies it, because an instance's lens is its owner's. `CLAUDE.md` and `README.md` are
   scaffold seeds — written by `dex-new` at creation, instance-owned
   afterwards (they hold only identity, scope, and instance-specifics;
   everything shared lives in the synced contract).

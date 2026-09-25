@@ -122,12 +122,14 @@ material, it is working.
 Tell the owner, in a few lines:
 
 - **Ask from any chat**, in whichever clients they connected. Questions that
-  fall inside a dex's scope get answered from their own saved material, with
+  touch what a dex reads for get answered from their own saved material, with
   the item ids cited. It reads the clones on this machine — nothing is
   uploaded and no key is stored.
-- **"Save this to my dex"** mid-conversation drops a capture into that
-  instance's inbox, exactly like the phone shortcut. The next run reads it and
-  files it; the save itself is instant.
+- **"Save this to my dex"** mid-conversation drops a capture into an
+  instance's inbox, exactly like the phone shortcut. It goes where they say:
+  with more than one dex connected, the chat asks which one, or which ones,
+  and never picks from the content. The next run reads it through that
+  instance's lens; the save itself is instant.
 - **The `dex-query` prompt**, in the desktop app's prompt picker, for a deep
   pull — it runs the full query procedure instead of the two or three probes a
   chat reaches for on its own.

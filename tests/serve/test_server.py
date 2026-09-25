@@ -14,7 +14,7 @@ from .conftest import (
     BORGES,
     COFFEE,
     GRINDER,
-    SCOPE,
+    LENS,
     TEMPLATE,
     V60,
     call,
@@ -92,6 +92,18 @@ class TestTools:
     def test_capture_says_it_writes_a_suggestion(self, server):
         assert "A suggestion, not a corpus entry" in described(server, "capture")
 
+    def test_capture_says_the_instance_reads_it_through_its_lens(self, server):
+        said = described(server, "capture")
+        assert "reads it through its" in said
+        assert "scope" not in said
+
+    def test_capture_states_where_a_capture_goes(self, server):
+        said = " ".join(described(server, "capture").split())
+        assert "Capture into the one the owner names" in said
+        assert "when this server serves a single instance, capture there without asking" in said
+        assert "otherwise ask the owner which instance, or which ones, before saving" in said
+        assert "Never choose from the content" in said
+
     def test_topics_says_it_is_the_opening_move(self, server):
         assert "opening move" in described(server, "topics")
 
@@ -118,9 +130,9 @@ class TestInstructions:
         assert "never a ranked answer" in said
         assert "cite the item ids" in said
 
-    def test_every_instance_declares_its_own_scope(self, server):
+    def test_every_instance_states_its_own_lens(self, server):
         said = drive(server, _instructions)
-        assert SCOPE.strip() in said
+        assert LENS.strip() in said
         assert f'<instance name="{BOOKS}">' in said
 
 

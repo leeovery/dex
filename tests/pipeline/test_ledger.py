@@ -538,6 +538,27 @@ class TestLoadAppendCompact:
         assert [p.name for p in instance.state_dir.iterdir()] == ["enrichment-ledger.jsonl"]
 
 
+class TestDropItems:
+    """The purge's ledger half; `bin/dex exclude` is its caller and its fuller test."""
+
+    def test_a_missing_ledger_drops_nothing_and_writes_nothing(self, instance: Instance):
+        assert ledger.drop_items(instance.ledger_path, {BASE_ENTRY.item}, claimed=()) == (0, 0)
+        assert not instance.ledger_path.exists()
+
+    def test_no_purged_items_leaves_the_ledger_as_it_was(self, instance: Instance):
+        ledger.append(instance.ledger_path, entry())
+        before = instance.ledger_path.read_text()
+        assert ledger.drop_items(instance.ledger_path, set(), claimed=()) == (0, 0)
+        assert instance.ledger_path.read_text() == before
+
+    def test_a_purged_hash_goes_with_its_audit_trail(self, instance: Instance):
+        other = entry(hash="ffff000000", url="https://other.test", item="2026-08-19-other-11ff22")
+        for line in (entry(status=Status.BLOCKED, attempts=1), other, entry(status=Status.DEAD)):
+            ledger.append(instance.ledger_path, line)
+        assert ledger.drop_items(instance.ledger_path, {BASE_ENTRY.item}, claimed=()) == (2, 0)
+        assert ledger.load(instance.ledger_path) == {other.hash: other}
+
+
 class TestAppender:
     """The held handle: open-per-line's bytes and durability, without the reopens."""
 
