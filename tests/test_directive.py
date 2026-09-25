@@ -207,6 +207,14 @@ class TestDone:
         assert '"expected": "directive 4 completes and passes its own check"' in steps
         assert '"observed": "directive 4 did not complete on this instance"' in steps
 
+    def test_the_steps_ask_nothing_of_the_owner(self):
+        # A run whose directive failed once told the owner to add permission
+        # rules; the next run performs it again on its own.
+        lead = REFUSED_NEXT.format(number=4).split("\n", 1)[0]
+        assert lead.startswith("The next run performs directive 4 again")
+        assert "nothing needed from the owner" in lead
+        assert "never ask them to change a permission or run anything by hand" in lead
+
     def test_one_unmet_condition_is_counted_in_the_singular(self, instance):
         with pytest.raises(ValueError, match="found 1 unmet condition,"):
             done(instance, 1, [make_directive(1, unmet=["lens.md is missing"])])

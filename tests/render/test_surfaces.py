@@ -825,6 +825,62 @@ class TestSyncReport:
                 {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0, "lens": ["missing"]},
             )
 
+    def test_changed_instructions_close_the_report_by_ending_the_run(self):
+        out = render(
+            "sync-report",
+            {
+                "pin": "v0.3.0",
+                "previous": "v0.2.0",
+                "migrations": [],
+                "directives": [{"number": 1, "intent": "rehome the scope"}],
+                "machinery_changes": 2,
+                "instructions_changed": True,
+                "lens": LENS_NOTE,
+                "connect": [{"client": "desktop", "gap": "unconnected"}],
+                "notes": ["refreshed: CLAUDE.md"],
+            },
+        )
+        head, _, closing = out.rstrip("\n").rpartition("\n\n")
+        assert head.endswith("- refreshed: CLAUDE.md")
+        assert "\n" not in closing
+        assert closing.startswith("**Instructions changed** — this run began with instructions")
+        # Addressed to the session holding the old instructions: it stops
+        # after the sync reaches the remote, and nothing waits on the owner.
+        for said in (
+            "a dex run or health check in progress goes no further",
+            "commit the sync, then pull and push",
+            "report that the engine was updated",
+            "end the run here",
+            "pending directives included",
+            "nothing is needed from the owner",
+            "A session that is not performing a run, such as setup or a query, carries on.",
+        ):
+            assert said in closing
+        assert_no_trailing_whitespace(out)
+
+    def test_unchanged_instructions_are_no_line(self):
+        for payload in (
+            {"pin": "v0.3.0", "migrations": [], "machinery_changes": 1},
+            {
+                "pin": "v0.3.0",
+                "migrations": [],
+                "machinery_changes": 1,
+                "instructions_changed": False,
+            },
+        ):
+            out = render("sync-report", payload)
+            assert "Instructions changed" not in out
+            assert out.endswith("**Machinery changes** — 1\n")
+
+    def test_a_non_boolean_instructions_changed_is_loud(self):
+        with pytest.raises(
+            PayloadError, match=r"^sync-report: instructions_changed must be a boolean, got 'yes'"
+        ):
+            render(
+                "sync-report",
+                {"migrations": [], "machinery_changes": 1, "instructions_changed": "yes"},
+            )
+
     def test_no_gap_is_no_line(self):
         out = render("sync-report", {"pin": "v0.3.0", "migrations": [], "machinery_changes": 0})
         assert "Chat connection" not in out
@@ -1469,6 +1525,7 @@ SURFACE_PAYLOADS = {
         "migrations": [],
         "directives": [{"number": 1, "intent": "rehome the scope"}],
         "machinery_changes": 2,
+        "instructions_changed": True,
     },
     "ingest-receipt": {"item": LONG_ID, "fetched": 2},
     "health-report": HEALTH_PAYLOAD,

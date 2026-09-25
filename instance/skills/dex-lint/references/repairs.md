@@ -171,7 +171,8 @@ other repairs need):
 - **Stale pages** (members newer than the page) — fold the newer items
   in via rewrite-not-append; if the new material supersedes old claims,
   move them to the history section marked superseded, never silently
-  delete.
+  delete. Then set the page's `generated:` to today, which is what clears
+  the row: lint never moves an existing date itself.
 - **Possible restated facts** — read each flagged pair: same fact →
   merge into one sentence carrying both citations; genuinely distinct →
   leave them (the flag is a question, not a verdict).

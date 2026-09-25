@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from dex_engine.directives import DirectiveError, append_done
 from dex_engine.directives import log_path as directives_log
 from dex_engine.migrations import AppliedMigration, log_path, read_applied
 from dex_engine.pipeline.types import Instance, MigrationReport, Skipped
+from dex_engine.render import surfaces
 from dex_engine.sync import (
     PIN_FILE,
     Refresh,
@@ -38,7 +40,7 @@ SEED_LENS = (Path(__file__).resolve().parent.parent / "instance" / "lens.md").re
     encoding="utf-8"
 )
 FILLED_LENS = "# dex-coffee\n\n## Reads for\nBrewing technique, recipes and gear.\n"
-CLAUDE_MD = "# dex instance\n\n@.claude/dex-contract.md\n\n@lens.md\n"
+CLAUDE_MD = "# dex instance\n\n@.claude/dex-contract.md\n"
 OLD_CLAUDE_MD = "# dex-coffee\n\n@.claude/dex-contract.md\n\n## In scope\n\n- brewing\n"
 
 
@@ -800,6 +802,109 @@ class TestClaudeMdTakeover:
         assert HELD_UNCOMMITTED in report
         assert "**Machinery changes** — 0" in report
         assert "review + commit" not in report
+
+
+RUN_ENDS = "**Instructions changed** — "
+
+
+def last_line(report: str) -> str:
+    return report.rstrip("\n").rsplit("\n", 1)[-1]
+
+
+class TestInstructionsChanged:
+    """A sync that replaces the instructions a run began with ends that run.
+
+    A session loads CLAUDE.md, the contract and its skills before it syncs,
+    so whatever sync rewrites or removes there leaves the run holding the
+    previous text; bin/dex and .gitattributes are read by no session.
+    """
+
+    @pytest.fixture
+    def current(self, inst, template):
+        """An instance whose machinery already matches the template."""
+        sync(inst.root, template=template)
+        return inst
+
+    @pytest.fixture
+    def payloads(self, monkeypatch) -> list[Mapping[str, object]]:
+        seen: list[Mapping[str, object]] = []
+        real = surfaces.render
+
+        def spy(surface: str, payload: Mapping[str, object]) -> str:
+            seen.append(payload)
+            return real(surface, payload)
+
+        monkeypatch.setattr(surfaces, "render", spy)
+        return seen
+
+    def report(self, inst, template, **kwargs) -> str:
+        kwargs.setdefault("uncommitted", lambda _path: None)
+        channel, _ = make_channel("")
+        report, _ = run(inst, channel, template, migrate=lambda _root: [], shipped=[], **kwargs)
+        assert report is not None
+        return report
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".claude/skills/dex-run/SKILL.md",
+            ".claude/skills/dex-run/references/ingest-item.md",
+            ".claude/dex-contract.md",
+            "CLAUDE.md",
+        ],
+    )
+    def test_a_rewritten_instruction_file_ends_the_run(self, current, template, rel, payloads):
+        (current.root / rel).write_text("the previous release's text\n")
+        report = self.report(current, template)
+        assert f"refreshed: {rel}" in report
+        assert last_line(report).startswith(RUN_ENDS)
+        assert report.count(RUN_ENDS) == 1
+        assert payloads[-1]["instructions_changed"] is True
+
+    def test_a_retired_skill_removed_ends_the_run(self, current, template):
+        retired = current.root / ".claude" / "skills" / "dex-ingest"
+        retired.mkdir()
+        (retired / "SKILL.md").write_text("stale procedure\n")
+        report = self.report(current, template)
+        assert "removed .claude/skills/dex-ingest (retired engine skill)" in report
+        assert last_line(report).startswith(RUN_ENDS)
+
+    def test_a_retired_skill_file_removed_ends_the_run(self, current, template):
+        references = current.root / ".claude" / "skills" / "dex-run" / "references"
+        (references / "old-procedure.md").write_text("stale procedure\n")
+        report = self.report(current, template)
+        assert "(retired skill file)" in report
+        assert last_line(report).startswith(RUN_ENDS)
+
+    @pytest.mark.parametrize("rel", ["bin/dex", ".gitattributes"])
+    def test_machinery_no_session_loads_never_ends_the_run(self, current, template, rel, payloads):
+        (current.root / rel).write_text("the previous release's text\n")
+        report = self.report(current, template)
+        assert f"refreshed: {rel}" in report
+        assert "Instructions changed" not in report
+        assert "instructions_changed" not in payloads[-1]
+
+    def test_nothing_changed_never_ends_the_run(self, current, template, payloads):
+        report = self.report(current, template)
+        assert "**Machinery changes** — 0" in report
+        assert "Instructions changed" not in report
+        assert "instructions_changed" not in payloads[-1]
+
+    def test_a_held_claude_md_changes_no_instructions(self, current, template):
+        (current.root / "CLAUDE.md").write_text(OLD_CLAUDE_MD)
+        report = self.report(current, template, uncommitted=edited)
+        assert HELD_UNCOMMITTED in report
+        assert "Instructions changed" not in report
+
+    def test_the_refresh_says_whether_the_instructions_changed(self, current, template):
+        (current.root / ".claude" / "dex-contract.md").write_text("the previous release's\n")
+        (current.root / "bin" / "dex").write_text("the previous release's\n")
+        refresh = sync(current.root, template=template)
+        assert refresh.instructions is True
+        (current.root / "bin" / "dex").write_text("the previous release's\n")
+        refresh = sync(current.root, template=template)
+        assert refresh == Refresh(changed=["bin/dex"])
+        assert refresh.instructions is False
 
 
 class TestClaudeMdAgainstGit:

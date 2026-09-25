@@ -16,8 +16,10 @@ Flow::
     5. render the sync report (one surface): the pending directives for the
        run to perform after its pull, the lens check's note when lens.md
        still holds the seed's placeholder lines or will not read as text,
-       and whatever a read of the desktop app's own config says about this
-       instance's reach into chat
+       whatever a read of the desktop app's own config says about this
+       instance's reach into chat, and, when step 4 changed CLAUDE.md, the
+       contract or a skill, a closing line that ends the run in progress,
+       since that run began with the instructions it replaced
 
 ``.dex-engine-pin`` is one line at the instance root — ``<tag> <commit>`` —
 committed, instance-owned: sync writes its *value* — it is not a
@@ -349,11 +351,14 @@ class Refresh:
 
     ``changed`` describes every write and removal. ``held`` says why
     CLAUDE.md was left as it stands, and is ``None`` when sync wrote it or
-    it was already current.
+    it was already current. ``instructions`` says whether any of those
+    writes or removals touched what a session loads as its instructions:
+    CLAUDE.md, the contract, or a synced skill.
     """
 
     changed: list[str]
     held: str | None = None
+    instructions: bool = False
 
 
 def _git_uncommitted(path: Path) -> str | None:
@@ -501,13 +506,13 @@ def sync(
             differs from the template's.
 
     Returns:
-        The refresh: why CLAUDE.md was left as it stands, when it was, and
-        the change descriptions. Those are paths (relative to ``root``)
-        that were written because they differed, plus ``removed <path>``
-        entries for retired skills, for files a synced ``dex-*`` skill no
-        longer carries, and for entries cleared because the template's
-        shape changed (a file where it now ships a directory, or the
-        reverse).
+        The refresh: why CLAUDE.md was left as it stands, when it was,
+        whether the instructions a session loads changed, and the change
+        descriptions. Those are paths (relative to ``root``) that were
+        written because they differed, plus ``removed <path>`` entries for
+        retired skills, for files a synced ``dex-*`` skill no longer
+        carries, and for entries cleared because the template's shape
+        changed (a file where it now ships a directory, or the reverse).
     """
     tpl = template if template is not None else bundled_template()
     # Ensured here, not only at scaffold: a migrated pre-existing instance
@@ -517,6 +522,32 @@ def sync(
     # change (gitignored ephemera, not machinery).
     (root / "cache").mkdir(exist_ok=True)
     changed: list[str] = []
+    held = _refresh_instructions(root, tpl, changed, uncommitted)
+    instructions = bool(changed)
+    _write_if_changed(
+        root, root / "bin" / "dex", (tpl / "dex").read_text(encoding="utf-8"), changed
+    )
+    (root / "bin" / "dex").chmod(0o755)
+    _write_if_changed(
+        root,
+        root / ".gitattributes",
+        (tpl / "gitattributes").read_text(encoding="utf-8"),
+        changed,
+    )
+    return Refresh(changed=changed, held=held, instructions=instructions)
+
+
+def _refresh_instructions(
+    root: Path,
+    tpl: Traversable,
+    changed: list[str],
+    uncommitted: Callable[[Path], str | None],
+) -> str | None:
+    """Refresh what a session loads as its instructions: the skills, CLAUDE.md, the contract.
+
+    Returns why CLAUDE.md was left as it stands, or ``None`` when it was
+    written or already current.
+    """
     template_skills: set[str] = set()
     for skill in (tpl / "skills").iterdir():
         if skill.is_dir():
@@ -546,17 +577,7 @@ def sync(
         (tpl / "dex-contract.md").read_text(encoding="utf-8"),
         changed,
     )
-    _write_if_changed(
-        root, root / "bin" / "dex", (tpl / "dex").read_text(encoding="utf-8"), changed
-    )
-    (root / "bin" / "dex").chmod(0o755)
-    _write_if_changed(
-        root,
-        root / ".gitattributes",
-        (tpl / "gitattributes").read_text(encoding="utf-8"),
-        changed,
-    )
-    return Refresh(changed=changed, held=held)
+    return held
 
 
 def _prune_tree(root: Path, src_dir: Traversable, dest_dir: Path, changed: list[str]) -> None:
@@ -688,6 +709,7 @@ def run_sync(  # noqa: PLR0913 — the seams are the signature: clocks, version,
         applied=applied,
         waiting=waiting,
         machinery_changes=len(refresh.changed),
+        instructions_changed=refresh.instructions,
         lens=read_lens(instance, tpl).note,
         connect=connect_gaps(root),
         notes=notes,
@@ -702,6 +724,7 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
     applied: list[AppliedMigration],
     waiting: list[Directive],
     machinery_changes: int,
+    instructions_changed: bool,
     lens: str | None,
     connect: list[dict[str, str]],
     notes: list[str],
@@ -736,6 +759,8 @@ def _report_payload(  # noqa: PLR0913 — the report's shape is its parameters
                 payload["major"] = True
     if notes:
         payload["notes"] = notes
+    if instructions_changed:
+        payload["instructions_changed"] = True
     return payload
 
 

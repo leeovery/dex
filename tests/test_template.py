@@ -8,6 +8,7 @@ would refresh an instance's machinery from nothing.
 import re
 from pathlib import Path
 
+from dex_engine.directives.directive_1 import ENGINE_OWNED
 from dex_engine.template import bundled_template
 
 # The repo's template tree — what the wheel bundles as dex_engine/instance.
@@ -27,10 +28,16 @@ class TestClaudeMd:
     def lines(self) -> list[str]:
         return (TEMPLATE / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
 
-    def test_imports_the_contract_and_the_lens(self):
-        # Whole lines: an `@path` inside a code span is only text, never an import.
-        assert "@.claude/dex-contract.md" in self.lines()
-        assert "@lens.md" in self.lines()
+    def test_imports_the_contract_and_never_the_lens(self):
+        # Whole lines: an `@path` inside a code span is only text, never an
+        # import. Imported, the lens would join every session's instructions,
+        # and a run writing it would be rewriting its own.
+        assert [line for line in self.lines() if line.startswith("@")] == [
+            "@.claude/dex-contract.md"
+        ]
+
+    def test_keeps_the_mark_directive_1_passes_over(self):
+        assert ENGINE_OWNED in " ".join(self.lines())
 
     def test_holds_no_placeholder_for_anyone_to_fill(self):
         assert [line for line in self.lines() if re.search(r"<[^<>]+>", line)] == []

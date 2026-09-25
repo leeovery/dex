@@ -4,11 +4,14 @@ One item = corpus item → enrich → media → harvest → lens verdict → dig
 → place → wiki → receipt, and a drop at the lens verdict ends it there.
 Never skip steps; never invent inputs. All commands run from the instance
 root. Code writes frontmatter and state; you write prose and judgment.
-Every judgment below reads the item through this instance's lens, the
-owner's `lens.md` at the instance root, taken whole as the contract says.
-An instance with no lens is a general knowledge dex, which the contract
-also defines: there every judgment reads the item for its general
-substance, the facts the source yields and the subject it is about.
+
+Before the first item this session, read `lens.md` at the instance root,
+once: it is this instance's lens, the owner's statement of what it reads
+for, taken whole as the contract says, and every judgment below reads the
+item through it. When the file is missing or empty, or reads as no lens
+for a reason the contract gives, the instance is a general knowledge
+dex: there every judgment reads the item for its general substance, the
+facts the source yields and the subject it is about.
 
 ## 1. Corpus item (mechanical: the verb writes it)
 
@@ -332,7 +335,9 @@ money, what a piece of copy achieves.
 Splice cited sentence(s) into affected pages — rewrite-not-append when
 "current state" changes. Pages citing a media item should usually embed it
 (relative image links). `wiki/index.md` needs nothing — it is rendered by
-the engine, and step 7's `place` already recompiled it. Append a
+the engine, and step 7's `place` already recompiled it. Set `generated:`
+to today on every page you rewrite, because lint never moves an existing
+date and reads a page older than its newest member as stale. Append a
 `wiki/log.md` line. Then `bin/dex enrich pass <item-id> --stage wiki`.
 
 Citation rules:
