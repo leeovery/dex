@@ -4,7 +4,7 @@ import json
 
 from dex_engine.drivers.x import HOP_SLEEP, MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
-from dex_engine.pipeline.types import Content, Kind, Missing, Refused, Unusable
+from dex_engine.pipeline.types import Content, Kind, Missing, Need, Refused, Unusable
 from dex_engine.pipeline.urls import work_hash
 from tests.drivers.conftest import (
     FakeTransport,
@@ -15,6 +15,7 @@ from tests.drivers.conftest import (
     html_response,
     json_response,
     make_unit,
+    needs_of,
 )
 
 API = "https://api.fxtwitter.com/"
@@ -90,6 +91,8 @@ class TestThreadWalkUp:
         assert isinstance(result, Content)
         body = body_of(result)
         assert body.index("@alice") < body.index("@bob") < body.index("@carol")
+        assert body.startswith("@alice — ")
+        assert "\n\n@bob — " in body  # each post its own paragraph run
         assert "Two things every ingestion pipeline gets wrong" in body
         assert "the ledger, not the corpus, is the work queue" in body
 
@@ -99,6 +102,22 @@ class TestThreadWalkUp:
         result = content_of(driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X)))
         assert result.meta["thread_length"] == 3
         assert result.meta["author"] == "Carol Chen (@carol)"
+        assert (
+            result.meta["tweeted"]
+            == json.loads(fixture_text("fxtwitter", "captured-300.json"))["tweet"]["created_at"]
+        )
+
+    def test_a_lone_post_is_no_thread(self):
+        responses = {API + "status/300": api_fixture("root-100.json")}
+        result = content_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
+        assert "thread_length" not in result.meta
+
+    def test_a_post_naming_no_author_says_so(self):
+        tweet = json.loads(fixture_text("fxtwitter", "root-100.json"))["tweet"]
+        tweet["author"] = {}
+        responses = {API + "status/300": json_response({"tweet": tweet})}
+        result = content_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
+        assert result.meta["author"] == "unknown (@unknown)"
 
     def test_chain_media_pooled_captured_posts_first(self):
         result = content_of(driver_for(full_chain()).fetch(make_unit(CAPTURED_URL, Kind.X)))
@@ -384,21 +403,7 @@ class TestEdges:
 
     def test_photo_only_post_is_done_with_attributed_body_and_media(self):
         url = "https://x.com/gina/status/600"
-        tweet = {
-            "id": "600",
-            "text": "",
-            "created_at": "Thu Aug 20 12:00:00 +0000 2026",
-            "author": {"name": "Gina Ruiz", "screen_name": "gina"},
-            "replying_to": None,
-            "replying_to_status": None,
-            "media": {
-                "photos": [
-                    {"type": "photo", "url": "https://pbs.example.test/media/p600.jpg"},
-                    {"type": "photo", "url": "https://pbs.example.test/media/p601.jpg"},
-                ]
-            },
-        }
-        responses = {API + "status/600": json_response({"tweet": tweet})}
+        responses = {API + "status/600": json_response({"tweet": _photo_post()})}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         assert isinstance(result, Content)
         body = body_of(result)
@@ -415,6 +420,23 @@ class TestEdges:
         assert "not a status URL" in result.evidence
 
 
+def _photo_post() -> dict:
+    return {
+        "id": "600",
+        "text": "",
+        "created_at": "Thu Aug 20 12:00:00 +0000 2026",
+        "author": {"name": "Gina Ruiz", "screen_name": "gina"},
+        "replying_to": None,
+        "replying_to_status": None,
+        "media": {
+            "photos": [
+                {"type": "photo", "url": "https://pbs.example.test/media/p600.jpg"},
+                {"type": "photo", "url": "https://pbs.example.test/media/p601.jpg"},
+            ]
+        },
+    }
+
+
 class TestVideoPosts:
     """fxtwitter nests videos beside photos; reading photos alone lied."""
 
@@ -425,12 +447,29 @@ class TestVideoPosts:
         responses = {API + "status/800": api_fixture("video-800.json")}
         return driver_for(responses).fetch(make_unit(self.URL, Kind.X))
 
-    def test_a_video_only_post_is_done_with_the_video_pooled(self):
-        # It parked `manual` on "fxtwitter returned no text or media" — a
-        # statement the payload itself contradicts — and dropped the video
-        # the media stage would have fetched.
-        result = content_of(self.video_result())
-        assert result.media == [self.VIDEO]  # Content states no park; the type says so
+    def test_a_video_post_parks_for_the_transcript_of_its_video(self):
+        # It once parked `manual` on "fxtwitter returned no text or media",
+        # a statement the payload contradicts; then it landed done with the
+        # video pooled as a file owing a description, and a talking-head
+        # clip's substance, all of it in the audio, was never heard.
+        parked = needs_of(self.video_result())
+        assert parked.need is Need.TRANSCRIBE
+        assert parked.meta["enclosure"] == self.VIDEO
+        assert "transcription" in (parked.reason or "")  # the report states the park
+
+    def test_the_transcribed_video_is_never_pooled_as_a_file(self):
+        # The transcript supersedes it, as it does a reel's.
+        assert needs_of(self.video_result()).media == []
+
+    def test_a_transcribe_park_carries_no_fetch_stamp(self):
+        # `via` is the transcript-provenance stamp: a park carrying it tells
+        # the drain its body already holds a transcript.
+        assert needs_of(self.video_result()).meta.get("via") is None
+        responses = {API + "status/600": json_response({"tweet": _photo_post()})}
+        photo = content_of(
+            driver_for(responses).fetch(make_unit("https://x.com/gina/status/600", Kind.X))
+        )
+        assert photo.meta["via"] == "fxtwitter"
 
     def test_the_body_names_the_media_it_actually_holds(self):
         body = body_of(self.video_result())
@@ -442,8 +481,11 @@ class TestVideoPosts:
         # `all` is fxtwitter's union of `photos` and `videos`, so every
         # media object appears twice in one payload; pooling it twice would
         # spend two of the item's four media slots on one file.
-        result = content_of(self.video_result())
-        assert result.media.count(self.VIDEO) == 1
+        responses = {API + "status/900": json_response({"tweet": self._mixed_post()})}
+        result = content_of(
+            driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        )
+        assert len(result.media) == len(set(result.media)) == 2
 
     def _mixed_post(self) -> dict:
         photo = {"type": "photo", "url": "https://pbs.example.test/media/p900.jpg"}
@@ -469,6 +511,12 @@ class TestVideoPosts:
         ]
         assert "(media post)" in body_of(result)  # neither label alone would be true
 
+    def test_a_gif_is_a_silent_loop_and_never_transcribes(self):
+        post = self._mixed_post()
+        responses = {API + "status/900": json_response({"tweet": post})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/ines/status/900", Kind.X))
+        assert isinstance(result, Content)  # pooled like the photo beside it, never parked
+
     def test_a_payload_without_the_union_list_still_pools_both(self):
         # `all` leads, but nothing depends on it: the typed lists carry the
         # same media, and the existing photo fixtures have only those.
@@ -483,9 +531,9 @@ class TestVideoPosts:
             "https://video.example.test/tweet_video/g900.mp4",
         ]
 
-    def test_a_parents_video_joins_the_pool_behind_the_captured_posts(self):
-        # Chain media is pooled, captured post's first — media stage cap and
-        # all. A parent's video is media like any other.
+    def test_a_parents_video_is_the_one_heard_when_the_captured_post_has_none(self):
+        # Chain media is pooled, the captured post's first; the first video
+        # in that order is the transcript's, wherever in the chain it sits.
         parent = json.loads(fixture_text("fxtwitter", "video-800.json"))["tweet"]
         captured = json.loads(fixture_text("fxtwitter", "captured-300.json"))["tweet"]
         captured["replying_to"], captured["replying_to_status"] = "ines", "800"
@@ -493,8 +541,27 @@ class TestVideoPosts:
             API + "status/300": json_response({"tweet": captured}),
             API + "ines/status/800": json_response({"tweet": parent}),
         }
-        result = content_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
-        assert result.media == ["https://pbs.example.test/media/p300.jpg", self.VIDEO]
+        parked = needs_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
+        assert parked.meta["enclosure"] == self.VIDEO
+        assert parked.media == ["https://pbs.example.test/media/p300.jpg"]
+        assert parked.meta["thread_length"] == 2
+
+    def test_the_first_video_is_heard_and_every_other_stays_pooled(self):
+        first = "https://video.example.test/ext_tw_video/801/vid/v801.mp4"
+        second = "https://video.example.test/ext_tw_video/802/vid/v802.mp4"
+        parent = json.loads(fixture_text("fxtwitter", "video-800.json"))["tweet"]
+        captured = json.loads(fixture_text("fxtwitter", "captured-300.json"))["tweet"]
+        captured["replying_to"], captured["replying_to_status"] = "ines", "800"
+        gif = {"type": "gif", "url": "https://video.example.test/tweet_video/g300.mp4"}
+        videos = [gif, {"type": "video", "url": first}, {"type": "video", "url": second}]
+        captured["media"] = {"all": videos}
+        responses = {
+            API + "status/300": json_response({"tweet": captured}),
+            API + "ines/status/800": json_response({"tweet": parent}),
+        }
+        parked = needs_of(driver_for(responses).fetch(make_unit(CAPTURED_URL, Kind.X)))
+        assert parked.meta["enclosure"] == first
+        assert parked.media == [gif["url"], second, self.VIDEO]
 
     def test_a_payload_with_no_media_at_all_still_says_so_honestly(self):
         # The reason survives — it just has to be true when it is said.
