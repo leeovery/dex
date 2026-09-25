@@ -351,3 +351,12 @@ above, this section is the later decision.
   it on another machine" section when there is no GitHub origin (read as
   stored, past any `insteadOf` rewrite), and keeps the template's closing
   line above that section so it survives the drop.
+- **The lens never narrows harvest (owner's ruling, 2026-09-25).** This
+  supersedes the Harvest bullet under "Where the lens acts". A link is
+  chosen before its page is read, so a lens-narrowed harvest throws away
+  what nobody has seen; harvest follows the item's subject exactly as it
+  did before the lens, and the lens may only add a page its angle needs.
+  The lens acts where the item is read: the digest's takeaway (a design
+  dex's digest of a flower site holds its design, not plant facts, as a
+  designer reading it would), the topics and the wiki. The fetched content
+  itself is always kept whole in the enrichment.

@@ -54,8 +54,11 @@ which is the owner's to act on and never a session's repair.
 Sharing something into this instance is the curation: the owner has
 already decided it belongs here, so a session never rejects a share for
 its subject, and a gardening site shared into a design instance is read
-for its design. The lens decides what harvest promotes, which facts a
-digest extracts, how topics break apart and what the wiki writes about.
+for its design. Everything behind a share is fetched and kept whatever the
+lens, and harvest follows the item's subject as fully as it would anywhere
+(the lens may add a page its angle needs, never skip one). The lens
+decides what the item is read for: which facts its digest takes away, how
+topics break apart and what the wiki writes about.
 The only drop is an item whose landed content yields nothing through the
 lens, such as a share into the wrong instance or chatter with nothing in
 it; it goes through `bin/dex exclude` with its reason, and the run report
