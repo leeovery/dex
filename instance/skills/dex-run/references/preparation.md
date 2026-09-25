@@ -1,6 +1,6 @@
 # Preparation
 
-Make the instance current before any other work touches it. Five steps,
+Make the instance current before any other work touches it. Six steps,
 in order:
 
 1. **Anchor.** Confirm the working directory is this instance's root (the
@@ -37,6 +37,12 @@ in order:
      previous run died mid-work`) and proceed — the run's redrain
      re-seeds and retries whatever was half-done, so nothing recovered
      this way is trusted as finished.
+   - **A directive's unfinished work** is never recovered: a dead
+     session's edits to the files a pending directive names (`bin/dex
+     directive list` still names it, and `bin/dex directive show <n>` says
+     which files) are half a judgment nobody checked. When that is all
+     the tree holds, restore it to HEAD exactly as step 5 does when `done`
+     refuses, and step 5 performs the directive again from the start.
    - **A tree left mid-merge** (conflict markers, an unfinished merge in
      git's own state) is the pull procedure's case arriving early:
      resolve it per step 4's file classes, commit, and continue.
@@ -87,7 +93,42 @@ in order:
    Then commit the resolution with a message that says what it merged,
    and continue the run.
 
-5. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
+5. **Directives.** `bin/dex directive list` names the directives the
+   engine ships that this instance has not completed, in the order they
+   run. It reads `state/directives.jsonl` as the pull left it, so a
+   directive another machine already performed is not listed again: act on
+   this list, not on the one in the sync report. A directive is the
+   engine's decision about this instance's own files, written for a run
+   with nobody present, so never ask the owner anything about one and
+   never wait for an answer. For each pending directive, in numeric order:
+
+   - Run `bin/dex directive show <n>` and perform its instructions exactly.
+     Every file they name is yours to edit, `state/config.json` included.
+   - Run `bin/dex directive done <n>`. It runs the directive's check and
+     appends its record to `state/directives.jsonl` only when every
+     condition holds.
+   - Commit the directive's edits and that record together as one commit,
+     `directive <n>: <intent>`. The run's normal push carries it.
+
+   **When `done` refuses**, nothing is recorded and the next run performs
+   the directive again, so leave nothing of this attempt behind: restore
+   the working tree to HEAD with `git reset --hard HEAD`, then remove the
+   files the attempt created with `git clean -fd` (the guard left the tree
+   clean, so every untracked file is the attempt's own, and ignored files
+   such as `cache/` and `.env` are untouched). Residue left in the tree
+   trips the next run's guard. Treat instructions you cannot carry out the
+   same way, without running `done`. Then perform no further directive this
+   run, since a later one may build on the one that failed. A directive the
+   engine shipped that cannot complete is an engine defect: file it with
+   `bin/dex issue` per the "Engine defects" rubric in `processing.md` (this
+   directory), with `"verb": "directive"`, `"expected": "directive <n>
+   completes and passes its own check"` and `"observed": "directive <n> did
+   not complete on this instance"`, worded exactly so, because the same
+   wording on every later run is what dedups the report to one issue. Put
+   what the check reported, in abstract terms, in `steps`, and the concrete
+   detail in `note`. Then continue the run with the inbox.
+
+6. **Inbox.** `bin/dex inbox` — materializes staged binary captures. It
    needs GitHub auth (gh logged in, or GITHUB_TOKEN); if it reports
    missing auth or any FAIL line, stop and report — in an attended
    session, fix it with the owner before continuing; never work around it

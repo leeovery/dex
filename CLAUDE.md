@@ -9,9 +9,9 @@ the engine stays unaware of which ones exist.
 
 - `src/dex_engine/` — the mechanical commands, exposed as entry points in
   `pyproject.toml` (`dex-normalize`, `dex-enrich`, `dex-lint`, `dex-map`,
-  `dex-exclude`, `dex-inbox`, `dex-sync`, `dex-render`, `dex-new`,
-  `dex-issue`, `dex-serve`, `dex-connect`) and run in instances through the `bin/dex` shim
-  (`uvx --from` this repo at the pinned tag):
+  `dex-exclude`, `dex-inbox`, `dex-sync`, `dex-directive`, `dex-render`,
+  `dex-new`, `dex-issue`, `dex-serve`, `dex-connect`) and run in instances
+  through the `bin/dex` shim (`uvx --from` this repo at the pinned tag):
   - `pipeline/` — the ledger-driven core: `types.py` (enums, dataclasses,
     Instance/Config), `ledger.py` (the one serialization boundary),
     `detect.py`, `registry.py` (explicit ordered driver list), `run.py`
@@ -49,6 +49,15 @@ the engine stays unaware of which ones exist.
     never judges relevance; the calling model does the searching.
   - `migrations/` — numbered state migrations, run by sync before anything
     touches state.
+  - `directives/` — numbered directives: judgment work on an instance's
+    own files that a migration may not do. Each is `directive_<n>.py`
+    (its intent and a check that names every unmet condition) with its
+    instructions beside it as `directive_<n>.md`. Sync lists the pending
+    ones, the run session performs them after the pull, `dex-directive
+    done` records each in `state/directives.jsonl` only once its check
+    passes, and `dex-new` records every shipped one as done.
+  - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
+    appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
   - `wikitext.py` — the ONE `[[wikilink]]` extraction (serve's page reads
     and the map compiler share it).
@@ -60,8 +69,8 @@ the engine stays unaware of which ones exist.
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·
-    `exclude.py` · `new.py` · `issue.py` — thin argparse CLIs over injected
-    Instance/Config; zero import-time state anywhere.
+    `exclude.py` · `new.py` · `issue.py` · `directive.py` — thin argparse
+    CLIs over injected Instance/Config; zero import-time state anywhere.
 - `instance/` — the template for a new instance, bundled into the wheel:
   the `dex` shim, `gitattributes`, `dex-contract.md` (the shared instance
   contract, synced to `.claude/dex-contract.md` and imported by every
@@ -148,7 +157,8 @@ the engine stays unaware of which ones exist.
 - **Engine/instance separation.** Instances hold content plus synced
   machinery; every machinery change happens here and reaches instances via
   `bin/dex sync` (pinned: `.dex-engine-pin` is one line, `<tag> <commit>`;
-  Mint cuts releases, sync bumps pins and runs migrations). The shim reads
+  Mint cuts releases, sync bumps pins, runs migrations and lists the
+  directives the run then performs). The shim reads
   the pin beside itself, never from the working directory, and launches by
   the commit: uv never re-resolves a full commit, so a launch skips the
   release lookup a tag costs every time. Nothing is ever fixed by
@@ -326,7 +336,8 @@ that as two executors. Neither weakens an ordinary run.
 - **Corpus or state file shapes**: `instance/skills/dex-run/references/`
   (`schema.md`, `state-formats.md`) is the contract; change it in the same
   commit as the code and skills that read those files — and ship a
-  migration when existing state must move.
+  migration when existing state must move, or a directive when moving it
+  takes judgment a migration is not allowed to exercise.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in

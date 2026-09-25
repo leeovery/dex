@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from dex_engine.directives import DirectiveError, append_done
+from dex_engine.directives import log_path as directives_log
 from dex_engine.migrations import AppliedMigration, log_path, read_applied
 from dex_engine.pipeline.types import Instance, MigrationReport, Skipped
 from dex_engine.sync import (
@@ -24,6 +26,7 @@ from dex_engine.sync import (
     sync,
     write_pin,
 )
+from tests.directives.conftest import make_directive
 
 RUNNING = "0.1.0"
 TODAY = datetime.date(2026, 8, 20)
@@ -436,6 +439,53 @@ class TestMigrationsInTheFlow:
         assert "ledger: 3 line(s) translated" in report
         assert "**Repair with judgment** — 1 skipped" in report
         assert "ledger line 7" in report
+
+
+class TestDirectivesInTheReport:
+    def test_pending_directives_are_listed_with_their_intents(self, inst, template):
+        append_done(directives_log(inst.root), number=1, engine=RUNNING, date=TODAY)
+        shipped = [
+            make_directive(1, intent="done on another machine"),
+            make_directive(2, intent="rehome the scope"),
+            make_directive(3, intent="rewrite the readme"),
+        ]
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(inst, channel, template, migrate=lambda _root: [], shipped=shipped)
+        assert "### Directives pending — 2" in report
+        assert "- **directive 2** — rehome the scope\n- **directive 3** — rewrite the readme" in (
+            report
+        )
+        assert "done on another machine" not in report
+        assert "after its pull" in report
+
+    def test_nothing_pending_is_no_section_at_all(self, inst, template):
+        append_done(directives_log(inst.root), number=1, engine=RUNNING, date=TODAY)
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(
+            inst, channel, template, migrate=lambda _root: [], shipped=[make_directive(1)]
+        )
+        assert "Directives pending" not in report
+
+    def test_an_engine_shipping_nothing_has_no_section(self, inst, template):
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(inst, channel, template, migrate=lambda _root: [], shipped=[])
+        assert "Directives pending" not in report
+
+    def test_the_pending_set_is_read_after_migrations(self, inst, template):
+        def migrate(root: Path):
+            append_done(directives_log(root), number=1, engine=RUNNING, date=TODAY)
+            return []
+
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        report, _ = run(inst, channel, template, migrate=migrate, shipped=[make_directive(1)])
+        assert "Directives pending" not in report
+
+    def test_a_corrupt_directives_log_fails_sync_naming_it(self, inst, template):
+        directives_log(inst.root).parent.mkdir(parents=True)
+        directives_log(inst.root).write_text("{torn\n")
+        channel, _ = make_channel(listing_for("v0.1.0"))
+        with pytest.raises(DirectiveError, match=r"directives\.jsonl:1"):
+            run(inst, channel, template, migrate=lambda _root: [], shipped=[make_directive(1)])
 
 
 class TestTemplateSync:

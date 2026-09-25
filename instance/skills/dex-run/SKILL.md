@@ -17,13 +17,14 @@ instructions apply when its step is reached.
 
 ## Every run
 
-1. **Prepare.** Read `references/preparation.md` now and perform its five
-   steps: anchor → sync → guard → pull → inbox. The invariants: stay
-   inside this instance's root for the whole run and never enter another
-   dex instance; `bin/dex sync` runs before anything else touches state;
-   after sync's commit, a still-dirty tree means a previous run died
-   mid-work — never build on it silently; the reference says how to
-   recover.
+1. **Prepare.** Read `references/preparation.md` now and perform its six
+   steps: anchor → sync → guard → pull → directives → inbox. The
+   invariants: stay inside this instance's root for the whole run and
+   never enter another dex instance; `bin/dex sync` runs before anything
+   else touches state; after sync's commit, a still-dirty tree means a
+   previous run died mid-work — never build on it silently; the reference
+   says how to recover. Pending directives are performed after the pull
+   and before the inbox, in order, each as its own commit.
 
 2. **Process.** Read `references/processing.md` now and perform its three
    steps: items created from every in-scope capture, then `bin/dex enrich
@@ -46,17 +47,18 @@ instructions apply when its step is reached.
    the push is skipped, not passed).
 
 6. **Report.** Close with one report to the owner. Its content is fixed;
-   its form is yours. Cover: what was ingested (full item ids), what was
-   parked and why, what the health check found or why it was not due,
-   any engine defect filed, any config change proposed, and the end
-   state (pushed commit, or clean with nothing to push) — or "nothing to
-   do", which covers every empty section in one line. Shape the rest to
-   the run — prose where there is substance, bullets where there is
-   little — but item ids, URLs, and paths reach the owner whole, never
-   truncated. Report any failure — auth, network, a command — loudly.
-   Never work around a failure by hand; never leave work half-done
-   silently. A scheduled run never asks the owner questions — it acts or
-   it reports.
+   its form is yours. Cover: which directives were performed, which are
+   still pending, and any that failed, with what its check reported; what
+   was ingested (full item ids), what was parked and why, what the health
+   check found or why it was not due, any engine defect filed, any config
+   change proposed, and the end state (pushed commit, or clean with
+   nothing to push) — or "nothing to do", which covers every empty
+   section in one line. Shape the rest to the run — prose where there is
+   substance, bullets where there is little — but item ids, URLs, and
+   paths reach the owner whole, never truncated. Report any failure —
+   auth, network, a command — loudly. Never work around a failure by
+   hand; never leave work half-done silently. A scheduled run never asks
+   the owner questions — it acts or it reports.
 
    While the sync report carries a **Chat connection** line, close with
    it: one last footnote, in your own words, saying this dex is not
@@ -70,7 +72,10 @@ instructions apply when its step is reached.
 - **Never edit `state/config.json`** (or any owner-editable config) in an
   unattended run. A config change is a policy decision; the run's job is
   to surface it: put the proposed change and its rationale in the report,
-  and the owner ratifies it in an attended session.
+  and the owner ratifies it in an attended session. This rule governs
+  the run's own judgment, so it does not apply to a directive: a
+  directive is the engine's decision, not the run's, and has full
+  authority over every file its instructions name.
 - Borderline scope calls are skipped and reported, never guessed
   (details in `references/ingest-item.md`).
 - Cap-fired events (depth/URL caps) are internal — they live in the

@@ -940,6 +940,11 @@ def _capability_provider(surface: str, provider: Mapping[str, object], *, where:
 # this line.
 _CONNECT_DOC = "https://raw.githubusercontent.com/leeovery/dex/main/docs/connect.md"
 
+_DIRECTIVES_WHEN = (
+    "The run performs these after its pull, in this order, working from `bin/dex directive "
+    "list`: another machine may have completed one, and the pull brings its record."
+)
+
 # What sync found about this machine's chat clients, as the offer the session
 # reading it makes. Addressed to that session, not to the owner: the owner is
 # asked a question and never handed a command, and the doc is the session's
@@ -967,7 +972,7 @@ _CONNECT_OFFERS = {
 
 
 def _render_sync_report(payload: Mapping[str, object]) -> str:
-    """Render the sync report: pin state, migrations applied, machinery changes.
+    """Render the sync report: pin state, migrations, pending directives, machinery.
 
     Payload::
 
@@ -985,6 +990,10 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
              "skipped": [{"what": str, "why": str}],  # optional
              "anomalies": [str]}                   # optional
           ],
+          "directives": [             # optional: not yet completed, in the
+             {"number": int,          #   order the run performs them
+              "intent": str}
+          ],
           "machinery_changes": int,   # template files written + retired skills removed
           "connect": [               # optional: one per client with a gap
              {"client": str,         # "desktop" | "code"
@@ -1001,7 +1010,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         surface,
         payload,
         required=frozenset({"migrations", "machinery_changes"}),
-        optional=frozenset({"pin", "previous", "major", "connect", "notes"}),
+        optional=frozenset({"pin", "previous", "major", "directives", "connect", "notes"}),
     )
     pin = _str_at(surface, payload, "pin") if "pin" in payload else None
     previous = _str_at(surface, payload, "previous") if "previous" in payload else None
@@ -1013,6 +1022,7 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
     if major and previous is None:
         _fail(surface, "major requires a pin transition — previous and pin")
     migrations = _obj_list_at(surface, payload, "migrations", required=True)
+    directives = _sync_directives(surface, payload)
     machinery_changes = _int_at(surface, payload, "machinery_changes")
     connect = _sync_connect(surface, payload)
     notes = _str_list_at(surface, payload, "notes")
@@ -1050,11 +1060,32 @@ def _render_sync_report(payload: Mapping[str, object]) -> str:
         ]
     else:
         blocks.append("No migrations to apply — state was already current.")
+    blocks += directives
     blocks += ["", f"{kernel.bold('Machinery changes')} — {machinery_changes}"]
     if connect:
         blocks += ["", *connect]
     blocks += _note_section("Notes", notes)
     return kernel.document(blocks)
+
+
+def _sync_directives(surface: str, payload: Mapping[str, object]) -> list[str]:
+    """The pending directives as a section; nothing at all when none are pending."""
+    rows = _obj_list_at(surface, payload, "directives", required=False)
+    if not rows:
+        return []
+    heading = kernel.heading(f"Directives pending — {len(rows)}", level=3)
+    return ["", heading, "", *_sync_directive_rows(surface, rows), "", _DIRECTIVES_WHEN]
+
+
+def _sync_directive_rows(surface: str, rows: list[Mapping[str, object]]) -> list[str]:
+    lines = []
+    for i, row in enumerate(rows):
+        where = f"directives[{i}]."
+        _check_keys(surface, row, required=frozenset({"number", "intent"}), where=where)
+        number = _int_at(surface, row, "number", where)
+        intent = _str_at(surface, row, "intent", where)
+        lines.append(kernel.bullet(f"{kernel.bold(f'directive {number}')} — {intent}"))
+    return lines
 
 
 def _sync_connect(surface: str, payload: Mapping[str, object]) -> list[str]:

@@ -13,9 +13,10 @@ reference at the step that names it, not before.
    straight to step 2. Standalone, the instance is made current exactly
    as a run makes it current: read
    `.claude/skills/dex-run/references/preparation.md` now and perform its
-   five steps (anchor → sync → guard → pull → inbox), then return here.
-   Preparation only — create no items and run no `bin/dex enrich run`;
-   processing is dex-run's job, and this skill's job is the check.
+   six steps (anchor → sync → guard → pull → directives → inbox), then
+   return here. Preparation only — create no items and run no `bin/dex
+   enrich run`; processing is dex-run's job, and this skill's job is the
+   check.
 
 2. **Report.** `bin/dex lint --write` from the instance root — the
    mechanical report. `--write` reconciles derived wiki frontmatter

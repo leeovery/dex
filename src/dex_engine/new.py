@@ -5,18 +5,21 @@
 Creates ``./<name>``: the directory tree (tracked dirs plus the gitignored
 ``cache/``), seed CLAUDE.md and README.md (both to be personalized), the
 engine-managed machinery (via the same template sync every instance runs),
-git init, and local LFS.
+every shipped directive recorded as done, git init, and local LFS.
 """
 
 import argparse
+import datetime
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
+from .directives import Directive, record_shipped
 from .sync import sync
 from .template import bundled_template
+from .version import engine_version
 
 __all__ = ["EPHEMERAL", "SEEDS", "TREE", "build_parser", "main", "scaffold"]
 
@@ -60,11 +63,14 @@ def _run(args: list[str], cwd: Path) -> None:
     )
 
 
-def scaffold(
+def scaffold(  # noqa: PLR0913 — the seams are the signature: subprocess, template, directives, clocks
     root: Path,
     *,
     run: Callable[[list[str], Path], None] = _run,
     template: Traversable | None = None,
+    shipped: Sequence[Directive] | None = None,
+    today: Callable[[], datetime.date] = datetime.date.today,
+    version: Callable[[], str] = engine_version,
 ) -> list[str]:
     """Build a new instance at ``root``.
 
@@ -74,6 +80,10 @@ def scaffold(
             tests are hermetic.
         template: Template override for tests; ``None`` uses the wheel's
             bundled ``instance/`` tree.
+        shipped: Directive-set override for tests; ``None`` records the
+            engine's own directives as done.
+        today: Injected date clock, for the directive records.
+        version: The running engine's version, for the directive records.
 
     Returns:
         The next-step lines for the operator.
@@ -97,6 +107,7 @@ def scaffold(
     (root / "CLAUDE.md").write_text((template / "CLAUDE.md").read_text(encoding="utf-8"))
     (root / "README.md").write_text((template / "README.md").read_text(encoding="utf-8"))
     sync(root, template=template)
+    record_shipped(root, engine=version(), date=today(), shipped=shipped)
     run(["git", "init", "-q"], root)
     run(["git", "lfs", "install", "--local"], root)
     # The next steps stay neutral on hosting: the GitHub question is the

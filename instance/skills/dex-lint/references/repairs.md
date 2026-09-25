@@ -11,9 +11,10 @@ other repairs need):
   the torn-line sanction below: delete exactly the named line.
 - **Torn state file** — the failure row (or sync's error) names the
   offending file AND line. A torn line in
-  `state/enrichment-ledger.jsonl`, `state/passes.jsonl` or
-  `state/migrations.jsonl` is an interrupted write (it starts trailing,
-  but later appends or a union merge can leave it mid-file), and the
+  `state/enrichment-ledger.jsonl`, `state/passes.jsonl`,
+  `state/migrations.jsonl` or `state/directives.jsonl` is an interrupted
+  write (it starts trailing, but later appends or a union merge can
+  leave it mid-file), and the
   sanctioned repair is deleting exactly the line the row names: a
   half-written line is not a record, so removing it is healing, not
   hand-writing state. The sanction is that narrow — the named TORN line
