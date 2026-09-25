@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-25
+
+🔧 Changed
+- A sync that rewrites CLAUDE.md, the contract, or a skill now ends the run in progress instead of leaving it on stale instructions — the sync report tells you to commit, pull/push, and stop, and the next run continues under the new instructions with nothing needed from you.
+- `lens.md` is no longer imported into CLAUDE.md — it's read as data by the specific steps that judge through it, so a sync that writes it is never mistaken for a session rewriting its own instructions.
+- A directive a run can't complete now says plainly that the next run retries it unattended, asking nothing of the owner — no permission change, no manual command.
+- Lint and the ingest skill now say explicitly to set a rewritten wiki page's `generated:` date to today, since lint never moves an existing date on its own.
+
 ## [0.2.0] - 2026-09-25
 
 ✨ Added
