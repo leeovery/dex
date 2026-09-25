@@ -32,8 +32,16 @@ Accept: application/vnd.github+json
 { "message": "capture", "content": "<base64 of the file, no line wrapping>" }
 ```
 
-- `{name}` — a timestamp, `yyyyMMdd-HHmmss`. Unique per capturer per second,
-  which is all the uniqueness a personal inbox needs.
+- `{name}` — the capture's timestamp, `yyyyMMdd-HHmmss`, optionally followed
+  by `-<suffix>`: a short random run of lowercase letters and digits
+  (`20260917-082604-a3f9`). A name belongs to one capture, and how that
+  holds depends on how the file is delivered:
+  - a client that PUTs through the contents API sends no `sha` — it creates
+    a file, never updates one — so a name already taken fails at GitHub
+    instead of replacing that capture; the suffix is its choice;
+  - a client that commits into a working tree (a session capture, a local
+    tool) must suffix: two machines committing one name meet only at the
+    next pull, as a conflict.
 - The token needs Contents read/write on the instance repo (the same
   fine-grained or classic PAT the shortcut uses).
 - The note — why this was worth saving — goes **in the file body**, never the
@@ -79,7 +87,8 @@ creates it), and the capture file points at it:
    the note
    ```
 
-At the next run, `bin/dex inbox` downloads the asset into `media/<id>/`,
+At the next run, `bin/dex inbox` downloads the asset into `media/<id>/`, the
+id keyed by the asset and never by its file name, which may recur,
 verifies it staged under LFS, deletes the asset, and rewrites the capture's
 frontmatter to `media:` — in that order, so a binary that failed to stage
 never loses its only remote copy. End state: media in LFS, git history

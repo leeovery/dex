@@ -24,10 +24,10 @@ from tests.drivers.conftest import truncating_server
 
 REPO = "owner/instance"
 ASSET_URL = "https://api.github.com/repos/owner/instance/releases/assets/123"
+OTHER_ASSET_URL = "https://api.github.com/repos/owner/instance/releases/assets/456"
 NAME = "20260818-101530.jpg"
 DATA = b"\xff\xd8\xff\xe0 jpeg bytes"
-ITEM_ID = hashlib.sha1(f"media/{NAME}".encode()).hexdigest()[:6]  # noqa: S324 — content key, mirrors inbox
-REL = f"media/{ITEM_ID}/{NAME}"
+REL = f"media/{hashlib.sha1(b'asset/123').hexdigest()[:6]}/{NAME}"  # noqa: S324 — content key, mirrors inbox
 
 RELEASE_URL = f"/repos/{REPO}/releases/tags/inbox"
 
@@ -48,7 +48,7 @@ class FakeGithub:
         self.ops: list[tuple] = []
         self.lines: list[str] = []
         self.downloads = 0
-        self.download_data = DATA
+        self.blobs = {ASSET_URL: DATA}
 
     # -- seams ------------------------------------------------------------
 
@@ -61,10 +61,10 @@ class FakeGithub:
             asset_id = int(url.rsplit("/", 1)[-1])
             self.assets = [a for a in self.assets if a.get("id") != asset_id]
             return 204, None
-        if url == ASSET_URL:
+        if url in self.blobs:
             if self.asset_status != 200:
                 return self.asset_status, None
-            return 200, {"name": NAME, "size": len(self.download_data)}
+            return 200, {"name": NAME, "size": len(self.blobs[url])}
         if url == RELEASE_URL:
             if self.release_status != 200:
                 return self.release_status, None
@@ -75,9 +75,8 @@ class FakeGithub:
 
     def download(self, url, token):
         assert token
-        assert url == ASSET_URL
         self.downloads += 1
-        return self.download_data
+        return self.blobs[url]
 
     def git(self, args):
         self.git_calls.append(list(args))
@@ -161,7 +160,7 @@ class TestMaterialize:
 
     def test_document_capture_notes_extraction_routing(self, instance):
         gh = FakeGithub()
-        gh.download_data = fixture_bytes("report.docx")
+        gh.blobs[ASSET_URL] = fixture_bytes("report.docx")
         write_capture(instance)
         reconcile(instance, gh.seams())
         assert "document — queues for extraction" in gh.out
@@ -236,6 +235,18 @@ class TestMaterialize:
         assert reconcile(instance, gh.seams()) == 0
         assert gh.downloads == 0
 
+    def test_an_existing_file_of_another_size_is_fetched_again(self, instance):
+        # A clone without the LFS smudge holds the pointer text where the
+        # bytes belong: the asset is still staged, so its bytes come back.
+        write_capture(instance)
+        dest = instance.root / REL
+        dest.parent.mkdir(parents=True)
+        dest.write_text(f"version https://git-lfs.github.com/spec/v1\nsize {len(DATA)}\n")
+        gh = FakeGithub()
+        assert reconcile(instance, gh.seams()) == 0
+        assert gh.downloads == 1
+        assert dest.read_bytes() == DATA
+
     def test_one_bad_capture_never_aborts_the_loop(self, instance):
         write_capture(instance, "20260818-000001.md", asset="https://evil.example/a/1")
         write_capture(instance, "20260818-000002.md")
@@ -278,6 +289,40 @@ class TestMaterialize:
         assert reconcile(instance, seams) == 1
         assert "did not stage as an LFS pointer" in gh.out
         assert gh.deleted == []
+
+
+class TestMediaDirectory:
+    """A staged file is filed under its asset, never under its file name."""
+
+    @pytest.mark.parametrize(
+        "second",
+        [b"\xff\xd8\xff\xe0 JPEG BYTES", DATA + b" and then some"],
+        ids=["same size", "other size"],
+    )
+    def test_one_file_name_staged_twice_keeps_both_files(self, instance, second):
+        first = write_capture(instance, "20260818-101530.md")
+        other = write_capture(instance, "20260818-101531.md", asset=OTHER_ASSET_URL)
+        gh = FakeGithub()
+        gh.blobs[OTHER_ASSET_URL] = second
+        assert reconcile(instance, gh.seams()) == 0
+        pointers = [parse_capture(capture.read_text())[0]["media"] for capture in (first, other)]
+        assert pointers[0] != pointers[1]
+        assert [(instance.root / pointer).read_bytes() for pointer in pointers] == [DATA, second]
+        assert gh.downloads == 2
+        assert sorted(gh.deleted) == [ASSET_URL, OTHER_ASSET_URL]
+
+    def test_media_filed_by_its_name_before_is_never_touched(self, instance):
+        # No migration moves media filed under the old name key: a capture
+        # staging that same name now lands beside it, and leaves it be.
+        earlier = instance.root / "media" / hashlib.sha1(f"media/{NAME}".encode()).hexdigest()[:6]  # noqa: S324 — the key before assets
+        earlier.mkdir(parents=True)
+        (earlier / NAME).write_bytes(b"an earlier capture")
+        capture = write_capture(instance)
+        gh = FakeGithub()
+        assert reconcile(instance, gh.seams()) == 0
+        assert (earlier / NAME).read_bytes() == b"an earlier capture"
+        assert parse_capture(capture.read_text())[0] == {"media": REL}
+        assert (instance.root / REL).read_bytes() == DATA
 
 
 class TestReconcileModes:

@@ -17,21 +17,29 @@ given a link, file, or note.
 
 ## Procedure
 
-1. **Write the capture file**: `inbox/<yyyyMMdd-HHmmss>.md` (the current
-   timestamp — unique per capturer per second, all the uniqueness a
-   personal inbox needs). Body = the captured URL and/or the owner's note,
-   exactly as given — URL on the first line, note after, nothing else. The
-   note is often the most valuable part; never trim or paraphrase it. Do
-   not create a corpus item, fetch anything or judge the content: all of
-   that is processing.
+1. **Write the capture file**: `inbox/<yyyyMMdd-HHmmss>-<suffix>.md` — the
+   current timestamp, then four random lowercase hex digits drawn with
+   `od -An -N2 -tx1 /dev/urandom | tr -d ' \n'`, e.g.
+   `inbox/20260818-101530-a3f9.md`. The suffix is not optional: this
+   capture is committed from a working tree, and a same-second capture
+   from anywhere else (the phone's names carry none) would meet it at the
+   next pull as a conflict. Draw the digits with the command, never make
+   them up — digits a session picks come out the same every time. A name
+   already taken draws again; never overwrite a capture. Body = the
+   captured URL and/or the owner's note, exactly as given — URL on the
+   first line, note after, nothing else. The note is often the most
+   valuable part; never trim or paraphrase it. Do not create a corpus
+   item, fetch anything or judge the content: all of that is processing.
 
 2. **A binary in hand** (an image, PDF, any file dropped into the
-   session): file it as `bin/dex inbox` would have —
+   session): file it the way `bin/dex inbox` files a staged one —
    - Path `media/<item-id>/<name>` where
-     `item-id = sha1("media/<name>")[:6]`.
-   - If `media/<item-id>/` already exists for a *different* file (generic
-     names like `screenshot.png` collide), rename yours first — prefix
-     today's date — so ids stay one-to-one with files.
+     `item-id = sha1("inbox/<capture file>")[:6]`, the capture file being
+     step 1's (`sha1("inbox/20260818-101530-a3f9.md")`). The key is the
+     capture, never the file's name: names like `screenshot.png` recur,
+     and a directory is one capture's alone.
+   - If `media/<item-id>/` already exists, draw a new suffix for the
+     capture file and key again.
    - `git add` the file and verify it staged as an LFS pointer
      (`git cat-file -p :media/<item-id>/<name>` starts with
      `version https://git-lfs`). If it did not, stop and report — a raw
@@ -57,6 +65,6 @@ given a link, file, or note.
 
 4. **Confirm and stop.** One line: what was captured and that it is on the
    remote (or committed, on a local-only instance), e.g. `captured
-   inbox/20260818-101530.md — processed on the next run`. Do not process,
+   inbox/20260818-101530-a3f9.md — processed on the next run`. Do not process,
    enrich, digest, or touch the wiki. The next dex-run session (scheduled,
    or asked for) picks it up.
