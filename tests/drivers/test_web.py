@@ -558,14 +558,32 @@ class TestMarkdownAlternate:
             '{"message": "Not Found", "detail": "' + "x" * 700 + '"}',
             "[" + ", ".join(['{"title": "a post"}'] * 40) + "]",
             '<?xml version="1.0"?><rss><channel>' + "<item>a post</item>" * 40 + "</channel></rss>",
+            "<rss><channel>" + "<item>a post</item>" * 40 + "</channel></rss>",
+            '﻿\n  <FEED xmlns="http://www.w3.org/2005/Atom">'
+            + "<entry>a post</entry>" * 40
+            + "</FEED>",
         ],
-        ids=["json-object", "json-array", "xml-feed"],
+        ids=["json-object", "json-array", "xml-feed", "bare-rss", "atom-feed-after-bom"],
     )
     def test_a_document_labelled_plain_text_is_not_the_source(self, body):
         # An API error or a feed served under a text label: the bytes say what it is.
         answer = HttpResponse(status=200, content_type="text/plain", body=body.encode())
         result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
         assert result.body == substantial_extract("")
+
+    @pytest.mark.parametrize(
+        "lead",
+        [
+            "[![CI](https://ci.example.test/badge.svg)](https://ci.example.test/runs)",
+            "{/* generated from the component library — edit the source, not this page */}",
+        ],
+        ids=["badge", "mdx-comment"],
+    )
+    def test_markdown_opening_like_json_is_still_the_source(self, lead):
+        # A badge line and an MDX comment open with `[` and `{`, and neither parses as JSON.
+        source = f"{lead}\n\n{SOURCE}"
+        result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
+        assert result.body == source.strip()
 
     @pytest.mark.parametrize(
         "body",

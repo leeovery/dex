@@ -94,7 +94,9 @@ of the corpus's own resolution: the stored ``item`` where its corpus file
 still exists, else the live item that claims the unit — a harvested page
 through its parent chain, since no frontmatter lists it. A unit nothing
 live claims is a purge honored on the record: skipped with why, naming
-the ``state/exclusions.tsv`` entry where one exists.
+the ``state/exclusions.tsv`` entry where one exists. Only a member is
+reported, so an unclaimed unit whose file still stands is judged first,
+and an abstract-only paper costs no line.
 
 Idempotent: a seeded unit's live line is the queued seed until the
 drain takes it, and whatever the drain then writes — a landing, or a
@@ -213,11 +215,9 @@ class ArticleSeamRerun:
         exclusions = _exclusions(root)
         seeds: list[tuple[LedgerEntry, str]] = []
         for entry in candidates:
-            # Unclaimed first: an excluded item's enrichment is deleted with
-            # it, and a missing file must not read as work to requeue by hand.
             item = _live_item(entry, root=root, owners=owners)
             if item is None:
-                skipped.append(_unclaimed(entry, exclusions))
+                _report_unclaimed(root, entry, exclusions, skipped, anomalies)
             elif _went_through_seam(root, entry, item, skipped, anomalies):
                 seeds.append((entry, item))
         for entry, item in seeds:
@@ -291,6 +291,32 @@ def _went_through_seam(
     return _ARXIV_ID_FIELD not in fields or fields.get(_NOTE_FIELD) != _ABSTRACT_ONLY
 
 
+def _report_unclaimed(
+    root: Path,
+    entry: LedgerEntry,
+    exclusions: Mapping[str, str],
+    skipped: list[Skipped],
+    anomalies: list[str],
+) -> None:
+    """Say why a candidate nothing claims was not requeued, when it would have been.
+
+    An excluded item says so whatever it held: ``dex exclude`` deletes its
+    enrichment with it, and a missing file must not read as work to requeue
+    by hand. Otherwise a unit whose file still stands where it was recorded
+    is judged first, so an abstract-only paper nothing claims costs no line;
+    a unit with no file left to judge is reported unclaimed.
+    """
+    judged = entry.item not in exclusions and entry.path is not None and _stands(root, entry.path)
+    if judged and not _went_through_seam(root, entry, entry.item, skipped, anomalies):
+        return
+    skipped.append(_unclaimed(entry, exclusions))
+
+
+def _stands(root: Path, repo_path: str) -> bool:
+    file = resolve_repo_path(root, repo_path)
+    return file is not None and file.is_file()
+
+
 def _stored_file(root: Path, entry: LedgerEntry, item: str) -> tuple[str, Path] | None:
     """The landing's stored file: at its recorded path, else under the live item.
 
@@ -302,11 +328,8 @@ def _stored_file(root: Path, entry: LedgerEntry, item: str) -> tuple[str, Path] 
     """
     named = f"enrichment/{item}/{entry.kind.value}-{entry.hash[:6]}.md"
     for repo_path in (entry.path, named):
-        if repo_path is None:
-            continue
-        file = resolve_repo_path(root, repo_path)
-        if file is not None and file.is_file():
-            return repo_path, file
+        if repo_path is not None and _stands(root, repo_path):
+            return repo_path, root / repo_path
     return None
 
 

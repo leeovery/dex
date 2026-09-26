@@ -578,6 +578,43 @@ class TestOwnership:
         assert "excluded on the record (state/exclusions.tsv: off-topic for this dex)" in skip.why
         assert "enrich mark" not in skip.why
 
+    def test_an_excluded_item_is_named_whatever_its_file_holds(self, tmp_path, migration):
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=ABSTRACT_ONLY)
+        (tmp_path / "state" / "exclusions.tsv").write_text(f"{ITEM}\toff-topic for this dex\n")
+        (skip,) = migration.apply(tmp_path).skipped
+        assert "excluded on the record" in skip.why
+
+    def test_an_unclaimed_abstract_only_paper_costs_no_report_line(self, tmp_path, migration):
+        # Its file still stands, so it is judged first: the seam never read it.
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=ABSTRACT_ONLY)
+        report = migration.apply(tmp_path)
+        assert (report.actions, report.skipped, report.anomalies) == ([], [], [])
+
+    def test_an_unclaimed_full_text_paper_is_reported_unclaimed(self, tmp_path, migration):
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=FULL_TEXT)
+        report = migration.apply(tmp_path)
+        assert seeds(tmp_path) == []
+        (skip,) = report.skipped
+        assert skip.what == f"article-seam rerun for {ITEM}"
+        assert f"no live corpus item claims {PAPER_URL}" in skip.why
+
+    def test_an_unclaimed_papers_unreadable_file_is_an_anomaly(self, tmp_path, migration):
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=FULL_TEXT).write_text("---\nunterminated\n")
+        report = migration.apply(tmp_path)
+        assert report.skipped == []
+        (anomaly,) = report.anomalies
+        assert PAPER_URL in anomaly
+
+    def test_an_unclaimed_paper_with_no_file_left_is_reported_unclaimed(self, tmp_path, migration):
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        (skip,) = migration.apply(tmp_path).skipped
+        assert skip.what == f"article-seam rerun for {ITEM}"
+        assert f"no live corpus item claims {PAPER_URL}" in skip.why
+
     def test_a_purged_item_is_never_requeued(self, tmp_path, migration):
         write_ledger(tmp_path, unit())
         (tmp_path / "state" / "exclusions.tsv").write_text(f"{ITEM}\toff-topic for this dex\n")

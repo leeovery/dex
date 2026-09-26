@@ -169,6 +169,7 @@ _LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))""")
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
+_FEED_LEADS = (b"<rss", b"<feed")
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -648,7 +649,7 @@ def _markdown_text(response: HttpResponse) -> str | None:
     """
     if response.content_type not in _MARKDOWN_ANSWER_TYPES:
         return None
-    if sniff_document(response.body) is not None or sniff_format(response.body) is not None:
+    if _is_another_document(response.body) or sniff_format(response.body) is not None:
         return None
     if sniff_media_ext(response.body, signatures_only=True) is not None:
         return None
@@ -656,6 +657,26 @@ def _markdown_text(response: HttpResponse) -> str | None:
         return response.body.decode("utf-8")
     except UnicodeDecodeError:
         return None
+
+
+def _is_another_document(body: bytes) -> bool:
+    """Whether a text body is really HTML, XML, a feed or JSON — not markdown.
+
+    ``sniff_document`` names HTML and XML by their openings, but it calls
+    anything opening ``[`` or ``{`` JSON, and markdown opens that way too:
+    a badge line, an MDX comment. So JSON counts only when the body parses
+    as JSON, and a feed is also known by its own root element, which it may
+    open with and no prolog.
+    """
+    shape = sniff_document(body)
+    if shape == "JSON":
+        try:
+            json.loads(body)
+        except ValueError:
+            return False
+        return True
+    lead = body.removeprefix(b"\xef\xbb\xbf").lstrip()[:5].lower()
+    return shape is not None or lead.startswith(_FEED_LEADS)
 
 
 def _markdown_alternate_url(html: str, base_url: str) -> str | None:
