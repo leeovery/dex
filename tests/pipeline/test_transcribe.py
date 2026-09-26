@@ -24,7 +24,7 @@ from dex_engine.pipeline.classify import (
     ProviderInputError,
     ProviderUnavailableError,
 )
-from dex_engine.pipeline.enrichment import read_enrichment
+from dex_engine.pipeline.enrichment import pre_transcript, read_enrichment
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
@@ -221,11 +221,12 @@ class TestYoutubeDrain:
 
     def test_a_rerun_through_the_driver_keeps_the_transcript_the_drain_wrote(self, instance):
         # End to end: the driver parks, the drain transcribes, and a rerun's
-        # driver parks again — without the keep, over the transcript.
+        # driver parks again — without the keep, over the transcript. The
+        # re-probe's own meta lands, with the transcript and its stamps.
         park = self._park_through_the_driver(instance)
         words = FakeTranscriber("whisper-local", text="The transcript text.", model="medium")
         run_mod.run_transcribe(transcribe_ctx(instance, transcriber=words))
-        transcribed = park.read_bytes()
+        description = pre_transcript(*read_enrichment(park))
         done = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
         ledger.append(
             instance.ledger_path,
@@ -235,8 +236,10 @@ class TestYoutubeDrain:
         driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
         report = run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
         entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
-        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
-        assert park.read_bytes() == transcribed
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, info["title"])
+        fields, body = read_enrichment(park)
+        assert (fields["via"], fields["model"]) == ("whisper-local", "medium")
+        assert body == f"{description}\n\n## Transcript\n\nThe transcript text."
         assert "kept the stored transcript" in report
 
     def test_a_re_drain_never_duplicates_the_transcript(self, instance):

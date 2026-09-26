@@ -53,12 +53,14 @@ from .detect import (
     sniff_media_ext,
 )
 from .enrichment import (
-    holds_transcript,
+    description_text,
     instagram_body,
     mask_fetched,
     podcast_body,
     read_enrichment,
     render_enrichment,
+    split_transcript,
+    transcript_provenance,
     youtube_body,
 )
 from .ownership import unit_owners
@@ -71,6 +73,8 @@ from .transcribe import (
     acquire_youtube_audio,
 )
 from .types import (
+    OUTSTANDING,
+    PARKED,
     Availability,
     Cap,
     Config,
@@ -167,11 +171,6 @@ MEDIA_MAX_BYTES = 10 * 1024 * 1024
 # Bumped when the harvest rules change; recorded in passes.jsonl.
 HARVEST_RULES_VERSION = 1
 
-_PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
-# Work still owed on an item: queued and every parked status. Its complement
-# — done, dead, skipped — is a unit that has landed, is confirmed gone, or
-# was deliberately closed out; none of the three is owed anything further.
-_OUTSTANDING = _PARKED | {Status.QUEUED}
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
 # How much of a rejected pass id the error repeats: enough to recognize a
@@ -1164,21 +1163,7 @@ class _Drain:
         meta = dict(acquired.meta)
         meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
-        # Total over the transcribable kinds, mirroring _acquire_audio — a
-        # kind added to acquisition alone must fail loudly here, never
-        # silently take the podcast body.
-        match entry.kind:
-            case Kind.YOUTUBE:
-                body = youtube_body(acquired.prefix, transcript)
-            case Kind.PODCAST:
-                body = podcast_body(acquired.prefix, transcript)
-            case Kind.INSTAGRAM:
-                body = instagram_body(acquired.prefix, transcript)
-            case _:
-                raise RuntimeError(
-                    f"no transcript body for kind '{entry.kind}' — _acquire_audio "
-                    "and the body dispatch must cover the same kinds"
-                )
+        body = _transcript_body(entry.kind, acquired.prefix, transcript)
         path = self._write_output(entry, meta, body)
         # A unit corrected to a transcribable kind (web → podcast) lands its
         # own output HERE, never through _apply_done — the pre-correction
@@ -1362,29 +1347,36 @@ class _Drain:
         self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
 
     def _kept_transcript(self, entry: LedgerEntry, needs: NeedsCapability) -> bool:
-        """Keep a rerun's stored transcript rather than park over it.
+        """Land a rerun's re-fetch over its stored transcript rather than park.
 
         A transcribable unit's fetch parks for its transcription, and the
-        park is written over the unit's file before the transcription is
+        park was written over the unit's file before the transcription was
         redone: a rerun traded the transcript for the notes around it, and
         a transcription that then failed — the video or the episode gone,
-        the provider down, the audio silent — lost the transcript for good.
-        A stored file that holds none (a park, or a landing from before the
-        unit transcribed) parks as ever.
+        the provider down, the audio silent — lost it for good. So the
+        re-fetch lands what a fresh share would hold: its own notes and
+        meta, composed with the stored transcript and that transcript's
+        provenance, counted rewritten or unchanged like any landing. A
+        stored file that holds no transcript (a park, or a landing from
+        before the unit transcribed) parks as ever.
         """
         if needs.need is not Need.TRANSCRIBE or not entry.rerun:
             return False
         stored = self._stored_output(entry)
-        if stored is None or not holds_transcript(stored.fields, stored.body):
+        split = None if stored is None else split_transcript(stored.fields, stored.body)
+        if stored is None or split is None:
             return False
-        self._keep_stored(
-            entry,
-            stored,
-            note=(
-                f"kept the stored transcript of {entry.url}: the re-fetch parked it for "
-                f"transcription again ({needs.reason}) — delete {stored.path} first to "
-                "re-transcribe"
-            ),
+        meta = {**needs.meta, **transcript_provenance(stored.fields)}
+        notes = _park_notes(entry.kind, needs.body)
+        path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
+        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        title = meta.get("title")
+        self.record_outcome(
+            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
+        )
+        self.notes.append(
+            f"kept the stored transcript of {entry.url} under its re-fetched notes "
+            f"({needs.reason}) — delete {path} first to transcribe it afresh"
         )
         return True
 
@@ -1990,7 +1982,7 @@ class _Drain:
             self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
         return self._outputs
 
-    def _owed(self) -> set[str]:
+    def owed(self) -> set[str]:
         """The units still owed work (:func:`_owed_units`), off this run's maps."""
         return _owed_units(self.ctx.instance, self.entries, self.owners, self._landings())
 
@@ -2042,7 +2034,7 @@ class _Drain:
         if count:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
-        if count and stamped.status in _PARKED:
+        if count and stamped.status in PARKED:
             self.parked.append(
                 _parked_row(
                     stamped,
@@ -2133,7 +2125,7 @@ class _Drain:
         write-only-on-change rule keeps untouched items untouched.
         """
         self.resolve_owners()  # this run's children exist now, and want owners
-        owed = self._owed()
+        owed = self.owed()
         for item_id, path in self.item_paths.items():
             detail = refresh_item_frontmatter(
                 self.ctx.instance,
@@ -2276,7 +2268,7 @@ class _Drain:
         off the same two answers.
         """
         rows: list[dict[str, object]] = []
-        owed = self._owed()
+        owed = self.owed()
         for item_id in sorted(self.touched):
             units = [
                 entry
@@ -2398,6 +2390,39 @@ def _parked_row(
         elif cognitive:
             row["cognitive"] = True
     return row
+
+
+def _transcript_body(kind: Kind, notes: str, transcript: str) -> str:
+    """A transcribable unit's body: the transcript composed onto its notes, per kind.
+
+    Total over the transcribable kinds, mirroring _acquire_audio — a kind
+    added to acquisition alone must fail loudly here, never silently take
+    the podcast body.
+    """
+    match kind:
+        case Kind.YOUTUBE:
+            return youtube_body(notes, transcript)
+        case Kind.PODCAST:
+            return podcast_body(notes, transcript)
+        case Kind.INSTAGRAM:
+            return instagram_body(notes, transcript)
+        case _:
+            raise RuntimeError(
+                f"no transcript body for kind '{kind}' — _acquire_audio "
+                "and the body dispatch must cover the same kinds"
+            )
+
+
+def _park_notes(kind: Kind, body: str | None) -> str:
+    """The notes a transcribe park's body carries, as :func:`_transcript_body` takes them.
+
+    A youtube park writes its description as a section of its own, and
+    :func:`youtube_body` frames the bare text again — exactly as the drain
+    reads a stored park back.
+    """
+    if body is None:
+        return ""
+    return description_text(body) if kind is Kind.YOUTUBE else body
 
 
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
@@ -2608,7 +2633,7 @@ def _owed_units(
     return {
         entry.hash
         for entry in entries.values()
-        if entry.status in _OUTSTANDING
+        if entry.status in OUTSTANDING
         and not _stands_on_its_landing(instance, entry, owners, landings)
     }
 
@@ -2970,7 +2995,7 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
             cognitive=is_cognitive_park(entry, ctx),
         )
         for entry in entries.values()
-        if entry.status in _PARKED
+        if entry.status in PARKED
     ]
     rows.sort(key=lambda row: (str(row["item"]), str(row["url"])))
     return rows
@@ -3588,8 +3613,11 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     # line names: a shared URL completes two items at once, and a renamed
     # item's line names an id with no file to refresh at all.
     drain.resolve_owners()
+    owed = drain.owed()
     for item_id in drain.owners.get(prior.hash, (prior.item,)):
-        refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
+        refresh_item_frontmatter(
+            ctx.instance, item_id, entries=drain.entries, owners=drain.owners, owed=owed
+        )
     drain.close_ledger()
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 

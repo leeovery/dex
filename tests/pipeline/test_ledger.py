@@ -14,7 +14,17 @@ from hypothesis import strategies as st
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.ledger import LedgerSchemaError
-from dex_engine.pipeline.types import Cap, Format, Instance, Job, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import (
+    OUTSTANDING,
+    Cap,
+    Format,
+    Instance,
+    Job,
+    Kind,
+    LedgerEntry,
+    Need,
+    Status,
+)
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import ITEM, URL, make_ctx, write_item
@@ -483,6 +493,8 @@ class TestABackwardsClock:
 
 
 class TestLoadAppendCompact:
+    MEDIA = "enrichment/i/media-0.jpg"
+
     def test_missing_file_is_an_empty_ledger(self, instance: Instance):
         assert ledger.load(instance.ledger_path) == {}
 
@@ -558,6 +570,63 @@ class TestLoadAppendCompact:
         assert ledger.load(instance.ledger_path) == {BASE_ENTRY.hash: requeued}
         assert ledger.latest_outputs(instance.ledger_path) == {BASE_ENTRY.hash: landed}
         assert ledger.compact(instance.ledger_path) == 0
+
+    @pytest.mark.parametrize(
+        "closed",
+        [
+            entry(status=Status.SKIPPED, reason="retired"),
+            entry(status=Status.DEAD, reason="HTTP 404"),
+            entry(status=Status.DONE),
+        ],
+        ids=["skipped", "dead", "done-without-a-path"],
+    )
+    def test_a_closed_units_landing_goes_at_compact(self, instance: Instance, closed):
+        # A unit closed out holds its landing to nothing: kept, a retired
+        # video child's line would reserve its media slot forever.
+        ledger.append(instance.ledger_path, entry(status=Status.DONE, path=self.MEDIA))
+        ledger.append(instance.ledger_path, closed)
+        assert ledger.compact(instance.ledger_path) == 1
+        assert ledger.latest_outputs(instance.ledger_path) == {}
+
+    @pytest.mark.parametrize(
+        ("landed_at", "live_at", "kept"),
+        [
+            (None, None, True),
+            (None, AT, True),
+            (AT, AT, True),
+            (AT - datetime.timedelta(hours=1), AT, True),
+            # A stamp at the very edge of the skew allowance is trusted.
+            (AT, AT + ledger.FUTURE_SKEW_ALLOWANCE, True),
+            # Written from a clock running ahead: read as unstamped now, it
+            # outranks the queued line once the clock catches up.
+            (AT + datetime.timedelta(hours=1), AT, False),
+            # A live line that is itself still future-dated is trusted only
+            # later than the landing ahead of it would be.
+            (AT + datetime.timedelta(hours=1), AT + datetime.timedelta(hours=2), False),
+        ],
+        ids=[
+            "unstamped",
+            "unstamped-landing",
+            "same-instant",
+            "earlier",
+            "live-at-the-skew-edge",
+            "future",
+            "both-ahead",
+        ],
+    )
+    def test_a_landing_is_kept_only_where_it_can_never_outrank_the_live_line(
+        self, instance: Instance, landed_at, live_at, kept
+    ):
+        landing = entry(status=Status.DONE, path=self.MEDIA, at=landed_at)
+        requeued = entry(rerun=True, at=live_at)
+        for e in (landing, requeued):
+            ledger.append(instance.ledger_path, e)
+        assert ledger.load(instance.ledger_path, now=lambda: AT) == {BASE_ENTRY.hash: requeued}
+        ledger.compact(instance.ledger_path, now=lambda: AT)
+        later = AT + datetime.timedelta(days=1)
+        assert ledger.load(instance.ledger_path, now=lambda: later) == {BASE_ENTRY.hash: requeued}
+        outputs = ledger.latest_outputs(instance.ledger_path, now=lambda: AT)
+        assert outputs == ({BASE_ENTRY.hash: landing} if kept else {})
 
     def test_compact_drops_the_old_landing_once_the_unit_lands_again(self, instance: Instance):
         relanded = entry(status=Status.DONE, path="enrichment/i/web-73bd78.md", rerun=True)
@@ -869,15 +938,24 @@ def test_compact_preserves_latest_per_hash_and_round_trips(
         if e.path is not None and (e.hash not in landing or key >= landing[e.hash]):
             landed[e.hash] = e
             landing[e.hash] = key
-    # A live line naming no output keeps the landing before it beside it.
-    kept = len(expected) + sum(
-        1 for unit_hash, live in expected.items() if live.path is None and unit_hash in landed
-    )
+    # An owed live line keeps the landing before it beside it. Every stamp
+    # drawn is in the past, so a landing losing to its live line now can
+    # never outrank it later.
+    kept_landings = {
+        unit_hash
+        for unit_hash, live in expected.items()
+        if unit_hash in landed and live.path is None and live.status in OUTSTANDING
+    }
+    kept = len(expected) + len(kept_landings)
     assert ledger.load(path) == expected
     removed = ledger.compact(path)
     assert removed == len(sequence) - kept
     assert ledger.load(path) == expected
-    assert ledger.latest_outputs(path) == landed
+    assert ledger.latest_outputs(path) == {
+        unit_hash: landing
+        for unit_hash, landing in landed.items()
+        if unit_hash in kept_landings or expected[unit_hash].path is not None
+    }
     if sequence:
         # Count records by "\n" alone — a JSON string field may legally hold
         # unicode line separators, which str.splitlines() would miscount.

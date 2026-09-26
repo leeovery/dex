@@ -32,6 +32,7 @@ from dex_engine.pipeline.digest import item_digest
 from dex_engine.pipeline.enrichment import (
     TRANSCRIPT_HEADING,
     _yaml_value,
+    description_section,
     instagram_body,
     podcast_body,
     read_enrichment,
@@ -1741,31 +1742,27 @@ class TestARerunOnItsLandingOwesNothing:
 
 
 # What the transcribe drain stamps on every transcript it composes.
-TRANSCRIBER_STAMP = {"title": "t", "via": "whisper-local", "model": "base"}
+TRANSCRIBER_STAMP: dict[str, str | int | None] = {
+    "title": "t",
+    "via": "whisper-local",
+    "model": "base",
+}
 
-# Every kind whose driver parks for transcription, with a body shaped as the
-# transcribe drain composes it for that kind.
+# Every kind the drain transcribes: how its transcript body is composed, and
+# how its driver's park writes the notes the transcript follows.
 TRANSCRIBED = pytest.mark.parametrize(
-    ("kind", "transcribed"),
+    ("kind", "compose", "park_body"),
     [
-        (Kind.YOUTUBE, youtube_body("the description", "the words")),
-        (Kind.PODCAST, podcast_body("the show notes", "the words")),
-        (Kind.INSTAGRAM, instagram_body("the caption", "the words")),
-        (Kind.X, f"the post\n\n{TRANSCRIPT_HEADING}\n\nthe words"),
+        (Kind.YOUTUBE, youtube_body, description_section),
+        (Kind.PODCAST, podcast_body, str),
+        (Kind.INSTAGRAM, instagram_body, str),
     ],
-    ids=["youtube", "podcast", "instagram", "x"],
+    ids=["youtube", "podcast", "instagram"],
 )
 
 
 class TestRerunKeepsItsTranscript:
     """A rerun that parks for transcription again never parks over its transcript."""
-
-    PARK = NeedsCapability(
-        need=Need.TRANSCRIBE,
-        meta={"title": "t"},
-        body="the notes, fetched again",
-        reason="no captions available",
-    )
 
     def land(self, instance: Instance, kind: Kind, meta: dict, body: str) -> LedgerEntry:
         """Land the unit through the engine's writer, then seed it as a rerun."""
@@ -1777,25 +1774,115 @@ class TestRerunKeepsItsTranscript:
         TestRerun.seed_rerun(ctx)
         return done
 
-    def reparked(self, instance: Instance, kind: Kind, park: NeedsCapability = PARK) -> str:
+    def park(self, body: str | None, *, title: str = "t", media=()) -> NeedsCapability:
+        return NeedsCapability(
+            need=Need.TRANSCRIBE,
+            meta={"title": title},
+            body=body,
+            media=list(media),
+            reason="no captions available",
+        )
+
+    def reparked(self, instance: Instance, kind: Kind, park: NeedsCapability) -> str:
         return run_mod.run(make_ctx(instance, FakeDriver(kind, fetch_fn=lambda _unit: park)))
 
+    def live(self, instance: Instance) -> LedgerEntry:
+        return entry_for(make_ctx(instance, FakeDriver()))
+
     @TRANSCRIBED
-    def test_a_rerun_keeps_its_transcript(self, instance, kind, transcribed):
-        # The park was written over the file before transcription was
-        # redone, and a transcription that then failed lost the transcript.
-        done = self.land(instance, kind, TRANSCRIBER_STAMP, transcribed)
-        out = instance.root / str(done.path)
-        before = out.read_bytes()
-        report = self.reparked(instance, kind)
-        entry = entry_for(make_ctx(instance, FakeDriver()))
-        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
-        assert out.read_bytes() == before
+    def test_a_rerun_lands_its_refetched_notes_over_the_stored_transcript(
+        self, instance, kind, compose, park_body
+    ):
+        # The park was written over the file before transcription was redone,
+        # and a transcription that then failed lost the transcript; keeping
+        # the stale file instead would bar every change to the notes around
+        # it. The re-fetch lands what a fresh share would hold.
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        report = self.reparked(instance, kind, self.park(park_body("new notes"), title="t2"))
+        entry = self.live(instance)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, "t2")
+        fields, body = read_enrichment(instance.root / str(done.path))
+        assert body == compose("new notes", "the words")
+        assert (fields["title"], fields["via"], fields["model"]) == ("t2", "whisper-local", "base")
+        assert "1 rewritten" in report
         assert (
-            f"kept the stored transcript of {URL}: the re-fetch parked it for transcription "
-            f"again (no captions available) — delete {done.path} first to re-transcribe"
+            f"kept the stored transcript of {URL} under its re-fetched notes (no captions "
+            f"available) — delete {done.path} first to transcribe it afresh"
         ) in report
+
+    @TRANSCRIBED
+    def test_an_unchanged_rerun_is_already_stored(self, instance, kind, compose, park_body):
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        report = self.reparked(instance, kind, self.park(park_body("old notes")))
+        assert self.live(instance).status is Status.DONE
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
         assert "Already stored — 1 unit" in report
+        assert "rewritten" not in report
+
+    @TRANSCRIBED
+    def test_a_rerun_with_no_notes_lands_the_bare_transcript(
+        self,
+        instance,
+        kind,
+        compose,
+        park_body,  # noqa: ARG002 — the park under test carries no body at all
+    ):
+        # A video with no description, an episode with no show notes: the
+        # park carries no body, and the transcript stands alone as it did.
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("", "the words"))
+        report = self.reparked(instance, kind, self.park(None))
+        assert read_enrichment(instance.root / str(done.path))[1] == "## Transcript\n\nthe words"
+        assert "Already stored — 1 unit" in report
+
+    @TRANSCRIBED
+    def test_a_rerun_with_no_transcript_stored_still_parks(
+        self, instance, kind, compose, park_body
+    ):
+        # The frontmatter stamp is what says a transcript was composed: the
+        # same body without it is notes, however it reads.
+        done = self.land(instance, kind, {"title": "t"}, compose("old notes", "the words"))
+        self.reparked(instance, kind, self.park(park_body("new notes")))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert read_enrichment(instance.root / str(done.path))[1] == park_body("new notes")
+
+    @TRANSCRIBED
+    def test_deleting_the_stored_file_first_re_parks(self, instance, kind, compose, park_body):
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        (instance.root / str(done.path)).unlink()
+        report = self.reparked(instance, kind, self.park(park_body("new notes")))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert "kept the stored transcript" not in report
+
+    def test_a_transcript_healed_under_its_own_name_lands_under_the_engines(self, instance):
+        # What a fresh share would hold: the engine-named file, and the
+        # heal's copy of the same unit gone with the landing that replaces it.
+        transcribed = youtube_body("d", "the words")
+        self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, transcribed)
+        healed = instance.enrichment_dir / ITEM / "transcribed-by-hand.md"
+        healed.write_text(
+            render_enrichment(URL, TODAY, TRANSCRIBER_STAMP, transcribed), encoding="utf-8"
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{healed.name}")
+        assert [p.name for p in healed.parent.glob("*.md")] == [healed.name]
+        TestRerun.seed_rerun(ctx)
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        named = f"youtube-{work_hash(URL)[:6]}.md"
+        assert self.live(instance).path == f"enrichment/{ITEM}/{named}"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")) == [named]
+
+    def test_a_fetched_posts_own_transcript_heading_is_no_transcript(self, instance):
+        # `via` is fetch provenance on an X post's file: a post whose text
+        # carries a transcript heading parks for its video like any other.
+        post = f"the post\n\n{TRANSCRIPT_HEADING}\n\nwords the author typed"
+        self.land(instance, Kind.X, {"title": "t", "via": "fxtwitter"}, post)
+        self.reparked(instance, Kind.X, self.park("the post"))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
 
     def test_a_transcript_no_landing_line_names_is_found_by_the_engines_name(self, instance):
         # What a compact before the landing-keeping one left: the queued
@@ -1805,39 +1892,18 @@ class TestRerunKeepsItsTranscript:
         live = ledger.load(instance.ledger_path).values()
         instance.ledger_path.write_text("".join(ledger.to_line(e) + "\n" for e in live))
         assert ledger.latest_outputs(instance.ledger_path) == {}
-        self.reparked(instance, Kind.YOUTUBE)
-        entry = entry_for(make_ctx(instance, FakeDriver()))
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        entry = self.live(instance)
         assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
-
-    @TRANSCRIBED
-    def test_a_rerun_with_no_transcript_stored_still_parks(self, instance, kind, transcribed):
-        # The frontmatter stamp is what says a transcript was composed: the
-        # same body without it is notes, however it reads.
-        done = self.land(instance, kind, {"title": "t"}, transcribed)
-        self.reparked(instance, kind)
-        entry = entry_for(make_ctx(instance, FakeDriver()))
-        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
-        assert read_enrichment(instance.root / str(done.path))[1] == "the notes, fetched again"
-
-    @TRANSCRIBED
-    def test_deleting_the_stored_file_first_re_parks(self, instance, kind, transcribed):
-        done = self.land(instance, kind, TRANSCRIBER_STAMP, transcribed)
-        (instance.root / str(done.path)).unlink()
-        report = self.reparked(instance, kind)
-        entry = entry_for(make_ctx(instance, FakeDriver()))
-        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
-        assert "kept the stored transcript" not in report
 
     def test_a_kept_transcript_still_stages_the_media_the_park_carries(self, instance):
         # A carousel's stills ride the park beside the video it transcribes;
         # a keep that dropped them would lose them, since nothing downstream
         # sees their URLs again.
-        done = self.land(
-            instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, instagram_body("c", "the words")
-        )
+        body = instagram_body("c", "the words")
+        done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
         still = "https://cdn.example.test/still.jpg"
-        park = dataclasses.replace(self.PARK, media=[still])
-        self.reparked(instance, Kind.INSTAGRAM, park)
+        self.reparked(instance, Kind.INSTAGRAM, self.park("c", media=[still]))
         entries = ledger.load(instance.ledger_path)
         assert entries[done.hash].status is Status.DONE
         child = next(e for e in entries.values() if e.url == still)
@@ -1853,14 +1919,14 @@ class TestRerunKeepsItsTranscript:
             render_enrichment(URL, TODAY, {"via": "whisper-local"}, youtube_body("d", "w")),
             encoding="utf-8",
         )
-        self.reparked(instance, Kind.YOUTUBE)
-        assert entry_for(make_ctx(instance, FakeDriver())).status is Status.WAITING
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        assert self.live(instance).status is Status.WAITING
 
     def test_a_park_for_another_capability_parks_as_ever(self, instance):
         self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, youtube_body("d", "the words"))
         park = NeedsCapability(need=Need.EXTRACT, reason="no extractor")
         self.reparked(instance, Kind.YOUTUBE, park)
-        entry = entry_for(make_ctx(instance, FakeDriver()))
+        entry = self.live(instance)
         assert (entry.status, entry.needs) == (Status.WAITING, Need.EXTRACT)
 
 
