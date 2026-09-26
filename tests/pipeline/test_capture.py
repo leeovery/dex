@@ -2,6 +2,7 @@
 
 import datetime
 import hashlib
+import re
 
 import pytest
 
@@ -142,6 +143,19 @@ class TestNoteOnly:
         new(instance, path)
         assert only_item(instance).date == TODAY
 
+    def test_a_suffixed_stamp_still_dates_the_capture(self, instance):
+        path = stage_capture(instance, "20260818-101530-a3f9.md", "an observation\n")
+        new(instance, path)
+        assert only_item(instance).date == datetime.date(2026, 8, 18)
+
+    @pytest.mark.parametrize(
+        "name", ["20260818-101530-.md", "20260818-101530-A3F9.md", "20260818-101530-a3f9-2.md"]
+    )
+    def test_a_stamp_trailing_anything_but_a_suffix_dates_today(self, instance, name):
+        path = stage_capture(instance, name, "an observation\n")
+        new(instance, path)
+        assert only_item(instance).date == TODAY
+
 
 class TestMediaPath:
     def test_media_capture_uses_the_materialized_directory_id(self, instance):
@@ -224,10 +238,20 @@ class TestParseCapture:
 
 
 class TestWriteCapture:
-    def test_writes_the_url_and_the_note_at_a_stamped_filename(self, instance):
-        path = write_capture(instance, url="https://example.test/p", note="why I saved it", now=NOW)
-        assert path == instance.root / "inbox" / "20260820-101530.md"
+    def test_writes_the_url_and_the_note_at_a_stamped_suffixed_filename(self, instance):
+        path = write_capture(
+            instance,
+            url="https://example.test/p",
+            note="why I saved it",
+            now=NOW,
+            suffix=lambda: "a3f9",
+        )
+        assert path == instance.root / "inbox" / "20260820-101530-a3f9.md"
         assert path.read_text(encoding="utf-8") == "https://example.test/p\n\nwhy I saved it\n"
+
+    def test_the_suffix_is_four_random_lowercase_hex(self, instance):
+        path = write_capture(instance, url="", note="a thought", now=NOW)
+        assert re.fullmatch(r"20260820-101530-[0-9a-f]{4}\.md", path.name)
 
     def test_the_inbox_is_created_when_a_young_instance_has_none(self, instance):
         assert not (instance.root / "inbox").exists()
@@ -252,27 +276,47 @@ class TestWriteCapture:
             write_capture(instance, url=url, note=note, now=NOW)
         assert list((instance.root / "inbox").glob("*.md")) == []
 
-    def test_a_taken_stamp_walks_forward_a_second(self, instance):
+    def test_a_phone_capture_of_the_same_second_is_never_touched(self, instance):
+        # The phone names a capture by its stamp alone, so a suffixed name
+        # can never be one it wrote, in this tree or at the next pull.
+        phone = instance.root / "inbox" / "20260820-101530.md"
+        phone.parent.mkdir()
+        phone.write_text("from the phone\n")
+        path = write_capture(instance, url="", note="from a session", now=NOW)
+        assert path.name.startswith("20260820-101530-")
+        assert phone.read_text() == "from the phone\n"
+        assert path.read_text(encoding="utf-8") == "from a session\n"
+
+    def test_captures_in_one_second_each_keep_their_own_name(self, instance):
         first = write_capture(instance, url="", note="first", now=NOW)
         second = write_capture(instance, url="", note="second", now=NOW)
-        assert first.name == "20260820-101530.md"
-        assert second.name == "20260820-101531.md"
+        assert first != second
+        assert first.name.startswith("20260820-101530-")
+        assert second.name.startswith("20260820-101530-")
         assert first.read_text(encoding="utf-8") == "first\n"
         assert second.read_text(encoding="utf-8") == "second\n"
 
-    def test_the_walk_only_steps_over_what_is_taken(self, instance):
-        (instance.root / "inbox").mkdir()
-        (instance.root / "inbox" / "20260820-101531.md").write_text("someone else's\n")
-        write_capture(instance, url="", note="mine", now=NOW)
-        second = write_capture(instance, url="", note="also mine", now=NOW)
-        assert second.name == "20260820-101532.md"
+    def test_a_taken_name_draws_a_fresh_suffix_at_the_same_stamp(self, instance):
+        draws = iter(["a3f9", "a3f9", "a3f9", "0b17"])
+        write_capture(instance, url="", note="mine", now=NOW, suffix=draws.__next__)
+        second = write_capture(instance, url="", note="also mine", now=NOW, suffix=draws.__next__)
+        assert second.name == "20260820-101530-0b17.md"
+        assert (instance.root / "inbox" / "20260820-101530-a3f9.md").read_text() == "mine\n"
 
-    def test_a_full_minute_of_taken_stamps_is_refused(self, instance):
-        for second in range(60):
-            write_capture(instance, url="", note=f"note {second}", now=NOW)
-        with pytest.raises(ValueError, match="every second from 20260820-101530"):
-            write_capture(instance, url="", note="one too many", now=NOW)
-        assert len(list((instance.root / "inbox").glob("*.md"))) == 60
+    def test_draws_that_never_come_up_free_are_refused(self, instance):
+        write_capture(instance, url="", note="mine", now=NOW, suffix=lambda: "a3f9")
+        draws: list[str] = []
+
+        def taken() -> str:
+            draws.append("a3f9")
+            return "a3f9"
+
+        with pytest.raises(ValueError, match="every name drawn for 20260820-101530"):
+            write_capture(instance, url="", note="one too many", now=NOW, suffix=taken)
+        assert len(draws) == 8
+        assert [path.name for path in (instance.root / "inbox").glob("*.md")] == [
+            "20260820-101530-a3f9.md"
+        ]
 
     def test_what_is_written_is_what_item_new_reads_back(self, instance):
         # The round trip that matters: the writer's file, through the reader

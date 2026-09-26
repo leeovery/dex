@@ -86,7 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="exceed the per-item URL cap deliberately"
     )
 
-    commands.add_parser("compact", help="rewrite the ledger keeping the latest line per hash")
+    commands.add_parser(
+        "compact",
+        help="rewrite the ledger keeping the latest line per hash, and a requeued unit's landing",
+    )
 
     mark_parser = commands.add_parser(
         "mark", help="heal one ledger entry (the sanctioned correction verb)"

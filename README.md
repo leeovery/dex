@@ -228,12 +228,12 @@ different problem from the page having nothing on it.
 | source | what it does |
 |---|---|
 | **YouTube** | captions where they exist, otherwise the audio is downloaded and transcribed |
-| **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole |
+| **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole. A post's video is transcribed; photos and any further video are kept beside the thread |
 | **Instagram** | a public post's caption, author and date, read credential-free from the link-preview metadata instagram.com serves, with the media pulled through an embed proxy: video is transcribed, images are kept beside the caption. A private post parks and says to screenshot it |
-| **GitHub** | repos and profiles: README, description, metadata |
+| **GitHub** | repos and profiles: README, description, metadata. A directory link gives that directory's README and file listing, a file link the file, an issue or pull request its text. A document committed to a repo or attached to an issue is read as a file. Any other link into a repo, such as a commit or a release page, parks for judgment |
 | **Papers** | arXiv and friends |
 | **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the real audio enclosure, then transcribes it. Show notes come from the feed, which is richer than the page |
-| **Web** | article text with the boilerplate stripped, falling back to the Wayback Machine when the live page has gone |
+| **Web** | article text with the boilerplate stripped, or the markdown a docs page declares it was rendered from, tables and code intact; falling back to the Wayback Machine when the live page has gone |
 | **Files** | PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB and CSV. Text is extracted and embedded images are pulled out alongside it. Scanned pages route to OCR |
 
 Three things sit on top of that, and they are where the real work happens:
@@ -305,7 +305,7 @@ launch — and falls back to the tag for a pin an older sync wrote:
 | `dex-enrich status` | ledger summary, waiting cohorts, interrupted-session backstop, capability report (`--item <id>` for one item's ledger view) |
 | `dex-enrich transcribe` | drain the waiting transcription cohort (whisper local floor or OpenAI-compatible API; `--limit`, `--model`) |
 | `dex-enrich fetch` | fetch extra URLs into an existing item, ledgered as children (the harvest verb) |
-| `dex-enrich compact` | rewrite the ledger to the latest line per unit, settling union merges |
+| `dex-enrich compact` | rewrite the ledger to the latest line per unit, settling union merges; a unit whose latest line names no output keeps the last line that named one |
 | `dex-enrich mark` | heal one ledger entry: the sanctioned correction verb |
 | `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
 | `dex-enrich item new` | create a corpus item from a capture file (id rules and provenance; code writes frontmatter) |

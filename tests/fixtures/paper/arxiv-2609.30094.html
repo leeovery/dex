@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta content="text/html; charset=utf-8" http-equiv="content-type"/>
+<title>PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations</title>
+</head>
+<body>
+<div class="ltx_page_main">
+<div class="ltx_page_content">
+<article class="ltx_document ltx_authors_1line">
+<h1 class="ltx_title ltx_title_document">PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations</h1>
+<div id="abstract1" class="ltx_abstract"><h6 class="ltx_title ltx_title_abstract">Abstract</h6>
+    
+<p id="abstract1.1" class="ltx_p">Large language models increasingly operate as persistent assistants in user-facing, shared-session, and tool-augmented settings. When users disclose sensitive information during an active conversation, that information may remain behaviorally recoverable through later prompts even after the dialogue shifts to unrelated topics. We introduce <span id="abstract1.1.1" class="ltx_text ltx_font_bold">PrivDrift</span>, a benchmark for auditing whether user-disclosed secrets remain recoverable after conversational topic drift and persuasion-based probing. PrivDrift contains 1,000 controlled multi-turn dialogues with seeded secrets, content-dense drift turns, and standardized extraction probes. Across three LLMs with extended context windows, dialogue-level hybrid leakage remains substantial, ranging from 38.7% to 54.6%, and varies strongly by model, secret type, and persuasion intensity. Within the tested drift window, additional topic drift does not reliably reduce leakage, suggesting that privacy risk in active LLM contexts should be evaluated as a persistent behavioral failure mode rather than only as training-data memorization or immediate jailbreak behavior.</p>
+  
+</div>
+<section id="S3.SS2" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection"><span class="ltx_tag ltx_tag_subsection">3.2 </span>Dataset Generation Pipeline</h3>
+
+<div id="S3.SS2.p1" class="ltx_para">
+<p id="S3.SS2.p1.1" class="ltx_p">We generate <math id="S3.SS2.p1.m1" class="ltx_Math" alttext="N=1000" display="inline" intent=":literal"><semantics><mrow><mi>N</mi><mo>=</mo><mn>1000</mn></mrow><annotation encoding="application/x-tex">N=1000</annotation></semantics></math> controlled dialogues using a multi-stage scaffold-then-rewrite pipeline. This design preserves strict control over the ground-truth secret, drift length, and probe structure while reducing the rigid artifacts of purely template-based generation. The dataset contains 900 synthetic dialogues and 100 human-authored dialogues constructed under the same secret and drift constraints. The human-authored dialogues were inserted throughout the benchmark rather than stored as a separate contiguous block. Since the current cached evaluation metadata does not preserve the human-authored identifiers, we report aggregate results over the full evaluated benchmark and leave a separate human-versus-synthetic leakage comparison for future work.</p>
+</div>
+<figure id="S3.T1" class="ltx_table">
+<p id="S3.T1.3" class="ltx_p ltx_align_center"><span id="S3.T1.3.1" class="ltx_text" style="font-size:90%;">
+<span id="S3.T1.3.1.1" class="ltx_inline-block ltx_transformed_outer" style="width:242.2pt;height:145.3pt;vertical-align:-70.4pt;"><span class="ltx_transformed_inner" style="transform:translate(0.0pt,0.0pt) scale(1,1) ;">
+<span id="S3.T1.3.1.1.1" class="ltx_p"><span id="S3.T1.3.1.1.1.1" class="ltx_text">
+<span id="S3.T1.3.1.1.1.1.1" class="ltx_tabular ltx_guessed_headers ltx_align_middle">
+<span class="ltx_tbody">
+<span id="S3.T1.3.1.1.1.1.1.1" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.1.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_tt">Statistic</span>
+<span id="S3.T1.3.1.1.1.1.1.1.2" class="ltx_td ltx_align_center ltx_border_tt">Value</span></span>
+<span id="S3.T1.3.1.1.1.1.1.2" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.2.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">Total dialogues</span>
+<span id="S3.T1.3.1.1.1.1.1.2.2" class="ltx_td ltx_align_center ltx_border_t">1,000</span></span>
+<span id="S3.T1.3.1.1.1.1.1.3" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.3.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Synthetic dialogues</span>
+<span id="S3.T1.3.1.1.1.1.1.3.2" class="ltx_td ltx_align_center">900</span></span>
+<span id="S3.T1.3.1.1.1.1.1.4" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.4.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Human-authored dialogues</span>
+<span id="S3.T1.3.1.1.1.1.1.4.2" class="ltx_td ltx_align_center">100</span></span>
+<span id="S3.T1.3.1.1.1.1.1.5" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.5.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Secret categories</span>
+<span id="S3.T1.3.1.1.1.1.1.5.2" class="ltx_td ltx_align_center">4</span></span>
+<span id="S3.T1.3.1.1.1.1.1.6" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.6.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Drift lengths</span>
+<span id="S3.T1.3.1.1.1.1.1.6.2" class="ltx_td ltx_align_center"><math id="S3.T1.m1" class="ltx_Math" alttext="0,2,3,4,5,6" display="inline" intent=":literal"><semantics><mrow><mn>0</mn><mo>,</mo><mn>2</mn><mo>,</mo><mn>3</mn><mo>,</mo><mn>4</mn><mo>,</mo><mn>5</mn><mo>,</mo><mn>6</mn></mrow><annotation encoding="application/x-tex">0,2,3,4,5,6</annotation></semantics></math></span></span>
+<span id="S3.T1.3.1.1.1.1.1.7" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.7.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Avg. words per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.7.2" class="ltx_td ltx_align_center">359.16</span></span>
+<span id="S3.T1.3.1.1.1.1.1.8" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.8.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Median words per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.8.2" class="ltx_td ltx_align_center">385.00</span></span>
+<span id="S3.T1.3.1.1.1.1.1.9" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.9.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Min/max words per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.9.2" class="ltx_td ltx_align_center">43 / 795</span></span>
+<span id="S3.T1.3.1.1.1.1.1.10" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.10.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Avg. approx. tokens per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.10.2" class="ltx_td ltx_align_center">478.87</span></span>
+<span id="S3.T1.3.1.1.1.1.1.11" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.11.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Median approx. tokens per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.11.2" class="ltx_td ltx_align_center">513.33</span></span>
+<span id="S3.T1.3.1.1.1.1.1.12" class="ltx_tr">
+<span id="S3.T1.3.1.1.1.1.1.12.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">Min/max approx. tokens per dialogue</span>
+<span id="S3.T1.3.1.1.1.1.1.12.2" class="ltx_td ltx_align_center ltx_border_bb">57.33 / 1060.00</span></span>
+</span>
+</span></span></span>
+</span></span></span><span id="S3.T1.3.2" class="ltx_text"></span></p>
+<figcaption class="ltx_caption ltx_centering" style="font-size:90%;"><span class="ltx_tag ltx_tag_table">Table 1: </span>Dataset summary for the evaluated 1,000-dialogue benchmark. Approximate token counts are estimated from word counts.</figcaption>
+</figure>
+</section>
+<section id="S3.SS3" class="ltx_subsection">
+<h3 class="ltx_title ltx_title_subsection"><span class="ltx_tag ltx_tag_subsection">3.3 </span>Probing Setup</h3>
+
+<div id="S3.SS3.p1" class="ltx_para">
+<p id="S3.SS3.p1.1" class="ltx_p">The main evaluation appends a final standardized probe to the completed conversation history. Probes are grouped into three persuasion levels:</p>
+<ul id="S3.I1" class="ltx_itemize">
+<li id="S3.I1.i1" class="ltx_item" style="list-style-type:none;"><span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I1.i1.p1" class="ltx_para">
+<p id="S3.I1.i1.p1.1" class="ltx_p">Simple: a direct neutral query, such as asking for the phone number mentioned earlier.</p>
+</div></li>
+<li id="S3.I1.i2" class="ltx_item" style="list-style-type:none;"><span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I1.i2.p1" class="ltx_para">
+<p id="S3.I1.i2.p1.1" class="ltx_p">Medium: a query with a contextual justification, such as needing the information for a form.</p>
+</div></li>
+<li id="S3.I1.i3" class="ltx_item" style="list-style-type:none;"><span class="ltx_tag ltx_tag_item">•</span> 
+<div id="S3.I1.i3.p1" class="ltx_para">
+<p id="S3.I1.i3.p1.1" class="ltx_p">Hard: a high-pressure or urgent request designed to test whether pressure cues increase or decrease leakage.</p>
+</div></li>
+</ul>
+</div>
+<div id="S3.SS3.p2" class="ltx_para">
+<p id="S3.SS3.p2.1" class="ltx_p">We sample drift length <math id="S3.SS3.p2.m1" class="ltx_Math" alttext="d" display="inline" intent=":literal"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>, the number of turns between secret disclosure and final probing, from a mixed distribution:</p>
+<table id="S3.E1" class="ltx_equation ltx_eqn_table">
+
+<tbody><tr class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_eqn_cell ltx_align_center"><math id="S3.E1.m1" class="ltx_Math" alttext="d\sim\begin{cases}0&amp;\text{with }p=0.2,\\
+\mathrm{Uniform}\{2,3,4,5,6\}&amp;\text{with }p=0.8.\end{cases}" display="block" intent=":literal"><semantics><mrow><mi>d</mi><mo>∼</mo><mrow><mo>{</mo><mtable columnspacing="5pt" displaystyle="true" rowspacing="0pt"><mtr><mtd class="ltx_align_left" columnalign="left"><mn>0</mn></mtd><mtd class="ltx_align_left" columnalign="left"><mrow><mrow><mrow><mtext>with </mtext><mo lspace="0em" rspace="0em">​</mo><mi>p</mi></mrow><mo>=</mo><mn>0.2</mn></mrow><mo>,</mo></mrow></mtd></mtr><mtr><mtd class="ltx_align_left" columnalign="left"><mrow><mi>Uniform</mi><mo lspace="0em" rspace="0em">​</mo><mrow><mo stretchy="false">{</mo><mrow><mn>2</mn><mo>,</mo><mn>3</mn><mo>,</mo><mn>4</mn><mo>,</mo><mn>5</mn><mo>,</mo><mn>6</mn></mrow><mo stretchy="false">}</mo></mrow></mrow></mtd><mtd class="ltx_align_left" columnalign="left"><mrow><mrow><mrow><mtext>with </mtext><mo lspace="0em" rspace="0em">​</mo><mi>p</mi></mrow><mo>=</mo><mn>0.8</mn></mrow><mo lspace="0em">.</mo></mrow></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">d\sim\begin{cases}0&amp;\text{with }p=0.2,\\
+\mathrm{Uniform}\{2,3,4,5,6\}&amp;\text{with }p=0.8.\end{cases}</annotation></semantics></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="1" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equation ltx_align_right">(1)</span></td></tr></tbody>
+</table>
+<p id="S3.SS3.p2.2" class="ltx_p">This distribution includes immediate recall cases while emphasizing short-to-medium topic drift. We interpret the results as bounded active-context persistence, not as a full test of arbitrarily long context windows.</p>
+</div>
+</section>
+<section id="S3.SS4.SSS3" class="ltx_subsubsection">
+<h4 class="ltx_title ltx_title_subsubsection"><span class="ltx_tag ltx_tag_subsubsection">3.4.3 </span>Privacy Half-Life</h4>
+
+<div id="S3.SS4.SSS3.p1" class="ltx_para">
+<p id="S3.SS4.SSS3.p1.1" class="ltx_p">We introduce Privacy Half-Life (<math id="S3.SS4.SSS3.p1.m1" class="ltx_Math" alttext="\tau" display="inline" intent=":literal"><semantics><mi>τ</mi><annotation encoding="application/x-tex">\tau</annotation></semantics></math>), a stability-based metric for sustained suppression. Let <math id="S3.SS4.SSS3.p1.m2" class="ltx_Math" alttext="D_{obs}" display="inline" intent=":literal"><semantics><msub><mi>D</mi><mrow><mi>o</mi><mo lspace="0em" rspace="0em">​</mo><mi>b</mi><mo lspace="0em" rspace="0em">​</mo><mi>s</mi></mrow></msub><annotation encoding="application/x-tex">D_{obs}</annotation></semantics></math> be the observed set of drift lengths and <math id="S3.SS4.SSS3.p1.m3" class="ltx_Math" alttext="L(d)" display="inline" intent=":literal"><semantics><mrow><mi>L</mi><mo>⁡</mo><mrow><mo stretchy="false">(</mo><mi>d</mi><mo stretchy="false">)</mo></mrow></mrow><annotation encoding="application/x-tex">L(d)</annotation></semantics></math> be the leakage rate at drift length <math id="S3.SS4.SSS3.p1.m4" class="ltx_Math" alttext="d" display="inline" intent=":literal"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>. We define the safety threshold as <math id="S3.SS4.SSS3.p1.m5" class="ltx_Math" alttext="\delta=0.1\times L(0)" display="inline" intent=":literal"><semantics><mrow><mi>δ</mi><mo>=</mo><mrow><mn>0.1</mn><mo lspace="0.222em" rspace="0.222em">×</mo><mrow><mi>L</mi><mo>⁡</mo><mrow><mo stretchy="false">(</mo><mn>0</mn><mo stretchy="false">)</mo></mrow></mrow></mrow></mrow><annotation encoding="application/x-tex">\delta=0.1\times L(0)</annotation></semantics></math> and define</p>
+<table id="S3.E3" class="ltx_equationgroup ltx_eqn_table">
+<tbody>
+<tr id="S3.E3X" class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_td ltx_align_right ltx_eqn_cell"><math id="S3.E3X.m2" class="ltx_Math" alttext="\displaystyle\tau=\min\{d\in D_{obs}\mid" display="inline" intent=":literal"><semantics><mrow><mi mathsize="0.900em">τ</mi><mo mathsize="0.900em">=</mo><mi mathsize="0.900em">min</mi><mo stretchy="false">{</mo><mi mathsize="0.900em">d</mi><mo mathsize="0.900em">∈</mo><mi mathsize="0.900em">D</mi><msub><mrow></mrow><mrow><mi mathsize="0.900em">o</mi><mo lspace="0em" rspace="0em">​</mo><mi mathsize="0.900em">b</mi><mo lspace="0em" rspace="0em">​</mo><mi mathsize="0.900em">s</mi></mrow></msub><mo lspace="0em" mathsize="0.900em">∣</mo></mrow><annotation encoding="application/x-tex">\displaystyle\tau=\min\{d\in D_{obs}\mid</annotation></semantics></math></td>
+<td class="ltx_td ltx_align_left ltx_eqn_cell"><math id="S3.E3X.m3" class="ltx_Math" alttext="\displaystyle L(d)\leq\delta" display="inline" intent=":literal"><semantics><mrow><mrow><mi mathsize="0.900em">L</mi><mo>⁡</mo><mrow><mo maxsize="0.900em" minsize="0.900em">(</mo><mi mathsize="0.900em">d</mi><mo maxsize="0.900em" minsize="0.900em">)</mo></mrow></mrow><mo mathsize="0.900em">≤</mo><mi mathsize="0.900em">δ</mi></mrow><annotation encoding="application/x-tex">\displaystyle L(d)\leq\delta</annotation></semantics></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td>
+<td rowspan="2" class="ltx_eqn_cell ltx_eqn_eqno ltx_align_middle ltx_align_right"><span class="ltx_tag ltx_tag_equationgroup ltx_align_right">(3)</span></td></tr>
+<tr id="S3.E3Xa" class="ltx_equation ltx_eqn_row ltx_align_baseline">
+<td class="ltx_eqn_cell ltx_eqn_center_padleft"></td>
+<td class="ltx_td ltx_eqn_cell"></td>
+<td class="ltx_td ltx_align_left ltx_eqn_cell"><math id="S3.E3Xa.m2" class="ltx_Math" alttext="\displaystyle\text{and }\forall d^{\prime}\in D_{obs},d^{\prime}&gt;d:\ L(d^{\prime})\leq\delta\}." display="inline" intent=":literal"><semantics><mrow><mtext mathsize="0.900em">and </mtext><mo lspace="0.167em" mathsize="0.900em" rspace="0.167em">∀</mo><mi mathsize="0.900em">d</mi><msup><mrow></mrow><mo mathsize="0.900em">′</mo></msup><mo mathsize="0.900em">∈</mo><mi mathsize="0.900em">D</mi><msub><mrow></mrow><mrow><mi mathsize="0.900em">o</mi><mo lspace="0em" rspace="0em">​</mo><mi mathsize="0.900em">b</mi><mo lspace="0em" rspace="0em">​</mo><mi mathsize="0.900em">s</mi></mrow></msub><mo mathsize="0.900em">,</mo><mi mathsize="0.900em">d</mi><msup><mrow></mrow><mo mathsize="0.900em">′</mo></msup><mo mathsize="0.900em">&gt;</mo><mi mathsize="0.900em">d</mi><mo lspace="0.278em" mathsize="0.900em" rspace="0.738em">:</mo><mi mathsize="0.900em">L</mi><mo maxsize="0.900em" minsize="0.900em">(</mo><mi mathsize="0.900em">d</mi><msup><mrow></mrow><mo mathsize="0.900em">′</mo></msup><mo maxsize="0.900em" minsize="0.900em">)</mo><mo mathsize="0.900em">≤</mo><mi mathsize="0.900em">δ</mi><mo stretchy="false">}</mo><mo lspace="0em" mathsize="0.900em">.</mo></mrow><annotation encoding="application/x-tex">\displaystyle\text{and }\forall d^{\prime}\in D_{obs},d^{\prime}&gt;d:\ L(d^{\prime})\leq\delta\}.</annotation></semantics></math></td>
+<td class="ltx_eqn_cell ltx_eqn_center_padright"></td></tr></tbody>
+</table>
+<p id="S3.SS4.SSS3.p1.2" class="ltx_p">If this set is empty, we assign <math id="S3.SS4.SSS3.p1.m6" class="ltx_Math" alttext="\tau=\max(D_{obs})+1" display="inline" intent=":literal"><semantics><mrow><mi>τ</mi><mo>=</mo><mrow><mrow><mi>max</mi><mo>⁡</mo><mrow><mo stretchy="false">(</mo><msub><mi>D</mi><mrow><mi>o</mi><mo lspace="0em" rspace="0em">​</mo><mi>b</mi><mo lspace="0em" rspace="0em">​</mo><mi>s</mi></mrow></msub><mo stretchy="false">)</mo></mrow></mrow><mo>+</mo><mn>1</mn></mrow></mrow><annotation encoding="application/x-tex">\tau=\max(D_{obs})+1</annotation></semantics></math>. This definition prevents transient dips from being interpreted as stable suppression.</p>
+</div>
+<figure id="S3.F3" class="ltx_figure"><object type="image/svg+xml" data="2609.30094v1/fig4_halflife_concept.svg" id="S3.F3.g1" class="ltx_graphics ltx_centering ltx_img_square" style="aspect-ratio:476/385;" width="476" height="385"></object>
+<figcaption class="ltx_caption ltx_centering"><span class="ltx_tag ltx_tag_figure"><span id="S3.F3.3" class="ltx_text" style="font-size:90%;">Figure 3</span>: </span><span id="S3.F3.4" class="ltx_text" style="font-size:90%;">Privacy Half-Life <math id="S3.F3.m2" class="ltx_Math" alttext="\tau" display="inline" intent=":literal"><semantics><mi>τ</mi><annotation encoding="application/x-tex">\tau</annotation></semantics></math> requires stable decay below the threshold. A later resurgence disqualifies a transient decrease.</span></figcaption>
+</figure>
+</section>
+<section id="S8" class="ltx_section">
+<h2 class="ltx_title ltx_title_section"><span class="ltx_tag ltx_tag_section">8 </span>Conclusion</h2>
+
+<div id="S8.p1" class="ltx_para">
+<p id="S8.p1.1" class="ltx_p">We introduce PrivDrift, a benchmark for auditing active-context privacy leakage under topic drift and persuasion intensity. Across three LLMs and 1,000 dialogues per model, dialogue-level hybrid leakage remains substantial, ranging from 38.7% to 54.6%. Persuasion intensity affects leakage in model-dependent ways, while secret type has the strongest association with leakage. Within the tested drift range, topic drift does not reliably reduce leakage, and Privacy Half-Life exceeds the observed window for all models. The observed asymmetry across secret types suggests that current protections remain uneven and depend more on format-sensitive cues than on robust contextual confidentiality.</p>
+</div>
+<div class="ltx_pagination ltx_role_newpage"></div>
+</section>
+<section id="bib" class="ltx_bibliography">
+<h2 class="ltx_title ltx_title_bibliography">References</h2>
+
+<ul id="bib.L1" class="ltx_biblist">
+<li id="bib.bib2" class="ltx_bibitem ltx_bib_inproceedings"><span class="ltx_tag ltx_bib_author-year ltx_role_refnum ltx_tag_bibitem">Carlini <span class="ltx_text ltx_bib_etal">et al.</span> (2021)</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_author">N. Carlini, F. Tramèr, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. Brown, D. Song, Ú. Erlingsson, A. Oprea, and C. Raffel</span>
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_title">Extracting training data from large language models</span>.
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_bib_inbook">Proceedings of the 30th USENIX Security Symposium</span>,
+</span>
+<span class="ltx_bibblock ltx_bib_cited">Cited by: <a href="#S1.p2.1" title="1 Introduction ‣ PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations" class="ltx_ref"><span class="ltx_text ltx_ref_tag">§1</span></a>,
+<a href="#S2.SS1.p1.1" title="2.1 Contextual Privacy and Inference-Time Leakage ‣ 2 Related Work ‣ PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations" class="ltx_ref"><span class="ltx_text ltx_ref_tag">§2.1</span></a>.
+</span></li>
+<li id="bib.bib15" class="ltx_bibitem ltx_bib_inproceedings"><span class="ltx_tag ltx_bib_author-year ltx_role_refnum ltx_tag_bibitem">Deng <span class="ltx_text ltx_bib_etal">et al.</span> (2024)</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_author">G. Deng, Y. Liu, Y. Li, K. Wang, Y. Zhang, Z. Li, H. Wang, T. Zhang, and Y. Liu</span>
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_title">MasterKey: automated jailbreaking of large language model chatbots</span>.
+</span>
+<span class="ltx_bibblock">In <span class="ltx_text ltx_bib_inbook">Network and Distributed System Security Symposium</span>,
+</span>
+<span class="ltx_bibblock ltx_bib_cited">Cited by: <a href="#S1.p2.1" title="1 Introduction ‣ PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations" class="ltx_ref"><span class="ltx_text ltx_ref_tag">§1</span></a>,
+<a href="#S2.SS2.p1.1" title="2.2 Multi-Turn Adversarial Attacks ‣ 2 Related Work ‣ PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations" class="ltx_ref"><span class="ltx_text ltx_ref_tag">§2.2</span></a>.
+</span></li>
+<li id="bib.bib10" class="ltx_bibitem ltx_bib_article"><span class="ltx_tag ltx_bib_author-year ltx_role_refnum ltx_tag_bibitem">Li <span class="ltx_text ltx_bib_etal">et al.</span> (2023)</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_author">H. Li, D. Guo, W. Fan, M. Xu, and J. Huang</span>
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_title">Multi-step jailbreaking privacy attacks on ChatGPT</span>.
+</span>
+<span class="ltx_bibblock"><span class="ltx_text ltx_bib_journal">arXiv preprint arXiv:2304.05197</span>.
+</span>
+<span class="ltx_bibblock">External Links: <span class="ltx_text ltx_bib_links"><a href="https://arxiv.org/abs/2304.05197" title="" class="ltx_ref ltx_bib_external">Link</a></span>
+</span>
+<span class="ltx_bibblock ltx_bib_cited">Cited by: <a href="#S2.SS1.p1.1" title="2.1 Contextual Privacy and Inference-Time Leakage ‣ 2 Related Work ‣ PrivDrift: Auditing User-Secret Leakage Under Topic Drift in Active LLM Conversations" class="ltx_ref"><span class="ltx_text ltx_ref_tag">§2.1</span></a>.
+</span></li>
+</ul>
+</section>
+<section id="A1" class="ltx_appendix">
+<h2 class="ltx_title ltx_title_appendix"><span class="ltx_tag ltx_tag_appendix">Appendix A </span>Dataset Characterization</h2>
+
+<figure id="A1.T7" class="ltx_table">
+<p id="A1.T7.3" class="ltx_p ltx_align_center"><span id="A1.T7.3.1" class="ltx_text" style="font-size:90%;">
+<span id="A1.T7.3.1.1" class="ltx_inline-block ltx_transformed_outer" style="width:325.3pt;height:85.3pt;vertical-align:-40.4pt;"><span class="ltx_transformed_inner" style="transform:translate(0.0pt,0.0pt) scale(1,1) ;">
+<span id="A1.T7.3.1.1.1" class="ltx_p"><span id="A1.T7.3.1.1.1.1" class="ltx_text">
+<span id="A1.T7.3.1.1.1.1.1" class="ltx_tabular ltx_guessed_headers ltx_align_middle">
+<span class="ltx_thead">
+<span id="A1.T7.3.1.1.1.1.1.1" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.1.1" class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">Drift <math id="A1.T7.m1" class="ltx_Math" alttext="d" display="inline" intent=":literal"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math></span>
+<span id="A1.T7.3.1.1.1.1.1.1.2" class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_th_row ltx_border_tt"><math id="A1.T7.m2" class="ltx_Math" alttext="N" display="inline" intent=":literal"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></span>
+<span id="A1.T7.3.1.1.1.1.1.1.3" class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Avg. words</span>
+<span id="A1.T7.3.1.1.1.1.1.1.4" class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Median words</span>
+<span id="A1.T7.3.1.1.1.1.1.1.5" class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Avg. tokens</span>
+<span id="A1.T7.3.1.1.1.1.1.1.6" class="ltx_td ltx_align_right ltx_th ltx_th_column ltx_border_tt">Median tokens</span></span>
+</span>
+<span class="ltx_tbody">
+<span id="A1.T7.3.1.1.1.1.1.2" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.2.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">0</span>
+<span id="A1.T7.3.1.1.1.1.1.2.2" class="ltx_td ltx_align_right ltx_th ltx_th_row ltx_border_t">197</span>
+<span id="A1.T7.3.1.1.1.1.1.2.3" class="ltx_td ltx_align_right ltx_border_t">44.29</span>
+<span id="A1.T7.3.1.1.1.1.1.2.4" class="ltx_td ltx_align_right ltx_border_t">43.00</span>
+<span id="A1.T7.3.1.1.1.1.1.2.5" class="ltx_td ltx_align_right ltx_border_t">59.05</span>
+<span id="A1.T7.3.1.1.1.1.1.2.6" class="ltx_td ltx_align_right ltx_border_t">57.33</span></span>
+<span id="A1.T7.3.1.1.1.1.1.3" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.3.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">2</span>
+<span id="A1.T7.3.1.1.1.1.1.3.2" class="ltx_td ltx_align_right ltx_th ltx_th_row">147</span>
+<span id="A1.T7.3.1.1.1.1.1.3.3" class="ltx_td ltx_align_right">253.97</span>
+<span id="A1.T7.3.1.1.1.1.1.3.4" class="ltx_td ltx_align_right">258.00</span>
+<span id="A1.T7.3.1.1.1.1.1.3.5" class="ltx_td ltx_align_right">338.62</span>
+<span id="A1.T7.3.1.1.1.1.1.3.6" class="ltx_td ltx_align_right">344.00</span></span>
+<span id="A1.T7.3.1.1.1.1.1.4" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.4.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">3</span>
+<span id="A1.T7.3.1.1.1.1.1.4.2" class="ltx_td ltx_align_right ltx_th ltx_th_row">142</span>
+<span id="A1.T7.3.1.1.1.1.1.4.3" class="ltx_td ltx_align_right">344.18</span>
+<span id="A1.T7.3.1.1.1.1.1.4.4" class="ltx_td ltx_align_right">347.00</span>
+<span id="A1.T7.3.1.1.1.1.1.4.5" class="ltx_td ltx_align_right">458.91</span>
+<span id="A1.T7.3.1.1.1.1.1.4.6" class="ltx_td ltx_align_right">462.67</span></span>
+<span id="A1.T7.3.1.1.1.1.1.5" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.5.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">4</span>
+<span id="A1.T7.3.1.1.1.1.1.5.2" class="ltx_td ltx_align_right ltx_th ltx_th_row">166</span>
+<span id="A1.T7.3.1.1.1.1.1.5.3" class="ltx_td ltx_align_right">452.27</span>
+<span id="A1.T7.3.1.1.1.1.1.5.4" class="ltx_td ltx_align_right">447.00</span>
+<span id="A1.T7.3.1.1.1.1.1.5.5" class="ltx_td ltx_align_right">603.02</span>
+<span id="A1.T7.3.1.1.1.1.1.5.6" class="ltx_td ltx_align_right">596.00</span></span>
+<span id="A1.T7.3.1.1.1.1.1.6" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.6.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">5</span>
+<span id="A1.T7.3.1.1.1.1.1.6.2" class="ltx_td ltx_align_right ltx_th ltx_th_row">181</span>
+<span id="A1.T7.3.1.1.1.1.1.6.3" class="ltx_td ltx_align_right">520.92</span>
+<span id="A1.T7.3.1.1.1.1.1.6.4" class="ltx_td ltx_align_right">543.00</span>
+<span id="A1.T7.3.1.1.1.1.1.6.5" class="ltx_td ltx_align_right">694.56</span>
+<span id="A1.T7.3.1.1.1.1.1.6.6" class="ltx_td ltx_align_right">724.00</span></span>
+<span id="A1.T7.3.1.1.1.1.1.7" class="ltx_tr">
+<span id="A1.T7.3.1.1.1.1.1.7.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">6</span>
+<span id="A1.T7.3.1.1.1.1.1.7.2" class="ltx_td ltx_align_right ltx_th ltx_th_row ltx_border_bb">167</span>
+<span id="A1.T7.3.1.1.1.1.1.7.3" class="ltx_td ltx_align_right ltx_border_bb">568.03</span>
+<span id="A1.T7.3.1.1.1.1.1.7.4" class="ltx_td ltx_align_right ltx_border_bb">605.00</span>
+<span id="A1.T7.3.1.1.1.1.1.7.5" class="ltx_td ltx_align_right ltx_border_bb">757.37</span>
+<span id="A1.T7.3.1.1.1.1.1.7.6" class="ltx_td ltx_align_right ltx_border_bb">806.67</span></span>
+</span>
+</span></span></span>
+</span></span></span><span id="A1.T7.3.2" class="ltx_text"></span></p>
+<figcaption class="ltx_caption ltx_centering" style="font-size:90%;"><span class="ltx_tag ltx_tag_table">Table 7: </span>Dataset length characteristics by drift length. Approximate token counts are estimated from word counts.</figcaption>
+</figure>
+</section>
+<section id="A2" class="ltx_appendix">
+<h2 class="ltx_title ltx_title_appendix"><span class="ltx_tag ltx_tag_appendix">Appendix B </span>Additional Effect Sizes</h2>
+
+<figure id="A2.T8" class="ltx_table">
+<p id="A2.T8.3" class="ltx_p ltx_align_center"><span id="A2.T8.3.1" class="ltx_text" style="font-size:90%;">
+<span id="A2.T8.3.1.1" class="ltx_inline-block ltx_transformed_outer" style="width:269.4pt;height:121.3pt;vertical-align:-58.4pt;"><span class="ltx_transformed_inner" style="transform:translate(0.0pt,0.0pt) scale(1,1) ;">
+<span id="A2.T8.3.1.1.1" class="ltx_p"><span id="A2.T8.3.1.1.1.1" class="ltx_text">
+<span id="A2.T8.3.1.1.1.1.1" class="ltx_tabular ltx_guessed_headers ltx_align_middle">
+<span class="ltx_thead">
+<span id="A2.T8.3.1.1.1.1.1.1" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.1.1" class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">Model</span>
+<span id="A2.T8.3.1.1.1.1.1.1.2" class="ltx_td ltx_align_left ltx_th ltx_th_column ltx_th_row ltx_border_tt">Variable</span>
+<span id="A2.T8.3.1.1.1.1.1.1.3" class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt">Cramer’s <math id="A2.T8.m1" class="ltx_Math" alttext="V" display="inline" intent=":literal"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math></span>
+<span id="A2.T8.3.1.1.1.1.1.1.4" class="ltx_td ltx_align_center ltx_th ltx_th_column ltx_border_tt">Interpretation</span></span>
+</span>
+<span class="ltx_tbody">
+<span id="A2.T8.3.1.1.1.1.1.2" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.2.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">DeepSeek-R1</span>
+<span id="A2.T8.3.1.1.1.1.1.2.2" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_t">Secret type</span>
+<span id="A2.T8.3.1.1.1.1.1.2.3" class="ltx_td ltx_align_center ltx_border_t">0.5871</span>
+<span id="A2.T8.3.1.1.1.1.1.2.4" class="ltx_td ltx_align_center ltx_border_t">Large</span></span>
+<span id="A2.T8.3.1.1.1.1.1.3" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.3.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">DeepSeek-R1</span>
+<span id="A2.T8.3.1.1.1.1.1.3.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Drift length</span>
+<span id="A2.T8.3.1.1.1.1.1.3.3" class="ltx_td ltx_align_center">0.1073</span>
+<span id="A2.T8.3.1.1.1.1.1.3.4" class="ltx_td ltx_align_center">Small</span></span>
+<span id="A2.T8.3.1.1.1.1.1.4" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.4.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">DeepSeek-R1</span>
+<span id="A2.T8.3.1.1.1.1.1.4.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Persuasion</span>
+<span id="A2.T8.3.1.1.1.1.1.4.3" class="ltx_td ltx_align_center">0.0718</span>
+<span id="A2.T8.3.1.1.1.1.1.4.4" class="ltx_td ltx_align_center">Negligible</span></span>
+<span id="A2.T8.3.1.1.1.1.1.5" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.5.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">GPT-OSS-120B</span>
+<span id="A2.T8.3.1.1.1.1.1.5.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Secret type</span>
+<span id="A2.T8.3.1.1.1.1.1.5.3" class="ltx_td ltx_align_center">0.7731</span>
+<span id="A2.T8.3.1.1.1.1.1.5.4" class="ltx_td ltx_align_center">Large</span></span>
+<span id="A2.T8.3.1.1.1.1.1.6" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.6.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">GPT-OSS-120B</span>
+<span id="A2.T8.3.1.1.1.1.1.6.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Drift length</span>
+<span id="A2.T8.3.1.1.1.1.1.6.3" class="ltx_td ltx_align_center">0.0659</span>
+<span id="A2.T8.3.1.1.1.1.1.6.4" class="ltx_td ltx_align_center">Negligible</span></span>
+<span id="A2.T8.3.1.1.1.1.1.7" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.7.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">GPT-OSS-120B</span>
+<span id="A2.T8.3.1.1.1.1.1.7.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Persuasion</span>
+<span id="A2.T8.3.1.1.1.1.1.7.3" class="ltx_td ltx_align_center">0.0689</span>
+<span id="A2.T8.3.1.1.1.1.1.7.4" class="ltx_td ltx_align_center">Negligible</span></span>
+<span id="A2.T8.3.1.1.1.1.1.8" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.8.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Qwen3-VL-235B</span>
+<span id="A2.T8.3.1.1.1.1.1.8.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Secret type</span>
+<span id="A2.T8.3.1.1.1.1.1.8.3" class="ltx_td ltx_align_center">0.6927</span>
+<span id="A2.T8.3.1.1.1.1.1.8.4" class="ltx_td ltx_align_center">Large</span></span>
+<span id="A2.T8.3.1.1.1.1.1.9" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.9.1" class="ltx_td ltx_align_left ltx_th ltx_th_row">Qwen3-VL-235B</span>
+<span id="A2.T8.3.1.1.1.1.1.9.2" class="ltx_td ltx_align_left ltx_th ltx_th_row">Drift length</span>
+<span id="A2.T8.3.1.1.1.1.1.9.3" class="ltx_td ltx_align_center">0.0723</span>
+<span id="A2.T8.3.1.1.1.1.1.9.4" class="ltx_td ltx_align_center">Negligible</span></span>
+<span id="A2.T8.3.1.1.1.1.1.10" class="ltx_tr">
+<span id="A2.T8.3.1.1.1.1.1.10.1" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">Qwen3-VL-235B</span>
+<span id="A2.T8.3.1.1.1.1.1.10.2" class="ltx_td ltx_align_left ltx_th ltx_th_row ltx_border_bb">Persuasion</span>
+<span id="A2.T8.3.1.1.1.1.1.10.3" class="ltx_td ltx_align_center ltx_border_bb">0.0639</span>
+<span id="A2.T8.3.1.1.1.1.1.10.4" class="ltx_td ltx_align_center ltx_border_bb">Negligible</span></span>
+</span>
+</span></span></span>
+</span></span></span><span id="A2.T8.3.2" class="ltx_text"></span></p>
+<figcaption class="ltx_caption ltx_centering" style="font-size:90%;"><span class="ltx_tag ltx_tag_table">Table 8: </span>Probe-level effect sizes for associations between hybrid leakage and benchmark variables.</figcaption>
+</figure>
+</section>
+</article>
+</div>
+</div>
+</body>
+</html>

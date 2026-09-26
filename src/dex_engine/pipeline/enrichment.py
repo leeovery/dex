@@ -11,7 +11,9 @@ live here. The transcript-bearing kinds' body sections belong to the same
 contract — whether a body holds a transcript is said by the ``via`` field,
 so the section headings and the frontmatter cannot be read apart — and
 their composition and split live here too, shared by the youtube driver
-and the transcribe drain.
+and the transcribe drain. So does the one line a media description opens
+with, naming the file it covers: the describe verb writes it, and both
+that verb and the drain that retires a transcribed video read it back.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
@@ -34,16 +36,25 @@ from pathlib import Path
 from dex_engine import frontmatter
 
 __all__ = [
+    "CAPTIONS_VIA",
     "DESCRIPTION_HEADING",
     "TRANSCRIPT_HEADING",
+    "TRANSCRIPT_PROVENANCE",
+    "TRANSCRIPT_SOURCES",
+    "described_file",
+    "description_header",
     "description_section",
-    "instagram_body",
+    "description_text",
+    "holds_transcript",
     "mask_fetched",
     "podcast_body",
+    "post_body",
     "pre_transcript",
     "read_enrichment",
     "read_enrichment_fields",
     "render_enrichment",
+    "split_transcript",
+    "transcript_provenance",
     "youtube_body",
 ]
 
@@ -209,8 +220,34 @@ TRANSCRIPT_HEADING = "## Transcript"
 # The frontmatter key the transcriber stamps (the run layer writes
 # via/model onto every transcript it composes). Neither park writes it, so
 # it is the one fact on disk that says whether a body already holds a
-# transcript.
+# transcript — read against the transcript sources below, because other
+# kinds' files carry the same key as fetch provenance.
 _TRANSCRIBED_FIELD = "via"
+# The stamps the drain appends to every transcript it composes, in the
+# order it appends them — the transcript's provenance, never the fetch's.
+TRANSCRIPT_PROVENANCE = (_TRANSCRIBED_FIELD, "model")
+
+# The stamp youtube's captions route writes. The frontmatter, not the
+# heading, says whether a body holds a transcript: the drain reads `via`
+# back to find where the notes end, so a captions transcript that carried
+# no `via` was read as description end to end and a later whisper drain
+# appended a SECOND transcript under the first — old caption text and new
+# whisper text in one file.
+CAPTIONS_VIA = "captions"
+
+# Every `via` written beside a transcript section, and only those: the
+# captions route's, and each transcription provider's name, which the drain
+# stamps on the transcript it composes. Elsewhere `via` is fetch provenance
+# — fxtwitter, wayback, an extractor's name — and a fetched post whose text
+# carries a "## Transcript" heading must never read as transcribed.
+TRANSCRIPT_SOURCES = frozenset({CAPTIONS_VIA, "whisper-local", "whisper-api"})
+
+
+def description_text(body: str) -> str:
+    """The description a :func:`description_section` holds, or ``body`` itself without one."""
+    if body.startswith(DESCRIPTION_HEADING):
+        return body[len(DESCRIPTION_HEADING) :].strip()
+    return body
 
 
 def description_section(description: str) -> str:
@@ -242,9 +279,9 @@ def podcast_body(show_notes: str, transcript: str) -> str:
     return _notes_then_transcript(show_notes, transcript)
 
 
-def instagram_body(caption: str, transcript: str) -> str:
-    """The post's attributed caption followed by the transcript section."""
-    return _notes_then_transcript(caption, transcript)
+def post_body(text: str, transcript: str) -> str:
+    """An instagram or x post's attributed text followed by the transcript section."""
+    return _notes_then_transcript(text, transcript)
 
 
 def _notes_then_transcript(notes: str, transcript: str) -> str:
@@ -259,8 +296,8 @@ def _notes_then_transcript(notes: str, transcript: str) -> str:
     return f"{TRANSCRIPT_HEADING}\n\n{transcript}"
 
 
-def pre_transcript(fields: dict[str, str], body: str) -> str:
-    """The show-notes half of a park/output body — everything before the transcript.
+def holds_transcript(fields: dict[str, str], body: str) -> bool:
+    """Whether a stored body carries a transcript section a transcriber composed.
 
     A body only holds a transcript section if the drain composed it, and
     the frontmatter is what says so. A park's body is notes end to end,
@@ -269,14 +306,71 @@ def pre_transcript(fields: dict[str, str], body: str) -> str:
     notes at the author's own line, and the drain then wrote that
     truncation back to disk, losing the tail for good.
 
-    A drained no-notes episode's body STARTS with the transcript heading;
-    the newline-anchored split below would miss it and hand the previous
-    transcript back as "notes", duplicating it on a re-drain. That split
-    takes the LAST section, because the transcript is what the drain
-    appended last.
+    A drained no-notes episode's body STARTS with the transcript heading,
+    where a newline-anchored search would miss it.
     """
-    if _TRANSCRIBED_FIELD not in fields:
-        return body
-    if body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n"):
-        return ""
-    return body.rsplit(f"\n{TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
+    return fields.get(_TRANSCRIBED_FIELD) in TRANSCRIPT_SOURCES and (
+        _opens_with_transcript(body) or f"\n{TRANSCRIPT_HEADING}\n" in body
+    )
+
+
+def split_transcript(fields: dict[str, str], body: str) -> tuple[str, str] | None:
+    """A stored body's (notes, transcript) halves, or None when it holds no transcript.
+
+    Only a body that :func:`holds_transcript` is split. The split takes the
+    LAST section, because the transcript is what the drain appended last.
+    """
+    if not holds_transcript(fields, body):
+        return None
+    if _opens_with_transcript(body):
+        return "", body[len(TRANSCRIPT_HEADING) :].strip()
+    notes, _, transcript = body.rpartition(f"\n{TRANSCRIPT_HEADING}\n")
+    return notes.rstrip(), transcript.strip()
+
+
+def pre_transcript(fields: dict[str, str], body: str) -> str:
+    """The show-notes half of a park/output body — everything before the transcript."""
+    split = split_transcript(fields, body)
+    return body if split is None else split[0]
+
+
+def transcript_provenance(fields: dict[str, str]) -> dict[str, str | int | None]:
+    """The stamps a transcript's frontmatter carries of how it was made."""
+    return {key: fields[key] for key in TRANSCRIPT_PROVENANCE if key in fields}
+
+
+def _opens_with_transcript(body: str) -> bool:
+    return body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n")
+
+
+# ---------------------------------------------------------------------------
+# A media description's first line: the one tie between a description and
+# the file it covers.
+# ---------------------------------------------------------------------------
+
+# The name a description's first line carries. Written by the describe verb
+# as the whole line; a description written before that verb existed opens
+# the same way and runs on.
+_DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
+
+
+def description_header(of: str) -> str:
+    """The first line of a description of ``of``."""
+    return f"Describes `{of}`"
+
+
+def described_file(path: Path) -> str | None:
+    """The file a description's first line names, or None where it names none.
+
+    The one tie between a description and the file it covers, and the
+    reason a slot number proves nothing: a capture's media carries no slot
+    at all. The line is read for that name rather than matched whole,
+    because a description written before the describe verb existed carries
+    its own prose after it.
+    """
+    try:
+        line = path.read_text(encoding="utf-8").partition("\n")[0]
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = _DESCRIBED_RE.match(line)
+    return None if match is None else match.group(1)

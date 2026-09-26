@@ -34,8 +34,12 @@ media:                                      # media captures and materialized ba
 - `id` shortid — from a stable key, computed by the engine: exporter message
   id for backfills; `manual/<canonical-url>` for link captures
   (`manual/<capture-filename>` when there's no URL); for media captures the
-  id is fixed by `bin/dex inbox` (the `media/<id>/` directory name, sha1 of
-  `media/<filename>`).
+  id is the `media/<id>/` directory name, fixed when the binary was filed
+  and keyed by the capture, never the file's name: sha1 of
+  `asset/<asset-id>` when `bin/dex inbox` materializes a staged asset, of
+  `inbox/<capture-filename>` when the dex-capture skill files its own.
+  Media filed under the older rule (sha1 of `media/<filename>`) keeps its
+  directory.
 - `kinds` — pattern-only detection at creation, **provisional forever**: the
   enrichment ledger is authoritative for what a URL actually was. `text` when
   the body itself is the knowledge; `image`/`file` when the item's primary
