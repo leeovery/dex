@@ -244,6 +244,19 @@ def _download_slot(path: str | None) -> int | None:
     return None if named is None else int(named.group(1))
 
 
+def _another_kinds_output(path: str, entry: LedgerEntry) -> bool:
+    """Whether ``path`` names the unit's own output as a kind it no longer is.
+
+    The file name is the lasting record of the kind that wrote it: a keep
+    after a redetection records the corrected kind on its line beside the
+    earlier kind's file.
+    """
+    name = PurePosixPath(path).name
+    return any(
+        name == f"{kind.value}-{entry.hash[:6]}.md" for kind in Kind if kind is not entry.kind
+    )
+
+
 def _slot_held(item_dir: Path, slot: int) -> bool:
     """Whether a media file stands in ``slot`` — a description or a temp is not one."""
     return any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*"))
@@ -1463,24 +1476,42 @@ class _Drain:
     # -- outputs ---------------------------------------------------------
 
     def _stored_output(self, entry: LedgerEntry) -> _StoredOutput | None:
-        """The unit's own output on disk, or None.
+        """The unit's own output on disk, as its landing left it, or None.
 
-        Its own twice over: the deterministic ``<kind>-<hash6>.md`` in the
-        owning item's directory, and the unit's URL recorded inside — a
-        neighbour squatting at this name is not content any keep protects.
-        The title comes off the file too: a rerun seed wiped the ledger's.
+        The ledger's word first: the unit's latest landing, superseded or
+        not, since a requeue leaves the live line without a path. A landing
+        stands under whatever name it was given — a hand heal's, an old
+        migration's re-keyed one, the name of the kind before a redetection
+        — so no name the engine would choose today can find it, and the
+        line's own title comes with it, which a hand-written file may never
+        state. The path is resolved by file name under the owning item's
+        directory: a rename moves the directory, and a path recorded before
+        it names the dead id.
+
+        With no recorded landing on disk, the deterministic
+        ``<kind>-<hash6>.md`` stands in only once it proves itself by the
+        unit's URL recorded inside — a neighbour squatting at this name is
+        not content any keep protects — and the title comes off the file.
         """
-        owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
-        if not out.is_file():
+        root = self.ctx.instance.root
+        item_dir = self.ctx.instance.enrichment_dir / self.owner_of(entry)
+        landing = self._recorded_output(entry.hash)
+        if landing is not None and landing.path is not None:
+            landed = item_dir / PurePosixPath(landing.path).name
+            if landed.is_file():
+                return _StoredOutput(
+                    path=str(landed.relative_to(root)),
+                    title=landing.title,
+                    body=read_enrichment(landed)[1],
+                )
+        named = item_dir / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        if not named.is_file():
             return None
-        fields, body = read_enrichment(out)
+        fields, body = read_enrichment(named)
         if fields.get("url") != entry.url:
             return None
         return _StoredOutput(
-            path=str(out.relative_to(self.ctx.instance.root)),
-            title=fields.get("title"),
-            body=body,
+            path=str(named.relative_to(root)), title=fields.get("title"), body=body
         )
 
     def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
@@ -1499,9 +1530,17 @@ class _Drain:
         would trade the article for the stub, reported as new material,
         its title standing in for the article's. If the smaller page really
         is the truth, deleting the stored file first lets the re-fetch land.
+
+        A copy another kind wrote says nothing about size: a URL that now
+        serves a PDF where it served a page is re-read, not shrunk, and its
+        extraction replaces the page's view however short it is.
         """
         stored = self._stored_output(entry)
-        if stored is None or len(body) * 2 >= len(stored.body):
+        if (
+            stored is None
+            or _another_kinds_output(stored.path, entry)
+            or len(body) * 2 >= len(stored.body)
+        ):
             return False
         self._keep_stored(
             entry,
@@ -1904,10 +1943,14 @@ class _Drain:
 
     def _output_path(self, unit_hash: str) -> str | None:
         """The unit's latest recorded output path, superseded or not."""
+        output = self._recorded_output(unit_hash)
+        return None if output is None else output.path
+
+    def _recorded_output(self, unit_hash: str) -> LedgerEntry | None:
+        """The unit's latest line that recorded an output, superseded or not."""
         if self._outputs is None:
             self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
-        output = self._outputs.get(unit_hash)
-        return None if output is None else output.path
+        return self._outputs.get(unit_hash)
 
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries the item owns — what the 12-URL cap bounds.
