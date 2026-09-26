@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from dex_engine.drivers.x import HOP_SLEEP, MAX_HOPS, XDriver
 from dex_engine.pipeline.classify import PAYWALL_REASON
 from dex_engine.pipeline.types import Content, Kind, Missing, Need, Refused, Unusable
@@ -456,6 +458,43 @@ class TestVideoPosts:
         assert parked.need is Need.TRANSCRIBE
         assert parked.meta["enclosure"] == self.VIDEO
         assert "transcription" in (parked.reason or "")  # the report states the park
+
+    def renditions_result(self, variants: list):
+        payload = json.loads(fixture_text("fxtwitter", "video-800.json"))
+        for listing in payload["tweet"]["media"].values():
+            listing[0]["variants"] = variants
+        responses = {API + "status/800": json_response(payload)}
+        return needs_of(driver_for(responses).fetch(make_unit(self.URL, Kind.X)))
+
+    def test_the_smallest_mp4_rendition_is_the_one_heard(self):
+        # The shape fxtwitter relays: a playlist at bitrate 0, then the mp4
+        # renditions; the default `url` is the largest of them.
+        stem = "https://video.example.test/ext_tw_video/800"
+        variants = [
+            {"url": f"{stem}/pl/p.m3u8", "bitrate": 0, "content_type": "application/x-mpegURL"},
+            {"url": f"{stem}/vid/640x360/b.mp4", "bitrate": 832000, "content_type": "video/mp4"},
+            {"url": f"{stem}/vid/480x270/a.mp4", "bitrate": 288000, "content_type": "video/mp4"},
+            {"url": self.VIDEO, "bitrate": 2176000, "content_type": "video/mp4"},
+        ]
+        parked = self.renditions_result(variants)
+        assert parked.meta["enclosure"] == f"{stem}/vid/480x270/a.mp4"
+        assert parked.media == []  # no rendition of the heard video is pooled
+
+    @pytest.mark.parametrize(
+        "variants",
+        [
+            [],
+            "not a list",
+            [
+                "not a variant",
+                {"url": "https://video.example.test/x.mp4", "content_type": "video/mp4"},
+                {"url": 5, "bitrate": 1, "content_type": "video/mp4"},
+                {"url": "https://video.example.test/p.m3u8", "bitrate": 1},
+            ],
+        ],
+    )
+    def test_without_a_usable_rendition_the_default_is_heard(self, variants):
+        assert self.renditions_result(variants).meta["enclosure"] == self.VIDEO
 
     def test_the_transcribed_video_is_never_pooled_as_a_file(self):
         # The transcript supersedes it, as it does a reel's.
