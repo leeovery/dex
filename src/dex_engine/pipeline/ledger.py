@@ -35,7 +35,7 @@ from typing import TextIO
 
 from dex_engine import atomic
 
-from .types import Cap, Format, Job, Kind, LedgerEntry, LineageError, Need, Status
+from .types import OUTSTANDING, Cap, Format, Job, Kind, LedgerEntry, LineageError, Need, Status
 
 __all__ = [
     "FUTURE_SKEW_ALLOWANCE",
@@ -340,8 +340,9 @@ def latest_outputs(
 
     Outputs are success-only, so a unit re-queued since it landed has a
     live line carrying no path while the file it landed still stands. The
-    line that named the file is audit trail from then on, and stays in the
-    file until ``compact`` drops it — this reads it there, resolved by the
+    line that named the file is audit trail from then on, and ``compact``
+    keeps it while the unit is owed and the line can never outrank the live
+    one (:func:`_keeps_landing`) — this reads it there, resolved by the
     rule ``load`` resolves live lines by.
 
     Args:
@@ -489,29 +490,66 @@ def append(path: Path, entry: LedgerEntry) -> None:
 
 
 def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:
-    """Rewrite the ledger keeping only the latest line per hash.
+    """Rewrite the ledger keeping the latest line per hash, and a requeued unit's landing.
 
     Also settles git union merges — it keeps the line ``load`` resolves to,
     so a merge whose newer line landed first is settled in the newer line's
-    favor rather than against it. Superseded lines — the audit trail — are
-    dropped. Because it keeps exactly ``load``'s line, a future-dated ``at``
-    cannot make it delete a real write: such a line is read as unstamped and
-    loses, and it is the line that goes.
+    favor rather than against it. Because it keeps exactly ``load``'s line,
+    a future-dated ``at`` cannot make it delete a real write: such a line is
+    read as unstamped and loses, and it is the line that goes.
+
+    Superseded lines — the audit trail — are dropped, but one: while a
+    hash's live line is still owed (queued or parked), the latest line
+    that recorded an output stays (:func:`latest_outputs`,
+    :func:`_keeps_landing`). A requeued unit's file stands on disk under
+    whatever name its landing gave it, and that line is the only record of
+    which file is the unit's own — the one a failed re-fetch keeps, and the
+    media slot a re-download writes over. It goes at the first compact
+    after the unit lands again, or is closed out any other way.
 
     Args:
         path: The ledger file; a missing file is a no-op.
-        now: The reader's clock, passed through to :func:`load`.
+        now: The reader's clock — one instant resolves both the live lines
+            and the landings, as :func:`load` would.
 
     Returns:
         The number of superseded lines removed.
     """
     if not path.exists():
         return 0
-    lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
-    entries = load(path, now=now)
+    records = list(_records(path))
+    moment = now()
+    landings = _latest(((n, e) for n, e in records if e.path is not None), now=moment)
+    kept: list[LedgerEntry] = []
+    for unit_hash, live in _latest(records, now=moment).items():
+        landing = landings.get(unit_hash)
+        if landing is not None and _keeps_landing(live, landing, now=moment):
+            kept.append(landing)
+        kept.append(live)
     # Atomic: a crash mid-write must never lose the ledger.
-    atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
-    return len(lines) - len(entries)
+    atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in kept))
+    return len(records) - len(kept)
+
+
+def _keeps_landing(live: LedgerEntry, landing: LedgerEntry, *, now: datetime.datetime) -> bool:
+    """Whether compact keeps ``landing`` ahead of ``live``, the hash's live line.
+
+    Only for an owed unit: a unit closed out — skipped, dead, landed again
+    without a path — holds its landing to nothing, and a kept one would
+    reserve a retired child's media slot forever. And only a landing that
+    resolves below the live line at every instant from here on, written
+    ahead of it: an unstamped one ties at the bottom and loses on position,
+    and a stamped one only while the live line is stamped no earlier and
+    already trusted. A stamp further ahead than the skew allowance reads as
+    unstamped only until the clock reaches it; from then on it outranks the
+    line it was losing to, and a kept landing would resurrect a superseded
+    ``done``.
+    """
+    if live.path is not None or live.status not in OUTSTANDING:
+        return False
+    if landing.at is None:
+        return True
+    return live.at is not None and landing.at <= live.at <= now + FUTURE_SKEW_ALLOWANCE
 
 
 def drop_items(

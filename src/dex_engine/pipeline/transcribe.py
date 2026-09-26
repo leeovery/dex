@@ -29,7 +29,7 @@ from dex_engine.drivers.ytdlp import (
 
 from .classify import Classification
 from .detect import looks_like_html
-from .enrichment import DESCRIPTION_HEADING, pre_transcript, read_enrichment
+from .enrichment import description_text, pre_transcript, read_enrichment
 from .types import LedgerEntry, Status
 from .urls import ext_of
 
@@ -119,10 +119,7 @@ def _stored_description(path: Path) -> str:
     if not path.exists():
         return ""
     fields, body = read_enrichment(path)
-    head = pre_transcript(fields, body)
-    if head.startswith(DESCRIPTION_HEADING):
-        return head[len(DESCRIPTION_HEADING) :].strip()
-    return head
+    return description_text(pre_transcript(fields, body))
 
 
 def acquire_podcast_audio(

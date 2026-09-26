@@ -29,8 +29,17 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, classify_connection
 from dex_engine.pipeline.digest import item_digest
-from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
-from dex_engine.pipeline.ownership import work_identity
+from dex_engine.pipeline.enrichment import (
+    TRANSCRIPT_HEADING,
+    _yaml_value,
+    description_section,
+    instagram_body,
+    podcast_body,
+    read_enrichment,
+    render_enrichment,
+    youtube_body,
+)
+from dex_engine.pipeline.ownership import unit_owners, work_identity
 from dex_engine.pipeline.run import (
     _SHOWN_ID_MAX,
     _SNIFF_PREFIX_BYTES,
@@ -1185,7 +1194,8 @@ class TestHttpOnlySources:
 
 
 class TestRerun:
-    def seed_rerun(self, ctx: RunContext) -> None:
+    @staticmethod
+    def seed_rerun(ctx: RunContext) -> None:
         entry = entry_for(ctx)
         requeued = dataclasses.replace(
             entry, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-2"
@@ -1277,6 +1287,18 @@ class TestRerun:
         report = run_mod.run(ctx)
         assert "1 rewritten" in report
         assert "kept the stored body" not in report
+
+    @pytest.mark.parametrize(("size", "kept"), [(200, False), (199, True)])
+    def test_the_stub_line_is_drawn_at_half_the_stored_body(self, instance, size, kept):
+        # Exactly half is still the page; one character less is a stub.
+        write_item(instance)
+        stored = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="x" * 400))
+        run_mod.run(make_ctx(instance, stored))
+        refetched = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="y" * size))
+        ctx = make_ctx(instance, refetched)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert ("kept the stored body" in report) is kept
 
     def test_a_squatting_neighbour_does_not_trigger_the_keep(self, instance):
         # The stored file must prove it is this unit's own by the URL it
@@ -1405,6 +1427,535 @@ class TestRerun:
         assert files == [f"web-{work_hash(URL)[:6]}.md"]  # overwrite, never a second file
         assert "rewritten body" in (item_dir / files[0]).read_text()
         assert "1 rewritten" in report
+
+    def land(self, instance: Instance) -> LedgerEntry:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        return entry_for(ctx)
+
+    def failing(self, instance: Instance, outcome: Outcome) -> RunContext:
+        return make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: outcome))
+
+    @pytest.mark.parametrize(
+        ("outcome", "would_be"),
+        [
+            (Missing(evidence="HTTP 404"), Status.DEAD),
+            (Refused(evidence="payment/login required (HTTP 402)", permanent=True), Status.MANUAL),
+            (Unusable(evidence="thin-extraction"), Status.MANUAL),
+            (Unusable(evidence="github root url", rescuable=False), Status.SKIPPED),
+        ],
+        ids=["missing", "permanent-refusal", "rescuable-unusable", "unusable"],
+    )
+    def test_a_rerun_whose_re_fetch_lands_nothing_keeps_its_landing(
+        self, instance, outcome, would_be
+    ):
+        # Healing migrations re-seed landings months old, and a source that
+        # rotted since traded the stored copy for a dead row: the line no
+        # longer named the file, and the item reported its source lost.
+        done = self.land(instance)
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+
+        ctx = self.failing(instance, outcome)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert (entry.path, entry.title, entry.reason) == (done.path, done.title, None)
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert (
+            f"kept the stored copy of {URL}: the re-fetch came back {would_be.value} "
+            f"({outcome.evidence}) — delete {done.path} first to let the failure land "
+            "if the source is really gone"
+        ) in report
+        assert "Already stored — 1 unit" in report  # accounted for, never new material
+        assert "Needs writing up" not in report
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert item.status == "enriched"
+
+    def test_a_rerun_takes_its_retries_then_keeps_its_landing(self, instance):
+        # A rate-limited heal gets the blocked lifecycle's attempts; only
+        # giving up at the last one falls back on the stored copy.
+        done = self.land(instance)
+        ctx = self.failing(instance, Refused(evidence="HTTP 429"))
+        self.seed_rerun(ctx)
+        for expected_attempts in range(1, MAX_BLOCKED_ATTEMPTS):
+            run_mod.run(ctx)
+            entry = entry_for(ctx)
+            assert entry.status is Status.BLOCKED
+            assert entry.attempts == expected_attempts
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert (entry.path, entry.title, entry.attempts) == (done.path, done.title, None)
+        assert (
+            "the re-fetch came back manual "
+            f"(still blocked after {MAX_BLOCKED_ATTEMPTS} attempts — HTTP 429)"
+        ) in report
+
+    def test_the_owners_re_fetch_of_a_dead_source_keeps_the_landing(self, instance):
+        # `enrich fetch` on the item's own landed URL requeues it as a rerun.
+        done = self.land(instance)
+        ctx = self.failing(instance, Missing(evidence="HTTP 410"))
+        report = run_mod.fetch_urls(ctx, ITEM, [URL])
+        entry = entry_for(ctx)
+        assert (entry.status, entry.rerun, entry.path) == (Status.DONE, True, done.path)
+        assert f"kept the stored copy of {URL}" in report
+
+    def test_deleting_the_stored_file_first_lets_the_failure_land(self, instance):
+        # The way through the note names, for a source that really is gone.
+        done = self.land(instance)
+        (instance.root / str(done.path)).unlink()
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.reason) == (Status.DEAD, "HTTP 404")
+        assert "kept the stored copy" not in report
+
+    def test_a_squatting_neighbour_is_no_landing_to_keep(self, instance):
+        # With no landing recorded, a file at the engine's name must prove it
+        # is this unit's own by the URL it records.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.2.0",
+                date=TODAY,
+                rerun=True,
+            ),
+        )
+        squatter = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        squatter.parent.mkdir(parents=True)
+        squatter.write_text(
+            render_enrichment("https://elsewhere.test/other", TODAY, {}, "another page " * 50),
+            encoding="utf-8",
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        run_mod.run(ctx)
+        assert entry_for(ctx).status is Status.DEAD
+
+    def test_a_fresh_captures_failure_is_its_failure(self, instance):
+        # Only a rerun keeps: a unit never landed has no landing, whatever
+        # file sits at its name recording its URL.
+        write_item(instance)
+        out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(render_enrichment(URL, TODAY, {}, "a body " * 50), encoding="utf-8")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.reason) == (Status.DEAD, "HTTP 404")
+        assert "kept the stored copy" not in report
+
+    def heal_by_hand(self, instance: Instance, body: str) -> str:
+        """Close the landed unit on a hand-written file, as a session's heal does."""
+        healed = instance.enrichment_dir / ITEM / "read-by-hand.md"
+        healed.write_text(body, encoding="utf-8")
+        path = f"enrichment/{ITEM}/{healed.name}"
+        run_mod.mark(make_ctx(instance, FakeDriver()), URL, Status.DONE, path=path)
+        return path
+
+    def test_a_landing_under_a_heals_own_name_is_kept(self, instance):
+        # A heal lands on whatever name the session chose, which no name the
+        # engine would pick can find — the recorded path does, and the
+        # ledger's word needs no URL inside the file to back it. The title
+        # is the heal line's too: a hand-written file may state none.
+        done = self.land(instance)
+        healed = self.heal_by_hand(instance, "the page, read by hand\n")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+        assert (instance.root / healed).read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert f"delete {healed} first" in report
+
+    def test_a_stub_never_replaces_a_heals_landing(self, instance):
+        self.land(instance)
+        healed = self.heal_by_hand(instance, "the whole article, read by hand " * 40)
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="preview " * 5))
+        )
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert entry_for(ctx).path == healed
+        assert "kept the stored body" in report
+        assert [p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")] == [
+            "read-by-hand.md"
+        ]
+
+    def test_a_renamed_items_landing_is_found_under_the_live_id(self, instance):
+        # The landing recorded its path under the id the item had then; the
+        # rename moved the file with its directory.
+        write_item(instance, NEW_ITEM)
+        healed = instance.enrichment_dir / NEW_ITEM / "read-by-hand.md"
+        healed.parent.mkdir(parents=True)
+        healed.write_text("the page, read by hand\n", encoding="utf-8")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                path=f"enrichment/{OLD_ITEM}/{healed.name}",
+            ),
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.item) == (Status.DONE, NEW_ITEM)
+        assert entry.path == f"enrichment/{NEW_ITEM}/{healed.name}"
+
+    def test_a_recorded_path_naming_nothing_falls_back_on_the_engines_name(self, instance):
+        # Proved by the URL inside; with that gone too, the failure lands
+        # (the deletion test above).
+        done = self.land(instance)
+        ledger.append(
+            instance.ledger_path, dataclasses.replace(done, path=f"enrichment/{ITEM}/gone.md")
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+
+    def test_a_compact_between_the_seed_and_the_drain_keeps_a_heals_landing(self, instance):
+        # The health check compacts after sync — between a migration seeding
+        # its reruns and the drain that runs them — and the heal's line was
+        # the only record of which file is the unit's.
+        done = self.land(instance)
+        healed = self.heal_by_hand(instance, "the page, read by hand\n")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.compact(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+
+
+class TestARerunOnItsLandingOwesNothing:
+    """An item keeps its status while a rerun drains over a landing that still stands.
+
+    A healing migration seeds its whole cohort at sync and the drain takes
+    fifty a run: counted owed, every item in it flipped ``raw``, listed as
+    not finished and held out of digest and wiki work over copies nobody
+    had touched — and every blocked retry did the same.
+    """
+
+    BLOCKED = Refused(evidence="HTTP 429")
+
+    def rerun(self, instance: Instance, *, landing_stands: bool = True) -> RunContext:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert self.status(instance) == "enriched"
+        if not landing_stands:
+            (instance.root / str(entry_for(ctx).path)).unlink()
+        TestRerun.seed_rerun(ctx)
+        return ctx
+
+    def status(self, instance: Instance) -> str:
+        return corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md").status
+
+    def blocked(self, instance: Instance) -> str:
+        return run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: self.BLOCKED)))
+
+    def test_a_rerun_the_cap_leaves_queued_keeps_its_item_enriched(self, instance, monkeypatch):
+        self.rerun(instance)
+        monkeypatch.setattr(run_mod, "RERUN_DRAIN_CAP", 0)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "rerun cohort: 0 of 1 drained; 1 queue for the next run" in report
+        assert self.status(instance) == "enriched"
+
+    def test_a_blocked_rerun_keeps_its_item_enriched_and_off_not_finished(self, instance):
+        self.rerun(instance)
+        report = self.blocked(instance)
+        assert entry_for(make_ctx(instance, FakeDriver())).status is Status.BLOCKED
+        assert self.status(instance) == "enriched"
+        assert "Not finished" not in report
+        assert "Waiting on the engine — 1 entry" in report  # the retry is still the engine's
+
+    def test_a_rerun_with_no_landing_standing_keeps_its_item_raw(self, instance):
+        self.rerun(instance, landing_stands=False)
+        report = self.blocked(instance)
+        assert self.status(instance) == "raw"
+        assert "Not finished — 1 item" in report
+
+    def test_a_fresh_unit_still_holds_its_item_raw(self, instance):
+        write_item(instance)
+        report = self.blocked(instance)
+        assert self.status(instance) == "raw"
+        assert "Not finished — 1 item" in report
+
+    def test_an_undigested_item_standing_on_its_landing_is_digestible(self, instance):
+        # The digest backstop and lint's coverage exemption read what is
+        # owed off the same rule as the item's status.
+        self.rerun(instance)
+        self.blocked(instance)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_verb_refreshing_the_item_reads_what_is_owed_itself(self, instance):
+        # mark, pass and describe refresh the item holding none of the
+        # drain's maps.
+        ctx = self.rerun(instance)
+        run_mod.record_pass(ctx, ITEM, "harvest")
+        assert self.status(instance) == "enriched"
+
+    def test_a_ledger_torn_after_the_caller_read_it_leaves_the_status_alone(self, instance):
+        # A refresh follows a write that already landed: a line it cannot
+        # read must not flip the item on a guess, nor raise past the write.
+        self.rerun(instance)
+        entries = ledger.load(instance.ledger_path)
+        with instance.ledger_path.open("a", encoding="utf-8") as f:
+            f.write("{torn\n")
+        run_mod.refresh_item_frontmatter(instance, ITEM, entries=entries)
+        assert self.status(instance) == "enriched"
+
+    def test_a_ledger_torn_after_the_caller_read_it_claims_no_item(self, instance):
+        self.rerun(instance, landing_stands=False)
+        entries = ledger.load(instance.ledger_path)
+        owners = unit_owners(instance.root, entries, [FakeDriver()])
+        assert run_mod.items_owing_work(instance, entries, owners) == {ITEM}
+        with instance.ledger_path.open("a", encoding="utf-8") as f:
+            f.write("{torn\n")
+        assert run_mod.items_owing_work(instance, entries, owners) == set()
+
+    def test_an_item_whose_rerun_has_no_landing_is_not_digestible(self, instance):
+        # A session's media description keeps the directory in the
+        # backstop's view; the owed rerun is what holds the item back.
+        self.rerun(instance, landing_stands=False)
+        (instance.enrichment_dir / ITEM / "media-0.md").write_text("a description\n")
+        self.blocked(instance)
+        assert run_mod.digest_orphans(instance) == []
+
+
+# What the transcribe drain stamps on every transcript it composes.
+TRANSCRIBER_STAMP: dict[str, str | int | None] = {
+    "title": "t",
+    "via": "whisper-local",
+    "model": "base",
+}
+
+# Every kind the drain transcribes: how its transcript body is composed, and
+# how its driver's park writes the notes the transcript follows.
+TRANSCRIBED = pytest.mark.parametrize(
+    ("kind", "compose", "park_body"),
+    [
+        (Kind.YOUTUBE, youtube_body, description_section),
+        (Kind.PODCAST, podcast_body, str),
+        (Kind.INSTAGRAM, instagram_body, str),
+    ],
+    ids=["youtube", "podcast", "instagram"],
+)
+
+
+class TestRerunKeepsItsTranscript:
+    """A rerun that parks for transcription again never parks over its transcript."""
+
+    def land(self, instance: Instance, kind: Kind, meta: dict, body: str) -> LedgerEntry:
+        """Land the unit through the engine's writer, then seed it as a rerun."""
+        write_item(instance, kinds=[kind.value])
+        driver = FakeDriver(kind, fetch_fn=lambda _unit: Content(meta=meta, body=body))
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        done = entry_for(ctx)
+        TestRerun.seed_rerun(ctx)
+        return done
+
+    def park(self, body: str | None, *, title: str = "t", media=()) -> NeedsCapability:
+        return NeedsCapability(
+            need=Need.TRANSCRIBE,
+            meta={"title": title},
+            body=body,
+            media=list(media),
+            reason="no captions available",
+        )
+
+    def reparked(self, instance: Instance, kind: Kind, park: NeedsCapability) -> str:
+        return run_mod.run(make_ctx(instance, FakeDriver(kind, fetch_fn=lambda _unit: park)))
+
+    def live(self, instance: Instance) -> LedgerEntry:
+        return entry_for(make_ctx(instance, FakeDriver()))
+
+    @TRANSCRIBED
+    def test_a_rerun_lands_its_refetched_notes_over_the_stored_transcript(
+        self, instance, kind, compose, park_body
+    ):
+        # The park was written over the file before transcription was redone,
+        # and a transcription that then failed lost the transcript; keeping
+        # the stale file instead would bar every change to the notes around
+        # it. The re-fetch lands what a fresh share would hold.
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        report = self.reparked(instance, kind, self.park(park_body("new notes"), title="t2"))
+        entry = self.live(instance)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, "t2")
+        fields, body = read_enrichment(instance.root / str(done.path))
+        assert body == compose("new notes", "the words")
+        assert (fields["title"], fields["via"], fields["model"]) == ("t2", "whisper-local", "base")
+        assert "1 rewritten" in report
+        assert (
+            f"kept the stored transcript of {URL} under its re-fetched notes (no captions "
+            f"available) — delete {done.path} first to transcribe it afresh"
+        ) in report
+
+    @TRANSCRIBED
+    def test_an_unchanged_rerun_is_already_stored(self, instance, kind, compose, park_body):
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        report = self.reparked(instance, kind, self.park(park_body("old notes")))
+        assert self.live(instance).status is Status.DONE
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert "Already stored — 1 unit" in report
+        assert "rewritten" not in report
+
+    def test_a_park_holding_an_empty_via_still_reads_unchanged(self, instance):
+        # The drain appends its stamps after the park's own fields — an empty
+        # `via` in the park's meta is dropped from its file — so the kept
+        # rerun has to render them in that same place, not where the park
+        # happened to hold the key.
+        landed = {"title": "t", "channel": "c", "via": "whisper-local", "model": "base"}
+        done = self.land(instance, Kind.YOUTUBE, landed, youtube_body("notes", "the words"))
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        park = dataclasses.replace(
+            self.park(description_section("notes")),
+            meta={"title": "t", "via": None, "channel": "c"},
+        )
+        report = self.reparked(instance, Kind.YOUTUBE, park)
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert "Already stored — 1 unit" in report
+
+    def test_a_caption_ending_in_a_newline_still_reads_unchanged(self, instance):
+        # The drain reads a park's notes back off disk, stripped; the driver
+        # hands them over as the post has them.
+        body = instagram_body("the caption", "the words")
+        done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        report = self.reparked(instance, Kind.INSTAGRAM, self.park("the caption\n"))
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert "Already stored — 1 unit" in report
+
+    @TRANSCRIBED
+    def test_a_rerun_with_no_notes_lands_the_bare_transcript(
+        self,
+        instance,
+        kind,
+        compose,
+        park_body,  # noqa: ARG002 — the park under test carries no body at all
+    ):
+        # A video with no description, an episode with no show notes: the
+        # park carries no body, and the transcript stands alone as it did.
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("", "the words"))
+        report = self.reparked(instance, kind, self.park(None))
+        assert read_enrichment(instance.root / str(done.path))[1] == "## Transcript\n\nthe words"
+        assert "Already stored — 1 unit" in report
+
+    @TRANSCRIBED
+    def test_a_rerun_with_no_transcript_stored_still_parks(
+        self, instance, kind, compose, park_body
+    ):
+        # The frontmatter stamp is what says a transcript was composed: the
+        # same body without it is notes, however it reads.
+        done = self.land(instance, kind, {"title": "t"}, compose("old notes", "the words"))
+        self.reparked(instance, kind, self.park(park_body("new notes")))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert read_enrichment(instance.root / str(done.path))[1] == park_body("new notes")
+
+    @TRANSCRIBED
+    def test_deleting_the_stored_file_first_re_parks(self, instance, kind, compose, park_body):
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, compose("old notes", "the words"))
+        (instance.root / str(done.path)).unlink()
+        report = self.reparked(instance, kind, self.park(park_body("new notes")))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert "kept the stored transcript" not in report
+
+    def test_a_transcript_healed_under_its_own_name_lands_under_the_engines(self, instance):
+        # What a fresh share would hold: the engine-named file, and the
+        # heal's copy of the same unit gone with the landing that replaces it.
+        transcribed = youtube_body("d", "the words")
+        self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, transcribed)
+        healed = instance.enrichment_dir / ITEM / "transcribed-by-hand.md"
+        healed.write_text(
+            render_enrichment(URL, TODAY, TRANSCRIBER_STAMP, transcribed), encoding="utf-8"
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{healed.name}")
+        assert [p.name for p in healed.parent.glob("*.md")] == [healed.name]
+        TestRerun.seed_rerun(ctx)
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        named = f"youtube-{work_hash(URL)[:6]}.md"
+        assert self.live(instance).path == f"enrichment/{ITEM}/{named}"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")) == [named]
+
+    def test_a_fetched_posts_own_transcript_heading_is_no_transcript(self, instance):
+        # `via` is fetch provenance on an X post's file: a post whose text
+        # carries a transcript heading parks for its video like any other.
+        post = f"the post\n\n{TRANSCRIPT_HEADING}\n\nwords the author typed"
+        self.land(instance, Kind.X, {"title": "t", "via": "fxtwitter"}, post)
+        self.reparked(instance, Kind.X, self.park("the post"))
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+
+    def test_a_transcript_no_landing_line_names_is_found_by_the_engines_name(self, instance):
+        # What a compact before the landing-keeping one left: the queued
+        # line alone. The engine's own name, proved by its URL, still finds
+        # the transcript.
+        done = self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, youtube_body("d", "the words"))
+        live = ledger.load(instance.ledger_path).values()
+        instance.ledger_path.write_text("".join(ledger.to_line(e) + "\n" for e in live))
+        assert ledger.latest_outputs(instance.ledger_path) == {}
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        entry = self.live(instance)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+
+    def test_a_kept_transcript_still_stages_the_media_the_park_carries(self, instance):
+        # A carousel's stills ride the park beside the video it transcribes;
+        # a keep that dropped them would lose them, since nothing downstream
+        # sees their URLs again.
+        body = instagram_body("c", "the words")
+        done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
+        still = "https://cdn.example.test/still.jpg"
+        self.reparked(instance, Kind.INSTAGRAM, self.park("c", media=[still]))
+        entries = ledger.load(instance.ledger_path)
+        assert entries[done.hash].status is Status.DONE
+        child = next(e for e in entries.values() if e.url == still)
+        assert (child.job, child.parent) == (Job.MEDIA, done.hash)
+
+    def test_only_a_rerun_keeps(self, instance):
+        # A unit drained for the first time holds no landing to keep, even
+        # where a transcript-shaped file stands at its name.
+        write_item(instance, kinds=[Kind.YOUTUBE.value])
+        out = instance.enrichment_dir / ITEM / f"youtube-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(
+            render_enrichment(URL, TODAY, {"via": "whisper-local"}, youtube_body("d", "w")),
+            encoding="utf-8",
+        )
+        self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
+        assert self.live(instance).status is Status.WAITING
+
+    def test_a_park_for_another_capability_parks_as_ever(self, instance):
+        self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, youtube_body("d", "the words"))
+        park = NeedsCapability(need=Need.EXTRACT, reason="no extractor")
+        self.reparked(instance, Kind.YOUTUBE, park)
+        entry = self.live(instance)
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.EXTRACT)
 
 
 class TestSupersededOutputDrop:
@@ -2411,6 +2962,25 @@ class TestMediaSlots:
         busy = self._transport({self.HERO: self.BUSY})
         run_mod.fetch_urls(self._ctx(instance, busy), ITEM, [self.HERO])
         assert ledger.load(instance.ledger_path)[work_hash(self.HERO)].status is Status.BLOCKED
+        run_mod.run(self._ctx(instance, self._transport()))
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def test_a_requeued_unit_keeps_its_slot_through_a_compact(self, instance):
+        # The health check compacts between a migration seeding its reruns
+        # and the drain. The landing line is the unit's only claim on its
+        # slot, and with its own file standing there unclaimed, the
+        # re-download went to a free slot beside it.
+        self._both_landed_in_one_batch(instance)
+        hero = ledger.load(instance.ledger_path)[work_hash(self.HERO)]
+        requeued = dataclasses.replace(
+            hero, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-13"
+        )
+        ledger.append(instance.ledger_path, requeued)
+        ledger.compact(instance.ledger_path)
         run_mod.run(self._ctx(instance, self._transport()))
         assert self._landed(instance) == {
             self.HERO: f"enrichment/{ITEM}/media-0.webp",
@@ -5141,11 +5711,12 @@ class TestRedetection:
         assert "re-detection loop" not in report
         assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
 
-    def test_a_parked_correction_keeps_the_old_output_until_one_replaces_it(self, instance):
+    def test_a_failed_correction_keeps_the_old_kinds_landing_until_one_replaces_it(self, instance):
         # The wild rerun path: an item enriched as web re-detects to file,
-        # and the corrected fetch parks. Unlinking the web output at
+        # and the corrected fetch fails. Unlinking the web output at
         # redetect time left the item at `raw` with an orphaned digest and
-        # nothing on disk to re-derive from.
+        # nothing on disk to re-derive from; parking the unit then left the
+        # web view on disk with no line naming it.
         item_path = write_item(instance)
         mode = {"redetect": False, "extract": False}
 
@@ -5156,7 +5727,7 @@ class TestRedetection:
 
         def file_fetch(_unit):
             if mode["extract"]:
-                return Content(meta={"title": "t"}, body="extracted " * 40)
+                return Content(meta={"title": "t"}, body="extracted " * 5)
             return Unusable(evidence="no extractor for pdf here")
 
         web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
@@ -5168,17 +5739,19 @@ class TestRedetection:
 
         mode["redetect"] = True
         self._requeue(ctx, URL)
-        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
-        parked = entry_for(ctx)
-        assert parked.kind is Kind.FILE
-        assert parked.status is Status.MANUAL
-        assert web_out.exists()  # the enrichment the item already had stands
+        report = run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        kept = entry_for(ctx)
+        assert (kept.kind, kept.status) == (Kind.FILE, Status.DONE)
+        assert kept.path == f"enrichment/{ITEM}/{web_out.name}"
+        assert f"kept the stored copy of {URL}" in report
         assert corpus.read_item(item_path).enrichment == [web_out.name]
-        assert corpus.read_item(item_path).status == "raw"  # the parked unit is still owed
+        assert corpus.read_item(item_path).status == "enriched"
 
-        # The success that replaces it is what drops it.
+        # The success that replaces it is what drops it, however much
+        # shorter the new kind's reading is: the stub guard weighs a copy
+        # against its own kind only.
         mode["extract"] = True
-        self._requeue(ctx, URL, reason=None)
+        self._requeue(ctx, URL)
         run_mod.run(make_ctx(instance, web, drivers=[web, files]))
         done = entry_for(ctx)
         assert done.status is Status.DONE
@@ -5224,10 +5797,11 @@ class TestRedetection:
         ]
 
     def test_a_mark_landed_output_drops_the_superseded_one(self, instance):
-        # The prescribed recovery for a web→file correction whose corrected
-        # fetch parks: the session writes the enrichment by hand and closes
-        # it with `enrich mark ... done --path`. The stale web view of the
-        # PDF must leave with it — the drain's route is not the only one.
+        # The route for a web→file correction the engine could not read,
+        # whose rerun kept the web view: the session writes the enrichment
+        # by hand and closes it with `enrich mark ... done --path`. The
+        # stale web view of the PDF must leave with it — the drain's route
+        # is not the only one.
         item_path = write_item(instance)
         mode = {"redetect": False}
 
@@ -5249,8 +5823,8 @@ class TestRedetection:
         mode["redetect"] = True
         self._requeue(ctx, URL)
         run_mod.run(make_ctx(instance, web, drivers=[web, files]))
-        assert entry_for(ctx).status is Status.MANUAL
-        assert web_out.exists()  # the park leaves the item as enriched as it found it
+        assert entry_for(ctx).status is Status.DONE
+        assert web_out.exists()  # the failed correction keeps the web landing
 
         # The session reads the PDF with its eyes and closes the unit.
         hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"

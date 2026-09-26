@@ -24,7 +24,7 @@ from dex_engine.pipeline.classify import (
     ProviderInputError,
     ProviderUnavailableError,
 )
-from dex_engine.pipeline.enrichment import read_enrichment
+from dex_engine.pipeline.enrichment import pre_transcript, read_enrichment
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
@@ -219,6 +219,29 @@ class TestYoutubeDrain:
         assert "anydoc" not in content  # not the re-probe's, which differs
         assert "## Transcript\n\nThe transcript text." in content
 
+    def test_a_rerun_through_the_driver_keeps_the_transcript_the_drain_wrote(self, instance):
+        # End to end: the driver parks, the drain transcribes, and a rerun's
+        # driver parks again — without the keep, over the transcript. The
+        # re-probe's own meta lands, with the transcript and its stamps.
+        park = self._park_through_the_driver(instance)
+        words = FakeTranscriber("whisper-local", text="The transcript text.", model="medium")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=words))
+        description = pre_transcript(*read_enrichment(park))
+        done = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(done, status=Status.QUEUED, path=None, title=None, rerun=True),
+        )
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        report = run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, info["title"])
+        fields, body = read_enrichment(park)
+        assert (fields["via"], fields["model"]) == ("whisper-local", "medium")
+        assert body == f"{description}\n\n## Transcript\n\nThe transcript text."
+        assert "kept the stored transcript" in report
+
     def test_a_re_drain_never_duplicates_the_transcript(self, instance):
         park = self._park_through_the_driver(instance)
         first = FakeTranscriber("whisper-local", text="First pass words.")
@@ -389,6 +412,24 @@ class TestYoutubeDrain:
         # Manual is terminal for the mechanical drain — no further attempts.
         run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
         assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.MANUAL
+
+    def test_a_rerun_acquisition_giving_up_parks_manual_over_its_park_file(self, instance):
+        # A rerun keeps a landing its FETCH failed to replace. A transcribe
+        # job's stored file is the park its fetch wrote — a description
+        # still owed its transcript — so giving up on it stays a manual park.
+        park = self._park_through_the_driver(instance)
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)], rerun=True
+            ),
+        )
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        for _ in range(run_mod.MAX_BLOCKED_ATTEMPTS):
+            run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert (entry.status, entry.rerun) == (Status.MANUAL, True)
+        assert park.is_file()
 
     def test_blocked_acquisition_retry_routes_back_to_the_drain_and_completes(self, instance):
         write_item(instance, urls=[VIDEO_URL])

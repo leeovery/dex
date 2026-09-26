@@ -810,7 +810,11 @@ def _exempt_parked_orphans(
     if not isinstance(orphans, list):
         return
     digested = digested_items(instance, corpus_ids)
-    parked = {item_id for item_id in items_owing_work(entries, owners) if item_id not in digested}
+    parked = {
+        item_id
+        for item_id in items_owing_work(instance, entries, owners)
+        if item_id not in digested
+    }
     payload["orphans"] = [item_id for item_id in orphans if item_id not in parked]
 
 

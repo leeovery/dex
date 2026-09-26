@@ -23,7 +23,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import assert_never
@@ -53,11 +53,15 @@ from .detect import (
     sniff_media_ext,
 )
 from .enrichment import (
+    TRANSCRIPT_PROVENANCE,
+    description_text,
     instagram_body,
     mask_fetched,
     podcast_body,
     read_enrichment,
     render_enrichment,
+    split_transcript,
+    transcript_provenance,
     youtube_body,
 )
 from .ownership import unit_owners
@@ -70,6 +74,8 @@ from .transcribe import (
     acquire_youtube_audio,
 )
 from .types import (
+    OUTSTANDING,
+    PARKED,
     Availability,
     Cap,
     Config,
@@ -166,11 +172,6 @@ MEDIA_MAX_BYTES = 10 * 1024 * 1024
 # Bumped when the harvest rules change; recorded in passes.jsonl.
 HARVEST_RULES_VERSION = 1
 
-_PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
-# Work still owed on an item: queued and every parked status. Its complement
-# — done, dead, skipped — is a unit that has landed, is confirmed gone, or
-# was deliberately closed out; none of the three is owed anything further.
-_OUTSTANDING = _PARKED | {Status.QUEUED}
 _PASS_STAGES = frozenset({"harvest", "digest", "wiki"})
 
 # How much of a rejected pass id the error repeats: enough to recognize a
@@ -242,6 +243,19 @@ def _download_slot(path: str | None) -> int | None:
         return None
     named = _DOWNLOAD_NAME.match(PurePosixPath(path).name)
     return None if named is None else int(named.group(1))
+
+
+def _another_kinds_output(path: str, entry: LedgerEntry) -> bool:
+    """Whether ``path`` names the unit's own output as a kind it no longer is.
+
+    The file name is the lasting record of the kind that wrote it: a keep
+    after a redetection records the corrected kind on its line beside the
+    earlier kind's file.
+    """
+    name = PurePosixPath(path).name
+    return any(
+        name == f"{kind.value}-{entry.hash[:6]}.md" for kind in Kind if kind is not entry.kind
+    )
 
 
 def _slot_held(item_dir: Path, slot: int) -> bool:
@@ -466,6 +480,19 @@ class _ItemOutcome:
         return ", ".join(part for part in parts if part)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _StoredOutput:
+    """A unit's own output as it stands on disk — what a keep records done.
+
+    ``path`` is relative to the instance root, as the ledger records it.
+    """
+
+    path: str
+    title: str | None
+    fields: dict[str, str]
+    body: str
+
+
 @dataclass(slots=True)
 class _Drain:
     """One run's mutable state. Internal to this module."""
@@ -635,8 +662,7 @@ class _Drain:
         old line stays what it is, historical attribution, and no persisted
         line is ever rewritten to heal it.
         """
-        owners = self.owners_of(entry)
-        return entry.item if entry.item in owners else owners[0]
+        return _owner(entry, self.owners)
 
     def owners_of(self, entry: LedgerEntry) -> tuple[str, ...]:
         """Every item the corpus resolves this unit to — never empty.
@@ -1138,21 +1164,7 @@ class _Drain:
         meta = dict(acquired.meta)
         meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
-        # Total over the transcribable kinds, mirroring _acquire_audio — a
-        # kind added to acquisition alone must fail loudly here, never
-        # silently take the podcast body.
-        match entry.kind:
-            case Kind.YOUTUBE:
-                body = youtube_body(acquired.prefix, transcript)
-            case Kind.PODCAST:
-                body = podcast_body(acquired.prefix, transcript)
-            case Kind.INSTAGRAM:
-                body = instagram_body(acquired.prefix, transcript)
-            case _:
-                raise RuntimeError(
-                    f"no transcript body for kind '{entry.kind}' — _acquire_audio "
-                    "and the body dispatch must cover the same kinds"
-                )
+        body = _transcript_body(entry.kind, acquired.prefix, transcript)
         path = self._write_output(entry, meta, body)
         # A unit corrected to a transcribable kind (web → podcast) lands its
         # own output HERE, never through _apply_done — the pre-correction
@@ -1249,26 +1261,27 @@ class _Drain:
         for the unit's status is decided here and nowhere else. ``Missing``
         is the only road to ``dead``. The match is total over the union —
         a new outcome variant is a type error at this site until an arm
-        says what it means.
+        says what it means. Every arm that would leave the unit holding
+        nothing records through :meth:`_apply_failure`.
         """
         match fetched:
             case Content():
                 self._apply_content(entry, fetched)
             case Missing(evidence=evidence):
-                self.record_outcome(entry, status=Status.DEAD, reason=evidence)
+                self._apply_failure(entry, Status.DEAD, evidence)
             case Refused(evidence=evidence, permanent=True):
                 # Retrying can never change the answer, so the blocked
                 # lifecycle's attempts would teach nothing: the engine
                 # gives the unit up for judgment now.
-                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+                self._apply_failure(entry, Status.MANUAL, evidence)
             case Refused(evidence=evidence):
-                self._apply_blocked(entry, evidence)
+                self._apply_blocked(entry, evidence, give_up=self._apply_failure)
             case Unusable(evidence=evidence, rescuable=True):
-                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+                self._apply_failure(entry, Status.MANUAL, evidence)
             case Unusable(evidence=evidence):
                 # Nothing there for judgment either: closed out, owing
                 # nothing, holding nothing hostage.
-                self.record_outcome(entry, status=Status.SKIPPED, reason=evidence)
+                self._apply_failure(entry, Status.SKIPPED, evidence)
             case NeedsCapability():
                 self._apply_needs(entry, fetched)
             case Redetected():
@@ -1279,10 +1292,7 @@ class _Drain:
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
         path = None
         if content.body is not None:
-            kept = self._kept_larger_stored(entry, content.body)
-            if kept is not None:
-                path, title = kept
-                self.record_outcome(entry, status=Status.DONE, path=path, title=title)
+            if self._kept_larger_stored(entry, content.body):
                 return
             path = self._write_output(entry, content.meta, content.body)
             _drop_superseded_outputs(self.ctx.instance, entry, path)
@@ -1305,17 +1315,8 @@ class _Drain:
             self._media_stage(self.entries[entry.hash], content.media)
 
     def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
-        if needs.body is not None or needs.meta.get("enclosure") is not None:
-            # A parking driver may still have real content (a podcast's
-            # show notes, the enclosure pointer in meta) — written now,
-            # completed by the drain; the item is not yet cognitive work,
-            # so the write is not an outcome. A waiting-transcribe park
-            # carrying an enclosure ALWAYS writes its park file: the drain
-            # re-fetches the audio from that frontmatter pointer, show
-            # notes or not — a no-notes episode without it would loop
-            # manual.
-            self._write_output(entry, needs.meta, needs.body, count=False)
-        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+        if not self._kept_transcript(entry, needs):
+            self._park(entry, needs)
         if needs.media:
             # Ledgered at emit whatever `media_fetch` says, exactly as a
             # Content emit is: the config gates the download alone
@@ -1332,6 +1333,58 @@ class _Drain:
         # one, so the re-queue cannot loop.
         if is_drainable(self.entries[entry.hash], self.ctx):
             self.queue.append(entry.hash)
+
+    def _park(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
+        if needs.body is not None or needs.meta.get("enclosure") is not None:
+            # A parking driver may still have real content (a podcast's
+            # show notes, the enclosure pointer in meta) — written now,
+            # completed by the drain; the item is not yet cognitive work,
+            # so the write is not an outcome. A waiting-transcribe park
+            # carrying an enclosure ALWAYS writes its park file: the drain
+            # re-fetches the audio from that frontmatter pointer, show
+            # notes or not — a no-notes episode without it would loop
+            # manual.
+            self._write_output(entry, needs.meta, needs.body, count=False)
+        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+
+    def _kept_transcript(self, entry: LedgerEntry, needs: NeedsCapability) -> bool:
+        """Land a rerun's re-fetch over its stored transcript rather than park.
+
+        A transcribable unit's fetch parks for its transcription, and the
+        park was written over the unit's file before the transcription was
+        redone: a rerun traded the transcript for the notes around it, and
+        a transcription that then failed — the video or the episode gone,
+        the provider down, the audio silent — lost it for good. So the
+        re-fetch lands what a fresh share would hold: its own notes and
+        meta, composed with the stored transcript and that transcript's
+        provenance, counted rewritten or unchanged like any landing. A
+        stored file that holds no transcript (a park, or a landing from
+        before the unit transcribed) parks as ever.
+        """
+        if needs.need is not Need.TRANSCRIBE or not entry.rerun:
+            return False
+        stored = self._stored_output(entry)
+        split = None if stored is None else split_transcript(stored.fields, stored.body)
+        if stored is None or split is None:
+            return False
+        # The provenance lands last, where the drain appends it: a park's
+        # meta may already hold the key (an empty `via`), and filling it in
+        # place renders the frontmatter in another order, so an unchanged
+        # re-fetch would count rewritten.
+        refetched = {k: v for k, v in needs.meta.items() if k not in TRANSCRIPT_PROVENANCE}
+        meta = {**refetched, **transcript_provenance(stored.fields)}
+        notes = _park_notes(entry.kind, needs.body)
+        path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
+        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        title = meta.get("title")
+        self.record_outcome(
+            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
+        )
+        self.notes.append(
+            f"kept the stored transcript of {entry.url} under its re-fetched notes "
+            f"({needs.reason}) — delete {path} first to transcribe it afresh"
+        )
+        return True
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
@@ -1394,16 +1447,57 @@ class _Drain:
         )
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
-    def _apply_blocked(self, entry: LedgerEntry, reason: str, *, needs: Need | None = None) -> None:
+    def _apply_failure(self, entry: LedgerEntry, status: Status, reason: str) -> None:
+        """Record a fetch that landed nothing — unless it re-fetched a landing.
+
+        A rerun re-fetches work already done, often months later, and link
+        rot is how a page ends: a source gone dead, walled or thin since
+        says nothing against the copy on disk, and recording the failure
+        would unseat it — the live line no longer naming the file, the item
+        reporting a lost source. So a rerun whose own output is stored keeps
+        it, and the report says what the re-fetch met. A transient refusal
+        still takes its retries first; only giving up comes here. A fresh
+        capture holds nothing to keep: its failure is its failure.
+        """
+        stored = self._stored_output(entry) if entry.rerun else None
+        if stored is None:
+            self.record_outcome(entry, status=status, reason=reason)
+            return
+        self._keep_stored(
+            entry,
+            stored,
+            note=(
+                f"kept the stored copy of {entry.url}: the re-fetch came back "
+                f"{status.value} ({reason}) — delete {stored.path} first to let "
+                "the failure land if the source is really gone"
+            ),
+        )
+
+    def _apply_blocked(
+        self,
+        entry: LedgerEntry,
+        reason: str,
+        *,
+        needs: Need | None = None,
+        give_up: Callable[[LedgerEntry, Status, str], None] | None = None,
+    ) -> None:
+        """One more blocked attempt, or — the last one spent — the unit given up.
+
+        ``give_up`` records the escalation where a manual park is not the
+        whole answer: the fetch path hands :meth:`_apply_failure`, where a
+        rerun keeps its landing. The acquisition and media stages leave it
+        unset — a transcribe job's stored file is the park its fetch wrote,
+        never a landing to keep.
+        """
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
             # Escalation appends attempt context to what was found —
             # it never invents a reason.
-            self.record_outcome(
-                entry,
-                status=Status.MANUAL,
-                reason=f"still blocked after {attempts} attempts — {reason}",
-            )
+            escalated = f"still blocked after {attempts} attempts — {reason}"
+            if give_up is None:
+                self.record_outcome(entry, status=Status.MANUAL, reason=escalated)
+            else:
+                give_up(entry, Status.MANUAL, escalated)
             return
         self.record_outcome(
             entry, status=Status.BLOCKED, needs=needs, attempts=attempts, reason=reason
@@ -1411,37 +1505,85 @@ class _Drain:
 
     # -- outputs ---------------------------------------------------------
 
-    def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> tuple[str, str | None] | None:
-        """The stored output's (path, title) when it dwarfs a re-fetched body.
+    def _stored_output(self, entry: LedgerEntry) -> _StoredOutput | None:
+        """The unit's own output on disk, as its landing left it, or None.
+
+        The ledger's word first: the unit's latest landing, superseded or
+        not, since a requeue leaves the live line without a path. A landing
+        stands under whatever name it was given — a hand heal's, an old
+        migration's re-keyed one, the name of the kind before a redetection
+        — so no name the engine would choose today can find it, and the
+        line's own title comes with it, which a hand-written file may never
+        state. The path is resolved by file name under the owning item's
+        directory: a rename moves the directory, and a path recorded before
+        it names the dead id.
+
+        With no recorded landing on disk, the deterministic
+        ``<kind>-<hash6>.md`` stands in only once it proves itself by the
+        unit's URL recorded inside — a neighbour squatting at this name is
+        not content any keep protects — and the title comes off the file.
+        """
+        root = self.ctx.instance.root
+        owner = self.owner_of(entry)
+        landing = self._recorded_output(entry.hash)
+        if landing is not None and landing.path is not None:
+            landed = _landed_file(self.ctx.instance, owner, landing.path)
+            if landed is not None:
+                fields, body = read_enrichment(landed)
+                return _StoredOutput(
+                    path=str(landed.relative_to(root)),
+                    title=landing.title,
+                    fields=fields,
+                    body=body,
+                )
+        named = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        if not named.is_file():
+            return None
+        fields, body = read_enrichment(named)
+        if fields.get("url") != entry.url:
+            return None
+        return _StoredOutput(
+            path=str(named.relative_to(root)), title=fields.get("title"), fields=fields, body=body
+        )
+
+    def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
+        """Record the unit done on its stored output — accounted, never new material."""
+        self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
+        self.notes.append(note)
+        self.record_outcome(entry, status=Status.DONE, path=stored.path, title=stored.title)
+
+    def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> bool:
+        """Keep the stored output when it dwarfs a re-fetched body.
 
         A live page shrinks a little when it is edited; it does not lose
         half of itself. A re-fetched body under half the stored one is a
         stub standing where the content used to be — a paywall preview, a
         login interstitial, an archive snapshot of either — and writing it
-        would trade the article for the stub, reported as new material.
-        The stored body must prove it is this unit's own (the URL it
-        records): a neighbour squatting at this name is not content this
-        guard protects. The title comes off the stored file too — a rerun
-        seed wiped the ledger's, and the stub's must not stand in. If the
-        smaller page really is the truth, deleting the stored file first
-        lets the re-fetch land.
+        would trade the article for the stub, reported as new material,
+        its title standing in for the article's. If the smaller page really
+        is the truth, deleting the stored file first lets the re-fetch land.
+
+        A copy another kind wrote says nothing about size: a URL that now
+        serves a PDF where it served a page is re-read, not shrunk, and its
+        extraction replaces the page's view however short it is.
         """
-        owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
-        if not out.is_file():
-            return None
-        fields, stored = read_enrichment(out)
-        if fields.get("url") != entry.url or len(body) * 2 >= len(stored):
-            return None
-        rel = str(out.relative_to(self.ctx.instance.root))
-        self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
-        self.notes.append(
-            f"kept the stored body for {entry.url}: the re-fetch returned "
-            f"{len(body)} chars against {len(stored)} stored — "
-            f"delete {rel} first if the smaller page is the truth"
+        stored = self._stored_output(entry)
+        if (
+            stored is None
+            or _another_kinds_output(stored.path, entry)
+            or len(body) * 2 >= len(stored.body)
+        ):
+            return False
+        self._keep_stored(
+            entry,
+            stored,
+            note=(
+                f"kept the stored body for {entry.url}: the re-fetch returned "
+                f"{len(body)} chars against {len(stored.body)} stored — "
+                f"delete {stored.path} first if the smaller page is the truth"
+            ),
         )
-        title = fields.get("title")
-        return rel, title if isinstance(title, str) else None
+        return True
 
     def _write_output(
         self,
@@ -1833,10 +1975,22 @@ class _Drain:
 
     def _output_path(self, unit_hash: str) -> str | None:
         """The unit's latest recorded output path, superseded or not."""
+        output = self._recorded_output(unit_hash)
+        return None if output is None else output.path
+
+    def _recorded_output(self, unit_hash: str) -> LedgerEntry | None:
+        """The unit's latest line that recorded an output, superseded or not."""
+        return self._landings().get(unit_hash)
+
+    def _landings(self) -> dict[str, LedgerEntry]:
+        """Every unit's latest line that recorded an output, superseded or not."""
         if self._outputs is None:
             self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
-        output = self._outputs.get(unit_hash)
-        return None if output is None else output.path
+        return self._outputs
+
+    def owed(self) -> set[str]:
+        """The units still owed work (:func:`_owed_units`), off this run's maps."""
+        return _owed_units(self.ctx.instance, self.entries, self.owners, self._landings())
 
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries the item owns — what the 12-URL cap bounds.
@@ -1886,7 +2040,7 @@ class _Drain:
         if count:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)
-        if count and stamped.status in _PARKED:
+        if count and stamped.status in PARKED:
             self.parked.append(
                 _parked_row(
                     stamped,
@@ -1977,9 +2131,15 @@ class _Drain:
         write-only-on-change rule keeps untouched items untouched.
         """
         self.resolve_owners()  # this run's children exist now, and want owners
+        owed = self.owed()
         for item_id, path in self.item_paths.items():
             detail = refresh_item_frontmatter(
-                self.ctx.instance, item_id, path, entries=self.entries, owners=self.owners
+                self.ctx.instance,
+                item_id,
+                path,
+                entries=self.entries,
+                owners=self.owners,
+                owed=owed,
             )
             if detail is not None:
                 self.notes.append(
@@ -2109,17 +2269,19 @@ class _Drain:
         landed" for an item that admitted twelve.
 
         Which units are the item's is the corpus's answer, not the stored
-        string's, so the shape here and the ``raw`` its frontmatter derives
-        are read off one map.
+        string's, and which of them are still owed is :func:`_owed_units`'s,
+        so the shape here and the ``raw`` its frontmatter derives are read
+        off the same two answers.
         """
         rows: list[dict[str, object]] = []
+        owed = self.owed()
         for item_id in sorted(self.touched):
             units = [
                 entry
                 for entry in self.entries.values()
                 if item_id in self.owners.get(entry.hash, ()) and not _is_cap_refusal(entry)
             ]
-            outstanding = [entry for entry in units if entry.status in _OUTSTANDING]
+            outstanding = [entry for entry in units if entry.hash in owed]
             if not outstanding:
                 continue
             groups: dict[tuple[str, str | None], int] = {}
@@ -2236,6 +2398,41 @@ def _parked_row(
     return row
 
 
+def _transcript_body(kind: Kind, notes: str, transcript: str) -> str:
+    """A transcribable unit's body: the transcript composed onto its notes, per kind.
+
+    Total over the transcribable kinds, mirroring _acquire_audio — a kind
+    added to acquisition alone must fail loudly here, never silently take
+    the podcast body.
+    """
+    match kind:
+        case Kind.YOUTUBE:
+            return youtube_body(notes, transcript)
+        case Kind.PODCAST:
+            return podcast_body(notes, transcript)
+        case Kind.INSTAGRAM:
+            return instagram_body(notes, transcript)
+        case _:
+            raise RuntimeError(
+                f"no transcript body for kind '{kind}' — _acquire_audio "
+                "and the body dispatch must cover the same kinds"
+            )
+
+
+def _park_notes(kind: Kind, body: str | None) -> str:
+    """The notes a transcribe park's body carries, as :func:`_transcript_body` takes them.
+
+    Exactly as the drain reads a stored park back: stripped, as the disk
+    round trip leaves it, and a youtube park's description unframed from
+    the section it writes, since :func:`youtube_body` frames the bare text
+    again.
+    """
+    if body is None:
+        return ""
+    notes = body.strip()
+    return description_text(notes) if kind is Kind.YOUTUBE else notes
+
+
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
     """Drop the unit's earlier-kind output — once ``path`` replaces it.
 
@@ -2280,22 +2477,23 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
             stale.unlink()
 
 
-def refresh_item_frontmatter(
+def refresh_item_frontmatter(  # noqa: PLR0913 — three optional ledger reads
     instance: Instance,
     item_id: str,
     path: Path | None = None,
     *,
     entries: dict[str, LedgerEntry] | None = None,
     owners: Mapping[str, tuple[str, ...]] | None = None,
+    owed: Collection[str] | None = None,
 ) -> str | None:
     """Derive one item's ``status``/``enrichment:``; write only on change.
 
     The listing is the enrichment directory's markdown files; the status is
     the ledger's answer to "has the whole item landed" — ``enriched`` only
-    when no unit the item owns is still outstanding, ``raw`` while one is.
-    Callers holding the ledger pass ``entries``, and the ownership map with
-    it where they have one (it costs a corpus read); the rest read both
-    here.
+    when no unit the item owns is still owed (:func:`_owed_units`), ``raw``
+    while one is. Callers holding the ledger pass ``entries``, and the
+    ownership map and the owed units with it where they have them (they
+    cost a corpus read and a ledger read); the rest read them here.
 
     Silent when the corpus file is gone or unreadable: a heal may outlive
     its item (excluded after capture), an unreadable item is seeding's to
@@ -2317,11 +2515,10 @@ def refresh_item_frontmatter(
         # had landed, and the retry duplicated the record.
         return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
-    units = _item_units(instance, item_id, entries, owners)
+    ledgered = _item_units(instance, item_id, entries, owners, owed)
+    status = item.status if ledgered is None else _derived_status(files, *ledgered)
     try:
-        updated = dataclasses.replace(
-            item, status=_derived_status(item, files, units), enrichment=files
-        )
+        updated = dataclasses.replace(item, status=status, enrichment=files)
         if updated != item:
             corpus.write_item(path, updated)
     except (OSError, corpus.CorpusSchemaError) as e:
@@ -2362,9 +2559,10 @@ def _item_units(
     instance: Instance,
     item_id: str,
     entries: dict[str, LedgerEntry] | None,
-    owners: Mapping[str, tuple[str, ...]] | None = None,
-) -> list[LedgerEntry] | None:
-    """The item's ledger units — from the caller's map, or read here.
+    owners: Mapping[str, tuple[str, ...]] | None,
+    owed: Collection[str] | None,
+) -> tuple[list[LedgerEntry], Collection[str]] | None:
+    """The item's ledger units, and the units still owed — from the caller's maps, or read here.
 
     Ownership is the corpus's answer, not the line's stored string
     (:func:`_unit_owners`): a renamed item's units are its own, and a URL
@@ -2380,7 +2578,13 @@ def _item_units(
             return None
     if owners is None:
         owners = _unit_owners(instance, entries)
-    return [entry for entry in entries.values() if item_id in owners.get(entry.hash, ())]
+    if owed is None:
+        landings = _landings_or_none(instance)
+        if landings is None:
+            return None
+        owed = _owed_units(instance, entries, owners, landings)
+    units = [entry for entry in entries.values() if item_id in owners.get(entry.hash, ())]
+    return units, owed
 
 
 def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
@@ -2391,16 +2595,82 @@ def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
         return None
 
 
-def _derived_status(
-    item: corpus.CorpusItem, files: list[str], units: list[LedgerEntry] | None
-) -> str:
+def _landings_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
+    """Every unit's latest landing (:func:`ledger.latest_outputs`), or None when unreadable."""
+    try:
+        return ledger.latest_outputs(instance.ledger_path)
+    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        return None
+
+
+def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]]) -> str:
+    """The one live item a unit's work is written under (:meth:`_Drain.owner_of`)."""
+    claimants = owners.get(entry.hash) or (entry.item,)
+    return entry.item if entry.item in claimants else claimants[0]
+
+
+def _landed_file(instance: Instance, owner: str, recorded: str) -> Path | None:
+    """The file a recorded landing path names, where it still stands on disk.
+
+    Resolved by file name under the owning item's directory: a rename moves
+    the directory, and a path recorded before it names the dead id.
+    """
+    landed = instance.enrichment_dir / owner / PurePosixPath(recorded).name
+    return landed if landed.is_file() else None
+
+
+def _owed_units(
+    instance: Instance,
+    entries: Mapping[str, LedgerEntry],
+    owners: Mapping[str, tuple[str, ...]],
+    landings: Mapping[str, LedgerEntry],
+) -> set[str]:
+    """The units still owed work — the ones that hold an item ``raw``.
+
+    Every queued or parked unit, but one: a rerun whose latest landing still
+    stands on disk. Its item already holds what the unit landed, and a
+    re-fetch that fails keeps that copy (:meth:`_Drain._apply_failure`).
+    Counted owed, a healing migration's cohort — a thousand reruns, drained
+    fifty a run — flipped every item it touched ``raw``, listed each as not
+    finished and held it out of digest and wiki work for dozens of runs over
+    copies nobody had touched, and every blocked retry did the same. A rerun
+    with no landing standing is owed exactly as a fresh unit is.
+
+    ``landings`` is :func:`ledger.latest_outputs`.
+    """
+    return {
+        entry.hash
+        for entry in entries.values()
+        if entry.status in OUTSTANDING
+        and not _stands_on_its_landing(instance, entry, owners, landings)
+    }
+
+
+def _stands_on_its_landing(
+    instance: Instance,
+    entry: LedgerEntry,
+    owners: Mapping[str, tuple[str, ...]],
+    landings: Mapping[str, LedgerEntry],
+) -> bool:
+    """Whether ``entry`` is a rerun whose latest landing still stands on disk."""
+    landing = landings.get(entry.hash)
+    return (
+        entry.rerun
+        and landing is not None
+        and landing.path is not None
+        and _landed_file(instance, _owner(entry, owners), landing.path) is not None
+    )
+
+
+def _derived_status(files: list[str], units: list[LedgerEntry], owed: Collection[str]) -> str:
     """``enriched`` iff the item owes no further work.
 
     An item is one unit of knowledge — the post, the thread parents above
     it, the links harvest promoted, the media, the video awaiting its
-    transcript — so one outstanding unit keeps the whole item ``raw`` and
-    out of digest/wiki. A dead link or a deliberately skipped unit owes
-    nothing and holds nothing hostage.
+    transcript — so one owed unit (:func:`_owed_units`) keeps the whole
+    item ``raw`` and out of digest/wiki. A dead link or a deliberately
+    skipped unit owes nothing and holds nothing hostage, and neither does a
+    rerun whose earlier landing still stands.
 
     What it OWES is the whole question, and the ledger answers it through
     the ownership map (``units``) — never the item's own directory
@@ -2419,11 +2689,9 @@ def _derived_status(
     which owes its description and its digest — and an ``any()`` over no
     units would call that finished.
     """
-    if units is None:
-        return item.status
     if not units and not files:
         return "raw"
-    return "raw" if any(unit.status in _OUTSTANDING for unit in units) else "enriched"
+    return "raw" if any(unit.hash in owed for unit in units) else "enriched"
 
 
 # ---------------------------------------------------------------------------
@@ -2735,7 +3003,7 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
             cognitive=is_cognitive_park(entry, ctx),
         )
         for entry in entries.values()
-        if entry.status in _PARKED
+        if entry.status in PARKED
     ]
     rows.sort(key=lambda row: (str(row["item"]), str(row["url"])))
     return rows
@@ -2821,7 +3089,7 @@ def digest_orphans(instance: Instance) -> list[str]:
         return orphans
     entries = _ledger_or_none(instance)
     owners = _unit_owners(instance, entries) if entries is not None else {}
-    owing = items_owing_work(entries, owners)
+    owing = items_owing_work(instance, entries, owners)
     enriched_on = _last_enriched(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     recorded = digested_items(instance, live)
@@ -2989,9 +3257,11 @@ def items_owing_descriptions(instance: Instance) -> list[dict[str, object]]:
 
 
 def items_owing_work(
-    entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
+    instance: Instance,
+    entries: dict[str, LedgerEntry] | None,
+    owners: Mapping[str, tuple[str, ...]],
 ) -> set[str]:
-    """The items a unit is still outstanding on — the ones deriving ``raw``.
+    """The items a unit is still owed on (:func:`_owed_units`) — the ones deriving ``raw``.
 
     Read off the same ownership map the frontmatter's ``raw`` is derived
     from (:func:`_unit_owners`): an item held out of digest by an
@@ -3005,10 +3275,14 @@ def items_owing_work(
     """
     if entries is None:
         return set()
+    landings = _landings_or_none(instance)
+    if landings is None:
+        return set()
+    owed = _owed_units(instance, entries, owners, landings)
     return {
         item_id
         for entry in entries.values()
-        if entry.status in _OUTSTANDING
+        if entry.hash in owed
         for item_id in owners.get(entry.hash, (entry.item,))
     }
 
@@ -3145,7 +3419,7 @@ def never_harvested(instance: Instance) -> list[str]:
     if not entries:
         return []
     owners = _unit_owners(instance, entries)
-    owing = items_owing_work(entries, owners)
+    owing = items_owing_work(instance, entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     fetched = {
         item_id
@@ -3347,8 +3621,11 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     # line names: a shared URL completes two items at once, and a renamed
     # item's line names an id with no file to refresh at all.
     drain.resolve_owners()
+    owed = drain.owed()
     for item_id in drain.owners.get(prior.hash, (prior.item,)):
-        refresh_item_frontmatter(ctx.instance, item_id, entries=drain.entries, owners=drain.owners)
+        refresh_item_frontmatter(
+            ctx.instance, item_id, entries=drain.entries, owners=drain.owners, owed=owed
+        )
     drain.close_ledger()
     return f"marked {prior.url} ({prior.hash}) {status.value}"
 
@@ -3430,7 +3707,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
 
 
 def compact(ctx: RunContext) -> str:
-    """Compact the ledger to the latest line per hash."""
+    """Compact the ledger to the latest line per hash, and a requeued unit's landing."""
     removed = ledger.compact(ctx.instance.ledger_path)
     noun = "line" if removed == 1 else "lines"
     return f"compacted: {removed} superseded {noun} removed"
