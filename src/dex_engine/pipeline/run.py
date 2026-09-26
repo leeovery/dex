@@ -509,6 +509,9 @@ class _Drain:
     # loop; across runs the world genuinely changes, and a unit may be
     # legitimately re-corrected months later.
     redetected_hashes: set[str] = field(default_factory=set)
+    # The units this run parked, each with whether the park changed what
+    # was stored — how a rerun that keeps its post counts the item.
+    park_writes: dict[str, bool] = field(default_factory=dict)
     queue: deque[str] = field(default_factory=deque)
     counts: dict[Status, int] = field(default_factory=dict)
     parked: list[dict[str, object]] = field(default_factory=list)
@@ -1276,6 +1279,15 @@ class _Drain:
                     ),
                     cause=f"its video stopped serving ({failure.reason})",
                 )
+            case Status.SKIPPED:
+                self._close_unheard(
+                    entry,
+                    reason=(
+                        f"{failure.reason} — too large to transcribe here; mark done to keep "
+                        "the stored post as the record"
+                    ),
+                    cause=failure.reason,
+                )
             case Status.DEAD | Status.MANUAL:
                 self._close_unheard(entry, reason=failure.reason, status=failure.status)
             case _:
@@ -1310,6 +1322,14 @@ class _Drain:
             self.record_outcome(
                 entry, status=Status.DONE, path=str(stored.relative_to(self.ctx.instance.root))
             )
+            outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
+            # Parked in an earlier run, the park's effect is unknown here:
+            # counted rewritten, since a needless re-digest costs less than
+            # a lost one.
+            if self.park_writes.get(entry.hash, True):
+                outcome.changed += 1
+            else:
+                outcome.unchanged += 1
             self.notes.append(
                 f"item {self.owner_of(entry)}: the rerun of {entry.url} ended without a "
                 f"transcript ({cause or reason}) — the post stays done as it was re-fetched"
@@ -1562,6 +1582,8 @@ class _Drain:
             # was sitting on disk the whole time.
             if count:
                 self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
+            else:
+                self.park_writes[entry.hash] = False
             return str(out.relative_to(self.ctx.instance.root))
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_text(out, content)
@@ -1576,6 +1598,8 @@ class _Drain:
                 outcome.changed += 1
             else:
                 outcome.new += 1
+        else:
+            self.park_writes[entry.hash] = True
         return str(out.relative_to(self.ctx.instance.root))
 
     # -- extraction assets ----------------------------------------

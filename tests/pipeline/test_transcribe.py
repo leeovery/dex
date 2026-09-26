@@ -1065,6 +1065,19 @@ class TestInstagramDrain:
         assert "empty response body" in (entry.reason or "")
         assert audio_files(instance) == []
 
+    def test_a_reel_past_the_ceiling_parks_with_the_posts_route_out(self, instance, monkeypatch):
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 64)
+        self.park_via_driver(instance)
+        large = HttpResponse(
+            status=200, content_type="video/mp4", body=b"\x00" * 65, content_length=1024**3
+        )
+        ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: large}))
+        entry = entry_for(ctx, self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").endswith(
+            "too large to transcribe here; mark done to keep the stored post as the record"
+        )
+
     def test_no_speech_parks_manual_saying_the_caption_is_the_record(self, instance):
         # Silent and music-only reels are routine here, not an edge — the
         # park reason has to carry the disposition, because the caption on
@@ -1215,33 +1228,75 @@ class TestXDrain:
         assert entry.status is Status.BLOCKED
         assert entry.needs is Need.TRANSCRIBE
 
-    @pytest.mark.parametrize(
-        ("declared", "named"), [(734003200, "the video is 700MB"), (None, "the video is over 5MB")]
-    )
-    def test_a_video_past_the_ceiling_parks_naming_its_size(
-        self, instance, monkeypatch, declared, named
-    ):
-        # Held whole in memory between download and transcriber, so a long
-        # video is refused rather than buffered.
-        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 5 * 1024 * 1024)
-        self.park_via_driver(instance)
-        large = HttpResponse(
+    CEILING = 5 * 1024 * 1024
+    ROUTE = "too large to transcribe here; mark done to keep the stored post as the record"
+
+    def large(self, declared: int | None) -> HttpResponse:
+        return HttpResponse(
             status=200,
             content_type="video/mp4",
-            body=b"\x00" * (5 * 1024 * 1024 + 1),
+            body=b"\x00" * (self.CEILING + 1),
             content_length=declared,
         )
-        transport = FakeTransport({self.ENCLOSURE: large})
+
+    def test_a_video_declared_past_the_ceiling_is_refused_unread(self, instance, monkeypatch):
+        # Held whole in memory between download and transcriber, so a long
+        # video is turned away on what it declares, before a byte is read.
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", self.CEILING)
+        self.park_via_driver(instance)
+        transport = FakeTransport({self.ENCLOSURE: self.large(734003200)})
         entry = entry_for(self.drain(instance, transport=transport), self.POST_URL)
         assert entry.status is Status.MANUAL
-        assert (entry.reason or "").startswith(f"{named}, past the 5MB")
-        assert transport.limits == [5 * 1024 * 1024]  # the read itself stopped at the ceiling
+        assert entry.reason == (
+            f"the video is 700MB, past the 5MB a download to transcribe may hold — {self.ROUTE}"
+        )
+        assert transport.calls == [("HEAD", self.ENCLOSURE)]
         assert audio_files(instance) == []
+
+    def test_an_undeclared_video_stops_at_the_ceiling_as_it_is_read(self, instance, monkeypatch):
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", self.CEILING)
+        self.park_via_driver(instance)
+        transport = FakeTransport({self.ENCLOSURE: self.large(None)})
+        entry = entry_for(self.drain(instance, transport=transport), self.POST_URL)
+        assert (entry.reason or "").startswith("the video is over 5MB, past the 5MB")
+        assert transport.calls == [("HEAD", self.ENCLOSURE), ("GET", self.ENCLOSURE)]
+        assert transport.limits == [None, self.CEILING]  # the read itself stopped there
+        assert audio_files(instance) == []
+
+    def test_a_size_only_the_get_declares_is_still_named(self, instance, monkeypatch):
+        # A HEAD that fails, or answers what it will not stand behind, settles
+        # nothing; the GET's own declaration names the size.
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", self.CEILING)
+        self.park_via_driver(instance)
+        large = self.large(734003200)
+
+        def transport(url, *, method="GET", limit=None):
+            if method == "HEAD":
+                raise OSError("connection reset")
+            return FakeTransport({self.ENCLOSURE: large})(url, limit=limit)
+
+        entry = entry_for(self.drain(instance, transport=transport), self.POST_URL)
+        assert (entry.reason or "").startswith("the video is 700MB, past the 5MB")
+
+    def test_a_head_that_is_refused_settles_nothing(self, instance, monkeypatch):
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", self.CEILING)
+        self.park_via_driver(instance)
+        video = TestXDrain().video()
+
+        def transport(url, *, method="GET", limit=None):
+            if method == "HEAD":
+                return dataclasses.replace(self.large(734003200), status=403)
+            return FakeTransport({self.ENCLOSURE: video})(url, limit=limit)
+
+        ctx = self.drain(instance, transport=transport)
+        assert entry_for(ctx, self.POST_URL).status is Status.DONE
 
     def test_a_video_at_the_ceiling_is_heard(self, instance, monkeypatch):
         monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 64)
         self.park_via_driver(instance)
-        exact = HttpResponse(status=200, content_type="video/mp4", body=b"\x00" * 64)
+        exact = HttpResponse(
+            status=200, content_type="video/mp4", body=b"\x00" * 64, content_length=64
+        )
         ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: exact}))
         assert entry_for(ctx, self.POST_URL).status is Status.DONE
 
@@ -1447,9 +1502,52 @@ class TestTranscribedVideoRetired:
         assert body.startswith("@ines — ")
         assert "ended without a transcript (its video stopped serving (HTTP 404" in report
         assert "the post stays done as it was re-fetched" in report
+        # The park rewrote the stored post, so the item owes its writing up again.
+        assert "1 rewritten" in report
         # Nothing was transcribed, so the video it has is kept.
         assert entries[work_hash(self.VIDEO)].status is Status.DONE
         assert (item_dir / "media-0.mp4").exists()
+
+    def test_a_rerun_that_changed_nothing_owes_no_writing_up(self, instance):
+        # The second rerun re-fetches exactly the post the first one stored.
+        self.landed_before_the_fix(instance)
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        self.rerun(instance, video=gone)
+        post = ledger.load(instance.ledger_path)[self.post_hash()]
+        ledger.append(
+            instance.ledger_path, dataclasses.replace(post, status=Status.QUEUED, path=None)
+        )
+        report, entries = self.rerun(instance, video=gone)
+        assert entries[self.post_hash()].status is Status.DONE
+        assert "ended without a transcript" in report
+        assert "rewritten" not in report
+        assert "Needs writing up" not in report
+
+    def test_a_rerun_kept_runs_after_its_park_owes_its_writing_up(self, instance):
+        # The park is written in one run; its video blocks until the attempts
+        # run out, runs later. Whether that park changed the post is no longer
+        # known, and a needless re-digest costs less than a lost one.
+        self.landed_before_the_fix(instance)
+        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+        _report, entries = self.rerun(instance, video=page)
+        blocked = entries[self.post_hash()]
+        assert (blocked.status, blocked.attempts) == (Status.BLOCKED, 1)
+        ledger.append(instance.ledger_path, dataclasses.replace(blocked, attempts=4))
+        report, entries = self.drain_waiting(instance, page)
+        assert entries[self.post_hash()].status is Status.DONE
+        assert "ended without a transcript (still blocked after 5 attempts" in report
+        assert "1 rewritten" in report
+
+    def test_a_rerun_past_the_ceiling_keeps_its_post(self, instance, monkeypatch):
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 5 * 1024 * 1024)
+        self.landed_before_the_fix(instance)
+        large = HttpResponse(
+            status=200, content_type="video/mp4", body=b"\x00" * 65, content_length=1024**3
+        )
+        report, entries = self.rerun(instance, video=large)
+        assert entries[self.post_hash()].status is Status.DONE
+        assert "ended without a transcript (the video is 1024MB, past the 5MB" in report
+        assert "mark done" not in report  # the route belongs to a park, not a landing
 
     def test_a_rerun_whose_video_holds_no_speech_keeps_its_post_and_its_video(self, instance):
         # Silent and music-only clips are a large share of x video: the

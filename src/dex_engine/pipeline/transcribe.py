@@ -174,7 +174,9 @@ def acquire_post_audio(
 
     A 404 classifies ``dead`` but is returned as ``manual`` by the caller's
     mapping: the URL that died is the video's — for a reel, an
-    unmaintained proxy's — and it says nothing about the post.
+    unmaintained proxy's — and it says nothing about the post. A video
+    past :data:`POST_VIDEO_MAX_BYTES` comes back ``skipped``: this engine's
+    own ceiling turned it away, never its source.
 
     Args:
         entry: The waiting ledger entry.
@@ -280,12 +282,17 @@ def _download_enclosure(  # noqa: PLR0913 — the URL, where it lands, its seam,
     default_ext: str,
     limit: int | None = None,
 ) -> Path | Classification:
+    if limit is not None:
+        declared = _declared_length(transport, url)
+        if declared is not None and declared > limit:
+            return Classification(status=Status.SKIPPED, reason=_past_ceiling(declared, limit))
     outcome = fetch_classified(transport, url, limit=limit)
     if isinstance(outcome, FetchFailure):
         return outcome.classification
     response = outcome
     if limit is not None and len(response.body) > limit:
-        return Classification(status=Status.MANUAL, reason=_past_ceiling(response, limit))
+        reason = _past_ceiling(response.content_length, limit)
+        return Classification(status=Status.SKIPPED, reason=reason)
     unusable = _not_audio(response)
     if unusable is not None:
         # Never cached under <hash>.<ext>: a stored error page is
@@ -300,17 +307,19 @@ def _download_enclosure(  # noqa: PLR0913 — the URL, where it lands, its seam,
     return path
 
 
-def _past_ceiling(response: HttpResponse, limit: int) -> str:
+def _declared_length(transport: Transport, url: str) -> int | None:
+    """The size a HEAD says the body has, or None where it says nothing it can be held to."""
+    try:
+        probe = transport(url, method="HEAD")
+    except OSError:
+        return None
+    return probe.content_length if probe.ok else None
+
+
+def _past_ceiling(declared: int | None, limit: int) -> str:
     """Why a video larger than ``limit`` is not transcribed, its size named where declared."""
-    size = (
-        f"{response.content_length / _MB:.0f}MB"
-        if response.content_length is not None
-        else f"over {limit / _MB:.0f}MB"
-    )
-    return (
-        f"the video is {size}, past the {limit / _MB:.0f}MB a download to transcribe may "
-        "hold in memory — too large to transcribe here"
-    )
+    size = f"{declared / _MB:.0f}MB" if declared is not None else f"over {limit / _MB:.0f}MB"
+    return f"the video is {size}, past the {limit / _MB:.0f}MB a download to transcribe may hold"
 
 
 def _not_audio(response: HttpResponse) -> str | None:
