@@ -11,7 +11,9 @@ live here. The transcript-bearing kinds' body sections belong to the same
 contract — whether a body holds a transcript is said by the ``via`` field,
 so the section headings and the frontmatter cannot be read apart — and
 their composition and split live here too, shared by the youtube driver
-and the transcribe drain.
+and the transcribe drain. So does the one line a media description opens
+with, naming the file it covers: the describe verb writes it, and both
+that verb and the drain that retires a transcribed video read it back.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
@@ -39,6 +41,8 @@ __all__ = [
     "TRANSCRIPT_HEADING",
     "TRANSCRIPT_PROVENANCE",
     "TRANSCRIPT_SOURCES",
+    "described_file",
+    "description_header",
     "description_section",
     "description_text",
     "holds_transcript",
@@ -337,3 +341,36 @@ def transcript_provenance(fields: dict[str, str]) -> dict[str, str | int | None]
 
 def _opens_with_transcript(body: str) -> bool:
     return body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n")
+
+
+# ---------------------------------------------------------------------------
+# A media description's first line: the one tie between a description and
+# the file it covers.
+# ---------------------------------------------------------------------------
+
+# The name a description's first line carries. Written by the describe verb
+# as the whole line; a description written before that verb existed opens
+# the same way and runs on.
+_DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
+
+
+def description_header(of: str) -> str:
+    """The first line of a description of ``of``."""
+    return f"Describes `{of}`"
+
+
+def described_file(path: Path) -> str | None:
+    """The file a description's first line names, or None where it names none.
+
+    The one tie between a description and the file it covers, and the
+    reason a slot number proves nothing: a capture's media carries no slot
+    at all. The line is read for that name rather than matched whole,
+    because a description written before the describe verb existed carries
+    its own prose after it.
+    """
+    try:
+        line = path.read_text(encoding="utf-8").partition("\n")[0]
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = _DESCRIBED_RE.match(line)
+    return None if match is None else match.group(1)

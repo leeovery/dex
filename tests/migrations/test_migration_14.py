@@ -5,7 +5,7 @@ import datetime
 import pytest
 
 from dex_engine.migrations.migration_14 import build
-from dex_engine.pipeline.describe import described_file
+from dex_engine.pipeline.enrichment import described_file
 
 TODAY = datetime.date(2026, 9, 11)
 NOW = datetime.datetime(2026, 9, 11, 9, 0, 0, 500000, tzinfo=datetime.UTC)

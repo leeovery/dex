@@ -75,7 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from dex_engine import atomic, corpus
-from dex_engine.pipeline.describe import described_file
+from dex_engine.pipeline.enrichment import described_file
 from dex_engine.pipeline.run import is_media_file
 from dex_engine.pipeline.types import MigrationReport
 from dex_engine.pipeline.urls import resolve_repo_path

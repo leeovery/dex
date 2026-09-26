@@ -54,6 +54,7 @@ from .detect import (
 )
 from .enrichment import (
     TRANSCRIPT_PROVENANCE,
+    described_file,
     description_text,
     mask_fetched,
     podcast_body,
@@ -1180,9 +1181,47 @@ class _Drain:
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
         )
+        self._retire_transcribed_media(entry, path, acquired.meta.get("enclosure"))
         # Audio lifecycle: the transcript supersedes the audio — delete on
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
+
+    def _retire_transcribed_media(self, entry: LedgerEntry, landed: str, enclosure: object) -> None:
+        """Retire the unit's media child that downloaded the video just transcribed.
+
+        A post fetched before its video was heard pooled that video as a file
+        owing a description, and a post shared now never has one: the
+        transcript stands for the video, so the file and every description
+        of it leave, and the child's line closes ``skipped`` with no path —
+        nothing counts it any more, neither the describe row, which counts
+        files, nor lint, which asks after every recorded path. A child that
+        already closed without content (skipped over the size ceiling,
+        confirmed gone) holds nothing to retire.
+        """
+        if not isinstance(enclosure, str):
+            return
+        child = self.entries.get(work_hash(enclosure))
+        if (
+            child is None
+            or child.job is not Job.MEDIA
+            or child.parent != entry.hash
+            or child.status in _TERMINAL_NO_CONTENT
+        ):
+            return
+        if child.path is not None:
+            name = Path(child.path).name
+            described = _drop_described_download((self.ctx.instance.root / landed).parent, name)
+            self.notes.append(
+                f"item {self.owner_of(entry)}: the transcript of {entry.url} replaced its "
+                f"downloaded video {name}"
+                + (
+                    " and the description written of it — a digest drawn from that "
+                    "description wants rewriting from the transcript"
+                    if described
+                    else ""
+                )
+            )
+        self.record_outcome(child, status=Status.SKIPPED, reason=_TRANSCRIBED_AWAY)
 
     def _note_first_run(self, transcriber: Transcriber) -> None:
         """Surface an ok-with-caveat availability (the slow first run, explained)."""
@@ -1199,8 +1238,7 @@ class _Drain:
         # description, show notes, a caption) and composes the transcript
         # onto what that park wrote, so each acquisition reads the unit's
         # own output file.
-        name = f"{entry.kind.value}-{entry.hash[:6]}.md"
-        enrichment = self.ctx.instance.enrichment_dir / self.owner_of(entry) / name
+        enrichment = self._output_file(entry)
         match entry.kind:
             case Kind.YOUTUBE:
                 return acquire_youtube_audio(entry, enrichment, audio_dir, self.ctx.download_audio)
@@ -1254,6 +1292,8 @@ class _Drain:
                         "instagram_base_url at another host"
                     ),
                 )
+            case Status.DEAD if entry.kind is Kind.X and entry.rerun:
+                self._land_without_transcript(entry, failure.reason)
             case Status.DEAD if entry.kind is Kind.X:
                 # A post's video can go while the post stands, and the post
                 # the park already stored is a record of it either way.
@@ -1270,6 +1310,21 @@ class _Drain:
                 self.record_outcome(entry, status=failure.status, reason=failure.reason)
             case _:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
+
+    def _land_without_transcript(self, entry: LedgerEntry, why: str) -> None:
+        """Keep a rerun's post as done when the video it would transcribe is gone.
+
+        The rerun re-fetched the post and stored it before reaching for the
+        video, so that file is the landing the post can still have — a rerun
+        never leaves an item less enriched than it found it. A fresh share
+        parks manual instead: nothing has landed for it yet.
+        """
+        path = str(self._output_file(entry).relative_to(self.ctx.instance.root))
+        self.record_outcome(entry, status=Status.DONE, path=path)
+        self.notes.append(
+            f"item {self.owner_of(entry)}: the rerun of {entry.url} could not fetch the "
+            f"video it would transcribe ({why}) — the post stays done without a transcript"
+        )
 
     def _apply(self, entry: LedgerEntry, fetched: Outcome) -> None:
         """Map what the driver FOUND onto the unit's lifecycle — the one total match.
@@ -1553,7 +1608,7 @@ class _Drain:
                     fields=fields,
                     body=body,
                 )
-        named = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        named = self._output_file(entry)
         if not named.is_file():
             return None
         fields, body = read_enrichment(named)
@@ -1602,6 +1657,14 @@ class _Drain:
         )
         return True
 
+    def _output_file(self, entry: LedgerEntry) -> Path:
+        """The unit's own output, ``enrichment/<owner>/<kind>-<hash6>.md``."""
+        return (
+            self.ctx.instance.enrichment_dir
+            / self.owner_of(entry)
+            / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        )
+
     def _write_output(
         self,
         entry: LedgerEntry,
@@ -1630,9 +1693,8 @@ class _Drain:
         into ``enrichment/<dead-id>/``, where the item that owes the work
         cannot list it.
         """
-        owner = self.owner_of(entry)
-        name = f"{entry.kind.value}-{entry.hash[:6]}.md"
-        out = self.ctx.instance.enrichment_dir / owner / name
+        out = self._output_file(entry)
+        owner = out.parent.name
         content = render_enrichment(entry.url, self.ctx.today(), meta, body or "")
         existed = out.exists()
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
@@ -2448,6 +2510,26 @@ def _park_notes(kind: Kind, body: str | None) -> str:
         return ""
     notes = body.strip()
     return description_text(notes) if kind is Kind.YOUTUBE else notes
+
+
+_TRANSCRIBED_AWAY = "superseded — the transcript of its post stands for this video"
+
+
+def _drop_described_download(item_dir: Path, name: str) -> bool:
+    """Remove a media download and every description of it; whether one was described.
+
+    A description names what it covers in its first line: the describe verb
+    writes the download's bare name, and one written before the verb
+    existed wrote its repo path.
+    """
+    (item_dir / name).unlink(missing_ok=True)
+    spellings = {name, f"enrichment/{item_dir.name}/{name}"}
+    descriptions = [
+        path for path in sorted(item_dir.glob("media-*.md")) if described_file(path) in spellings
+    ]
+    for path in descriptions:
+        path.unlink()
+    return bool(descriptions)
 
 
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
