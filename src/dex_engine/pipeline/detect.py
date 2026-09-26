@@ -32,6 +32,7 @@ __all__ = [
     "canonical_url",
     "detect",
     "detect_kind",
+    "format_of_name",
     "looks_like_html",
     "sniff_document",
     "sniff_format",
@@ -237,9 +238,16 @@ def sniff_format(data: bytes, *, name: str | None = None) -> Format | None:
     detected = _anydoc_sniff(data) or _magic_sniff(data)
     if detected is not None:
         return detected
-    if name is not None and "." in name:
-        return _EXTENSION_FORMATS.get(name.rsplit(".", 1)[-1].lower())
+    if name is not None:
+        return format_of_name(name)
     return None
+
+
+def format_of_name(name: str) -> Format | None:
+    """The Format a filename's extension names, or None when it names none."""
+    if "." not in name:
+        return None
+    return _EXTENSION_FORMATS.get(name.rsplit(".", 1)[-1].lower())
 
 
 def _anydoc_sniff(data: bytes) -> Format | None:

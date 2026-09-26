@@ -230,7 +230,7 @@ different problem from the page having nothing on it.
 | **YouTube** | captions where they exist, otherwise the audio is downloaded and transcribed |
 | **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole |
 | **Instagram** | a public post's caption, author and date, read credential-free from the link-preview metadata instagram.com serves, with the media pulled through an embed proxy: video is transcribed, images are kept beside the caption. A private post parks and says to screenshot it |
-| **GitHub** | repos and profiles: README, description, metadata |
+| **GitHub** | repos and profiles: README, description, metadata. A directory link gives that directory's README and file listing, a file link the file, an issue or pull request its text. A document committed to a repo or attached to an issue is read as a file. Any other link into a repo, such as a commit or a release page, parks for judgment |
 | **Papers** | arXiv and friends |
 | **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the real audio enclosure, then transcribes it. Show notes come from the feed, which is richer than the page |
 | **Web** | article text with the boilerplate stripped, falling back to the Wayback Machine when the live page has gone |

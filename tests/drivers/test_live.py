@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from dex_engine.drivers.gh import Blob, blob_ref, fetch_blob, run_gh
+from dex_engine.drivers.gh import Blob, fetch_blob, ref_path, run_gh
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.instagram import (
     DEFAULT_BASE_URL,
@@ -100,7 +100,7 @@ class TestGitHubContentsShape:
         # can show it: a pointer and the real document both re-detect to
         # pdf work, and only the bytes say which one arrived.
         url = "https://github.com/sarabander/sicp-pdf/blob/master/sicp.pdf"
-        ref = blob_ref(url)
+        ref = ref_path(url)
         assert ref is not None
         blob = fetch_blob(run_gh, ref)
         assert isinstance(blob, Blob)
@@ -120,6 +120,23 @@ class TestGitHubContentsShape:
         # `git/matching-refs` answering `refs/heads/automation/bors/auto`.
         result = content_of(GitHubDriver().fetch(make_unit(self.SLASHED_BLOB, Kind.GITHUB)))
         assert result.meta["file"] == "README.md"
+        assert "Rust" in body_of(result)
+
+    def test_a_directory_on_a_slashed_branch_lists_beside_its_own_readme(self):
+        # The directory route rests on the contents API answering a directory
+        # with an array, and on `readme/<path>?ref=` finding the README of
+        # that directory rather than the repo root's — at a slashed ref too.
+        url = "https://github.com/rust-lang/rust/tree/automation/bors/auto/src/tools/clippy"
+        body = body_of(GitHubDriver().fetch(make_unit(url, Kind.GITHUB)))
+        assert "# Clippy" in body
+        assert "- `clippy_lints/`" in body
+
+    def test_a_slashed_branch_alone_is_the_repo_at_that_ref(self):
+        # GitHub renders this link where the same tail as a blob 404s.
+        url = "https://github.com/rust-lang/rust/tree/automation/bors/auto"
+        result = content_of(GitHubDriver().fetch(make_unit(url, Kind.GITHUB)))
+        assert result.meta["title"] == "rust-lang/rust"
+        assert result.meta["ref"] == "automation/bors/auto"
         assert "Rust" in body_of(result)
 
 
