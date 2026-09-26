@@ -450,14 +450,17 @@ def _linked_text(block: dict, entities: dict[str, dict]) -> str:
     further, so both ends convert before they slice.
     """
     text = str(block.get("text") or "")
+    links = sorted(
+        (span, url)
+        for entity_range in _ranges(block)
+        if (url := _link_url(_entity_of(entity_range, entities))) is not None
+        and (span := _span(text, entity_range)) is not None
+    )
     pieces: list[str] = []
     cursor = 0
-    for entity_range in _ranges(block):
-        url = _link_url(_entity_of(entity_range, entities))
-        span = _span(text, entity_range)
-        if url is None or span is None:
-            continue
-        start, end = span
+    for (start, end), url in links:
+        if start < cursor:
+            continue  # inside the link before it: spliced twice, its text would repeat
         anchor = text[start:end]
         pieces += [text[cursor:start], url if anchor == url else f"[{anchor}]({url})"]
         cursor = end

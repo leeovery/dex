@@ -530,6 +530,32 @@ class TestArticleEntities:
         body = self.body(self.with_blocks([block], entities))
         assert "\n\n[one](https://a.test/) two [3](https://a.test/)\n\n" in body
 
+    def test_ranges_out_of_order_still_link_in_place(self):
+        entities = [
+            {"key": "1", "value": {"type": "LINK", "data": {"url": "https://a.test/"}}},
+            {"key": "2", "value": {"type": "LINK", "data": {"url": "https://b.test/"}}},
+        ]
+        ranges = [{"key": 2, "offset": 8, "length": 5}, {"key": 1, "offset": 0, "length": 3}]
+        block = {"type": "unstyled", "text": "one two three four", "entityRanges": ranges}
+        assert "\n\n[one](https://a.test/) two [three](https://b.test/) four\n\n" in self.body(
+            self.with_blocks([block], entities)
+        )
+
+    def test_a_range_overlapping_the_one_before_it_is_passed_over(self):
+        entities = [
+            {"key": "1", "value": {"type": "LINK", "data": {"url": "https://a.test/"}}},
+            {"key": "2", "value": {"type": "LINK", "data": {"url": "https://b.test/"}}},
+        ]
+        ranges = [
+            {"key": 1, "offset": 0, "length": 7},
+            {"key": 2, "offset": 4, "length": 9},
+            {"key": 2, "offset": 14, "length": 4},  # and the reading goes on past it
+        ]
+        block = {"type": "unstyled", "text": "one two three four", "entityRanges": ranges}
+        assert "\n\n[one two](https://a.test/) three [four](https://b.test/)\n\n" in self.body(
+            self.with_blocks([block], entities)
+        )
+
     def test_a_range_splitting_an_emoji_never_fails_the_fetch(self):
         entities = [{"key": "1", "value": {"type": "LINK", "data": {"url": "https://a.test/"}}}]
         ranges = [{"key": 1, "offset": 1, "length": 2}]  # from inside the emoji's pair
