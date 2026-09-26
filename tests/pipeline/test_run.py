@@ -1842,7 +1842,7 @@ class TestRerunKeepsItsTranscript:
     def test_a_caption_ending_in_a_newline_still_reads_unchanged(self, instance):
         # The drain reads a park's notes back off disk, stripped; the driver
         # hands them over as the post has them.
-        body = instagram_body("the caption", "the words")
+        body = post_body("the caption", "the words")
         done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
         out = instance.root / str(done.path)
         before = (out.read_bytes(), out.stat().st_mtime_ns)
