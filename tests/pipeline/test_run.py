@@ -1278,6 +1278,18 @@ class TestRerun:
         assert "1 rewritten" in report
         assert "kept the stored body" not in report
 
+    @pytest.mark.parametrize(("size", "kept"), [(200, False), (199, True)])
+    def test_the_stub_line_is_drawn_at_half_the_stored_body(self, instance, size, kept):
+        # Exactly half is still the page; one character less is a stub.
+        write_item(instance)
+        stored = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="x" * 400))
+        run_mod.run(make_ctx(instance, stored))
+        refetched = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="y" * size))
+        ctx = make_ctx(instance, refetched)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert ("kept the stored body" in report) is kept
+
     def test_a_squatting_neighbour_does_not_trigger_the_keep(self, instance):
         # The stored file must prove it is this unit's own by the URL it
         # records — a file at this name holding another URL's content is
@@ -1405,6 +1417,209 @@ class TestRerun:
         assert files == [f"web-{work_hash(URL)[:6]}.md"]  # overwrite, never a second file
         assert "rewritten body" in (item_dir / files[0]).read_text()
         assert "1 rewritten" in report
+
+    def land(self, instance: Instance) -> LedgerEntry:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        return entry_for(ctx)
+
+    def failing(self, instance: Instance, outcome: Outcome) -> RunContext:
+        return make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: outcome))
+
+    @pytest.mark.parametrize(
+        ("outcome", "would_be"),
+        [
+            (Missing(evidence="HTTP 404"), Status.DEAD),
+            (Refused(evidence="payment/login required (HTTP 402)", permanent=True), Status.MANUAL),
+            (Unusable(evidence="thin-extraction"), Status.MANUAL),
+            (Unusable(evidence="github root url", rescuable=False), Status.SKIPPED),
+        ],
+        ids=["missing", "permanent-refusal", "rescuable-unusable", "unusable"],
+    )
+    def test_a_rerun_whose_re_fetch_lands_nothing_keeps_its_landing(
+        self, instance, outcome, would_be
+    ):
+        # Healing migrations re-seed landings months old, and a source that
+        # rotted since traded the stored copy for a dead row: the line no
+        # longer named the file, and the item reported its source lost.
+        done = self.land(instance)
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+
+        ctx = self.failing(instance, outcome)
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert (entry.path, entry.title, entry.reason) == (done.path, done.title, None)
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert (
+            f"kept the stored copy of {URL}: the re-fetch came back {would_be.value} "
+            f"({outcome.evidence}) — delete {done.path} first to let the failure land "
+            "if the source is really gone"
+        ) in report
+        assert "Already stored — 1 unit" in report  # accounted for, never new material
+        assert "Needs writing up" not in report
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert item.status == "enriched"
+
+    def test_a_rerun_takes_its_retries_then_keeps_its_landing(self, instance):
+        # A rate-limited heal gets the blocked lifecycle's attempts; only
+        # giving up at the last one falls back on the stored copy.
+        done = self.land(instance)
+        ctx = self.failing(instance, Refused(evidence="HTTP 429"))
+        self.seed_rerun(ctx)
+        for expected_attempts in range(1, MAX_BLOCKED_ATTEMPTS):
+            run_mod.run(ctx)
+            entry = entry_for(ctx)
+            assert entry.status is Status.BLOCKED
+            assert entry.attempts == expected_attempts
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert entry.status is Status.DONE
+        assert (entry.path, entry.title, entry.attempts) == (done.path, done.title, None)
+        assert (
+            "the re-fetch came back manual "
+            f"(still blocked after {MAX_BLOCKED_ATTEMPTS} attempts — HTTP 429)"
+        ) in report
+
+    def test_the_owners_re_fetch_of_a_dead_source_keeps_the_landing(self, instance):
+        # `enrich fetch` on the item's own landed URL requeues it as a rerun.
+        done = self.land(instance)
+        ctx = self.failing(instance, Missing(evidence="HTTP 410"))
+        report = run_mod.fetch_urls(ctx, ITEM, [URL])
+        entry = entry_for(ctx)
+        assert (entry.status, entry.rerun, entry.path) == (Status.DONE, True, done.path)
+        assert f"kept the stored copy of {URL}" in report
+
+    def test_deleting_the_stored_file_first_lets_the_failure_land(self, instance):
+        # The way through the note names, for a source that really is gone.
+        done = self.land(instance)
+        (instance.root / str(done.path)).unlink()
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.reason) == (Status.DEAD, "HTTP 404")
+        assert "kept the stored copy" not in report
+
+    def test_a_squatting_neighbour_is_no_landing_to_keep(self, instance):
+        # With no landing recorded, a file at the engine's name must prove it
+        # is this unit's own by the URL it records.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.QUEUED,
+                engine="0.2.0",
+                date=TODAY,
+                rerun=True,
+            ),
+        )
+        squatter = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        squatter.parent.mkdir(parents=True)
+        squatter.write_text(
+            render_enrichment("https://elsewhere.test/other", TODAY, {}, "another page " * 50),
+            encoding="utf-8",
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        run_mod.run(ctx)
+        assert entry_for(ctx).status is Status.DEAD
+
+    def test_a_fresh_captures_failure_is_its_failure(self, instance):
+        # Only a rerun keeps: a unit never landed has no landing, whatever
+        # file sits at its name recording its URL.
+        write_item(instance)
+        out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(render_enrichment(URL, TODAY, {}, "a body " * 50), encoding="utf-8")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.reason) == (Status.DEAD, "HTTP 404")
+        assert "kept the stored copy" not in report
+
+    def heal_by_hand(self, instance: Instance, body: str) -> str:
+        """Close the landed unit on a hand-written file, as a session's heal does."""
+        healed = instance.enrichment_dir / ITEM / "read-by-hand.md"
+        healed.write_text(body, encoding="utf-8")
+        path = f"enrichment/{ITEM}/{healed.name}"
+        run_mod.mark(make_ctx(instance, FakeDriver()), URL, Status.DONE, path=path)
+        return path
+
+    def test_a_landing_under_a_heals_own_name_is_kept(self, instance):
+        # A heal lands on whatever name the session chose, which no name the
+        # engine would pick can find — the recorded path does, and the
+        # ledger's word needs no URL inside the file to back it. The title
+        # is the heal line's too: a hand-written file may state none.
+        done = self.land(instance)
+        healed = self.heal_by_hand(instance, "the page, read by hand\n")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+        assert (instance.root / healed).read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert f"delete {healed} first" in report
+
+    def test_a_stub_never_replaces_a_heals_landing(self, instance):
+        self.land(instance)
+        healed = self.heal_by_hand(instance, "the whole article, read by hand " * 40)
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="preview " * 5))
+        )
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert entry_for(ctx).path == healed
+        assert "kept the stored body" in report
+        assert [p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")] == [
+            "read-by-hand.md"
+        ]
+
+    def test_a_renamed_items_landing_is_found_under_the_live_id(self, instance):
+        # The landing recorded its path under the id the item had then; the
+        # rename moved the file with its directory.
+        write_item(instance, NEW_ITEM)
+        healed = instance.enrichment_dir / NEW_ITEM / "read-by-hand.md"
+        healed.parent.mkdir(parents=True)
+        healed.write_text("the page, read by hand\n", encoding="utf-8")
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=datetime.date(2026, 8, 1),
+                path=f"enrichment/{OLD_ITEM}/{healed.name}",
+            ),
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.item) == (Status.DONE, NEW_ITEM)
+        assert entry.path == f"enrichment/{NEW_ITEM}/{healed.name}"
+
+    def test_a_recorded_path_naming_nothing_falls_back_on_the_engines_name(self, instance):
+        # Proved by the URL inside; with that gone too, the failure lands
+        # (the deletion test above).
+        done = self.land(instance)
+        ledger.append(
+            instance.ledger_path, dataclasses.replace(done, path=f"enrichment/{ITEM}/gone.md")
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
 
 
 class TestSupersededOutputDrop:
@@ -5141,11 +5356,12 @@ class TestRedetection:
         assert "re-detection loop" not in report
         assert not (instance.enrichment_dir / ITEM / f"file-{entry.hash[:6]}.md").exists()
 
-    def test_a_parked_correction_keeps_the_old_output_until_one_replaces_it(self, instance):
+    def test_a_failed_correction_keeps_the_old_kinds_landing_until_one_replaces_it(self, instance):
         # The wild rerun path: an item enriched as web re-detects to file,
-        # and the corrected fetch parks. Unlinking the web output at
+        # and the corrected fetch fails. Unlinking the web output at
         # redetect time left the item at `raw` with an orphaned digest and
-        # nothing on disk to re-derive from.
+        # nothing on disk to re-derive from; parking the unit then left the
+        # web view on disk with no line naming it.
         item_path = write_item(instance)
         mode = {"redetect": False, "extract": False}
 
@@ -5156,7 +5372,7 @@ class TestRedetection:
 
         def file_fetch(_unit):
             if mode["extract"]:
-                return Content(meta={"title": "t"}, body="extracted " * 40)
+                return Content(meta={"title": "t"}, body="extracted " * 5)
             return Unusable(evidence="no extractor for pdf here")
 
         web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
@@ -5168,17 +5384,19 @@ class TestRedetection:
 
         mode["redetect"] = True
         self._requeue(ctx, URL)
-        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
-        parked = entry_for(ctx)
-        assert parked.kind is Kind.FILE
-        assert parked.status is Status.MANUAL
-        assert web_out.exists()  # the enrichment the item already had stands
+        report = run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        kept = entry_for(ctx)
+        assert (kept.kind, kept.status) == (Kind.FILE, Status.DONE)
+        assert kept.path == f"enrichment/{ITEM}/{web_out.name}"
+        assert f"kept the stored copy of {URL}" in report
         assert corpus.read_item(item_path).enrichment == [web_out.name]
-        assert corpus.read_item(item_path).status == "raw"  # the parked unit is still owed
+        assert corpus.read_item(item_path).status == "enriched"
 
-        # The success that replaces it is what drops it.
+        # The success that replaces it is what drops it, however much
+        # shorter the new kind's reading is: the stub guard weighs a copy
+        # against its own kind only.
         mode["extract"] = True
-        self._requeue(ctx, URL, reason=None)
+        self._requeue(ctx, URL)
         run_mod.run(make_ctx(instance, web, drivers=[web, files]))
         done = entry_for(ctx)
         assert done.status is Status.DONE
@@ -5224,10 +5442,11 @@ class TestRedetection:
         ]
 
     def test_a_mark_landed_output_drops_the_superseded_one(self, instance):
-        # The prescribed recovery for a web→file correction whose corrected
-        # fetch parks: the session writes the enrichment by hand and closes
-        # it with `enrich mark ... done --path`. The stale web view of the
-        # PDF must leave with it — the drain's route is not the only one.
+        # The route for a web→file correction the engine could not read,
+        # whose rerun kept the web view: the session writes the enrichment
+        # by hand and closes it with `enrich mark ... done --path`. The
+        # stale web view of the PDF must leave with it — the drain's route
+        # is not the only one.
         item_path = write_item(instance)
         mode = {"redetect": False}
 
@@ -5249,8 +5468,8 @@ class TestRedetection:
         mode["redetect"] = True
         self._requeue(ctx, URL)
         run_mod.run(make_ctx(instance, web, drivers=[web, files]))
-        assert entry_for(ctx).status is Status.MANUAL
-        assert web_out.exists()  # the park leaves the item as enriched as it found it
+        assert entry_for(ctx).status is Status.DONE
+        assert web_out.exists()  # the failed correction keeps the web landing
 
         # The session reads the PDF with its eyes and closes the unit.
         hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"

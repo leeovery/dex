@@ -390,6 +390,24 @@ class TestYoutubeDrain:
         run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
         assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.MANUAL
 
+    def test_a_rerun_acquisition_giving_up_parks_manual_over_its_park_file(self, instance):
+        # A rerun keeps a landing its FETCH failed to replace. A transcribe
+        # job's stored file is the park its fetch wrote — a description
+        # still owed its transcript — so giving up on it stays a manual park.
+        park = self._park_through_the_driver(instance)
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)], rerun=True
+            ),
+        )
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        for _ in range(run_mod.MAX_BLOCKED_ATTEMPTS):
+            run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert (entry.status, entry.rerun) == (Status.MANUAL, True)
+        assert park.is_file()
+
     def test_blocked_acquisition_retry_routes_back_to_the_drain_and_completes(self, instance):
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)

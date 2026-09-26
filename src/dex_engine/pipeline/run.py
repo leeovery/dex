@@ -244,6 +244,19 @@ def _download_slot(path: str | None) -> int | None:
     return None if named is None else int(named.group(1))
 
 
+def _another_kinds_output(path: str, entry: LedgerEntry) -> bool:
+    """Whether ``path`` names the unit's own output as a kind it no longer is.
+
+    The file name is the lasting record of the kind that wrote it: a keep
+    after a redetection records the corrected kind on its line beside the
+    earlier kind's file.
+    """
+    name = PurePosixPath(path).name
+    return any(
+        name == f"{kind.value}-{entry.hash[:6]}.md" for kind in Kind if kind is not entry.kind
+    )
+
+
 def _slot_held(item_dir: Path, slot: int) -> bool:
     """Whether a media file stands in ``slot`` — a description or a temp is not one."""
     return any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*"))
@@ -464,6 +477,18 @@ class _ItemOutcome:
             f"{self.media} media {'file' if self.media == 1 else 'files'}" if self.media else "",
         ]
         return ", ".join(part for part in parts if part)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _StoredOutput:
+    """A unit's own output as it stands on disk — what a keep records done.
+
+    ``path`` is relative to the instance root, as the ledger records it.
+    """
+
+    path: str
+    title: str | None
+    body: str
 
 
 @dataclass(slots=True)
@@ -1249,26 +1274,27 @@ class _Drain:
         for the unit's status is decided here and nowhere else. ``Missing``
         is the only road to ``dead``. The match is total over the union —
         a new outcome variant is a type error at this site until an arm
-        says what it means.
+        says what it means. Every arm that would leave the unit holding
+        nothing records through :meth:`_apply_failure`.
         """
         match fetched:
             case Content():
                 self._apply_content(entry, fetched)
             case Missing(evidence=evidence):
-                self.record_outcome(entry, status=Status.DEAD, reason=evidence)
+                self._apply_failure(entry, Status.DEAD, evidence)
             case Refused(evidence=evidence, permanent=True):
                 # Retrying can never change the answer, so the blocked
                 # lifecycle's attempts would teach nothing: the engine
                 # gives the unit up for judgment now.
-                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+                self._apply_failure(entry, Status.MANUAL, evidence)
             case Refused(evidence=evidence):
-                self._apply_blocked(entry, evidence)
+                self._apply_blocked(entry, evidence, give_up=self._apply_failure)
             case Unusable(evidence=evidence, rescuable=True):
-                self.record_outcome(entry, status=Status.MANUAL, reason=evidence)
+                self._apply_failure(entry, Status.MANUAL, evidence)
             case Unusable(evidence=evidence):
                 # Nothing there for judgment either: closed out, owing
                 # nothing, holding nothing hostage.
-                self.record_outcome(entry, status=Status.SKIPPED, reason=evidence)
+                self._apply_failure(entry, Status.SKIPPED, evidence)
             case NeedsCapability():
                 self._apply_needs(entry, fetched)
             case Redetected():
@@ -1279,10 +1305,7 @@ class _Drain:
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
         path = None
         if content.body is not None:
-            kept = self._kept_larger_stored(entry, content.body)
-            if kept is not None:
-                path, title = kept
-                self.record_outcome(entry, status=Status.DONE, path=path, title=title)
+            if self._kept_larger_stored(entry, content.body):
                 return
             path = self._write_output(entry, content.meta, content.body)
             _drop_superseded_outputs(self.ctx.instance, entry, path)
@@ -1394,16 +1417,57 @@ class _Drain:
         )
         self.notes.append(f"re-detected: {entry.url} — {entry.kind.value} → {corrected}")
 
-    def _apply_blocked(self, entry: LedgerEntry, reason: str, *, needs: Need | None = None) -> None:
+    def _apply_failure(self, entry: LedgerEntry, status: Status, reason: str) -> None:
+        """Record a fetch that landed nothing — unless it re-fetched a landing.
+
+        A rerun re-fetches work already done, often months later, and link
+        rot is how a page ends: a source gone dead, walled or thin since
+        says nothing against the copy on disk, and recording the failure
+        would unseat it — the live line no longer naming the file, the item
+        reporting a lost source. So a rerun whose own output is stored keeps
+        it, and the report says what the re-fetch met. A transient refusal
+        still takes its retries first; only giving up comes here. A fresh
+        capture holds nothing to keep: its failure is its failure.
+        """
+        stored = self._stored_output(entry) if entry.rerun else None
+        if stored is None:
+            self.record_outcome(entry, status=status, reason=reason)
+            return
+        self._keep_stored(
+            entry,
+            stored,
+            note=(
+                f"kept the stored copy of {entry.url}: the re-fetch came back "
+                f"{status.value} ({reason}) — delete {stored.path} first to let "
+                "the failure land if the source is really gone"
+            ),
+        )
+
+    def _apply_blocked(
+        self,
+        entry: LedgerEntry,
+        reason: str,
+        *,
+        needs: Need | None = None,
+        give_up: Callable[[LedgerEntry, Status, str], None] | None = None,
+    ) -> None:
+        """One more blocked attempt, or — the last one spent — the unit given up.
+
+        ``give_up`` records the escalation where a manual park is not the
+        whole answer: the fetch path hands :meth:`_apply_failure`, where a
+        rerun keeps its landing. The acquisition and media stages leave it
+        unset — a transcribe job's stored file is the park its fetch wrote,
+        never a landing to keep.
+        """
         attempts = (entry.attempts or 0) + 1
         if attempts >= MAX_BLOCKED_ATTEMPTS:
             # Escalation appends attempt context to what was found —
             # it never invents a reason.
-            self.record_outcome(
-                entry,
-                status=Status.MANUAL,
-                reason=f"still blocked after {attempts} attempts — {reason}",
-            )
+            escalated = f"still blocked after {attempts} attempts — {reason}"
+            if give_up is None:
+                self.record_outcome(entry, status=Status.MANUAL, reason=escalated)
+            else:
+                give_up(entry, Status.MANUAL, escalated)
             return
         self.record_outcome(
             entry, status=Status.BLOCKED, needs=needs, attempts=attempts, reason=reason
@@ -1411,37 +1475,83 @@ class _Drain:
 
     # -- outputs ---------------------------------------------------------
 
-    def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> tuple[str, str | None] | None:
-        """The stored output's (path, title) when it dwarfs a re-fetched body.
+    def _stored_output(self, entry: LedgerEntry) -> _StoredOutput | None:
+        """The unit's own output on disk, as its landing left it, or None.
+
+        The ledger's word first: the unit's latest landing, superseded or
+        not, since a requeue leaves the live line without a path. A landing
+        stands under whatever name it was given — a hand heal's, an old
+        migration's re-keyed one, the name of the kind before a redetection
+        — so no name the engine would choose today can find it, and the
+        line's own title comes with it, which a hand-written file may never
+        state. The path is resolved by file name under the owning item's
+        directory: a rename moves the directory, and a path recorded before
+        it names the dead id.
+
+        With no recorded landing on disk, the deterministic
+        ``<kind>-<hash6>.md`` stands in only once it proves itself by the
+        unit's URL recorded inside — a neighbour squatting at this name is
+        not content any keep protects — and the title comes off the file.
+        """
+        root = self.ctx.instance.root
+        item_dir = self.ctx.instance.enrichment_dir / self.owner_of(entry)
+        landing = self._recorded_output(entry.hash)
+        if landing is not None and landing.path is not None:
+            landed = item_dir / PurePosixPath(landing.path).name
+            if landed.is_file():
+                return _StoredOutput(
+                    path=str(landed.relative_to(root)),
+                    title=landing.title,
+                    body=read_enrichment(landed)[1],
+                )
+        named = item_dir / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        if not named.is_file():
+            return None
+        fields, body = read_enrichment(named)
+        if fields.get("url") != entry.url:
+            return None
+        return _StoredOutput(
+            path=str(named.relative_to(root)), title=fields.get("title"), body=body
+        )
+
+    def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
+        """Record the unit done on its stored output — accounted, never new material."""
+        self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
+        self.notes.append(note)
+        self.record_outcome(entry, status=Status.DONE, path=stored.path, title=stored.title)
+
+    def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> bool:
+        """Keep the stored output when it dwarfs a re-fetched body.
 
         A live page shrinks a little when it is edited; it does not lose
         half of itself. A re-fetched body under half the stored one is a
         stub standing where the content used to be — a paywall preview, a
         login interstitial, an archive snapshot of either — and writing it
-        would trade the article for the stub, reported as new material.
-        The stored body must prove it is this unit's own (the URL it
-        records): a neighbour squatting at this name is not content this
-        guard protects. The title comes off the stored file too — a rerun
-        seed wiped the ledger's, and the stub's must not stand in. If the
-        smaller page really is the truth, deleting the stored file first
-        lets the re-fetch land.
+        would trade the article for the stub, reported as new material,
+        its title standing in for the article's. If the smaller page really
+        is the truth, deleting the stored file first lets the re-fetch land.
+
+        A copy another kind wrote says nothing about size: a URL that now
+        serves a PDF where it served a page is re-read, not shrunk, and its
+        extraction replaces the page's view however short it is.
         """
-        owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
-        if not out.is_file():
-            return None
-        fields, stored = read_enrichment(out)
-        if fields.get("url") != entry.url or len(body) * 2 >= len(stored):
-            return None
-        rel = str(out.relative_to(self.ctx.instance.root))
-        self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
-        self.notes.append(
-            f"kept the stored body for {entry.url}: the re-fetch returned "
-            f"{len(body)} chars against {len(stored)} stored — "
-            f"delete {rel} first if the smaller page is the truth"
+        stored = self._stored_output(entry)
+        if (
+            stored is None
+            or _another_kinds_output(stored.path, entry)
+            or len(body) * 2 >= len(stored.body)
+        ):
+            return False
+        self._keep_stored(
+            entry,
+            stored,
+            note=(
+                f"kept the stored body for {entry.url}: the re-fetch returned "
+                f"{len(body)} chars against {len(stored.body)} stored — "
+                f"delete {stored.path} first if the smaller page is the truth"
+            ),
         )
-        title = fields.get("title")
-        return rel, title if isinstance(title, str) else None
+        return True
 
     def _write_output(
         self,
@@ -1833,10 +1943,14 @@ class _Drain:
 
     def _output_path(self, unit_hash: str) -> str | None:
         """The unit's latest recorded output path, superseded or not."""
+        output = self._recorded_output(unit_hash)
+        return None if output is None else output.path
+
+    def _recorded_output(self, unit_hash: str) -> LedgerEntry | None:
+        """The unit's latest line that recorded an output, superseded or not."""
         if self._outputs is None:
             self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
-        output = self._outputs.get(unit_hash)
-        return None if output is None else output.path
+        return self._outputs.get(unit_hash)
 
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries the item owns — what the 12-URL cap bounds.
