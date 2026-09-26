@@ -16,7 +16,7 @@ from dex_engine.serve import library
 
 from .conftest import BOOKS, COFFEE, git, record, refusal
 
-STAMPED = re.compile(r"inbox/\d{8}-\d{6}\.md")
+STAMPED = re.compile(r"inbox/\d{8}-\d{6}-[0-9a-f]{4}\.md")
 NOW = datetime.datetime(2026, 8, 20, 10, 15, 30, tzinfo=datetime.UTC)
 
 
@@ -84,10 +84,10 @@ class TestTheFile:
         # reads the real one, and a burst is exactly the collision case.
         first = library.capture(roster, instance=COFFEE, url="", note="first", now=NOW)
         second = library.capture(roster, instance=COFFEE, url="", note="second", now=NOW)
-        assert (first.path, second.path) == (
-            "inbox/20260820-101530.md",
-            "inbox/20260820-101531.md",
-        )
+        assert first.path != second.path
+        assert first.path.startswith("inbox/20260820-101530-")
+        assert second.path.startswith("inbox/20260820-101530-")
+        assert (repos[0] / first.path).read_text(encoding="utf-8") == "first\n"
         assert (repos[0] / second.path).read_text(encoding="utf-8") == "second\n"
         assert (first.committed, second.committed) == (True, True)
 
