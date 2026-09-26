@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.pipeline.enrichment import read_enrichment, read_enrichment_fields
+from dex_engine.pipeline.enrichment import (
+    holds_transcript,
+    pre_transcript,
+    read_enrichment,
+    read_enrichment_fields,
+)
 
 
 class TestReadEnrichment:
@@ -79,3 +84,39 @@ class TestReadEnrichmentFields:
 
         monkeypatch.setattr(Path, "read_text", refuse)
         assert read_enrichment_fields(record) == {"url": "https://x.test"}
+
+
+STAMPED = {"via": "whisper-local"}
+
+
+class TestTranscriptSections:
+    """One test says whether a body holds a transcript; the split and the keep share it."""
+
+    @pytest.mark.parametrize(
+        ("fields", "body", "holds"),
+        [
+            (STAMPED, "notes\n\n## Transcript\n\nwords", True),
+            (STAMPED, "## Transcript\n\nwords", True),  # a no-notes episode opens with it
+            (STAMPED, "## Transcript", True),
+            (STAMPED, "notes, never transcribed", False),
+            # A park is notes end to end, whatever headings its author wrote.
+            ({}, "notes\n\n## Transcript\n\nthe author's own section", False),
+            (STAMPED, "notes\n\n## Transcripts elsewhere\n\nprose", False),
+        ],
+    )
+    def test_holds_transcript(self, fields, body, holds):
+        assert holds_transcript(fields, body) is holds
+
+    def test_the_notes_are_everything_before_the_transcript(self):
+        assert pre_transcript(STAMPED, "notes\n\n## Transcript\n\nwords") == "notes"
+
+    def test_the_split_takes_the_last_section_the_drain_appended(self):
+        body = "notes\n\n## Transcript\n\nthe author's own\n\n## Transcript\n\nwords"
+        assert pre_transcript(STAMPED, body) == "notes\n\n## Transcript\n\nthe author's own"
+
+    def test_a_body_holding_no_transcript_is_all_notes(self):
+        body = "notes\n\n## Transcript\n\nthe author's own section"
+        assert pre_transcript({}, body) == body
+
+    def test_a_body_opening_with_its_transcript_has_no_notes(self):
+        assert pre_transcript(STAMPED, "## Transcript\n\nwords") == ""

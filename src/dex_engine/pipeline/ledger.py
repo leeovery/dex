@@ -340,9 +340,9 @@ def latest_outputs(
 
     Outputs are success-only, so a unit re-queued since it landed has a
     live line carrying no path while the file it landed still stands. The
-    line that named the file is audit trail from then on, and stays in the
-    file until ``compact`` drops it — this reads it there, resolved by the
-    rule ``load`` resolves live lines by.
+    line that named the file is audit trail from then on, and ``compact``
+    keeps it for as long as the live line names no output — this reads it
+    there, resolved by the rule ``load`` resolves live lines by.
 
     Args:
         path: The ledger file; a missing file records nothing.
@@ -489,29 +489,45 @@ def append(path: Path, entry: LedgerEntry) -> None:
 
 
 def compact(path: Path, *, now: Callable[[], datetime.datetime] = _utc_now) -> int:
-    """Rewrite the ledger keeping only the latest line per hash.
+    """Rewrite the ledger keeping the latest line per hash, and a requeued unit's landing.
 
     Also settles git union merges — it keeps the line ``load`` resolves to,
     so a merge whose newer line landed first is settled in the newer line's
-    favor rather than against it. Superseded lines — the audit trail — are
-    dropped. Because it keeps exactly ``load``'s line, a future-dated ``at``
-    cannot make it delete a real write: such a line is read as unstamped and
-    loses, and it is the line that goes.
+    favor rather than against it. Because it keeps exactly ``load``'s line,
+    a future-dated ``at`` cannot make it delete a real write: such a line is
+    read as unstamped and loses, and it is the line that goes.
+
+    Superseded lines — the audit trail — are dropped, but one: while a
+    hash's live line names no output, the latest line that did stays
+    (:func:`latest_outputs`). A requeued unit's file stands on disk under
+    whatever name its landing gave it, and that line is the only record of
+    which file is the unit's own — the one a failed re-fetch keeps, and the
+    media slot a re-download writes over. It is written ahead of the live
+    line, so a tie on the stamp still resolves to the live line, and it
+    goes at the first compact after the unit lands again.
 
     Args:
         path: The ledger file; a missing file is a no-op.
-        now: The reader's clock, passed through to :func:`load`.
+        now: The reader's clock — one instant resolves both the live lines
+            and the landings, as :func:`load` would.
 
     Returns:
         The number of superseded lines removed.
     """
     if not path.exists():
         return 0
-    lines = [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
-    entries = load(path, now=now)
+    records = list(_records(path))
+    moment = now()
+    landings = _latest(((n, e) for n, e in records if e.path is not None), now=moment)
+    kept: list[LedgerEntry] = []
+    for unit_hash, live in _latest(records, now=moment).items():
+        landing = landings.get(unit_hash)
+        if live.path is None and landing is not None:
+            kept.append(landing)
+        kept.append(live)
     # Atomic: a crash mid-write must never lose the ledger.
-    atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in entries.values()))
-    return len(lines) - len(entries)
+    atomic.write_text(path, "".join(to_line(entry) + "\n" for entry in kept))
+    return len(records) - len(kept)
 
 
 def drop_items(

@@ -543,6 +543,34 @@ class TestLoadAppendCompact:
         ledger.compact(instance.ledger_path)
         assert [p.name for p in instance.state_dir.iterdir()] == ["enrichment-ledger.jsonl"]
 
+    def test_compact_keeps_a_requeued_units_landing(self, instance: Instance):
+        # The health check compacts between a migration seeding its reruns
+        # and the drain that runs them. The landing line is the only record
+        # of which file on disk is the unit's own — a heal's name, a
+        # re-keyed one — and of the media slot its re-download writes over.
+        # The lines are unstamped, so only their order says which is live.
+        earlier = entry(status=Status.DONE, path="enrichment/i/web-73bd78.md")
+        landed = entry(status=Status.DONE, path="enrichment/i/read-by-hand.md")
+        requeued = entry(rerun=True)
+        for e in (earlier, landed, requeued):
+            ledger.append(instance.ledger_path, e)
+        assert ledger.compact(instance.ledger_path) == 1  # only the earlier landing goes
+        assert ledger.load(instance.ledger_path) == {BASE_ENTRY.hash: requeued}
+        assert ledger.latest_outputs(instance.ledger_path) == {BASE_ENTRY.hash: landed}
+        assert ledger.compact(instance.ledger_path) == 0
+
+    def test_compact_drops_the_old_landing_once_the_unit_lands_again(self, instance: Instance):
+        relanded = entry(status=Status.DONE, path="enrichment/i/web-73bd78.md", rerun=True)
+        for e in (
+            entry(status=Status.DONE, path="enrichment/i/read-by-hand.md"),
+            entry(rerun=True),
+            relanded,
+        ):
+            ledger.append(instance.ledger_path, e)
+        assert ledger.compact(instance.ledger_path) == 2
+        assert instance.ledger_path.read_text().count("\n") == 1
+        assert ledger.latest_outputs(instance.ledger_path) == {BASE_ENTRY.hash: relanded}
+
 
 class TestLatestOutputs:
     """What a unit last landed, read past a live line that carries no path."""
@@ -827,17 +855,27 @@ def test_compact_preserves_latest_per_hash_and_round_trips(
     path = tmp_path_factory.mktemp("ledger") / "enrichment-ledger.jsonl"
     expected: dict[str, LedgerEntry] = {}
     winning: dict[str, tuple[datetime.datetime, int]] = {}
+    landed: dict[str, LedgerEntry] = {}
+    landing: dict[str, tuple[datetime.datetime, int]] = {}
     for position, e in enumerate(sequence):
         ledger.append(path, e)
         key = (e.at or _OLDEST, position)
         if e.hash not in winning or key >= winning[e.hash]:
             expected[e.hash] = e
             winning[e.hash] = key
+        if e.path is not None and (e.hash not in landing or key >= landing[e.hash]):
+            landed[e.hash] = e
+            landing[e.hash] = key
+    # A live line naming no output keeps the landing before it beside it.
+    kept = len(expected) + sum(
+        1 for unit_hash, live in expected.items() if live.path is None and unit_hash in landed
+    )
     assert ledger.load(path) == expected
     removed = ledger.compact(path)
-    assert removed == len(sequence) - len(expected)
+    assert removed == len(sequence) - kept
     assert ledger.load(path) == expected
+    assert ledger.latest_outputs(path) == landed
     if sequence:
         # Count records by "\n" alone — a JSON string field may legally hold
         # unicode line separators, which str.splitlines() would miscount.
-        assert path.read_text(encoding="utf-8").count("\n") == len(expected)
+        assert path.read_text(encoding="utf-8").count("\n") == kept

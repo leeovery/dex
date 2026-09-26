@@ -29,7 +29,15 @@ from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.classify import ProviderInputError, classify_connection
 from dex_engine.pipeline.digest import item_digest
-from dex_engine.pipeline.enrichment import _yaml_value, read_enrichment, render_enrichment
+from dex_engine.pipeline.enrichment import (
+    TRANSCRIPT_HEADING,
+    _yaml_value,
+    instagram_body,
+    podcast_body,
+    read_enrichment,
+    render_enrichment,
+    youtube_body,
+)
 from dex_engine.pipeline.ownership import work_identity
 from dex_engine.pipeline.run import (
     _SHOWN_ID_MAX,
@@ -1185,7 +1193,8 @@ class TestHttpOnlySources:
 
 
 class TestRerun:
-    def seed_rerun(self, ctx: RunContext) -> None:
+    @staticmethod
+    def seed_rerun(ctx: RunContext) -> None:
         entry = entry_for(ctx)
         requeued = dataclasses.replace(
             entry, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-2"
@@ -1620,6 +1629,143 @@ class TestRerun:
         run_mod.run(ctx)
         entry = entry_for(ctx)
         assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+
+    def test_a_compact_between_the_seed_and_the_drain_keeps_a_heals_landing(self, instance):
+        # The health check compacts after sync — between a migration seeding
+        # its reruns and the drain that runs them — and the heal's line was
+        # the only record of which file is the unit's.
+        done = self.land(instance)
+        healed = self.heal_by_hand(instance, "the page, read by hand\n")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.compact(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+
+
+# What the transcribe drain stamps on every transcript it composes.
+TRANSCRIBER_STAMP = {"title": "t", "via": "whisper-local", "model": "base"}
+
+# Every kind whose driver parks for transcription, with a body shaped as the
+# transcribe drain composes it for that kind.
+TRANSCRIBED = pytest.mark.parametrize(
+    ("kind", "transcribed"),
+    [
+        (Kind.YOUTUBE, youtube_body("the description", "the words")),
+        (Kind.PODCAST, podcast_body("the show notes", "the words")),
+        (Kind.INSTAGRAM, instagram_body("the caption", "the words")),
+        (Kind.X, f"the post\n\n{TRANSCRIPT_HEADING}\n\nthe words"),
+    ],
+    ids=["youtube", "podcast", "instagram", "x"],
+)
+
+
+class TestRerunKeepsItsTranscript:
+    """A rerun that parks for transcription again never parks over its transcript."""
+
+    PARK = NeedsCapability(
+        need=Need.TRANSCRIBE,
+        meta={"title": "t"},
+        body="the notes, fetched again",
+        reason="no captions available",
+    )
+
+    def land(self, instance: Instance, kind: Kind, meta: dict, body: str) -> LedgerEntry:
+        """Land the unit through the engine's writer, then seed it as a rerun."""
+        write_item(instance, kinds=[kind.value])
+        driver = FakeDriver(kind, fetch_fn=lambda _unit: Content(meta=meta, body=body))
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        done = entry_for(ctx)
+        TestRerun.seed_rerun(ctx)
+        return done
+
+    def reparked(self, instance: Instance, kind: Kind, park: NeedsCapability = PARK) -> str:
+        return run_mod.run(make_ctx(instance, FakeDriver(kind, fetch_fn=lambda _unit: park)))
+
+    @TRANSCRIBED
+    def test_a_rerun_keeps_its_transcript(self, instance, kind, transcribed):
+        # The park was written over the file before transcription was
+        # redone, and a transcription that then failed lost the transcript.
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, transcribed)
+        out = instance.root / str(done.path)
+        before = out.read_bytes()
+        report = self.reparked(instance, kind)
+        entry = entry_for(make_ctx(instance, FakeDriver()))
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+        assert out.read_bytes() == before
+        assert (
+            f"kept the stored transcript of {URL}: the re-fetch parked it for transcription "
+            f"again (no captions available) — delete {done.path} first to re-transcribe"
+        ) in report
+        assert "Already stored — 1 unit" in report
+
+    def test_a_transcript_no_landing_line_names_is_found_by_the_engines_name(self, instance):
+        # What a compact before the landing-keeping one left: the queued
+        # line alone. The engine's own name, proved by its URL, still finds
+        # the transcript.
+        done = self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, youtube_body("d", "the words"))
+        live = ledger.load(instance.ledger_path).values()
+        instance.ledger_path.write_text("".join(ledger.to_line(e) + "\n" for e in live))
+        assert ledger.latest_outputs(instance.ledger_path) == {}
+        self.reparked(instance, Kind.YOUTUBE)
+        entry = entry_for(make_ctx(instance, FakeDriver()))
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+
+    @TRANSCRIBED
+    def test_a_rerun_with_no_transcript_stored_still_parks(self, instance, kind, transcribed):
+        # The frontmatter stamp is what says a transcript was composed: the
+        # same body without it is notes, however it reads.
+        done = self.land(instance, kind, {"title": "t"}, transcribed)
+        self.reparked(instance, kind)
+        entry = entry_for(make_ctx(instance, FakeDriver()))
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert read_enrichment(instance.root / str(done.path))[1] == "the notes, fetched again"
+
+    @TRANSCRIBED
+    def test_deleting_the_stored_file_first_re_parks(self, instance, kind, transcribed):
+        done = self.land(instance, kind, TRANSCRIBER_STAMP, transcribed)
+        (instance.root / str(done.path)).unlink()
+        report = self.reparked(instance, kind)
+        entry = entry_for(make_ctx(instance, FakeDriver()))
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.TRANSCRIBE)
+        assert "kept the stored transcript" not in report
+
+    def test_a_kept_transcript_still_stages_the_media_the_park_carries(self, instance):
+        # A carousel's stills ride the park beside the video it transcribes;
+        # a keep that dropped them would lose them, since nothing downstream
+        # sees their URLs again.
+        done = self.land(
+            instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, instagram_body("c", "the words")
+        )
+        still = "https://cdn.example.test/still.jpg"
+        park = dataclasses.replace(self.PARK, media=[still])
+        self.reparked(instance, Kind.INSTAGRAM, park)
+        entries = ledger.load(instance.ledger_path)
+        assert entries[done.hash].status is Status.DONE
+        child = next(e for e in entries.values() if e.url == still)
+        assert (child.job, child.parent) == (Job.MEDIA, done.hash)
+
+    def test_only_a_rerun_keeps(self, instance):
+        # A unit drained for the first time holds no landing to keep, even
+        # where a transcript-shaped file stands at its name.
+        write_item(instance, kinds=[Kind.YOUTUBE.value])
+        out = instance.enrichment_dir / ITEM / f"youtube-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(
+            render_enrichment(URL, TODAY, {"via": "whisper-local"}, youtube_body("d", "w")),
+            encoding="utf-8",
+        )
+        self.reparked(instance, Kind.YOUTUBE)
+        assert entry_for(make_ctx(instance, FakeDriver())).status is Status.WAITING
+
+    def test_a_park_for_another_capability_parks_as_ever(self, instance):
+        self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, youtube_body("d", "the words"))
+        park = NeedsCapability(need=Need.EXTRACT, reason="no extractor")
+        self.reparked(instance, Kind.YOUTUBE, park)
+        entry = entry_for(make_ctx(instance, FakeDriver()))
+        assert (entry.status, entry.needs) == (Status.WAITING, Need.EXTRACT)
 
 
 class TestSupersededOutputDrop:
@@ -2626,6 +2772,25 @@ class TestMediaSlots:
         busy = self._transport({self.HERO: self.BUSY})
         run_mod.fetch_urls(self._ctx(instance, busy), ITEM, [self.HERO])
         assert ledger.load(instance.ledger_path)[work_hash(self.HERO)].status is Status.BLOCKED
+        run_mod.run(self._ctx(instance, self._transport()))
+        assert self._landed(instance) == {
+            self.HERO: f"enrichment/{ITEM}/media-0.webp",
+            self.SHOT: f"enrichment/{ITEM}/media-1.png",
+        }
+        assert self._on_disk(instance) == ["media-0.webp", "media-1.png"]
+
+    def test_a_requeued_unit_keeps_its_slot_through_a_compact(self, instance):
+        # The health check compacts between a migration seeding its reruns
+        # and the drain. The landing line is the unit's only claim on its
+        # slot, and with its own file standing there unclaimed, the
+        # re-download went to a free slot beside it.
+        self._both_landed_in_one_batch(instance)
+        hero = ledger.load(instance.ledger_path)[work_hash(self.HERO)]
+        requeued = dataclasses.replace(
+            hero, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-13"
+        )
+        ledger.append(instance.ledger_path, requeued)
+        ledger.compact(instance.ledger_path)
         run_mod.run(self._ctx(instance, self._transport()))
         assert self._landed(instance) == {
             self.HERO: f"enrichment/{ITEM}/media-0.webp",

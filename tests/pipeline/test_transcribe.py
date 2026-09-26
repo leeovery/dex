@@ -219,6 +219,26 @@ class TestYoutubeDrain:
         assert "anydoc" not in content  # not the re-probe's, which differs
         assert "## Transcript\n\nThe transcript text." in content
 
+    def test_a_rerun_through_the_driver_keeps_the_transcript_the_drain_wrote(self, instance):
+        # End to end: the driver parks, the drain transcribes, and a rerun's
+        # driver parks again — without the keep, over the transcript.
+        park = self._park_through_the_driver(instance)
+        words = FakeTranscriber("whisper-local", text="The transcript text.", model="medium")
+        run_mod.run_transcribe(transcribe_ctx(instance, transcriber=words))
+        transcribed = park.read_bytes()
+        done = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(done, status=Status.QUEUED, path=None, title=None, rerun=True),
+        )
+        info = json.loads(fixture_text("youtube", "info-without-captions.json"))
+        driver = YouTubeDriver(probe=lambda _url: info, transport=FakeTransport({}))
+        report = run_mod.run(make_ctx(instance, FakeDriver(), drivers=[driver]))
+        entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+        assert park.read_bytes() == transcribed
+        assert "kept the stored transcript" in report
+
     def test_a_re_drain_never_duplicates_the_transcript(self, instance):
         park = self._park_through_the_driver(instance)
         first = FakeTranscriber("whisper-local", text="First pass words.")

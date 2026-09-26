@@ -37,6 +37,7 @@ __all__ = [
     "DESCRIPTION_HEADING",
     "TRANSCRIPT_HEADING",
     "description_section",
+    "holds_transcript",
     "instagram_body",
     "mask_fetched",
     "podcast_body",
@@ -259,8 +260,8 @@ def _notes_then_transcript(notes: str, transcript: str) -> str:
     return f"{TRANSCRIPT_HEADING}\n\n{transcript}"
 
 
-def pre_transcript(fields: dict[str, str], body: str) -> str:
-    """The show-notes half of a park/output body — everything before the transcript.
+def holds_transcript(fields: dict[str, str], body: str) -> bool:
+    """Whether a stored body carries a transcript section a transcriber composed.
 
     A body only holds a transcript section if the drain composed it, and
     the frontmatter is what says so. A park's body is notes end to end,
@@ -269,14 +270,26 @@ def pre_transcript(fields: dict[str, str], body: str) -> str:
     notes at the author's own line, and the drain then wrote that
     truncation back to disk, losing the tail for good.
 
-    A drained no-notes episode's body STARTS with the transcript heading;
-    the newline-anchored split below would miss it and hand the previous
-    transcript back as "notes", duplicating it on a re-drain. That split
-    takes the LAST section, because the transcript is what the drain
-    appended last.
+    A drained no-notes episode's body STARTS with the transcript heading,
+    where a newline-anchored search would miss it.
     """
-    if _TRANSCRIBED_FIELD not in fields:
+    return _TRANSCRIBED_FIELD in fields and (
+        _opens_with_transcript(body) or f"\n{TRANSCRIPT_HEADING}\n" in body
+    )
+
+
+def pre_transcript(fields: dict[str, str], body: str) -> str:
+    """The show-notes half of a park/output body — everything before the transcript.
+
+    Only a body that :func:`holds_transcript` is split. The split takes the
+    LAST section, because the transcript is what the drain appended last.
+    """
+    if not holds_transcript(fields, body):
         return body
-    if body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n"):
+    if _opens_with_transcript(body):
         return ""
     return body.rsplit(f"\n{TRANSCRIPT_HEADING}\n", maxsplit=1)[0].rstrip()
+
+
+def _opens_with_transcript(body: str) -> bool:
+    return body == TRANSCRIPT_HEADING or body.startswith(f"{TRANSCRIPT_HEADING}\n")

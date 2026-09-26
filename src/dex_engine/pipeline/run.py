@@ -53,6 +53,7 @@ from .detect import (
     sniff_media_ext,
 )
 from .enrichment import (
+    holds_transcript,
     instagram_body,
     mask_fetched,
     podcast_body,
@@ -488,6 +489,7 @@ class _StoredOutput:
 
     path: str
     title: str | None
+    fields: dict[str, str]
     body: str
 
 
@@ -1328,17 +1330,8 @@ class _Drain:
             self._media_stage(self.entries[entry.hash], content.media)
 
     def _apply_needs(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
-        if needs.body is not None or needs.meta.get("enclosure") is not None:
-            # A parking driver may still have real content (a podcast's
-            # show notes, the enclosure pointer in meta) — written now,
-            # completed by the drain; the item is not yet cognitive work,
-            # so the write is not an outcome. A waiting-transcribe park
-            # carrying an enclosure ALWAYS writes its park file: the drain
-            # re-fetches the audio from that frontmatter pointer, show
-            # notes or not — a no-notes episode without it would loop
-            # manual.
-            self._write_output(entry, needs.meta, needs.body, count=False)
-        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+        if not self._kept_transcript(entry, needs):
+            self._park(entry, needs)
         if needs.media:
             # Ledgered at emit whatever `media_fetch` says, exactly as a
             # Content emit is: the config gates the download alone
@@ -1355,6 +1348,46 @@ class _Drain:
         # one, so the re-queue cannot loop.
         if is_drainable(self.entries[entry.hash], self.ctx):
             self.queue.append(entry.hash)
+
+    def _park(self, entry: LedgerEntry, needs: NeedsCapability) -> None:
+        if needs.body is not None or needs.meta.get("enclosure") is not None:
+            # A parking driver may still have real content (a podcast's
+            # show notes, the enclosure pointer in meta) — written now,
+            # completed by the drain; the item is not yet cognitive work,
+            # so the write is not an outcome. A waiting-transcribe park
+            # carrying an enclosure ALWAYS writes its park file: the drain
+            # re-fetches the audio from that frontmatter pointer, show
+            # notes or not — a no-notes episode without it would loop
+            # manual.
+            self._write_output(entry, needs.meta, needs.body, count=False)
+        self.record_outcome(entry, status=Status.WAITING, needs=needs.need, reason=needs.reason)
+
+    def _kept_transcript(self, entry: LedgerEntry, needs: NeedsCapability) -> bool:
+        """Keep a rerun's stored transcript rather than park over it.
+
+        A transcribable unit's fetch parks for its transcription, and the
+        park is written over the unit's file before the transcription is
+        redone: a rerun traded the transcript for the notes around it, and
+        a transcription that then failed — the video or the episode gone,
+        the provider down, the audio silent — lost the transcript for good.
+        A stored file that holds none (a park, or a landing from before the
+        unit transcribed) parks as ever.
+        """
+        if needs.need is not Need.TRANSCRIBE or not entry.rerun:
+            return False
+        stored = self._stored_output(entry)
+        if stored is None or not holds_transcript(stored.fields, stored.body):
+            return False
+        self._keep_stored(
+            entry,
+            stored,
+            note=(
+                f"kept the stored transcript of {entry.url}: the re-fetch parked it for "
+                f"transcription again ({needs.reason}) — delete {stored.path} first to "
+                "re-transcribe"
+            ),
+        )
+        return True
 
     def _apply_redetection(self, entry: LedgerEntry, redetect: Redetected) -> None:
         """Re-route a mid-fetch kind discovery through the queue, once per run.
@@ -1499,10 +1532,12 @@ class _Drain:
         if landing is not None and landing.path is not None:
             landed = item_dir / PurePosixPath(landing.path).name
             if landed.is_file():
+                fields, body = read_enrichment(landed)
                 return _StoredOutput(
                     path=str(landed.relative_to(root)),
                     title=landing.title,
-                    body=read_enrichment(landed)[1],
+                    fields=fields,
+                    body=body,
                 )
         named = item_dir / f"{entry.kind.value}-{entry.hash[:6]}.md"
         if not named.is_file():
@@ -1511,7 +1546,7 @@ class _Drain:
         if fields.get("url") != entry.url:
             return None
         return _StoredOutput(
-            path=str(named.relative_to(root)), title=fields.get("title"), body=body
+            path=str(named.relative_to(root)), title=fields.get("title"), fields=fields, body=body
         )
 
     def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
@@ -3544,7 +3579,7 @@ def record_pass(ctx: RunContext, item_id: str, stage: str) -> str:
 
 
 def compact(ctx: RunContext) -> str:
-    """Compact the ledger to the latest line per hash."""
+    """Compact the ledger to the latest line per hash, and a requeued unit's landing."""
     removed = ledger.compact(ctx.instance.ledger_path)
     noun = "line" if removed == 1 else "lines"
     return f"compacted: {removed} superseded {noun} removed"
