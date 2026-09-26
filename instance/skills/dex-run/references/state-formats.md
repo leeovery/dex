@@ -367,7 +367,9 @@ a malformed record impossible:
   not the last line in the file, because a union merge between two machines
   concatenates their lines in git's order, not in write order. Lines
   written before `at` shipped carry none and count as oldest. `bin/dex
-  enrich compact` settles the file down to the winners.
+  enrich compact` settles the file down to the winners, keeping beside a
+  winner that names no output (a requeued unit) the last line that named
+  one — the only record of which file on disk is that unit's own.
   Statuses: queued · done · dead · skipped · manual ·
   waiting · blocked · error. `reason` is the stated parking reason
   (required on manual/skipped); `error` entries carry a scrubbed message

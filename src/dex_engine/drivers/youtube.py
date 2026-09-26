@@ -41,7 +41,7 @@ import re
 from collections.abc import Callable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
-from dex_engine.pipeline.enrichment import description_section, youtube_body
+from dex_engine.pipeline.enrichment import CAPTIONS_VIA, description_section, youtube_body
 from dex_engine.pipeline.types import (
     Content,
     Kind,
@@ -133,16 +133,6 @@ _MAX_CHANNEL_SEGMENTS = 2
 # A cleaned captions track shorter than this is no transcript at all.
 _MIN_TRANSCRIPT_CHARS = 200
 
-# The transcript-provenance stamp the CAPTIONS route writes into meta, and
-# thereby into the enrichment frontmatter. **The frontmatter, not the
-# heading, says whether a body holds a transcript**: the drain
-# reads `via` back to find where the notes end, so a captions transcript
-# that carried no `via` was read as description end to end and a later
-# whisper drain appended a SECOND transcript under the first — old caption
-# text and new whisper text in one file. A park still stamps nothing: its
-# body IS notes end to end.
-_CAPTIONS_VIA = "captions"
-
 _VTT_NOISE_PREFIXES = ("WEBVTT", "Kind:", "Language:", "NOTE", "align:")
 _VTT_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -233,7 +223,7 @@ class YouTubeDriver:
         # Stamped only on the route that actually produces a transcript —
         # the two parks above share this meta and must stay unstamped.
         return Content(
-            meta={**meta, "via": _CAPTIONS_VIA},
+            meta={**meta, "via": CAPTIONS_VIA},
             body=youtube_body(_description(info), transcript),
         )
 
