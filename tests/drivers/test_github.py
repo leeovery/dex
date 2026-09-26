@@ -583,6 +583,7 @@ class TestDownloads:
         [
             ("releases/download/v1.0/book.pdf", Format.PDF),
             ("releases/download/release/1.0/deck.PPTX", Format.PPTX),
+            ("releases/latest/download/book.pdf", Format.PDF),
         ],
     )
     def test_a_released_document_is_file_work(self, tail, fmt):
@@ -597,6 +598,7 @@ class TestDownloads:
         [
             ("releases/download/v1.0/pipeline-kit.dmg", "pipeline-kit.dmg"),
             ("releases/download/v1.0/pipeline-kit", "pipeline-kit"),
+            ("releases/latest/download/pipeline-kit.dmg", "pipeline-kit.dmg"),
             ("archive/refs/tags/v1.0.zip", "v1.0.zip"),
             ("archive/main.tar.gz", "main.tar.gz"),
         ],
@@ -616,6 +618,7 @@ UNROUTED = [
     ("releases", "releases"),
     ("releases/tag/v1.0", "releases"),
     ("releases/download/v1.0", "releases"),
+    ("releases/latest", "releases"),
     ("tags", "tags"),
     ("discussions/12", "discussions"),
     ("wiki", "wiki"),

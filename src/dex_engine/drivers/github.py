@@ -216,7 +216,7 @@ class GitHubDriver:
                 return self._fetch_repo(owner, repo)
             case ["issues" | "pull", number, *_] if number.isdigit():
                 return self._fetch_issue(owner, repo, number)
-            case ["releases", "download", _, *_, asset]:
+            case ["releases", "download", _, *_, asset] | ["releases", "latest", "download", asset]:
                 return _download(asset)
             case ["archive", *_, name]:
                 return _download(name)

@@ -151,6 +151,7 @@ class TestCollapsedLinks:
             "https://github.com/acme/toolkit/raw/main/notes.txt",
             "https://github.com/acme/toolkit/releases/tag/v1.0",
             "https://github.com/acme/toolkit/releases/download/v1.0/manual.pdf",
+            "https://github.com/acme/toolkit/releases/latest/download/manual.pdf",
             "https://github.com/acme/toolkit/wiki/Design",
             "https://github.com/acme/toolkit/issues",
             "https://github.com/acme/toolkit/blob",
