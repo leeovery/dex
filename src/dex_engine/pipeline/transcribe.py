@@ -35,11 +35,12 @@ from .urls import ext_of
 
 __all__ = [
     "HEAD_MAX_TOKENS",
+    "POST_VIDEO_MAX_BYTES",
     "PROMPT_MAX_TOKENS",
     "TRANSCRIBE_RUN_CAP",
     "Acquired",
-    "acquire_instagram_audio",
     "acquire_podcast_audio",
+    "acquire_post_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
     "keep_first_tokens",
@@ -65,6 +66,12 @@ PROMPT_MAX_TOKENS = 200
 HEAD_MAX_TOKENS = 60
 
 _SEPARATOR = " — "
+
+_MB = 1024 * 1024
+
+# A post's video is held whole in memory between its download and the
+# transcriber, and an x video can run for hours.
+POST_VIDEO_MAX_BYTES = 512 * _MB
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -154,38 +161,46 @@ def acquire_podcast_audio(
     )
 
 
-def acquire_instagram_audio(
+def acquire_post_audio(
     entry: LedgerEntry, enrichment_path: Path, cache_dir: Path, transport: Transport
 ) -> Acquired | Classification:
-    """Acquire an instagram unit's video from the media proxy the park recorded.
+    """Acquire a post's video — an instagram reel's, an x post's — from the URL its park recorded.
 
-    The proxy URL and the caption come from the enrichment file the
-    instagram driver's park wrote; a cached download under the entry hash
-    is reused. The video is downloaded as it stands — the transcribers
-    decode a video container as readily as an audio one — and the caption
-    primes the prompt behind the author, who is the post's only name.
+    The video URL and the post's text come from the enrichment file the
+    driver's park wrote; a cached download under the entry hash is reused.
+    The video is downloaded as it stands — the transcribers decode a video
+    container as readily as an audio one — and the post's text primes the
+    prompt behind the author, who is the post's only name.
 
-    A 404 from the proxy classifies ``dead`` but is returned as ``manual``
-    by the caller's mapping: the URL that died is an unmaintained proxy's,
-    and it says nothing about the reel.
+    A 404 classifies ``dead`` but is returned as ``manual`` by the caller's
+    mapping: the URL that died is the video's — for a reel, an
+    unmaintained proxy's — and it says nothing about the post. A video
+    past :data:`POST_VIDEO_MAX_BYTES` comes back ``skipped``: this engine's
+    own ceiling turned it away, never its source.
 
     Args:
         entry: The waiting ledger entry.
-        enrichment_path: ``enrichment/<item>/instagram-<hash6>.md``.
+        enrichment_path: ``enrichment/<item>/<kind>-<hash6>.md``.
         cache_dir: ``cache/audio/``.
-        transport: The HTTP seam for the proxy GET.
+        transport: The HTTP seam for the video GET.
 
     Returns:
         The acquisition, or the classified failure.
     """
-    parked = _parked_enclosure(enrichment_path, "instagram")
+    parked = _parked_enclosure(enrichment_path, entry.kind.value)
     if isinstance(parked, Classification):
         return parked
     prompt = _prompt(parked.fields.get("author"), None, parked.prefix)
-    # The proxy's `/videos/<code>/<n>` carries no extension of its own; mp4
-    # is what it redirects to, and the decoders sniff the bytes anyway.
+    # The instagram proxy's `/videos/<code>/<n>` carries no extension of its
+    # own; mp4 is what it redirects to, and the decoders sniff the bytes anyway.
     return _acquire_parked_audio(
-        entry, parked, cache_dir, transport, prompt=prompt, default_ext="mp4"
+        entry,
+        parked,
+        cache_dir,
+        transport,
+        prompt=prompt,
+        default_ext="mp4",
+        limit=POST_VIDEO_MAX_BYTES,
     )
 
 
@@ -233,7 +248,7 @@ def _parked_enclosure(enrichment_path: Path, driver: str) -> _Parked | Classific
     return _Parked(enclosure=enclosure, fields=fields, prefix=pre_transcript(fields, body))
 
 
-def _acquire_parked_audio(  # noqa: PLR0913 — the park, its two seams, and the two facts the kind decides
+def _acquire_parked_audio(  # noqa: PLR0913 — the park, its two seams, and the three facts the kind decides
     entry: LedgerEntry,
     parked: _Parked,
     cache_dir: Path,
@@ -241,12 +256,13 @@ def _acquire_parked_audio(  # noqa: PLR0913 — the park, its two seams, and the
     *,
     prompt: str,
     default_ext: str,
+    limit: int | None = None,
 ) -> Acquired | Classification:
     """The park's audio — cached from an earlier attempt, or downloaded now."""
     audio = cached_audio(cache_dir, entry.hash)
     if audio is None:
         outcome = _download_enclosure(
-            parked.enclosure, cache_dir, entry.hash, transport, default_ext=default_ext
+            parked.enclosure, cache_dir, entry.hash, transport, default_ext=default_ext, limit=limit
         )
         if isinstance(outcome, Classification):
             return outcome
@@ -257,13 +273,26 @@ def _acquire_parked_audio(  # noqa: PLR0913 — the park, its two seams, and the
     return Acquired(audio=audio, meta=meta, prompt=prompt, prefix=parked.prefix)
 
 
-def _download_enclosure(
-    url: str, cache_dir: Path, stem: str, transport: Transport, *, default_ext: str
+def _download_enclosure(  # noqa: PLR0913 — the URL, where it lands, its seam, and two facts
+    url: str,
+    cache_dir: Path,
+    stem: str,
+    transport: Transport,
+    *,
+    default_ext: str,
+    limit: int | None = None,
 ) -> Path | Classification:
-    outcome = fetch_classified(transport, url)
+    if limit is not None:
+        declared = _declared_length(transport, url)
+        if declared is not None and declared > limit:
+            return Classification(status=Status.SKIPPED, reason=_past_ceiling(declared, limit))
+    outcome = fetch_classified(transport, url, limit=limit)
     if isinstance(outcome, FetchFailure):
         return outcome.classification
     response = outcome
+    if limit is not None and len(response.body) > limit:
+        reason = _past_ceiling(response.content_length, limit)
+        return Classification(status=Status.SKIPPED, reason=reason)
     unusable = _not_audio(response)
     if unusable is not None:
         # Never cached under <hash>.<ext>: a stored error page is
@@ -276,6 +305,21 @@ def _download_enclosure(
     # final cache name — cached_audio would reuse it as completed audio.
     atomic.write_bytes(path, response.body)
     return path
+
+
+def _declared_length(transport: Transport, url: str) -> int | None:
+    """The size a HEAD says the body has, or None where it says nothing it can be held to."""
+    try:
+        probe = transport(url, method="HEAD")
+    except OSError:
+        return None
+    return probe.content_length if probe.ok else None
+
+
+def _past_ceiling(declared: int | None, limit: int) -> str:
+    """Why a video larger than ``limit`` is not transcribed, its size named where declared."""
+    size = f"{declared / _MB:.0f}MB" if declared is not None else f"over {limit / _MB:.0f}MB"
+    return f"the video is {size}, past the {limit / _MB:.0f}MB a download to transcribe may hold"
 
 
 def _not_audio(response: HttpResponse) -> str | None:

@@ -20,6 +20,7 @@ __all__ = [
     "ext_of",
     "host_of",
     "resolve_repo_path",
+    "video_identity",
     "work_hash",
 ]
 
@@ -135,6 +136,26 @@ def resolve_repo_path(root: Path, repo_path: str) -> Path | None:
     if not resolved.is_relative_to(root.resolve()):
         return None
     return resolved
+
+
+# X serves each rendition of one video — every resolution, every
+# ``?tag=`` — under a URL of its own, and which one fxtwitter hands over can
+# differ between two fetches of the same post. Each carries the video's
+# media id as the segment after its kind, ``video.twimg.com/amplify_video/
+# <id>/…`` and ``…/ext_tw_video/<id>/…`` — a wild-data fact read off live
+# payloads of both kinds.
+_X_VIDEO_HOST = "video.twimg.com"
+_X_VIDEO_KINDS = frozenset({"amplify_video", "ext_tw_video"})
+
+
+def video_identity(url: str) -> str:
+    """What names the video a URL serves: X's media id where it carries one, else the URL."""
+    parts = urllib.parse.urlsplit(url)
+    segments = parts.path.split("/")
+    if parts.hostname != _X_VIDEO_HOST or len(segments) < 3:  # noqa: PLR2004 — "", kind, id
+        return url
+    kind, media_id = segments[1], segments[2]
+    return f"{_X_VIDEO_HOST}/{media_id}" if kind in _X_VIDEO_KINDS and media_id.isdigit() else url
 
 
 def work_hash(work_key: str) -> str:

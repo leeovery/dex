@@ -6,7 +6,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from dex_engine.pipeline.registry import default_drivers
-from dex_engine.pipeline.urls import base_canonical, ext_of, host_of, resolve_repo_path, work_hash
+from dex_engine.pipeline.urls import (
+    base_canonical,
+    ext_of,
+    host_of,
+    resolve_repo_path,
+    video_identity,
+    work_hash,
+)
 
 DRIVERS = default_drivers()
 
@@ -142,3 +149,41 @@ class TestResolveRepoPath:
         # Repo paths are owner-editable data; a NUL byte cannot be a path
         # and must park like any other bad seed, not abort the caller.
         assert resolve_repo_path(tmp_path, "media/bad\x00name.pdf") is None
+
+
+class TestVideoIdentity:
+    """Every rendition of one x video names the same video."""
+
+    def test_renditions_of_one_video_share_its_media_id(self):
+        # The shapes read off live payloads: resolution path, file name and
+        # tag all vary between renditions, the id after the kind does not.
+        renditions = [
+            "https://video.twimg.com/amplify_video/2100000000000000001/vid/avc1/1280x720/Ab.mp4?tag=16",
+            "https://video.twimg.com/amplify_video/2100000000000000001/vid/avc1/480x270/Cd.mp4?tag=21",
+            "https://video.twimg.com/amplify_video/2100000000000000001/pl/Ef.m3u8?tag=16&v=4",
+        ]
+        assert {video_identity(url) for url in renditions} == {
+            "video.twimg.com/2100000000000000001"
+        }
+        assert (
+            video_identity(
+                "https://video.twimg.com/ext_tw_video/2100000000000000002/pu/vid/avc1/640x360/Gh.mp4"
+            )
+            == "video.twimg.com/2100000000000000002"
+        )
+        assert video_identity("https://video.twimg.com/amplify_video/3") == "video.twimg.com/3"
+
+    def test_two_videos_stay_two(self):
+        one = video_identity("https://video.twimg.com/amplify_video/1/vid/a.mp4")
+        other = video_identity("https://video.twimg.com/ext_tw_video/2/pu/vid/a.mp4")
+        assert one != other
+
+    def test_any_other_url_is_its_own_identity(self):
+        urls = [
+            "https://video.twimg.com/tweet_video/GfAbCdEf.mp4",  # a gif names no media id
+            "https://video.twimg.com/amplify_video/not-a-number/vid/a.mp4",
+            "https://video.twimg.com/amplify_video",
+            "https://video.twimg.com.example.test/amplify_video/1/vid/a.mp4",
+            "https://uuinstagram.com/videos/DTestCode1/1",
+        ]
+        assert [video_identity(url) for url in urls] == urls

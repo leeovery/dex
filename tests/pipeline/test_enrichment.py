@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from dex_engine.pipeline.enrichment import read_enrichment, read_enrichment_fields
+from dex_engine.pipeline.enrichment import (
+    described_file,
+    description_header,
+    read_enrichment,
+    read_enrichment_fields,
+)
 
 
 class TestReadEnrichment:
@@ -79,3 +84,34 @@ class TestReadEnrichmentFields:
 
         monkeypatch.setattr(Path, "read_text", refuse)
         assert read_enrichment_fields(record) == {"url": "https://x.test"}
+
+
+class TestDescribedFile:
+    """A description's first line names the file it covers."""
+
+    def test_the_header_names_the_file_it_opens(self, tmp_path):
+        description = tmp_path / "media-0.md"
+        description.write_text(f"{description_header('media-0.png')}\n\nA chart.\n")
+        assert described_file(description) == "media-0.png"
+
+    def test_a_one_line_description_with_no_newline_still_names_its_file(self, tmp_path):
+        description = tmp_path / "media-0.md"
+        description.write_text("Describes `media-0.png`", encoding="utf-8")
+        assert described_file(description) == "media-0.png"
+
+    def test_prose_after_the_name_is_ignored(self, tmp_path):
+        # A description written before the verb carries its own words on.
+        description = tmp_path / "media-0.md"
+        description.write_text("Describes `media-0.png` — a 1.2MB chart\n\nText.\n")
+        assert described_file(description) == "media-0.png"
+
+    def test_only_the_first_line_is_read(self, tmp_path):
+        description = tmp_path / "media-0.md"
+        description.write_text("A chart.\nDescribes `media-0.png`\n")
+        assert described_file(description) is None
+
+    def test_an_unreadable_file_names_nothing(self, tmp_path):
+        description = tmp_path / "media-0.md"
+        description.write_bytes(b"\xff\xfe not text")
+        assert described_file(description) is None
+        assert described_file(tmp_path / "absent.md") is None
