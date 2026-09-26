@@ -49,8 +49,13 @@ def _record(head: bytes) -> _RecordedRequest:
 
 
 @contextlib.contextmanager
-def recording_server() -> Iterator[tuple[str, list[_RecordedRequest]]]:
-    """Serve 200 OK, recording each request. Yields the base URL and the log."""
+def recording_server(
+    *, redirect: str | None = None
+) -> Iterator[tuple[str, list[_RecordedRequest]]]:
+    """Serve 200 OK, recording each request. Yields the base URL and the log.
+
+    ``redirect`` answers the first request with a 302 to that path instead.
+    """
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(8)
@@ -71,10 +76,16 @@ def recording_server() -> Iterator[tuple[str, list[_RecordedRequest]]]:
                         break
                     data += chunk
                 seen.append(_record(data.split(b"\r\n\r\n")[0]))
-                conn.sendall(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
-                    b"Content-Length: 2\r\nConnection: close\r\n\r\nhi"
-                )
+                if redirect is not None and len(seen) == 1:
+                    conn.sendall(
+                        b"HTTP/1.1 302 Found\r\nLocation: %s\r\n"
+                        b"Content-Length: 0\r\nConnection: close\r\n\r\n" % redirect.encode()
+                    )
+                else:
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                        b"Content-Length: 2\r\nConnection: close\r\n\r\nhi"
+                    )
                 conn.shutdown(socket.SHUT_WR)
 
     thread = threading.Thread(target=serve, daemon=True)
@@ -103,6 +114,24 @@ class TestUserAgent:
             response = transport(base + "/p/abc123/")
         assert response.status == 200
         assert [request.headers["user-agent"] for request in seen] == [expected]
+
+
+class TestServedUrl:
+    """Where a body came from: what every relative URL inside it resolves against."""
+
+    def test_a_redirected_fetch_reports_the_url_it_landed_on(self):
+        with recording_server(redirect="/docs/create/code") as (base, seen):
+            response = urllib_transport(base + "/docs/code")
+        assert response.url == base + "/docs/create/code"
+        assert [request.line for request in seen] == [
+            "GET /docs/code HTTP/1.1",
+            "GET /docs/create/code HTTP/1.1",
+        ]
+
+    def test_a_direct_fetch_reports_its_own_url(self):
+        with recording_server() as (base, _):
+            response = urllib_transport(base + "/p/abc123/")
+        assert response.url == base + "/p/abc123/"
 
 
 class TestHttplibNormalization:
@@ -259,6 +288,7 @@ class _ChunkedResponse:
     """
 
     status = 200
+    url = "https://cdn.example.test/served.mp3"
 
     def __init__(self, total: int, chunk: int = 8192) -> None:
         self.total = total

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charSet="utf-8"/>
+<title>Jev 1.13 jaggedness - TypeSafe AI</title>
+<meta name="description" content="Jev isn&#x27;t perfect. Here are some jagged edges we are aware of with jev-1.13. Many of these will be fixed in later versions."/>
+<link rel="canonical" href="https://docs.typesafe.ai/model-jaggedness/jev-1.13"/>
+<link rel="alternate" type="application/xml" href="/sitemap.xml"/>
+<link rel="alternate" type="text/markdown" href="/model-jaggedness/jev-1.13.md"/>
+<meta property="og:image" content="https://ts-docs.mintlify.app/mintlify-assets/_next/image?url=%2F_mintlify%2Fapi%2Fog%3Fdivision%3DModel%2Bjaggedness%26title%3DJev%2B1.13%2Bjaggedness%26description%3DJev%2Bisn%2527t%2Bperfect.%2BHere%2Bare%2Bsome%2Bjagged%2Bedges%2Bwe%2Bare%2Baware%2Bof%2Bwith%2Bjev-1.13.%2BMany%2Bof%2Bthese%2Bwill%2Bbe%2Bfixed%2Bin%2Blater%2Bversions.%26theme%3Df0580ae664a0195833f0555d&amp;w=1200&amp;q=100"/>
+</head>
+<body>
+<div id="content-area">
+<header id="header"><h1 id="page-title">Jev 1.13 jaggedness</h1></header>
+<div class="mdx-content relative mt-8 prose prose-gray" id="content">
+<span data-as="p"><code>jev-1.13</code> is fast, calibrated, and good at common-sense judgment but it is not perfect. <code>jev-1.13</code> does the best on <a class="link" href="/concepts/system-one">System One</a> tasks. It may struggle with tasks that require additional levels of indirection. It can be quite literal in its understanding. It struggles with tasks that require numeric precision.</span>
+<h2 class="flex whitespace-pre-wrap group font-medium" id="literal-reading"><span class="cursor-pointer">Literal reading</span></h2>
+<span data-as="p"><code>jev-1.13</code> answers the question you wrote, not the one you meant. Scoping words, negations, and implied conditions are read at face value. A question will be answered based on the words written in the instruction, whereas a person might have read the intent behind the instructions.</span>
+<span data-as="p"><strong>Instead:</strong> state the exact condition in the <code>instructions</code>. Be specific. Put boundary cases in the criteria. When you look at a wrong answer and find yourself explaining what you really meant, that explanation is the missing half of the instruction. Where interpretation is unavoidable, split it into two literal questions and combine them in code.</span>
+</div>
+</div>
+</body>
+</html>

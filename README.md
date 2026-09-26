@@ -233,7 +233,7 @@ different problem from the page having nothing on it.
 | **GitHub** | repos and profiles: README, description, metadata. A directory link gives that directory's README and file listing, a file link the file, an issue or pull request its text. A document committed to a repo or attached to an issue is read as a file. Any other link into a repo, such as a commit or a release page, parks for judgment |
 | **Papers** | arXiv and friends |
 | **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the real audio enclosure, then transcribes it. Show notes come from the feed, which is richer than the page |
-| **Web** | article text with the boilerplate stripped, falling back to the Wayback Machine when the live page has gone |
+| **Web** | article text with the boilerplate stripped, or the markdown a docs page declares it was rendered from, tables and code intact; falling back to the Wayback Machine when the live page has gone |
 | **Files** | PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB and CSV. Text is extracted and embedded images are pulled out alongside it. Scanned pages route to OCR |
 
 Three things sit on top of that, and they are where the real work happens:
