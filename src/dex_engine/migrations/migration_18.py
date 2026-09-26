@@ -124,6 +124,7 @@ from dex_engine.pipeline.types import (
     Status,
     parse_version,
 )
+from dex_engine.pipeline.urls import resolve_repo_path
 
 __all__ = ["ArticleSeamRerun", "build"]
 
@@ -188,9 +189,10 @@ class ArticleSeamRerun:
 
         Returns:
             The report: a summary action with the counts and what the
-            reruns cost, a skip for every member no live item claims and
-            every line that cannot be read or dated, and an anomaly for
-            every paper file whose frontmatter does not parse.
+            reruns cost, a skip for every member no live item claims, every
+            paper whose stored file cannot be found and every line that
+            cannot be read or dated, and an anomaly for every paper file
+            whose frontmatter does not parse.
         """
         skipped: list[Skipped] = []
         anomalies: list[str] = []
@@ -198,24 +200,22 @@ class ArticleSeamRerun:
         if not path.exists():
             return MigrationReport()
         latest = _latest_per_hash(path, skipped, now=self._now())
-        members = [
-            entry
-            for entry in latest.values()
-            if _is_unfixed_outcome(entry, skipped) and _went_through_seam(root, entry, anomalies)
-        ]
-        if not members:
-            return MigrationReport(skipped=skipped, anomalies=anomalies)
+        candidates = [entry for entry in latest.values() if _is_unfixed_outcome(entry, skipped)]
+        if not candidates:
+            return MigrationReport(skipped=skipped)
         # The corpus resolution answers one question — which live item owns
         # a unit whose stored item is gone — and only such a unit asks it.
         owners = (
             unit_owners(root, latest, default_drivers())
-            if any(not _item_file(root, entry.item).exists() for entry in members)
+            if any(not _item_file(root, entry.item).exists() for entry in candidates)
             else {}
         )
         exclusions = _exclusions(root)
         seeds: list[tuple[LedgerEntry, str]] = []
-        for entry in members:
+        for entry in candidates:
             item = _live_item(entry, root=root, owners=owners)
+            if not _went_through_seam(root, entry, item or entry.item, skipped, anomalies):
+                continue
             if item is None:
                 skipped.append(_unclaimed(entry, exclusions))
                 continue
@@ -255,26 +255,59 @@ def _parked_thin(entry: LedgerEntry) -> bool:
     return entry.status is Status.MANUAL and entry.reason == _THIN_EXTRACTION
 
 
-def _went_through_seam(root: Path, entry: LedgerEntry, anomalies: list[str]) -> bool:
+def _went_through_seam(
+    root: Path, entry: LedgerEntry, item: str, skipped: list[Skipped], anomalies: list[str]
+) -> bool:
     """Whether the landing's stored text, or the thin park, came out of the article seam.
 
     A paper's thin park did: an arXiv full text that extracts thin degrades
     to abstract-only instead, so only a paper read as an article parks thin.
+    A paper landing is judged by its stored file, and one whose file cannot
+    be found is said so, never passed over in silence.
     """
     if entry.kind is Kind.WEB or _parked_thin(entry):
         return True
-    if entry.path is None or not (root / entry.path).is_file():
+    stored = _stored_file(root, entry, item)
+    if stored is None:
+        skipped.append(
+            Skipped(
+                what=f"paper {entry.url}",
+                why=f"no stored file at {entry.path} or under enrichment/{item}/ — whether "
+                "its text came from its HTML rendering is unknown, so it was not requeued; "
+                "requeue it by hand with `enrich mark` if it did",
+            )
+        )
         return False
+    repo_path, file = stored
     try:
-        fields = read_enrichment_fields(root / entry.path)
+        fields = read_enrichment_fields(file)
     except (OSError, ValueError) as e:
         anomalies.append(
-            f"{entry.path} does not parse ({e}) — {entry.url} was left alone; repair the "
+            f"{repo_path} does not parse ({e}) — {entry.url} was left alone; repair the "
             "file, then requeue the paper with `enrich mark` if its text came from its "
             "HTML rendering"
         )
         return False
     return _ARXIV_ID_FIELD not in fields or fields.get(_NOTE_FIELD) != _ABSTRACT_ONLY
+
+
+def _stored_file(root: Path, entry: LedgerEntry, item: str) -> tuple[str, Path] | None:
+    """The landing's stored file: at its recorded path, else under the live item.
+
+    A rename moves the item's enrichment directory and keeps each file's
+    name — the drain's own ``<kind>-<hash6>.md`` — so a landing recorded
+    under the old id stands under the new one. Both paths are data a ledger
+    line spells, so both are held inside the instance root before anything
+    is read.
+    """
+    named = f"enrichment/{item}/{entry.kind.value}-{entry.hash[:6]}.md"
+    for repo_path in (entry.path, named):
+        if repo_path is None:
+            continue
+        file = resolve_repo_path(root, repo_path)
+        if file is not None and file.is_file():
+            return repo_path, file
+    return None
 
 
 def _seed(entry: LedgerEntry, item: str) -> LedgerEntry:

@@ -527,6 +527,47 @@ class TestMarkdownAlternate:
         result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
         assert result.body == substantial_extract("")
 
+    @pytest.mark.parametrize("content_type", ["text/markdown", "text/x-markdown", "text/plain"])
+    def test_a_markdown_or_plain_text_answer_is_the_source(self, content_type):
+        answer = HttpResponse(status=200, content_type=content_type, body=SOURCE.encode())
+        result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
+        assert result.body == SOURCE.strip()
+
+    @pytest.mark.parametrize(
+        ("content_type", "body"),
+        [
+            ("application/json", ('{"message": "Not Found", "detail": "' + "x" * 700 + '"}')),
+            ("application/octet-stream", SOURCE),
+            (
+                "application/rss+xml",
+                "<rss><channel>" + "<item>a post</item>" * 40 + "</channel></rss>",
+            ),
+            ("", SOURCE),
+        ],
+        ids=["json-error", "octet-stream", "feed", "no-type"],
+    )
+    def test_an_answer_of_any_other_type_is_not_the_source(self, content_type, body):
+        # Each is long enough to win on length alone, and none is markdown.
+        answer = HttpResponse(status=200, content_type=content_type, body=body.encode())
+        result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
+        assert result.body == substantial_extract("")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b"%PDF-1.7\n" + SOURCE.encode(),
+            b"GIF89a" + SOURCE.encode(),
+            b"\x1f\x8b\x08\x00" + bytes(range(256)) * 4,
+        ],
+        ids=["named-document", "named-media", "not-utf8"],
+    )
+    def test_a_binary_claiming_plain_text_is_not_the_source(self, body):
+        # The bytes decide, as they do for a page: a signature names a file
+        # even where every byte is ASCII, and markdown is UTF-8 text.
+        answer = HttpResponse(status=200, content_type="text/plain", body=body)
+        result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
+        assert result.body == substantial_extract("")
+
     @pytest.mark.parametrize(
         ("source_chars", "stored"),
         [(599, "extraction"), (600, "source")],

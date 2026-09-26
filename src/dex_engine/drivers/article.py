@@ -36,8 +36,9 @@ a page was rendered from (``<link rel="alternate" type="text/markdown">``),
 and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
-and stores it whenever it carries at least what extraction found. The
-title, description and og:image still come from the HTML.
+and stores it whenever it answers as markdown or plain text and carries
+at least what extraction found. The title, description and og:image
+still come from the HTML.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -92,7 +93,7 @@ from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redet
 
 from .audio import audio_enclosure
 from .fetch import FetchFailure, fetch_classified
-from .transport import Transport
+from .transport import HttpResponse, Transport
 
 __all__ = ["HtmlExtract", "fetch_article", "trafilatura_extract"]
 
@@ -167,6 +168,7 @@ _MAX_DESCRIPTION_CHARS = 300
 _LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))""")
 _MARKDOWN_TYPE = "text/markdown"
+_MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -616,9 +618,7 @@ def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
     """The markdown source the page declares, fetched where it says, or None.
 
     Every failure is None and the page's own extraction stands: the
-    declaration is an offer, never a dependency. An answer that is HTML —
-    a soft 404, a login wall — is not the markdown asked for, whatever
-    status it came with.
+    declaration is an offer, never a dependency.
     """
     url = _markdown_alternate_url(page.html, page.url)
     if url is None:
@@ -629,11 +629,32 @@ def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
         # The transport refusing a host no DNS name can carry: the page's
         # own mistake, and the page is still here to extract.
         return None
-    if isinstance(outcome, FetchFailure):
-        return None
-    if outcome.content_type == "text/html" or looks_like_html(outcome.body):
+    if isinstance(outcome, FetchFailure) or not _is_markdown_answer(outcome):
         return None
     return outcome.text().strip()
+
+
+def _is_markdown_answer(response: HttpResponse) -> bool:
+    """Whether a 2xx answer can be the markdown asked for.
+
+    Only a markdown or plain-text answer can: a JSON error body served with
+    a 200 (GitHub Docs' source is an API path) or a feed would otherwise win
+    on length alone. The bytes must agree with the label, as they must on a
+    page: HTML — a soft 404, a login wall — is not markdown, a body a
+    signature names is a file whatever type it claims, and one that is not
+    UTF-8 text is no markdown at all.
+    """
+    if response.content_type not in _MARKDOWN_ANSWER_TYPES or looks_like_html(response.body):
+        return False
+    if sniff_format(response.body) is not None:
+        return False
+    if sniff_media_ext(response.body, signatures_only=True) is not None:
+        return False
+    try:
+        response.body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _markdown_alternate_url(html: str, base_url: str) -> str | None:

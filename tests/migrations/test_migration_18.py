@@ -1,5 +1,6 @@
 """Tests for migration 18: re-extract every page the unfixed article seam stored or parked thin."""
 
+import dataclasses
 import datetime
 
 import pytest
@@ -106,8 +107,12 @@ def write_paper(root, url=PAPER_URL, *, meta, item=ITEM):
     return path
 
 
-FULL_TEXT = {"title": "A Paper", "published": "2026-01-02", "arxiv_id": "2601.00001"}
-ABSTRACT_ONLY = {**FULL_TEXT, "note": "abstract only"}
+FULL_TEXT: dict[str, str | int | None] = {
+    "title": "A Paper",
+    "published": "2026-01-02",
+    "arxiv_id": "2601.00001",
+}
+ABSTRACT_ONLY: dict[str, str | int | None] = {**FULL_TEXT, "note": "abstract only"}
 
 
 def live_lines(root):
@@ -203,12 +208,67 @@ class TestNonMembers:
         assert migration.apply(tmp_path).actions == []
         assert seeds(tmp_path) == []
 
-    def test_a_paper_whose_stored_file_is_gone_is_left_alone(self, tmp_path, migration):
+    def test_a_paper_whose_stored_file_cannot_be_found_is_reported(self, tmp_path, migration):
         write_corpus_item(tmp_path, urls=(PAPER_URL,))
         write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
         report = migration.apply(tmp_path)
         assert (report.actions, report.anomalies) == ([], [])
         assert seeds(tmp_path) == []
+        (skip,) = report.skipped
+        assert skip.what == f"paper {PAPER_URL}"
+        assert skip.why.startswith(
+            f"no stored file at enrichment/{ITEM}/paper-{work_hash(PAPER_URL)[:6]}.md "
+            f"or under enrichment/{ITEM}/"
+        )
+
+    def test_a_renamed_items_paper_is_read_where_the_rename_moved_it(self, tmp_path, migration):
+        # The rename moved the enrichment directory and kept the file's
+        # name; the landing still records the path under the old id.
+        renamed = "2026-09-20-renamed-abc123"
+        write_corpus_item(tmp_path, item_id=renamed, urls=(PAPER_URL,))
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=FULL_TEXT, item=renamed)
+        report = migration.apply(tmp_path)
+        (seed,) = seeds(tmp_path)
+        assert (seed.url, seed.item) == (PAPER_URL, renamed)
+        assert report.skipped == []
+
+    def test_a_renamed_items_abstract_only_paper_stays_out(self, tmp_path, migration):
+        renamed = "2026-09-20-renamed-abc123"
+        write_corpus_item(tmp_path, item_id=renamed, urls=(PAPER_URL,))
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        write_paper(tmp_path, meta=ABSTRACT_ONLY, item=renamed)
+        report = migration.apply(tmp_path)
+        assert (report.actions, report.skipped) == ([], [])
+
+    def test_a_landing_that_records_no_path_is_read_at_the_drains_name(self, tmp_path, migration):
+        write_corpus_item(tmp_path, urls=(PAPER_URL,))
+        write_ledger(tmp_path, dataclasses.replace(unit(PAPER_URL, kind=Kind.PAPER), path=None))
+        write_paper(tmp_path, meta=FULL_TEXT)
+        migration.apply(tmp_path)
+        assert [seed.url for seed in seeds(tmp_path)] == [PAPER_URL]
+
+    def test_a_paper_left_out_never_stops_the_rest(self, tmp_path, migration):
+        write_corpus_item(tmp_path, urls=(PAPER_URL, PAGE_URL))
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER), unit())
+        write_paper(tmp_path, meta=ABSTRACT_ONLY)
+        migration.apply(tmp_path)
+        assert [seed.url for seed in seeds(tmp_path)] == [PAGE_URL]
+
+    def test_a_recorded_path_outside_the_instance_is_never_read(self, tmp_path, migration):
+        root = tmp_path / "instance"
+        outside = tmp_path / "elsewhere" / "paper.md"
+        outside.parent.mkdir()
+        outside.write_text(render_enrichment(PAPER_URL, LANDED, FULL_TEXT, "Not this."))
+        write_corpus_item(root, urls=(PAPER_URL,))
+        landing = dataclasses.replace(
+            unit(PAPER_URL, kind=Kind.PAPER), path="../elsewhere/paper.md"
+        )
+        write_ledger(root, landing)
+        report = migration.apply(root)
+        assert seeds(root) == []
+        (skip,) = report.skipped
+        assert skip.what == f"paper {PAPER_URL}"
 
     @pytest.mark.parametrize("engine", ["0.2.2", "0.3.0", "1.0.0"])
     def test_a_landing_by_the_fixed_engine_never_requeues(self, tmp_path, migration, engine):
