@@ -1725,9 +1725,10 @@ class _Drain:
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
         every run by definition, and an unchanged rerun must not rewrite the
-        file (nor report the item as changed). ``count=False`` writes
-        without registering an item outcome (a waiting park's partial
-        content is not cognitive work yet).
+        file (nor report the item as changed). ``count=False`` is a park's
+        write: it registers no item outcome (a waiting park's partial
+        content is not cognitive work yet), only whether it changed what was
+        stored, in :attr:`park_writes`.
 
         Atomic, like every other state write: an interrupted run must not
         leave a half-file behind. A truncated enrichment file is the worst

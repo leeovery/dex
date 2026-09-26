@@ -1225,6 +1225,22 @@ class TestXDrain:
         assert [entry for entry in entries.values() if entry.job is Job.MEDIA] == []
         assert audio_files(instance) == []  # the transcript superseded the video
 
+    def test_a_rerun_keeps_the_transcript_it_landed(self, instance):
+        # The real driver re-parks the post for its video; the stored
+        # transcript stands rather than being parked over.
+        self.test_one_run_takes_a_video_post_from_fetch_to_transcript(instance)
+        landed = entry_for(make_ctx(instance, FakeDriver()), self.POST_URL)
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(landed, status=Status.QUEUED, path=None, rerun=True),
+        )
+        transport = FakeTransport(self.responses())  # no video: nothing is acquired
+        report = " ".join(run_mod.run(self.ctx(instance, transport)).split())
+        entry = entry_for(make_ctx(instance, FakeDriver()), self.POST_URL)
+        assert (entry.status, entry.path) == (Status.DONE, landed.path)
+        assert "Clip words." in read_enrichment(instance.root / str(landed.path))[1]
+        assert f"kept the stored transcript of {self.POST_URL}" in report
+
     def test_the_park_carries_no_transcript_stamp(self, instance):
         # A park carrying `via` tells the drain its body already holds a
         # transcript, and the drain then reads the body by its heading.
@@ -1640,23 +1656,6 @@ class TestTranscribedVideoRetired:
         "@ines — Sat Aug 22 14:40:00 +0000 2026\n\n(video post)\n"
     )
 
-    def test_a_rerun_whose_post_fetch_escalates_is_not_a_transcript_end(self, instance):
-        # Blocked five times on the post itself: a page outcome, not the end
-        # of a transcription, and never reported as one.
-        self.landed_before_the_fix(instance)
-        post = ledger.load(instance.ledger_path)[self.post_hash()]
-        ledger.append(
-            instance.ledger_path,
-            dataclasses.replace(post, status=Status.BLOCKED, attempts=4, reason="rate limited"),
-        )
-        refused = HttpResponse(status=429, content_type="text/html", body=b"")
-        transport = FakeTransport({"https://api.fxtwitter.com/status/800": refused})
-        ctx = TestXDrain().ctx(instance, transport)
-        report = " ".join(run_mod.run(ctx).split())
-        # Four attempts on the line, so this fetch was the fifth.
-        assert ("GET", "https://api.fxtwitter.com/status/800") in transport.calls
-        assert "ended without a transcript" not in report
-
     def test_a_rerun_whose_park_names_no_video_keeps_its_post(self, instance):
         park = self.PARK.replace(f"enclosure: {self.VIDEO}\n", "")
         self.waiting_rerun(instance, park=park)
@@ -1672,27 +1671,6 @@ class TestTranscribedVideoRetired:
         post = entries[self.post_hash()]
         assert post.status is Status.MANUAL
         assert "no enrichment record" in (post.reason or "")
-
-    def test_a_rerun_whose_blocked_video_escalates_keeps_its_post(self, instance):
-        self.waiting_rerun(instance, park=self.PARK, status=Status.BLOCKED, attempts=4)
-        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
-        report, entries = self.drain_waiting(instance, page)
-        post = entries[self.post_hash()]
-        assert post.status is Status.DONE
-        assert "ended without a transcript (still blocked after 5 attempts" in report
-
-    def test_a_fresh_shares_blocked_video_still_escalates_to_manual(self, instance):
-        self.waiting_rerun(instance, park=self.PARK, status=Status.BLOCKED, attempts=4)
-        fresh = ledger.load(instance.ledger_path)[self.post_hash()]
-        ledger.append(
-            instance.ledger_path,
-            dataclasses.replace(fresh, rerun=False),
-        )
-        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
-        _report, entries = self.drain_waiting(instance, page)
-        post = entries[self.post_hash()]
-        assert post.status is Status.MANUAL
-        assert (post.reason or "").startswith("still blocked after 5 attempts")
 
     @pytest.mark.parametrize(
         "old_url",
@@ -1739,6 +1717,93 @@ class TestTranscribedVideoRetired:
         )
         report = " ".join(run_mod.run(ctx).split())
         return report, ledger.load(instance.ledger_path)
+
+
+class TestBlockedEscalation:
+    """The last blocked attempt: a page keeps its landing, an x transcribe rerun its post.
+
+    Anything else escalates to manual.
+    """
+
+    PAGE = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+
+    def test_a_page_fetch_rerun_keeps_its_landing(self, instance):
+        # Blocked five times on the post itself: a page outcome, kept as a
+        # page's landing is, and never reported as a transcript's end.
+        retired = TestTranscribedVideoRetired()
+        retired.landed_before_the_fix(instance)
+        landed = f"enrichment/{ITEM}/x-{retired.post_hash()[:6]}.md"
+        post = ledger.load(instance.ledger_path)[retired.post_hash()]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(post, status=Status.BLOCKED, attempts=4, reason="rate limited"),
+        )
+        refused = HttpResponse(status=429, content_type="text/html", body=b"")
+        transport = FakeTransport({"https://api.fxtwitter.com/status/800": refused})
+        report = " ".join(run_mod.run(TestXDrain().ctx(instance, transport)).split())
+        entry = ledger.load(instance.ledger_path)[retired.post_hash()]
+        assert (entry.status, entry.path) == (Status.DONE, landed)
+        assert f"kept the stored copy of {retired.POST_URL}" in report
+        assert "ended without a transcript" not in report
+
+    def test_an_x_transcribe_rerun_keeps_its_post(self, instance):
+        retired = TestTranscribedVideoRetired()
+        retired.waiting_rerun(instance, park=retired.PARK, status=Status.BLOCKED, attempts=4)
+        report, entries = retired.drain_waiting(instance, self.PAGE)
+        assert entries[retired.post_hash()].status is Status.DONE
+        assert "ended without a transcript (still blocked after 5 attempts" in report
+
+    def test_a_fresh_x_transcribe_escalates_to_manual(self, instance):
+        retired = TestTranscribedVideoRetired()
+        retired.waiting_rerun(instance, park=retired.PARK, status=Status.BLOCKED, attempts=4)
+        fresh = ledger.load(instance.ledger_path)[retired.post_hash()]
+        ledger.append(instance.ledger_path, dataclasses.replace(fresh, rerun=False))
+        _report, entries = retired.drain_waiting(instance, self.PAGE)
+        post = entries[retired.post_hash()]
+        assert post.status is Status.MANUAL
+        assert (post.reason or "").startswith("still blocked after 5 attempts")
+
+    def test_a_reel_transcribe_rerun_escalates_to_manual(self, instance):
+        drain = TestInstagramDrain()
+        ctx = drain.park_via_driver(instance)
+        parked = entry_for(ctx, drain.POST_URL)
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(parked, status=Status.BLOCKED, attempts=4, rerun=True),
+        )
+        entry = entry_for(
+            drain.drain(instance, transport=FakeTransport({drain.ENCLOSURE: self.PAGE})),
+            drain.POST_URL,
+        )
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith("still blocked after 5 attempts")
+
+    def test_an_x_media_rerun_escalates_to_manual(self, instance):
+        # A post's own media download: no transcript's end, and no landing
+        # the fetch path would keep — even with a file standing at the name
+        # a unit of its kind would land under.
+        retired = TestTranscribedVideoRetired()
+        item_dir = retired.landed_before_the_fix(instance)
+        (item_dir / f"x-{work_hash(retired.PHOTO)[:6]}.md").write_text("stray\n")
+        photo = ledger.load(instance.ledger_path)[work_hash(retired.PHOTO)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                photo, status=Status.BLOCKED, attempts=4, reason="HTTP 503", path=None, rerun=True
+            ),
+        )
+        unavailable = HttpResponse(status=503, content_type="text/html", body=b"")
+        transport = FakeTransport(
+            {
+                "https://api.fxtwitter.com/status/800": json_response({}, status=404),
+                retired.PHOTO: unavailable,
+            }
+        )
+        report = " ".join(run_mod.run(TestXDrain().ctx(instance, transport)).split())
+        entry = ledger.load(instance.ledger_path)[work_hash(retired.PHOTO)]
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith("still blocked after 5 attempts")
+        assert "ended without a transcript" not in report
 
 
 class TestCorrectedUnitLandsItsTranscript:
