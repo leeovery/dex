@@ -847,7 +847,10 @@ def test_entries_round_trip_through_the_serialization_boundary(sequence: list[Le
 _OLDEST = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 
 
-@settings(suppress_health_check=[HealthCheck.too_slow])
+# Each example appends, compacts and re-reads a real file, and on a loaded
+# machine one example overran hypothesis's 200 ms deadline (283 ms, then
+# 2 ms on the replay): file timing is not the claim either.
+@settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
 @given(sequence=st.lists(entries(), max_size=20))
 def test_compact_preserves_latest_per_hash_and_round_trips(
     sequence: list[LedgerEntry], tmp_path_factory: pytest.TempPathFactory

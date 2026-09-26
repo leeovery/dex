@@ -41,9 +41,12 @@ frontmatter fields ever change (`status`, `enrichment:`), both derived by
 the engine: the listing from the enrichment directory, the status from the
 ledger — `enriched` only once every unit the ownership map gives the item
 has landed (or is confirmed gone or deliberately skipped), `raw` while any
-is still owed. An item with no units at all derives its status from the
-enrichment directory instead: `raw` while nothing is there, `enriched` once
-something is. So a text-only share stays `raw` even after its digest lands,
+is still owed. A rerun — a landed unit fetched again, as a migration's
+reseed or `enrich fetch` on the item's own URL — is not owed while its
+earlier landing still stands on disk: the item keeps its status while the
+rerun drains or retries. An item with no units at all derives its status
+from the enrichment directory instead: `raw` while nothing is there,
+`enriched` once something is. So a text-only share stays `raw` even after its digest lands,
 and a media capture flips `enriched` when its description file lands, digest
 or not; owed description and digest are what the run report and the digest
 backstop carry, never `status`. And `enrichment: []` on an `enriched` item is

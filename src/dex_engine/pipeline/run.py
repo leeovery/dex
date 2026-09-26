@@ -23,7 +23,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import assert_never
@@ -662,8 +662,7 @@ class _Drain:
         old line stays what it is, historical attribution, and no persisted
         line is ever rewritten to heal it.
         """
-        owners = self.owners_of(entry)
-        return entry.item if entry.item in owners else owners[0]
+        return _owner(entry, self.owners)
 
     def owners_of(self, entry: LedgerEntry) -> tuple[str, ...]:
         """Every item the corpus resolves this unit to — never empty.
@@ -1527,11 +1526,11 @@ class _Drain:
         not content any keep protects — and the title comes off the file.
         """
         root = self.ctx.instance.root
-        item_dir = self.ctx.instance.enrichment_dir / self.owner_of(entry)
+        owner = self.owner_of(entry)
         landing = self._recorded_output(entry.hash)
         if landing is not None and landing.path is not None:
-            landed = item_dir / PurePosixPath(landing.path).name
-            if landed.is_file():
+            landed = _landed_file(self.ctx.instance, owner, landing.path)
+            if landed is not None:
                 fields, body = read_enrichment(landed)
                 return _StoredOutput(
                     path=str(landed.relative_to(root)),
@@ -1539,7 +1538,7 @@ class _Drain:
                     fields=fields,
                     body=body,
                 )
-        named = item_dir / f"{entry.kind.value}-{entry.hash[:6]}.md"
+        named = self.ctx.instance.enrichment_dir / owner / f"{entry.kind.value}-{entry.hash[:6]}.md"
         if not named.is_file():
             return None
         fields, body = read_enrichment(named)
@@ -1983,9 +1982,17 @@ class _Drain:
 
     def _recorded_output(self, unit_hash: str) -> LedgerEntry | None:
         """The unit's latest line that recorded an output, superseded or not."""
+        return self._landings().get(unit_hash)
+
+    def _landings(self) -> dict[str, LedgerEntry]:
+        """Every unit's latest line that recorded an output, superseded or not."""
         if self._outputs is None:
             self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
-        return self._outputs.get(unit_hash)
+        return self._outputs
+
+    def _owed(self) -> set[str]:
+        """The units still owed work (:func:`_owed_units`), off this run's maps."""
+        return _owed_units(self.ctx.instance, self.entries, self.owners, self._landings())
 
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries the item owns — what the 12-URL cap bounds.
@@ -2126,9 +2133,15 @@ class _Drain:
         write-only-on-change rule keeps untouched items untouched.
         """
         self.resolve_owners()  # this run's children exist now, and want owners
+        owed = self._owed()
         for item_id, path in self.item_paths.items():
             detail = refresh_item_frontmatter(
-                self.ctx.instance, item_id, path, entries=self.entries, owners=self.owners
+                self.ctx.instance,
+                item_id,
+                path,
+                entries=self.entries,
+                owners=self.owners,
+                owed=owed,
             )
             if detail is not None:
                 self.notes.append(
@@ -2258,17 +2271,19 @@ class _Drain:
         landed" for an item that admitted twelve.
 
         Which units are the item's is the corpus's answer, not the stored
-        string's, so the shape here and the ``raw`` its frontmatter derives
-        are read off one map.
+        string's, and which of them are still owed is :func:`_owed_units`'s,
+        so the shape here and the ``raw`` its frontmatter derives are read
+        off the same two answers.
         """
         rows: list[dict[str, object]] = []
+        owed = self._owed()
         for item_id in sorted(self.touched):
             units = [
                 entry
                 for entry in self.entries.values()
                 if item_id in self.owners.get(entry.hash, ()) and not _is_cap_refusal(entry)
             ]
-            outstanding = [entry for entry in units if entry.status in _OUTSTANDING]
+            outstanding = [entry for entry in units if entry.hash in owed]
             if not outstanding:
                 continue
             groups: dict[tuple[str, str | None], int] = {}
@@ -2429,22 +2444,23 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
             stale.unlink()
 
 
-def refresh_item_frontmatter(
+def refresh_item_frontmatter(  # noqa: PLR0913 — three optional ledger reads
     instance: Instance,
     item_id: str,
     path: Path | None = None,
     *,
     entries: dict[str, LedgerEntry] | None = None,
     owners: Mapping[str, tuple[str, ...]] | None = None,
+    owed: Collection[str] | None = None,
 ) -> str | None:
     """Derive one item's ``status``/``enrichment:``; write only on change.
 
     The listing is the enrichment directory's markdown files; the status is
     the ledger's answer to "has the whole item landed" — ``enriched`` only
-    when no unit the item owns is still outstanding, ``raw`` while one is.
-    Callers holding the ledger pass ``entries``, and the ownership map with
-    it where they have one (it costs a corpus read); the rest read both
-    here.
+    when no unit the item owns is still owed (:func:`_owed_units`), ``raw``
+    while one is. Callers holding the ledger pass ``entries``, and the
+    ownership map and the owed units with it where they have them (they
+    cost a corpus read and a ledger read); the rest read them here.
 
     Silent when the corpus file is gone or unreadable: a heal may outlive
     its item (excluded after capture), an unreadable item is seeding's to
@@ -2466,11 +2482,10 @@ def refresh_item_frontmatter(
         # had landed, and the retry duplicated the record.
         return None
     files = sorted(p.name for p in (instance.enrichment_dir / item_id).glob("*.md"))
-    units = _item_units(instance, item_id, entries, owners)
+    ledgered = _item_units(instance, item_id, entries, owners, owed)
+    status = item.status if ledgered is None else _derived_status(files, *ledgered)
     try:
-        updated = dataclasses.replace(
-            item, status=_derived_status(item, files, units), enrichment=files
-        )
+        updated = dataclasses.replace(item, status=status, enrichment=files)
         if updated != item:
             corpus.write_item(path, updated)
     except (OSError, corpus.CorpusSchemaError) as e:
@@ -2511,9 +2526,10 @@ def _item_units(
     instance: Instance,
     item_id: str,
     entries: dict[str, LedgerEntry] | None,
-    owners: Mapping[str, tuple[str, ...]] | None = None,
-) -> list[LedgerEntry] | None:
-    """The item's ledger units — from the caller's map, or read here.
+    owners: Mapping[str, tuple[str, ...]] | None,
+    owed: Collection[str] | None,
+) -> tuple[list[LedgerEntry], Collection[str]] | None:
+    """The item's ledger units, and the units still owed — from the caller's maps, or read here.
 
     Ownership is the corpus's answer, not the line's stored string
     (:func:`_unit_owners`): a renamed item's units are its own, and a URL
@@ -2529,7 +2545,13 @@ def _item_units(
             return None
     if owners is None:
         owners = _unit_owners(instance, entries)
-    return [entry for entry in entries.values() if item_id in owners.get(entry.hash, ())]
+    if owed is None:
+        landings = _landings_or_none(instance)
+        if landings is None:
+            return None
+        owed = _owed_units(instance, entries, owners, landings)
+    units = [entry for entry in entries.values() if item_id in owners.get(entry.hash, ())]
+    return units, owed
 
 
 def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
@@ -2540,16 +2562,82 @@ def _ledger_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
         return None
 
 
-def _derived_status(
-    item: corpus.CorpusItem, files: list[str], units: list[LedgerEntry] | None
-) -> str:
+def _landings_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
+    """Every unit's latest landing (:func:`ledger.latest_outputs`), or None when unreadable."""
+    try:
+        return ledger.latest_outputs(instance.ledger_path)
+    except (OSError, UnicodeDecodeError, ledger.LedgerSchemaError):
+        return None
+
+
+def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]]) -> str:
+    """The one live item a unit's work is written under (:meth:`_Drain.owner_of`)."""
+    claimants = owners.get(entry.hash) or (entry.item,)
+    return entry.item if entry.item in claimants else claimants[0]
+
+
+def _landed_file(instance: Instance, owner: str, recorded: str) -> Path | None:
+    """The file a recorded landing path names, where it still stands on disk.
+
+    Resolved by file name under the owning item's directory: a rename moves
+    the directory, and a path recorded before it names the dead id.
+    """
+    landed = instance.enrichment_dir / owner / PurePosixPath(recorded).name
+    return landed if landed.is_file() else None
+
+
+def _owed_units(
+    instance: Instance,
+    entries: Mapping[str, LedgerEntry],
+    owners: Mapping[str, tuple[str, ...]],
+    landings: Mapping[str, LedgerEntry],
+) -> set[str]:
+    """The units still owed work — the ones that hold an item ``raw``.
+
+    Every queued or parked unit, but one: a rerun whose latest landing still
+    stands on disk. Its item already holds what the unit landed, and a
+    re-fetch that fails keeps that copy (:meth:`_Drain._apply_failure`).
+    Counted owed, a healing migration's cohort — a thousand reruns, drained
+    fifty a run — flipped every item it touched ``raw``, listed each as not
+    finished and held it out of digest and wiki work for dozens of runs over
+    copies nobody had touched, and every blocked retry did the same. A rerun
+    with no landing standing is owed exactly as a fresh unit is.
+
+    ``landings`` is :func:`ledger.latest_outputs`.
+    """
+    return {
+        entry.hash
+        for entry in entries.values()
+        if entry.status in _OUTSTANDING
+        and not _stands_on_its_landing(instance, entry, owners, landings)
+    }
+
+
+def _stands_on_its_landing(
+    instance: Instance,
+    entry: LedgerEntry,
+    owners: Mapping[str, tuple[str, ...]],
+    landings: Mapping[str, LedgerEntry],
+) -> bool:
+    """Whether ``entry`` is a rerun whose latest landing still stands on disk."""
+    landing = landings.get(entry.hash)
+    return (
+        entry.rerun
+        and landing is not None
+        and landing.path is not None
+        and _landed_file(instance, _owner(entry, owners), landing.path) is not None
+    )
+
+
+def _derived_status(files: list[str], units: list[LedgerEntry], owed: Collection[str]) -> str:
     """``enriched`` iff the item owes no further work.
 
     An item is one unit of knowledge — the post, the thread parents above
     it, the links harvest promoted, the media, the video awaiting its
-    transcript — so one outstanding unit keeps the whole item ``raw`` and
-    out of digest/wiki. A dead link or a deliberately skipped unit owes
-    nothing and holds nothing hostage.
+    transcript — so one owed unit (:func:`_owed_units`) keeps the whole
+    item ``raw`` and out of digest/wiki. A dead link or a deliberately
+    skipped unit owes nothing and holds nothing hostage, and neither does a
+    rerun whose earlier landing still stands.
 
     What it OWES is the whole question, and the ledger answers it through
     the ownership map (``units``) — never the item's own directory
@@ -2568,11 +2656,9 @@ def _derived_status(
     which owes its description and its digest — and an ``any()`` over no
     units would call that finished.
     """
-    if units is None:
-        return item.status
     if not units and not files:
         return "raw"
-    return "raw" if any(unit.status in _OUTSTANDING for unit in units) else "enriched"
+    return "raw" if any(unit.hash in owed for unit in units) else "enriched"
 
 
 # ---------------------------------------------------------------------------
@@ -2970,7 +3056,7 @@ def digest_orphans(instance: Instance) -> list[str]:
         return orphans
     entries = _ledger_or_none(instance)
     owners = _unit_owners(instance, entries) if entries is not None else {}
-    owing = items_owing_work(entries, owners)
+    owing = items_owing_work(instance, entries, owners)
     enriched_on = _last_enriched(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     recorded = digested_items(instance, live)
@@ -3138,9 +3224,11 @@ def items_owing_descriptions(instance: Instance) -> list[dict[str, object]]:
 
 
 def items_owing_work(
-    entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
+    instance: Instance,
+    entries: dict[str, LedgerEntry] | None,
+    owners: Mapping[str, tuple[str, ...]],
 ) -> set[str]:
-    """The items a unit is still outstanding on — the ones deriving ``raw``.
+    """The items a unit is still owed on (:func:`_owed_units`) — the ones deriving ``raw``.
 
     Read off the same ownership map the frontmatter's ``raw`` is derived
     from (:func:`_unit_owners`): an item held out of digest by an
@@ -3154,10 +3242,14 @@ def items_owing_work(
     """
     if entries is None:
         return set()
+    landings = _landings_or_none(instance)
+    if landings is None:
+        return set()
+    owed = _owed_units(instance, entries, owners, landings)
     return {
         item_id
         for entry in entries.values()
-        if entry.status in _OUTSTANDING
+        if entry.hash in owed
         for item_id in owners.get(entry.hash, (entry.item,))
     }
 
@@ -3294,7 +3386,7 @@ def never_harvested(instance: Instance) -> list[str]:
     if not entries:
         return []
     owners = _unit_owners(instance, entries)
-    owing = items_owing_work(entries, owners)
+    owing = items_owing_work(instance, entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     fetched = {
         item_id

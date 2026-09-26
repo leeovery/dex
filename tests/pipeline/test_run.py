@@ -38,7 +38,7 @@ from dex_engine.pipeline.enrichment import (
     render_enrichment,
     youtube_body,
 )
-from dex_engine.pipeline.ownership import work_identity
+from dex_engine.pipeline.ownership import unit_owners, work_identity
 from dex_engine.pipeline.run import (
     _SHOWN_ID_MAX,
     _SNIFF_PREFIX_BYTES,
@@ -1642,6 +1642,102 @@ class TestRerun:
         run_mod.run(ctx)
         entry = entry_for(ctx)
         assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+
+
+class TestARerunOnItsLandingOwesNothing:
+    """An item keeps its status while a rerun drains over a landing that still stands.
+
+    A healing migration seeds its whole cohort at sync and the drain takes
+    fifty a run: counted owed, every item in it flipped ``raw``, listed as
+    not finished and held out of digest and wiki work over copies nobody
+    had touched — and every blocked retry did the same.
+    """
+
+    BLOCKED = Refused(evidence="HTTP 429")
+
+    def rerun(self, instance: Instance, *, landing_stands: bool = True) -> RunContext:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        assert self.status(instance) == "enriched"
+        if not landing_stands:
+            (instance.root / str(entry_for(ctx).path)).unlink()
+        TestRerun.seed_rerun(ctx)
+        return ctx
+
+    def status(self, instance: Instance) -> str:
+        return corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md").status
+
+    def blocked(self, instance: Instance) -> str:
+        return run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: self.BLOCKED)))
+
+    def test_a_rerun_the_cap_leaves_queued_keeps_its_item_enriched(self, instance, monkeypatch):
+        self.rerun(instance)
+        monkeypatch.setattr(run_mod, "RERUN_DRAIN_CAP", 0)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert "rerun cohort: 0 of 1 drained; 1 queue for the next run" in report
+        assert self.status(instance) == "enriched"
+
+    def test_a_blocked_rerun_keeps_its_item_enriched_and_off_not_finished(self, instance):
+        self.rerun(instance)
+        report = self.blocked(instance)
+        assert entry_for(make_ctx(instance, FakeDriver())).status is Status.BLOCKED
+        assert self.status(instance) == "enriched"
+        assert "Not finished" not in report
+        assert "Waiting on the engine — 1 entry" in report  # the retry is still the engine's
+
+    def test_a_rerun_with_no_landing_standing_keeps_its_item_raw(self, instance):
+        self.rerun(instance, landing_stands=False)
+        report = self.blocked(instance)
+        assert self.status(instance) == "raw"
+        assert "Not finished — 1 item" in report
+
+    def test_a_fresh_unit_still_holds_its_item_raw(self, instance):
+        write_item(instance)
+        report = self.blocked(instance)
+        assert self.status(instance) == "raw"
+        assert "Not finished — 1 item" in report
+
+    def test_an_undigested_item_standing_on_its_landing_is_digestible(self, instance):
+        # The digest backstop and lint's coverage exemption read what is
+        # owed off the same rule as the item's status.
+        self.rerun(instance)
+        self.blocked(instance)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_verb_refreshing_the_item_reads_what_is_owed_itself(self, instance):
+        # mark, pass and describe refresh the item holding none of the
+        # drain's maps.
+        ctx = self.rerun(instance)
+        run_mod.record_pass(ctx, ITEM, "harvest")
+        assert self.status(instance) == "enriched"
+
+    def test_a_ledger_torn_after_the_caller_read_it_leaves_the_status_alone(self, instance):
+        # A refresh follows a write that already landed: a line it cannot
+        # read must not flip the item on a guess, nor raise past the write.
+        self.rerun(instance)
+        entries = ledger.load(instance.ledger_path)
+        with instance.ledger_path.open("a", encoding="utf-8") as f:
+            f.write("{torn\n")
+        run_mod.refresh_item_frontmatter(instance, ITEM, entries=entries)
+        assert self.status(instance) == "enriched"
+
+    def test_a_ledger_torn_after_the_caller_read_it_claims_no_item(self, instance):
+        self.rerun(instance, landing_stands=False)
+        entries = ledger.load(instance.ledger_path)
+        owners = unit_owners(instance.root, entries, [FakeDriver()])
+        assert run_mod.items_owing_work(instance, entries, owners) == {ITEM}
+        with instance.ledger_path.open("a", encoding="utf-8") as f:
+            f.write("{torn\n")
+        assert run_mod.items_owing_work(instance, entries, owners) == set()
+
+    def test_an_item_whose_rerun_has_no_landing_is_not_digestible(self, instance):
+        # A session's media description keeps the directory in the
+        # backstop's view; the owed rerun is what holds the item back.
+        self.rerun(instance, landing_stands=False)
+        (instance.enrichment_dir / ITEM / "media-0.md").write_text("a description\n")
+        self.blocked(instance)
+        assert run_mod.digest_orphans(instance) == []
 
 
 # What the transcribe drain stamps on every transcript it composes.
