@@ -17,6 +17,7 @@ refusal every caller already handles. Every ledger write goes through
 
 import dataclasses
 import datetime
+import itertools
 import json
 import re
 import time
@@ -24,7 +25,7 @@ import urllib.parse
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import assert_never
 
 from dex_engine import atomic, corpus
@@ -230,6 +231,22 @@ def is_media_file(path: Path) -> bool:
         and path.suffix not in (".md", atomic.TEMP_SUFFIX)
         and (path.name.startswith("media-") or "-asset-" in path.name)
     )
+
+
+_DOWNLOAD_NAME = re.compile(r"media-(\d+)\.")
+
+
+def _download_slot(path: str | None) -> int | None:
+    """The slot a recorded ``media-<n>.<ext>`` path names; None for any other output."""
+    if path is None:
+        return None
+    named = _DOWNLOAD_NAME.match(PurePosixPath(path).name)
+    return None if named is None else int(named.group(1))
+
+
+def _slot_held(item_dir: Path, slot: int) -> bool:
+    """Whether a media file stands in ``slot`` — a description or a temp is not one."""
+    return any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*"))
 
 
 def _is_transcribe_job(entry: LedgerEntry) -> bool:
@@ -528,6 +545,10 @@ class _Drain:
     # the one door entries change through — and dropped whenever ownership
     # re-resolves, because the counts attribute exactly as `owner_of` does.
     _fetched_counts: dict[str, int] | None = None
+    # Each unit's latest line that recorded an output, superseded or not —
+    # what a media slot is owned through. Read off the file the first time a
+    # slot is asked for, and kept current in `record` from then on.
+    _outputs: dict[str, LedgerEntry] | None = None
     # One append handle for the run's many ledger writes (open-per-line
     # cost the drain per unit). Every line is flushed as written, so the
     # read-backs (mark's, the report's) and any concurrent reader see it
@@ -1700,7 +1721,9 @@ class _Drain:
         re-download whose format changed (a CDN that answered JPEG last run
         and PNG this one) writes ``media-0.png`` where ``media-0.jpg``
         stands. Reruns overwrite, never duplicate — and two files in one
-        slot would spend the item's media cap twice over.
+        slot would spend the item's media cap twice over. Nothing swept can
+        be another unit's file: the slot is one no other unit's recorded
+        path names (:meth:`_slot_for`).
 
         Swept AFTER the write, so a failed replacement leaves the standing
         file whole; the unit is then unfinished and the next run's redrain
@@ -1740,55 +1763,80 @@ class _Drain:
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
     def _media_slot(self, entry: LedgerEntry) -> int | None:
-        """This unit's media index — stable across runs — or None at the cap.
+        """This unit's media slot — the index its file is named by — or None at the cap.
 
-        The index is the unit's position among the item's media units in
-        ledger order, NOT the next free index on disk: a crash between the
-        file write and the outcome line leaves an orphaned file, and a
-        next-free scan would then write a second copy beside it. Reruns
-        overwrite, never duplicate.
+        A slot belongs to the unit whose recorded output names it
+        (:meth:`_slot_for`), never to a position in the ledger: a bare image
+        URL re-detected into the media stage kept the position it was
+        admitted at, ahead of a page's media emitted after it, so both
+        counted to one slot and the second download swept the first one's
+        landed file away as its own.
 
-        The index NAMES the file; it never decides the cap. The cap counts
+        The slot NAMES the file; it never decides the cap. The cap counts
         media-family files that exist — the kind's bound (:func:`media_cap`),
         over files shared with extraction assets, whichever route wrote
-        them — so a unit's parked, dead or skipped siblings spend nothing,
-        and an index past the cap is ordinary (a page pooling six photos
-        whose first two 404 still lands four files, at ``media-2`` through
-        ``media-5``). Counting
-        positions instead recorded a terminal "media cap reached" on units
-        no file had displaced, losing them permanently under a false
-        reason. A slot already on disk is this unit's own file, overwritten
-        in place, and likewise spends nothing new.
+        them — so a unit's parked, dead or skipped siblings spend nothing.
+        Counting positions instead recorded a terminal "media cap reached"
+        on units no file had displaced, losing them permanently under a
+        false reason. The unit's own slot, where a file already stands, is
+        overwritten in place and likewise spends nothing new.
         """
         owner = self.owner_of(entry)
-        slot = self._media_position(entry)
         item_dir = self.ctx.instance.enrichment_dir / owner
-        if any(is_media_file(path) for path in item_dir.glob(f"media-{slot}.*")):
+        slot = self._slot_for(entry, owner, item_dir)
+        if _slot_held(item_dir, slot):
             return slot
         if self._media_file_count(owner) >= media_cap(entry.kind):
             return None
         return slot
 
-    def _media_position(self, entry: LedgerEntry) -> int:
-        """How many of the item's media units were ledgered before this one.
+    def _slot_for(self, entry: LedgerEntry, owner: str, item_dir: Path) -> int:
+        """The slot the unit's own recorded path names, else the lowest nobody holds.
 
-        Counted regardless of status: the position is an identity, so a
-        parked or skipped sibling still holds its place — a position that
-        moved as statuses changed would rename files under the item.
+        Its own is read off its latest line that recorded an output,
+        superseded or not, so a unit re-queued since it landed re-downloads
+        over its file rather than beside it. It gives that slot up only
+        where a sibling's path names it too, which only damage leaves.
 
-        The item is the owning one on both sides of the comparison
-        (:meth:`owner_of`) — the slot names a file in ``enrichment/<owner>/``,
-        so counting the stored string's siblings would let a renamed item's
-        media and its own collide on one index.
+        A unit with no slot of its own passes over every slot a sibling's
+        path names and every slot a media file stands in: a file no path
+        names is nobody's to take over, because nothing says whose it is —
+        so a download a crash kept from its outcome line lands beside the
+        orphan it left, never over it.
         """
-        owner = self.owner_of(entry)
-        seen = 0
-        for unit_hash, other in self.entries.items():
-            if unit_hash == entry.hash:
-                break
-            if self.owner_of(other) == owner and other.job is Job.MEDIA:
-                seen += 1
-        return seen
+        claimed = self._claimed_slots(entry, owner)
+        own = _download_slot(self._output_path(entry.hash))
+        if own is not None and own not in claimed:
+            return own
+        return next(
+            slot
+            for slot in itertools.count()
+            if slot not in claimed and not _slot_held(item_dir, slot)
+        )
+
+    def _claimed_slots(self, entry: LedgerEntry, owner: str) -> set[int]:
+        """The slots the item's other units name through their recorded paths.
+
+        The item is the owning one on both sides (:meth:`owner_of`): the slot
+        names a file in ``enrichment/<owner>/``, and a unit that landed
+        before a rename recorded its path under the dead id, while the file
+        moved with the directory under the same name.
+        """
+        claimed: set[int] = set()
+        for other in self.entries.values():
+            if other.hash == entry.hash:
+                continue
+            slot = _download_slot(self._output_path(other.hash))
+            if slot is not None and self.owner_of(other) == owner:
+                claimed.add(slot)
+        return claimed
+
+    def _output_path(self, unit_hash: str) -> str | None:
+        """The unit's latest recorded output path, superseded or not."""
+        if self._outputs is None:
+            self._outputs = ledger.latest_outputs(self.ctx.instance.ledger_path)
+        output = self._outputs.get(unit_hash)
+        return None if output is None else output.path
 
     def fetched_count(self, item_id: str) -> int:
         """Fetched-page entries the item owns — what the 12-URL cap bounds.
@@ -1833,6 +1881,8 @@ class _Drain:
         self._count_write(stamped)
         self.entries[stamped.hash] = stamped
         self.written[stamped.hash] = stamped
+        if stamped.path is not None and self._outputs is not None:
+            self._outputs[stamped.hash] = stamped
         if count:
             self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
             self.touched.add(stamped.item)

@@ -502,6 +502,12 @@ class TestLoadAppendCompact:
         instance.ledger_path.write_text(ledger.to_line(entry()) + "\n\n\n")
         assert len(ledger.load(instance.ledger_path)) == 1
 
+    def test_a_blank_line_mid_file_ends_nothing(self, instance: Instance):
+        other = entry(hash="ffff000000", url="https://other.test")
+        instance.ledger_path.parent.mkdir(exist_ok=True)
+        instance.ledger_path.write_text(f"{ledger.to_line(entry())}\n\n{ledger.to_line(other)}\n")
+        assert list(ledger.load(instance.ledger_path)) == [BASE_ENTRY.hash, other.hash]
+
     def test_load_errors_name_file_and_line(self, instance: Instance):
         instance.ledger_path.write_text(ledger.to_line(entry()) + "\n{broken\n")
         with pytest.raises(LedgerSchemaError, match=r"enrichment-ledger\.jsonl:2"):
@@ -538,6 +544,43 @@ class TestLoadAppendCompact:
         assert [p.name for p in instance.state_dir.iterdir()] == ["enrichment-ledger.jsonl"]
 
 
+class TestLatestOutputs:
+    """What a unit last landed, read past a live line that carries no path."""
+
+    LANDED = "enrichment/i/media-0.jpg"
+
+    def test_a_requeued_units_landing_is_read_off_its_superseded_line(self, instance: Instance):
+        landed = entry(status=Status.DONE, path=self.LANDED)
+        ledger.append(instance.ledger_path, landed)
+        ledger.append(instance.ledger_path, entry(rerun=True))
+        assert ledger.load(instance.ledger_path)[BASE_ENTRY.hash].path is None
+        assert ledger.latest_outputs(instance.ledger_path) == {BASE_ENTRY.hash: landed}
+
+    def test_the_later_landing_wins_by_write_time_not_file_order(self, instance: Instance):
+        later = entry(
+            status=Status.DONE,
+            path="enrichment/i/media-0.png",
+            at=AT + datetime.timedelta(seconds=1),
+        )
+        ledger.append(instance.ledger_path, later)
+        ledger.append(instance.ledger_path, entry(status=Status.DONE, path=self.LANDED, at=AT))
+        assert ledger.latest_outputs(instance.ledger_path) == {BASE_ENTRY.hash: later}
+
+    def test_a_unit_that_never_landed_is_absent(self, instance: Instance):
+        landed = entry(hash="ffff000000", status=Status.DONE, path=self.LANDED)
+        for line in (entry(), entry(status=Status.BLOCKED, attempts=1), landed):
+            ledger.append(instance.ledger_path, line)
+        assert ledger.latest_outputs(instance.ledger_path) == {landed.hash: landed}
+
+    def test_a_missing_ledger_records_nothing(self, instance: Instance):
+        assert ledger.latest_outputs(instance.ledger_path) == {}
+
+    def test_a_nonconforming_line_raises_as_load_raises_it(self, instance: Instance):
+        instance.ledger_path.write_text(ledger.to_line(entry()) + "\n{broken\n")
+        with pytest.raises(LedgerSchemaError, match=r"enrichment-ledger\.jsonl:2"):
+            ledger.latest_outputs(instance.ledger_path)
+
+
 class TestDropItems:
     """The purge's ledger half; `bin/dex exclude` is its caller and its fuller test."""
 
@@ -557,6 +600,11 @@ class TestDropItems:
             ledger.append(instance.ledger_path, line)
         assert ledger.drop_items(instance.ledger_path, {BASE_ENTRY.item}, claimed=()) == (2, 0)
         assert ledger.load(instance.ledger_path) == {other.hash: other}
+
+    def test_the_purge_reads_past_a_torn_line_and_a_blank_one(self, instance: Instance):
+        instance.ledger_path.parent.mkdir(exist_ok=True)
+        instance.ledger_path.write_text("{torn\n\n" + ledger.to_line(entry()) + "\n")
+        assert ledger.latest_readable(instance.ledger_path) == {BASE_ENTRY.hash: entry()}
 
 
 class TestAppender:
