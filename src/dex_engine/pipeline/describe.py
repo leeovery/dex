@@ -29,20 +29,16 @@ it and would otherwise be passed over — leaving the stale reading beside
 the new one, both counted, neither marked.
 """
 
-import re
 from pathlib import Path
 
 from dex_engine import atomic, corpus
 
+from .enrichment import described_file, description_header
 from .run import RunContext, is_media_file, live_item, refresh_item_frontmatter
 from .types import Instance
 from .urls import resolve_repo_path
 
-__all__ = ["DescribeError", "described_file", "item_describe"]
-
-# The name a description's first line carries. Written by this verb as the
-# whole line; a pre-verb description opens the same way and runs on.
-_DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
+__all__ = ["DescribeError", "item_describe"]
 
 
 class DescribeError(ValueError):
@@ -83,7 +79,7 @@ def item_describe(item_id: str, *, of: str, text_path: Path, ctx: RunContext) ->
     text = text_path.read_text(encoding="utf-8").strip()
     if not text:
         raise DescribeError(f"{text_path}: the description is empty — it stands in for nothing")
-    header = f"Describes `{of}`"
+    header = description_header(of)
     item_dir = instance.enrichment_dir / item.id
     target = _target(item_dir, of)
     rewrite = target.exists()
@@ -120,21 +116,6 @@ def _carried(instance: Instance, item: corpus.CorpusItem, of: str) -> bool:
     return of.startswith("media-") and download.name == of and is_media_file(download)
 
 
-def described_file(path: Path) -> str | None:
-    """The file a description's first line names, or None where it names none.
-
-    The one tie between a description and the file it covers, and the
-    reason a slot number proves nothing: a capture's media carries no
-    slot at all. Read by this module to find the description to rewrite,
-    and by the migration that retires a description whose file is gone.
-    """
-    line = _first_line(path)
-    if line is None:
-        return None
-    match = _DESCRIBED_RE.match(line)
-    return None if match is None else match.group(1)
-
-
 def _target(item_dir: Path, of: str) -> Path:
     """The description already covering ``of``, else the lowest free slot."""
     for path in sorted(item_dir.glob("media-*.md")):
@@ -144,11 +125,3 @@ def _target(item_dir: Path, of: str) -> Path:
     while (item_dir / f"media-{n}.md").exists():
         n += 1
     return item_dir / f"media-{n}.md"
-
-
-def _first_line(path: Path) -> str | None:
-    """The file's first line, or None for one that cannot be read as text."""
-    try:
-        return path.read_text(encoding="utf-8").partition("\n")[0]
-    except (OSError, UnicodeDecodeError):
-        return None

@@ -1205,6 +1205,198 @@ class TestXDrain:
         assert "mark done to keep it as the record" in (entry.reason or "")
 
 
+class TestTranscribedVideoRetired:
+    """A transcript landing on a post retires the media child that downloaded its video.
+
+    The state under test is a post landed before x video transcribed: the
+    post done with its body, its video a done media child with a file in
+    the item's directory, perhaps described. A rerun of the post, whoever
+    seeded it, parks for the video and lands the transcript.
+    """
+
+    POST_URL = TestXDrain.POST_URL
+    VIDEO = TestXDrain.ENCLOSURE
+    PHOTO = "https://pbs.example.test/media/p800.jpg"
+
+    def post_hash(self) -> str:
+        return work_hash(self.POST_URL)
+
+    def line(self, url: str, **fields) -> LedgerEntry:
+        return LedgerEntry(
+            hash=work_hash(url),
+            url=url,
+            item=ITEM,
+            kind=Kind.X,
+            engine="0.2.0",
+            date=TODAY,
+            **fields,
+        )
+
+    def landed_before_the_fix(self, instance, *, video_status: Status = Status.DONE) -> Path:
+        """The post and its downloaded video (and a photo beside it), as pre-fix x left them."""
+        write_item(instance, urls=[self.POST_URL], kinds=["x"])
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True)
+        post_file = f"x-{self.post_hash()[:6]}.md"
+        (item_dir / post_file).write_text(
+            "---\nurl: https://x.com/i/status/800\nvia: fxtwitter\n---\n\n"
+            "@ines — Sat Aug 22 14:40:00 +0000 2026\n\n(video post)\n",
+            encoding="utf-8",
+        )
+        child = {"job": Job.MEDIA, "parent": self.post_hash(), "depth": 1, "via": None}
+        video_path = f"enrichment/{ITEM}/media-0.mp4" if video_status is Status.DONE else None
+        if video_path is not None:
+            (item_dir / "media-0.mp4").write_bytes(b"VIDEO-BYTES")
+        (item_dir / "media-1.jpg").write_bytes(b"PHOTO-BYTES")
+        (item_dir / "media-1.md").write_text("Describes `media-1.jpg`\n\nA chart.\n")
+        reason = None if video_status is Status.DONE else "media exceeds 10MB ceiling"
+        attempts = 5 if video_status is Status.BLOCKED else None
+        lines = [
+            self.line(self.POST_URL, status=Status.DONE, path=f"enrichment/{ITEM}/{post_file}"),
+            self.line(
+                self.VIDEO,
+                status=video_status,
+                path=video_path,
+                reason=reason,
+                attempts=attempts,
+                **child,
+            ),
+            self.line(
+                self.PHOTO, status=Status.DONE, path=f"enrichment/{ITEM}/media-1.jpg", **child
+            ),
+            self.line(self.POST_URL, status=Status.QUEUED, rerun=True),
+        ]
+        for entry in lines:
+            ledger.append(instance.ledger_path, entry)
+        return item_dir
+
+    def rerun(self, instance, *, video: HttpResponse | None = None) -> tuple[str, dict]:
+        responses = {
+            **TestXDrain().responses(),
+            self.VIDEO: video if video is not None else TestXDrain().video(),
+        }
+        transport = FakeTransport(responses)
+        caps = Capabilities(
+            transcribers=(FakeTranscriber("whisper-local", text="Clip words.", model="medium"),),
+            extractors=(),
+        )
+        ctx = TestXDrain().ctx(
+            instance, transport, capabilities=caps, provider_available=caps.available
+        )
+        report = " ".join(run_mod.run(ctx).split())  # the surface wraps
+        return report, ledger.load(instance.ledger_path)
+
+    @pytest.mark.parametrize("names", ["media-0.mp4", f"enrichment/{ITEM}/media-0.mp4"])
+    def test_the_video_and_its_description_leave_when_the_transcript_lands(self, instance, names):
+        # A description names its file bare (the verb) or by repo path (before it).
+        item_dir = self.landed_before_the_fix(instance)
+        (item_dir / "media-0.md").write_text(f"Describes `{names}`\n\nFrames of a talk.\n")
+        report, entries = self.rerun(instance)
+
+        post = entries[self.post_hash()]
+        assert post.status is Status.DONE
+        assert "Clip words." in read_enrichment(instance.root / str(post.path))[1]
+        video = entries[work_hash(self.VIDEO)]
+        assert video.status is Status.SKIPPED
+        assert video.path is None  # nothing recorded for lint to find missing
+        assert "transcript" in (video.reason or "")
+        assert not (item_dir / "media-0.mp4").exists()
+        assert not (item_dir / "media-0.md").exists()
+        # The photo beside it, and its description, are no business of the transcript.
+        assert entries[work_hash(self.PHOTO)].status is Status.DONE
+        assert (item_dir / "media-1.jpg").exists()
+        assert (item_dir / "media-1.md").exists()
+        assert run_mod.items_owing_descriptions(instance) == []
+        assert "replaced its downloaded video media-0.mp4 and the description" in report
+        assert "wants rewriting from the transcript" in report
+
+    def test_an_undescribed_video_leaves_and_the_describe_row_clears(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        assert run_mod.items_owing_descriptions(instance) != []  # the video owes one
+        report, entries = self.rerun(instance)
+        assert entries[work_hash(self.VIDEO)].status is Status.SKIPPED
+        assert not (item_dir / "media-0.mp4").exists()
+        assert run_mod.items_owing_descriptions(instance) == []
+        assert "replaced its downloaded video media-0.mp4" in report
+        assert "wants rewriting" not in report
+
+    def test_a_video_whose_file_is_already_gone_still_retires(self, instance):
+        # A done line whose file went missing is lint's to name; the landing
+        # closes the line all the same, and never fails over the absence.
+        item_dir = self.landed_before_the_fix(instance)
+        (item_dir / "media-0.mp4").unlink()
+        _report, entries = self.rerun(instance)
+        assert entries[self.post_hash()].status is Status.DONE
+        assert entries[work_hash(self.VIDEO)].status is Status.SKIPPED
+
+    def test_a_video_whose_download_never_landed_closes_with_nothing_to_remove(self, instance):
+        # Out of attempts, so the drain leaves it; the transcript still
+        # stands for it, and nothing will ever download it now.
+        item_dir = self.landed_before_the_fix(instance, video_status=Status.BLOCKED)
+        report, entries = self.rerun(instance)
+        video = entries[work_hash(self.VIDEO)]
+        assert video.status is Status.SKIPPED
+        assert "transcript" in (video.reason or "")
+        assert not (item_dir / "media-0.mp4").exists()
+        assert "replaced its downloaded video" not in report
+
+    def test_a_video_skipped_over_the_ceiling_is_left_as_it_closed(self, instance):
+        self.landed_before_the_fix(instance, video_status=Status.SKIPPED)
+        report, entries = self.rerun(instance)
+        video = entries[work_hash(self.VIDEO)]
+        assert video.reason == "media exceeds 10MB ceiling"  # no second line written
+        assert "replaced its downloaded video" not in report
+
+    def test_another_posts_download_of_the_same_video_is_never_touched(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        other = self.line(
+            self.VIDEO,
+            status=Status.DONE,
+            path=f"enrichment/{ITEM}/media-0.mp4",
+            job=Job.MEDIA,
+            parent=work_hash("https://x.com/i/status/801"),
+            depth=1,
+        )
+        ledger.append(instance.ledger_path, other)
+        _report, entries = self.rerun(instance)
+        assert entries[work_hash(self.VIDEO)].status is Status.DONE
+        assert (item_dir / "media-0.mp4").exists()
+
+    def test_a_page_unit_for_the_videos_url_is_no_download_to_retire(self, instance):
+        # Harvest can promote the video's URL as a page of its own; only the
+        # media download the post pooled is what the transcript stands for.
+        self.landed_before_the_fix(instance)
+        page = self.line(
+            self.VIDEO,
+            status=Status.MANUAL,
+            reason="not a page",
+            via="harvest",
+            parent=self.post_hash(),
+            depth=1,
+        )
+        ledger.append(instance.ledger_path, page)
+        _report, entries = self.rerun(instance)
+        assert entries[work_hash(self.VIDEO)].status is Status.MANUAL
+
+    def test_a_rerun_whose_video_is_gone_keeps_its_post_done(self, instance):
+        # The rerun stored the post again before reaching for the video; a
+        # fresh share of the same post would park manual instead.
+        item_dir = self.landed_before_the_fix(instance)
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, entries = self.rerun(instance, video=gone)
+        post = entries[self.post_hash()]
+        assert post.status is Status.DONE
+        assert post.path == f"enrichment/{ITEM}/x-{self.post_hash()[:6]}.md"
+        fields, body = read_enrichment(instance.root / post.path)
+        assert fields["enclosure"] == self.VIDEO
+        assert body.startswith("@ines — ")
+        assert "the post stays done without a transcript" in report
+        assert "(HTTP 404" in report
+        # Nothing was transcribed, so the video it has is kept.
+        assert entries[work_hash(self.VIDEO)].status is Status.DONE
+        assert (item_dir / "media-0.mp4").exists()
+
+
 class TestCorrectedUnitLandsItsTranscript:
     """A web → podcast correction whose transcript lands drops the web view."""
 
