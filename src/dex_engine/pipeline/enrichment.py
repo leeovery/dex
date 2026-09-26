@@ -37,6 +37,7 @@ __all__ = [
     "CAPTIONS_VIA",
     "DESCRIPTION_HEADING",
     "TRANSCRIPT_HEADING",
+    "TRANSCRIPT_PROVENANCE",
     "TRANSCRIPT_SOURCES",
     "description_section",
     "description_text",
@@ -218,7 +219,9 @@ TRANSCRIPT_HEADING = "## Transcript"
 # transcript — read against the transcript sources below, because other
 # kinds' files carry the same key as fetch provenance.
 _TRANSCRIBED_FIELD = "via"
-_TRANSCRIBER_MODEL_FIELD = "model"
+# The stamps the drain appends to every transcript it composes, in the
+# order it appends them — the transcript's provenance, never the fetch's.
+TRANSCRIPT_PROVENANCE = (_TRANSCRIBED_FIELD, "model")
 
 # The stamp youtube's captions route writes. The frontmatter, not the
 # heading, says whether a body holds a transcript: the drain reads `via`
@@ -329,8 +332,7 @@ def pre_transcript(fields: dict[str, str], body: str) -> str:
 
 def transcript_provenance(fields: dict[str, str]) -> dict[str, str | int | None]:
     """The stamps a transcript's frontmatter carries of how it was made."""
-    keys = (_TRANSCRIBED_FIELD, _TRANSCRIBER_MODEL_FIELD)
-    return {key: fields[key] for key in keys if key in fields}
+    return {key: fields[key] for key in TRANSCRIPT_PROVENANCE if key in fields}
 
 
 def _opens_with_transcript(body: str) -> bool:

@@ -1821,6 +1821,34 @@ class TestRerunKeepsItsTranscript:
         assert "Already stored — 1 unit" in report
         assert "rewritten" not in report
 
+    def test_a_park_holding_an_empty_via_still_reads_unchanged(self, instance):
+        # The drain appends its stamps after the park's own fields — an empty
+        # `via` in the park's meta is dropped from its file — so the kept
+        # rerun has to render them in that same place, not where the park
+        # happened to hold the key.
+        landed = {"title": "t", "channel": "c", "via": "whisper-local", "model": "base"}
+        done = self.land(instance, Kind.YOUTUBE, landed, youtube_body("notes", "the words"))
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        park = dataclasses.replace(
+            self.park(description_section("notes")),
+            meta={"title": "t", "via": None, "channel": "c"},
+        )
+        report = self.reparked(instance, Kind.YOUTUBE, park)
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert "Already stored — 1 unit" in report
+
+    def test_a_caption_ending_in_a_newline_still_reads_unchanged(self, instance):
+        # The drain reads a park's notes back off disk, stripped; the driver
+        # hands them over as the post has them.
+        body = instagram_body("the caption", "the words")
+        done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
+        out = instance.root / str(done.path)
+        before = (out.read_bytes(), out.stat().st_mtime_ns)
+        report = self.reparked(instance, Kind.INSTAGRAM, self.park("the caption\n"))
+        assert (out.read_bytes(), out.stat().st_mtime_ns) == before
+        assert "Already stored — 1 unit" in report
+
     @TRANSCRIBED
     def test_a_rerun_with_no_notes_lands_the_bare_transcript(
         self,

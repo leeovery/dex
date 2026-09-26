@@ -341,8 +341,9 @@ def latest_outputs(
     Outputs are success-only, so a unit re-queued since it landed has a
     live line carrying no path while the file it landed still stands. The
     line that named the file is audit trail from then on, and ``compact``
-    keeps it for as long as the live line names no output — this reads it
-    there, resolved by the rule ``load`` resolves live lines by.
+    keeps it while the unit is owed and the line can never outrank the live
+    one (:func:`_keeps_landing`) — this reads it there, resolved by the
+    rule ``load`` resolves live lines by.
 
     Args:
         path: The ledger file; a missing file records nothing.

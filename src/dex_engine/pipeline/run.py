@@ -53,6 +53,7 @@ from .detect import (
     sniff_media_ext,
 )
 from .enrichment import (
+    TRANSCRIPT_PROVENANCE,
     description_text,
     instagram_body,
     mask_fetched,
@@ -1366,7 +1367,12 @@ class _Drain:
         split = None if stored is None else split_transcript(stored.fields, stored.body)
         if stored is None or split is None:
             return False
-        meta = {**needs.meta, **transcript_provenance(stored.fields)}
+        # The provenance lands last, where the drain appends it: a park's
+        # meta may already hold the key (an empty `via`), and filling it in
+        # place renders the frontmatter in another order, so an unchanged
+        # re-fetch would count rewritten.
+        refetched = {k: v for k, v in needs.meta.items() if k not in TRANSCRIPT_PROVENANCE}
+        meta = {**refetched, **transcript_provenance(stored.fields)}
         notes = _park_notes(entry.kind, needs.body)
         path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
         _drop_superseded_outputs(self.ctx.instance, entry, path)
@@ -2416,13 +2422,15 @@ def _transcript_body(kind: Kind, notes: str, transcript: str) -> str:
 def _park_notes(kind: Kind, body: str | None) -> str:
     """The notes a transcribe park's body carries, as :func:`_transcript_body` takes them.
 
-    A youtube park writes its description as a section of its own, and
-    :func:`youtube_body` frames the bare text again — exactly as the drain
-    reads a stored park back.
+    Exactly as the drain reads a stored park back: stripped, as the disk
+    round trip leaves it, and a youtube park's description unframed from
+    the section it writes, since :func:`youtube_body` frames the bare text
+    again.
     """
     if body is None:
         return ""
-    return description_text(body) if kind is Kind.YOUTUBE else body
+    notes = body.strip()
+    return description_text(notes) if kind is Kind.YOUTUBE else notes
 
 
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
