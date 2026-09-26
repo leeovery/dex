@@ -260,7 +260,7 @@ fatal in an instance, and nothing downstream will catch one.
 never a gate). `pytest -m live` watches third parties for drift, which happens
 on their clock and has nothing to do with release timing. The workflow splits
 in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
-lookup, the six GitHub contents/matching-refs checks through an authenticated
+lookup, the eight GitHub contents/matching-refs checks through an authenticated
 `gh`, the Wikipedia page-audio extraction) fail the run and mail the
 maintainer, which is
 GitHub's own default for a failed scheduled workflow and needs no robot in the
@@ -393,6 +393,16 @@ that as two executors. Neither weakens an ordinary run.
   commit as the code and skills that read those files — and ship a
   migration when existing state must move, or a directive when moving it
   takes judgment a migration is not allowed to exercise.
+- **Healing migrations restore the post-fix world.** A fix that leaves
+  damage behind in existing instances ships a migration that brings every
+  affected item to the state a capture made after the fix would be in —
+  indistinguishable from a fresh share. It finds its members by what the
+  engine stored, never by anything one instance happens to hold, so it
+  heals every instance alike. It seeds the fixed code to redo the work; a
+  stored output the fix proves wrong is removed first, while one that is
+  merely incomplete stays as the copy a rerun keeps when its re-fetch
+  fails. Judgment the migration cannot exercise, such as a digest written
+  from the wrong source, goes to its report for the session.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in

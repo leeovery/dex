@@ -26,6 +26,7 @@ transport that carries it.
 import datetime
 import hashlib
 import re
+import secrets
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -40,14 +41,14 @@ __all__ = ["URL_RE", "item_new", "parse_capture", "slugify", "write_capture"]
 # `normalize` reads chat exports through the same regex, so one route in
 # cannot see a URL the other misses.
 URL_RE = re.compile(r"https?://[^\s>\)\]]+")
-_STAMP_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-\d{6}$")
+_STAMP_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-\d{6}(?:-[0-9a-z]+)?$")
 _STAMP_FORMAT = "%Y%m%d-%H%M%S"  # what _STAMP_RE reads back
 _MEDIA_RE = re.compile(r"^media/([0-9a-f]{6})/[^/]+$")
 
-# How far the stamp may walk forward looking for a free second. A capturer
-# is unique per second by the format's own contract, so needing more than a
-# minute of them means something other than a burst of captures.
-_STAMP_ATTEMPTS = 60
+# Four hex digits give 65536 names a second, so even one taken draw is
+# rare: a run of them means the draws are not random, and retrying further
+# would never end.
+_SUFFIX_ATTEMPTS = 8
 
 
 def parse_capture(text: str) -> tuple[dict[str, str], str]:
@@ -78,7 +79,18 @@ def parse_capture(text: str) -> tuple[dict[str, str], str]:
     return frontmatter, "\n".join(lines[end + 1 :]).lstrip("\n")
 
 
-def write_capture(instance: Instance, *, url: str, note: str, now: datetime.datetime) -> Path:
+def _random_suffix() -> str:
+    return secrets.token_hex(2)
+
+
+def write_capture(
+    instance: Instance,
+    *,
+    url: str,
+    note: str,
+    now: datetime.datetime,
+    suffix: Callable[[], str] = _random_suffix,
+) -> Path:
     """Write one capture into ``inbox/`` — the file every capture client writes.
 
     Body is the URL, the note, or both with a blank line between them, and
@@ -91,13 +103,14 @@ def write_capture(instance: Instance, *, url: str, note: str, now: datetime.date
         note: Why it was worth saving, or ``""`` for a bare link.
         now: The capture moment, stamped into the filename — which is where
             ``item_new`` reads the item's capture date back out of.
+        suffix: Draws the random suffix that follows the stamp.
 
     Returns:
         The capture file's path.
 
     Raises:
-        ValueError: Neither a URL nor a note was given, or a whole minute of
-            stamps is already taken.
+        ValueError: Neither a URL nor a note was given, or every name drawn
+            is already taken.
         OSError: ``inbox/`` or the file itself cannot be written.
     """
     body = "\n\n".join(part for part in (url.strip(), note.strip()) if part)
@@ -105,26 +118,26 @@ def write_capture(instance: Instance, *, url: str, note: str, now: datetime.date
         raise ValueError("a capture is a URL, a note, or both — this one is neither")
     inbox = instance.inbox_dir
     inbox.mkdir(parents=True, exist_ok=True)
-    for second in range(_STAMP_ATTEMPTS):
-        stamp = now + datetime.timedelta(seconds=second)
-        path = inbox / f"{stamp:{_STAMP_FORMAT}}.md"
+    # Suffixed where a phone capture never is: this file is committed from a
+    # working tree, and two machines committing one name meet only at the
+    # next pull, as a conflict. A taken name draws again rather than moving
+    # the stamp, which is the capture date.
+    stamp = f"{now:{_STAMP_FORMAT}}"
+    for _ in range(_SUFFIX_ATTEMPTS):
+        path = inbox / f"{stamp}-{suffix()}.md"
         try:
-            # Exclusive create, and a taken stamp walks forward a second
-            # rather than growing a suffix: the filename IS the capture date
-            # the processor reads back, and only a whole stamp parses.
             with path.open("x", encoding="utf-8") as file:
                 file.write(body + "\n")
         except FileExistsError:
             continue
         return path
     raise ValueError(
-        f"{inbox} already holds a capture for every second from "
-        f"{now:{_STAMP_FORMAT}} onwards — this one was not written"
+        f"{inbox} already holds every name drawn for {stamp} — this one was not written"
     )
 
 
 def _capture_date(name: str, today: Callable[[], datetime.date]) -> datetime.date:
-    """The capture timestamp from the filename (``yyyyMMdd-HHmmss.md``), else today."""
+    """The capture timestamp from the filename (``yyyyMMdd-HHmmss[-suffix].md``), else today."""
     match = _STAMP_RE.match(Path(name).stem)
     if match is None:
         return today()

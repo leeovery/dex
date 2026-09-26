@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Protocol
 
 __all__ = [
+    "OUTSTANDING",
+    "PARKED",
     "Asset",
     "Availability",
     "Cap",
@@ -96,6 +98,15 @@ class Status(StrEnum):
     WAITING = "waiting"
     BLOCKED = "blocked"
     ERROR = "error"
+
+
+# Resting on the engine or on judgment, and still owed: a capability
+# awaited, a blocked retry, an error awaiting a newer engine, a manual park.
+PARKED = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
+# Work still owed: queued and every parked status. Its complement — done,
+# dead, skipped — is a unit that has landed, is confirmed gone, or was
+# deliberately closed out; none of the three is owed anything further.
+OUTSTANDING = PARKED | {Status.QUEUED}
 
 
 class Need(StrEnum):

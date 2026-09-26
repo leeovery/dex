@@ -18,7 +18,7 @@ surface and the key — never a half-rendered report.
 from collections.abc import Callable, Mapping
 from typing import NoReturn, TypeVar
 
-from dex_engine.pipeline.types import Need, Status
+from dex_engine.pipeline.types import OUTSTANDING, PARKED, Need, Status
 
 from . import kernel
 
@@ -29,8 +29,6 @@ class PayloadError(ValueError):
     """A surface payload does not conform to that surface's shape."""
 
 
-# Statuses an entry may hold when it survives a session, parked.
-_PARKED_STATUSES = frozenset({Status.WAITING, Status.BLOCKED, Status.ERROR, Status.MANUAL})
 # The split that decides which section a parked entry lands in: `manual` is
 # the engine saying it has given up, and only a person moves it. Everything
 # else re-enters the queue unasked — blocked next run, waiting when a
@@ -249,8 +247,8 @@ def _parked_rows(
             where=where,
         )
         status = _status_at(surface, entry, "status", where)
-        if status not in _PARKED_STATUSES:
-            allowed = ", ".join(sorted(s.value for s in _PARKED_STATUSES))
+        if status not in PARKED:
+            allowed = ", ".join(sorted(s.value for s in PARKED))
             _fail(
                 surface,
                 f"{where}status must be a parked status ({allowed}), got {status.value!r}",
@@ -623,7 +621,6 @@ def _cognitive_rows(surface: str, payload: Mapping[str, object]) -> list[tuple[s
 
 # What an outstanding unit is waiting for, as prose. Statuses that are not
 # outstanding never reach this surface — the payload validation refuses them.
-_OUTSTANDING_STATUSES = frozenset(_PARKED_STATUSES | {Status.QUEUED})
 _NEED_NOUNS = {Need.TRANSCRIBE: "transcription", Need.EXTRACT: "extraction", Need.OCR: "OCR"}
 _STATUS_PHRASES = {
     Status.QUEUED: "queued",
@@ -683,8 +680,8 @@ def _enrich_outstanding(surface: str, entry: Mapping[str, object], where: str) -
             where=gwhere,
         )
         status = _status_at(surface, group, "status", gwhere)
-        if status not in _OUTSTANDING_STATUSES:
-            allowed = ", ".join(sorted(s.value for s in _OUTSTANDING_STATUSES))
+        if status not in OUTSTANDING:
+            allowed = ", ".join(sorted(s.value for s in OUTSTANDING))
             _fail(
                 surface,
                 f"{gwhere}status must be an outstanding status ({allowed}), got {status.value!r}",
