@@ -187,6 +187,7 @@ class TestRepo:
             "archived": None,  # not archived -> omitted from frontmatter
             # capped at 8 of the fixture's 9 topics
             "topics": "ingestion, pipelines, ledger, python, knowledge-base, etl, cli, jsonl",
+            "ref": None,  # the default branch's README -> omitted from frontmatter
         }
         assert "# pipeline-kit" in body_of(result)
 
@@ -540,6 +541,7 @@ class TestRepoAtRef:
         url = f"https://github.com/acme/pipeline-kit/{view}/v2"
         result = content_of(driver.fetch(make_unit(url, Kind.GITHUB)))
         assert result.meta["title"] == "acme/pipeline-kit"
+        assert result.meta["ref"] == "v2"
         assert body_of(result) == "# pipeline-kit v2"
 
     def test_a_ref_that_does_not_exist_is_dead(self):

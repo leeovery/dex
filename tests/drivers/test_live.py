@@ -136,6 +136,7 @@ class TestGitHubContentsShape:
         url = "https://github.com/rust-lang/rust/tree/automation/bors/auto"
         result = content_of(GitHubDriver().fetch(make_unit(url, Kind.GITHUB)))
         assert result.meta["title"] == "rust-lang/rust"
+        assert result.meta["ref"] == "automation/bors/auto"
         assert "Rust" in body_of(result)
 
 

@@ -265,6 +265,11 @@ class GitHubDriver:
             "stars": payload.get("stargazers_count"),
             "archived": "true" if payload.get("archived") else None,
             "topics": ", ".join((payload.get("topics") or [])[:_TOPIC_LIMIT]) or None,
+            # Which ref's README this is, when a link named one. Migration 15
+            # reads its absence to tell the default branch's root README the
+            # old dispatch stored for every repo link from a landing of this
+            # route, so it must never be dropped from a ref'd reading.
+            "ref": ref,
         }
         return Content(meta=meta, body=_readme_body(readme))
 

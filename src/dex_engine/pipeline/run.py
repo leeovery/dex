@@ -1688,10 +1688,13 @@ class _Drain:
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_bytes(out, response.body)
         self._clear_media_slot(out)
+        path = str(out.relative_to(self.ctx.instance.root))
+        # A page unit corrected to media work lands here, not through the
+        # page write, and its earlier view — a page enrichment, or a hand
+        # heal of the URL under its old kind — leaves on the same rule.
+        _drop_superseded_outputs(self.ctx.instance, entry, path)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
-        self.record_outcome(
-            entry, status=Status.DONE, path=str(out.relative_to(self.ctx.instance.root))
-        )
+        self.record_outcome(entry, status=Status.DONE, path=path)
 
     def _clear_media_slot(self, out: Path) -> None:
         """Drop whatever else stands in this slot beside the file just written.
@@ -2194,8 +2197,8 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     and never earlier: a corrected fetch that parks must leave the item
     exactly as enriched as it found it. The ledger's audit trail keeps the
     history either way. Every route to a unit's own output comes through
-    here — the drain's fetch write, the transcribe drain's landing, and a
-    hand-written file closed by ``mark``.
+    here — the drain's fetch write, the transcribe drain's landing, a media
+    download, and a hand-written file closed by ``mark``.
 
     The directory searched is the replacement's own, not the one the
     entry's ``item`` names: a unit's outputs all live beside each other by

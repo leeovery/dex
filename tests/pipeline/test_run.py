@@ -4802,6 +4802,32 @@ class TestRedetection:
         # And the picture is now the session's to describe.
         assert "0 of 1 media file described" in report
 
+    def test_a_media_landing_drops_the_units_earlier_page_output(self, instance):
+        # A unit healed by hand under its page kind, then corrected to media
+        # work, kept the hand-written view beside the picture: the item
+        # listed a page enrichment no ledger line owned any more.
+        transport = FakeTransport(
+            {self.IMAGE_URL: HttpResponse(status=200, content_type="image/jpeg", body=JPEG_BYTES)}
+        )
+        item_path = write_item(instance, urls=[self.IMAGE_URL])
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        healed = item_dir / "healed-by-hand.md"
+        healed.write_text(f'---\nurl: "{self.IMAGE_URL}"\n---\n\na reading of the picture\n')
+        neighbour = item_dir / "web-aaaaaa.md"
+        neighbour.write_text('---\nurl: "https://elsewhere.test/page"\n---\n\ntheir view\n')
+        ctx = make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=self._drivers(instance, transport),
+            transport=transport,
+        )
+        run_mod.run(ctx)
+        assert entry_for(ctx, self.IMAGE_URL).path == f"enrichment/{ITEM}/media-0.jpg"
+        assert not healed.exists()
+        assert neighbour.exists()
+        assert corpus.read_item(item_path).enrichment == ["web-aaaaaa.md"]
+
     def test_a_depth_zero_media_unit_needs_no_parent(self, instance):
         # Every media unit until now was a child of the page that named it;
         # a corrected one is the item's own URL, parentless at depth 0.
