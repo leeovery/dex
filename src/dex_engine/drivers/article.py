@@ -26,7 +26,19 @@ sits in, or leaking its glyph into the heading line. Extraction therefore
 runs twice over the prepared page, once without comments and once with,
 because the two settings answer different questions: an article's comment
 section is chrome, and a discussion page's comments are the entire
-artifact.
+artifact. The same preparation repairs markup trafilatura throws away
+with content inside it: scroll-area wrappers its navigation filter
+misreads, MathML, and the LaTeXML shapes of an arXiv rendering. The
+arXiv full text in the paper driver runs through it too.
+
+A page can make extraction unnecessary: docs sites declare the markdown
+a page was rendered from (``<link rel="alternate" type="text/markdown">``),
+and that source keeps the tables and code blocks extraction loses. The
+route fetches it exactly where the page says — never a guessed ``.md``
+URL, because GitHub's points at an API path and Fern's at another slug —
+and stores it whenever it answers as markdown or plain text and carries
+at least what extraction found. The title, description and og:image
+still come from the HTML.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -71,12 +83,17 @@ from dex_engine.pipeline.classify import (
     THIN_EXTRACTION_REASON,
     Classification,
 )
-from dex_engine.pipeline.detect import CONTENT_TYPE_FORMATS, sniff_format, sniff_media_ext
+from dex_engine.pipeline.detect import (
+    CONTENT_TYPE_FORMATS,
+    sniff_document,
+    sniff_format,
+    sniff_media_ext,
+)
 from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redetected, Unusable
 
 from .audio import audio_enclosure
 from .fetch import FetchFailure, fetch_classified
-from .transport import Transport
+from .transport import HttpResponse, Transport
 
 __all__ = ["HtmlExtract", "fetch_article", "trafilatura_extract"]
 
@@ -145,6 +162,19 @@ _DESCRIPTION_RES = (
 )
 _MAX_DESCRIPTION_CHARS = 300
 
+# A page's declaration of the markdown it was rendered from. Its attributes
+# come in any order and either quoting, so the tag is found first and read
+# attribute by attribute.
+_LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))""")
+_MARKDOWN_TYPE = "text/markdown"
+_MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
+
+_LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
+
+_TEX_ANNOTATION_TEXT = ".//annotation[@encoding='application/x-tex']//text()"
+_RENDERED_MATH_TEXT = ".//text()[not(ancestor::annotation or ancestor::annotation-xml)]"
+
 
 def trafilatura_extract(html: str) -> str | None:
     """Extract markdown from HTML via trafilatura — extraction ONLY.
@@ -173,43 +203,12 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
 def _prepare_page(html: str) -> str:
     """Repair the page shapes that break extraction, before trafilatura sees it.
 
-    Three repairs over one parse. First, drop every anchor carrying no text
-    — permalinks, icon links, line anchors. An anchor with nothing inside
-    it is chrome, and with ``include_links`` on it is chrome that eats
-    content: a heading whose permalink precedes its words
-    (``<h2><a class="headerlink" href="#x"></a>Text</h2>`` — the
-    Sphinx/mkdocs/Docusaurus spelling) extracts as a bare ``##`` with the
-    words gone, and mkdocs-material's per-line code anchors take whole
-    fenced blocks with them (a llama-cpp docs page: 42 fences down to
-    none). Dropping them is lossless — there is nothing inside an empty
-    anchor to lose, and an anchor with no text renders no link. On that
-    same page this recovers 92 fences AND keeps all 42 hyperlinks, which
-    neither link setting manages alone.
-
-    Second, inside headings only, drop the anchors whose text is a bare
-    permalink glyph. They are the first repair's chrome with an icon
-    character for content, non-empty enough to survive it and broken both
-    ways. Wrapped around a span before the words they swallow exactly as
-    an empty anchor does — a cursor.com post came back with every heading
-    a bare ``##`` — and bare they leak the glyph into the heading line
-    instead, ahead of the words on laravel-news.com and behind them on a
-    hugo blog whose anchor trails its heading. Restricting this to
-    headings is what makes it safe: a link reading ``#`` in body prose is
-    not provably chrome, and one inside a heading is.
-
-    Third, flatten the inside of headings: replace ``<br>`` elements with
-    a space and collapse whitespace runs to one space. A markdown heading
-    is one line by construction, and a heading holding a line break
-    (``<h3><span>Use Case: <br></span></h3>`` — Hugging Face model cards)
-    extracts as the marker alone on its line with the words below it,
-    among the span's source-formatting tabs and newlines emitted verbatim
-    — an empty heading to any consumer keying on the heading line. The
-    ``<br>`` is the break; the whitespace collapse is what puts the words
-    beside the marker cleanly instead of behind a run of tabs. Its
-    replacement is a space and not nothing, because a break BETWEEN two
-    parts is the only separator they have: a page whose top heading
-    carries its subtitle after a ``<br>`` folded to one welded line, the
-    subtitle no longer a line at all and two words run together.
+    Every repair runs over one parse, and each function below carries the
+    field case that earned it. They come in two families: what
+    ``include_links`` costs — empty anchors, and permalink glyphs and
+    line breaks in headings — and markup trafilatura throws away with
+    content inside it — scroll areas its navigation filter misreads,
+    MathML, and LaTeXML's tabulars and equation tables.
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -221,13 +220,14 @@ def _prepare_page(html: str) -> str:
         tree = fromstring(html)
     except (LxmlError, ValueError):
         return html
-    # Materialized before the loop: drop_tree() detaches from the live tree,
-    # and mutating what you are iterating skips siblings. drop_tree is also
-    # the right removal — it MERGES the anchor's tail into the preceding
-    # text, which is exactly where a heading's words live.
-    for anchor in list(tree.iter("a")):
-        if isinstance(anchor, HtmlElement) and not (anchor.text_content() or "").strip():
-            anchor.drop_tree()
+    _unmask_scroll_areas(tree)
+    _tabulate_latexml_spans(tree)
+    # Before the rest of the math: an equation row's formulas are one
+    # display block, and rendered one element at a time they would come
+    # back as separate inline ones.
+    _flatten_equation_tables(tree)
+    _render_math(tree)
+    _drop_empty_anchors(tree)
     for heading in tree.iter("h1", "h2", "h3", "h4", "h5", "h6"):
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
@@ -235,7 +235,44 @@ def _prepare_page(html: str) -> str:
     return tostring(tree, encoding="unicode")
 
 
+def _drop_empty_anchors(tree: "HtmlElement") -> None:
+    """Drop every anchor carrying no text — permalinks, icon links, line anchors.
+
+    An anchor with nothing inside it is chrome, and with ``include_links``
+    on it is chrome that eats content: a heading whose permalink precedes
+    its words (``<h2><a class="headerlink" href="#x"></a>Text</h2>`` — the
+    Sphinx/mkdocs/Docusaurus spelling) extracts as a bare ``##`` with the
+    words gone, and mkdocs-material's per-line code anchors take whole
+    fenced blocks with them (a llama-cpp docs page: 42 fences down to
+    none). Dropping them is lossless — there is nothing inside an empty
+    anchor to lose, and an anchor with no text renders no link. On that
+    same page this recovers 92 fences AND keeps all 42 hyperlinks, which
+    neither link setting manages alone.
+    """
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    # Materialized before the loop: drop_tree() detaches from the live tree,
+    # and mutating what you are iterating skips siblings. drop_tree is also
+    # the right removal — it MERGES the anchor's tail into the preceding
+    # text, which is exactly where a heading's words live.
+    for anchor in list(tree.iter("a")):
+        if isinstance(anchor, HtmlElement) and not (anchor.text_content() or "").strip():
+            anchor.drop_tree()
+
+
 def _drop_glyph_anchors(heading: "HtmlElement") -> None:
+    """Inside a heading, drop the anchors whose text is a bare permalink glyph.
+
+    They are the empty anchor's chrome with an icon character for
+    content, non-empty enough to survive that drop and broken both ways.
+    Wrapped around a span before the words they swallow exactly as an
+    empty anchor does — a cursor.com post came back with every heading a
+    bare ``##`` — and bare they leak the glyph into the heading line
+    instead, ahead of the words on laravel-news.com and behind them on a
+    hugo blog whose anchor trails its heading. Restricting this to
+    headings is what makes it safe: a link reading ``#`` in body prose is
+    not provably chrome, and one inside a heading is.
+    """
     from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
 
     for anchor in list(heading.iter("a")):
@@ -246,6 +283,20 @@ def _drop_glyph_anchors(heading: "HtmlElement") -> None:
 
 
 def _flatten_heading(heading: "HtmlElement") -> None:
+    """Put a heading on one line: each ``<br>`` a space, whitespace runs collapsed.
+
+    A markdown heading is one line by construction, and a heading holding
+    a line break (``<h3><span>Use Case: <br></span></h3>`` — Hugging Face
+    model cards) extracts as the marker alone on its line with the words
+    below it, among the span's source-formatting tabs and newlines emitted
+    verbatim — an empty heading to any consumer keying on the heading
+    line. The ``<br>`` is the break; the whitespace collapse is what puts
+    the words beside the marker cleanly instead of behind a run of tabs.
+    Its replacement is a space and not nothing, because a break BETWEEN
+    two parts is the only separator they have: a page whose top heading
+    carries its subtitle after a ``<br>`` folded to one welded line, the
+    subtitle no longer a line at all and two words run together.
+    """
     from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
 
     for br in list(heading.iter("br")):
@@ -270,11 +321,183 @@ def _flatten_heading(heading: "HtmlElement") -> None:
             node.tail = _WHITESPACE_RUN_RE.sub(" ", node.tail)
 
 
+def _unmask_scroll_areas(tree: "HtmlElement") -> None:
+    """Drop the class tokens that style a scrollbar.
+
+    trafilatura discards any div, section, paragraph or span whose class
+    attribute contains ``bar`` anywhere — its spelling of navbar and
+    sidebar — and a scroll area's scrollbar styling matches it too.
+    Mintlify wraps every table and code block in one
+    (``base-ui-disable-scrollbar``), and its docs pages came back as prose
+    alone, every table row and code fence gone. Styling never decides
+    extraction, so those tokens go and every other token stays: an element
+    that really is navigation still says so in the rest of its classes.
+    """
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for element in tree.iter():
+        if isinstance(element, HtmlElement) and "scrollbar" in _class_attribute(element).lower():
+            kept = [token for token in _classes(element) if "scrollbar" not in token.lower()]
+            element.set("class", " ".join(kept))
+
+
+def _tabulate_latexml_spans(tree: "HtmlElement") -> None:
+    """Rebuild LaTeXML's span-typeset tabulars as the tables they draw.
+
+    LaTeXML typesets a tabular sitting inside running text — a table
+    scaled to fit, a header cell stacked over two lines — as spans:
+    ``ltx_tabular`` over ``ltx_tr`` over ``ltx_td``, with head and body
+    wrappers between. To an extractor that is inline text with no rows in
+    it, and worse inside the ``<figure>`` LaTeXML floats a table in:
+    trafilatura deletes every figure that holds no real ``<table>``. An
+    appendix of nothing but such tables was left a bare heading, and bare
+    headings after the references are what trafilatura strips from a
+    page's end — two of one paper's three appendices vanished whole. Once
+    rebuilt, the table is real and trafilatura keeps its figure itself.
+
+    The spans the tabular sits in become blocks with it: a table left
+    inside inline markup is read as its paragraph's text, one cell to a
+    line and no rows. Only an outermost tabular is rebuilt: one inside a
+    table cell is that cell's own layout ("Msg-Wise" stacked over
+    "(%, ↑)"), and a table inside a cell has no markdown form.
+    """
+    for tabular in list(tree.iter("span")):
+        if "ltx_tabular" in _classes(tabular) and not _in_table_cell(tabular):
+            _as_table(tabular)
+
+
+def _in_table_cell(element: "HtmlElement") -> bool:
+    return any(ancestor.tag in ("td", "th") for ancestor in element.iterancestors())
+
+
+def _as_table(tabular: "HtmlElement") -> None:
+    tabular.tag = "table"
+    for ancestor in tabular.iterancestors():
+        if ancestor.tag != "span":
+            break
+        ancestor.tag = "div"
+    rows = []
+    for child in tabular:
+        section = _table_section(child)
+        if section is None:
+            rows.append(child)
+        else:
+            child.tag = section
+            rows.extend(child)
+    for row in rows:
+        if "ltx_tr" in _classes(row):
+            row.tag = "tr"
+            for cell in row:
+                # A header cell stays a td: LaTeXML's own <table> rendering
+                # writes one, and a paper's tables read alike in both forms.
+                if "ltx_td" in _classes(cell):
+                    cell.tag = "td"
+
+
+def _table_section(element: "HtmlElement") -> str | None:
+    """The table section a LaTeXML head/body/foot wrapper stands for, or None."""
+    for token in _classes(element):
+        if token in _LATEXML_TABLE_SECTIONS:
+            return _LATEXML_TABLE_SECTIONS[token]
+    return None
+
+
+def _flatten_equation_tables(tree: "HtmlElement") -> None:
+    """Rewrite LaTeXML's equation tables as one display-math line per row.
+
+    LaTeXML lays out a numbered equation as a table row — padding cells,
+    the formula, the equation number — and with the math deleted,
+    trafilatura kept the shell: rows of empty cells like
+    ``|  |  |  | (1) |``. A row's formulas are one display block even where
+    an aligned equation splits them across cells, so they join into one
+    ``$$`` block, followed by whatever else the row says: its number,
+    which the prose cites.
+    """
+    from lxml.html import Element  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for table in list(tree.iter("table")):
+        parent = table.getparent()
+        if parent is None or "ltx_eqn_table" not in _classes(table):
+            continue
+        lines = Element("div")
+        for row in table.iter("tr"):
+            line = _equation_line(row)
+            if line:
+                paragraph = Element("p")
+                paragraph.text = line
+                lines.append(paragraph)
+        lines.tail = table.tail
+        parent.replace(table, lines)
+
+
+def _equation_line(row: "HtmlElement") -> str:
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    formulas = [math for math in row.iter("math") if isinstance(math, HtmlElement)]
+    formula = " ".join(source for source in map(_math_source, formulas) if source)
+    for math in formulas:
+        math.drop_tree()
+    parts = (f"$${formula}$$" if formula else "", row.text_content().strip())
+    return " ".join(part for part in parts if part)
+
+
+def _render_math(tree: "HtmlElement") -> None:
+    """Replace every MathML element with its formula between dollar signs.
+
+    trafilatura deletes ``<math>`` outright and closes the text over the
+    gap: an arXiv paper's "an average gain of +17.8 points" was stored as
+    "an average gain of  points", and every delta in its ablation study
+    went the same way. Display math (``display="block"``) becomes a
+    ``$$`` block, the rest inline ``$`` math.
+    """
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for math in list(tree.iter("math")):
+        if not isinstance(math, HtmlElement):
+            continue
+        source = _math_source(math)
+        if source:
+            fence = "$$" if math.get("display") == "block" else "$"
+            math.tail = f"{fence}{source}{fence}{math.tail or ''}"
+        math.drop_tree()
+
+
+def _math_source(math: "HtmlElement") -> str:
+    """The formula as TeX where the page carries it, else as the text it renders.
+
+    LaTeXML writes the TeX into ``alttext``. KaTeX writes none and keeps
+    it in a TeX annotation, while the MathML's own text reads ``x2`` for
+    ``x^2`` — so the annotation is read next, and the text last, with
+    every annotation left out of it.
+    """
+    alttext = (math.get("alttext") or "").strip()
+    if alttext:
+        return alttext
+    tex = "".join(_xpath_text(math, _TEX_ANNOTATION_TEXT)).strip()
+    if tex:
+        return tex
+    return "".join(_xpath_text(math, _RENDERED_MATH_TEXT)).strip()
+
+
+def _xpath_text(element: "HtmlElement", path: str) -> list[str]:
+    result = element.xpath(path)
+    return [str(text) for text in result] if isinstance(result, list) else []
+
+
+def _classes(element: "HtmlElement") -> list[str]:
+    return _class_attribute(element).split()
+
+
+def _class_attribute(element: "HtmlElement") -> str:
+    return element.get("class") or ""
+
+
 @dataclass(frozen=True, slots=True)
 class _Page:
     """A successfully fetched page: decoded text plus what the wire said."""
 
     html: str
+    url: str  # where the body came from: what the page's relative URLs resolve against
     body: bytes = b""
     content_type: str = ""
 
@@ -288,10 +511,11 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
         url: The page URL.
 
     Returns:
-        What the fetch found: Content with body and media, a Redetected
-        for a body that is not web content, a thin-extraction Unusable,
-        or the classified fetch failure with the wayback rescue's fate
-        noted on its evidence.
+        What the fetch found: Content with body and media — the body the
+        page's declared markdown source when it has a faithful one — a
+        Redetected for a body that is not web content, a thin-extraction
+        Unusable, or the classified fetch failure with the wayback
+        rescue's fate noted on its evidence.
     """
     page = _fetch_page(transport, url)
     if isinstance(page, _Page):
@@ -301,7 +525,13 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
         enclosure = audio_enclosure(page.html, url)
         if enclosure is not None and enclosure.declared:
             return Redetected(kind=Kind.PODCAST)
-        extracted = _extracted(extract, page.html, base_url=url, allow_media=True)
+        extracted = _extracted(
+            extract,
+            page.html,
+            base_url=page.url,
+            allow_media=True,
+            alternate=_markdown_alternate(transport, page),
+        )
         if extracted is not None:
             return extracted
         if enclosure is not None:
@@ -342,19 +572,110 @@ def _fetch_page(transport: Transport, url: str) -> _Page | Classification:
     outcome = fetch_classified(transport, url)
     if isinstance(outcome, FetchFailure):
         return outcome.classification
-    return _Page(html=outcome.text(), body=outcome.body, content_type=outcome.content_type)
+    return _Page(
+        html=outcome.text(),
+        url=outcome.url or url,
+        body=outcome.body,
+        content_type=outcome.content_type,
+    )
 
 
 def _extracted(
-    extract: HtmlExtract, html: str, *, base_url: str, allow_media: bool
+    extract: HtmlExtract,
+    html: str,
+    *,
+    base_url: str,
+    allow_media: bool,
+    alternate: str | None = None,
 ) -> Content | None:
-    """The page as Content when extraction is substantial, else None."""
-    body = extract(html)
+    """The page as Content when its body is substantial, else None."""
+    body = _preferred_body(extract(html), alternate)
     if body is None or len(body) < MIN_SUBSTANTIAL_CHARS:
         return None
     media = [image] if allow_media and (image := _og_image(html, base_url)) else []
     meta = {**_title_meta(html), **_description_meta(html)}
     return Content(meta=meta, body=body, media=media)
+
+
+def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
+    """The declared markdown when it carries at least what extraction found.
+
+    The alternate is the source the page was rendered from, so a faithful
+    one holds every word extraction kept plus the tables and code it
+    dropped: across 13 docs sites that declare one, it ran 1.05 to 2.9
+    times the extraction's length, and 27 times on a page whose HTML
+    extracted thin. One shorter than the extraction is missing something
+    the page has — a stub, an error body served with a 200 — and where the
+    two come close the page lost nothing to extraction, so keeping the
+    extraction costs nothing.
+    """
+    if alternate is not None and len(alternate) >= len(extracted or ""):
+        return alternate
+    return extracted
+
+
+def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
+    """The markdown source the page declares, fetched where it says, or None.
+
+    Every failure is None and the page's own extraction stands: the
+    declaration is an offer, never a dependency.
+    """
+    url = _markdown_alternate_url(page.html, page.url)
+    if url is None:
+        return None
+    try:
+        outcome = fetch_classified(transport, url)
+    except ValueError:
+        # The transport refusing a host no DNS name can carry: the page's
+        # own mistake, and the page is still here to extract.
+        return None
+    if isinstance(outcome, FetchFailure):
+        return None
+    text = _markdown_text(outcome)
+    return None if text is None else text.strip()
+
+
+def _markdown_text(response: HttpResponse) -> str | None:
+    """A 2xx answer as the markdown asked for, or None when it cannot be that.
+
+    Only a markdown or plain-text answer can be: a JSON error body served
+    with a 200 (GitHub Docs' source is an API path) or a feed would
+    otherwise win on length alone. The bytes must agree with the label, as
+    they must on a page: HTML, XML or JSON under a text label — a soft 404,
+    a login wall, an API error — is not markdown, a body a signature names
+    is a file whatever type it claims, and one that is not UTF-8 text is no
+    markdown at all.
+    """
+    if response.content_type not in _MARKDOWN_ANSWER_TYPES:
+        return None
+    if sniff_document(response.body) is not None or sniff_format(response.body) is not None:
+        return None
+    if sniff_media_ext(response.body, signatures_only=True) is not None:
+        return None
+    try:
+        return response.body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _markdown_alternate_url(html: str, base_url: str) -> str | None:
+    for tag in _LINK_TAG_RE.findall(html):
+        attributes = _tag_attributes(tag)
+        rel = attributes.get("rel", "").lower().split()
+        media_type = attributes.get("type", "").split(";")[0].strip().lower()
+        href = attributes.get("href", "").strip()
+        if "alternate" in rel and media_type == _MARKDOWN_TYPE and href:
+            url = urllib.parse.urljoin(base_url, href)
+            if url.startswith(("http://", "https://")):
+                return url
+    return None
+
+
+def _tag_attributes(tag: str) -> dict[str, str]:
+    return {
+        name.lower(): html_lib.unescape(double or single or bare)
+        for name, double, single, bare in _ATTRIBUTE_RE.findall(tag)
+    }
 
 
 def _wayback_fallback(
@@ -365,7 +686,9 @@ def _wayback_fallback(
     if snapshot_url is not None:
         page = _fetch_page(transport, snapshot_url)
         if isinstance(page, _Page):
-            # Snapshot og:images point at web.archive.org — skip media.
+            # Snapshot og:images point at web.archive.org — skip media. The
+            # rescue reads the snapshot alone, so a markdown source the
+            # page declares is not chased into the archive either.
             rescued = _extracted(extract, page.html, base_url=snapshot_url, allow_media=False)
             if rescued is not None:
                 meta = dict(rescued.meta)

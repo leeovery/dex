@@ -233,7 +233,7 @@ different problem from the page having nothing on it.
 | **GitHub** | repos and profiles: README, description, metadata |
 | **Papers** | arXiv and friends |
 | **Podcasts** | an Apple or Spotify link resolves to the show's RSS and the real audio enclosure, then transcribes it. Show notes come from the feed, which is richer than the page |
-| **Web** | article text with the boilerplate stripped, falling back to the Wayback Machine when the live page has gone |
+| **Web** | article text with the boilerplate stripped, or the markdown a docs page declares it was rendered from, tables and code intact; falling back to the Wayback Machine when the live page has gone |
 | **Files** | PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB and CSV. Text is extracted and embedded images are pulled out alongside it. Scanned pages route to OCR |
 
 Three things sit on top of that, and they are where the real work happens:
