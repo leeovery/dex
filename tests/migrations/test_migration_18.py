@@ -527,12 +527,14 @@ class TestTolerantRead:
         assert f"no live corpus item claims {PAGE_URL}" in skip.why
 
     def test_an_anomaly_survives_a_run_that_seeds_nothing(self, tmp_path, migration):
-        write_ledger(tmp_path, unit(), unit(PAPER_URL, kind=Kind.PAPER))
+        gone = "2026-09-09-gone-def456"
+        write_corpus_item(tmp_path, urls=(PAPER_URL,))
+        write_ledger(tmp_path, unit(item=gone), unit(PAPER_URL, kind=Kind.PAPER))
         write_paper(tmp_path, meta=FULL_TEXT).write_text("---\nunterminated\n")
         report = migration.apply(tmp_path)
         assert report.actions == []
         assert len(report.anomalies) == 1
-        assert [skip.what for skip in report.skipped] == [f"article-seam rerun for {ITEM}"]
+        assert [skip.what for skip in report.skipped] == [f"article-seam rerun for {gone}"]
 
 
 class TestOwnership:
@@ -560,6 +562,21 @@ class TestOwnership:
         migration.apply(tmp_path)
         (seed,) = seeds(tmp_path)
         assert (seed.hash, seed.item) == (child.hash, renamed)
+
+    def test_an_excluded_items_paper_gets_the_exclusion_and_no_requeue_advice(
+        self, tmp_path, migration
+    ):
+        # `dex exclude` deletes the item's enrichment with it, so the paper's
+        # file is gone too: the report must name the exclusion, not ask the
+        # session to requeue a unit the owner removed.
+        write_ledger(tmp_path, unit(PAPER_URL, kind=Kind.PAPER))
+        (tmp_path / "state" / "exclusions.tsv").write_text(f"{ITEM}\toff-topic for this dex\n")
+        report = migration.apply(tmp_path)
+        assert seeds(tmp_path) == []
+        (skip,) = report.skipped
+        assert skip.what == f"article-seam rerun for {ITEM}"
+        assert "excluded on the record (state/exclusions.tsv: off-topic for this dex)" in skip.why
+        assert "enrich mark" not in skip.why
 
     def test_a_purged_item_is_never_requeued(self, tmp_path, migration):
         write_ledger(tmp_path, unit())

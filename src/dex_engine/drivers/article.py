@@ -85,7 +85,7 @@ from dex_engine.pipeline.classify import (
 )
 from dex_engine.pipeline.detect import (
     CONTENT_TYPE_FORMATS,
-    looks_like_html,
+    sniff_document,
     sniff_format,
     sniff_media_ext,
 )
@@ -629,32 +629,33 @@ def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
         # The transport refusing a host no DNS name can carry: the page's
         # own mistake, and the page is still here to extract.
         return None
-    if isinstance(outcome, FetchFailure) or not _is_markdown_answer(outcome):
+    if isinstance(outcome, FetchFailure):
         return None
-    return outcome.text().strip()
+    text = _markdown_text(outcome)
+    return None if text is None else text.strip()
 
 
-def _is_markdown_answer(response: HttpResponse) -> bool:
-    """Whether a 2xx answer can be the markdown asked for.
+def _markdown_text(response: HttpResponse) -> str | None:
+    """A 2xx answer as the markdown asked for, or None when it cannot be that.
 
-    Only a markdown or plain-text answer can: a JSON error body served with
-    a 200 (GitHub Docs' source is an API path) or a feed would otherwise win
-    on length alone. The bytes must agree with the label, as they must on a
-    page: HTML — a soft 404, a login wall — is not markdown, a body a
-    signature names is a file whatever type it claims, and one that is not
-    UTF-8 text is no markdown at all.
+    Only a markdown or plain-text answer can be: a JSON error body served
+    with a 200 (GitHub Docs' source is an API path) or a feed would
+    otherwise win on length alone. The bytes must agree with the label, as
+    they must on a page: HTML, XML or JSON under a text label — a soft 404,
+    a login wall, an API error — is not markdown, a body a signature names
+    is a file whatever type it claims, and one that is not UTF-8 text is no
+    markdown at all.
     """
-    if response.content_type not in _MARKDOWN_ANSWER_TYPES or looks_like_html(response.body):
-        return False
-    if sniff_format(response.body) is not None:
-        return False
+    if response.content_type not in _MARKDOWN_ANSWER_TYPES:
+        return None
+    if sniff_document(response.body) is not None or sniff_format(response.body) is not None:
+        return None
     if sniff_media_ext(response.body, signatures_only=True) is not None:
-        return False
+        return None
     try:
-        response.body.decode("utf-8")
+        return response.body.decode("utf-8")
     except UnicodeDecodeError:
-        return False
-    return True
+        return None
 
 
 def _markdown_alternate_url(html: str, base_url: str) -> str | None:

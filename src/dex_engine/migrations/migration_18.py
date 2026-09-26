@@ -213,13 +213,13 @@ class ArticleSeamRerun:
         exclusions = _exclusions(root)
         seeds: list[tuple[LedgerEntry, str]] = []
         for entry in candidates:
+            # Unclaimed first: an excluded item's enrichment is deleted with
+            # it, and a missing file must not read as work to requeue by hand.
             item = _live_item(entry, root=root, owners=owners)
-            if not _went_through_seam(root, entry, item or entry.item, skipped, anomalies):
-                continue
             if item is None:
                 skipped.append(_unclaimed(entry, exclusions))
-                continue
-            seeds.append((entry, item))
+            elif _went_through_seam(root, entry, item, skipped, anomalies):
+                seeds.append((entry, item))
         for entry, item in seeds:
             append(path, self._stamped(_seed(entry, item)))
         if not seeds:

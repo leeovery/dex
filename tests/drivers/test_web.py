@@ -555,6 +555,21 @@ class TestMarkdownAlternate:
     @pytest.mark.parametrize(
         "body",
         [
+            '{"message": "Not Found", "detail": "' + "x" * 700 + '"}',
+            "[" + ", ".join(['{"title": "a post"}'] * 40) + "]",
+            '<?xml version="1.0"?><rss><channel>' + "<item>a post</item>" * 40 + "</channel></rss>",
+        ],
+        ids=["json-object", "json-array", "xml-feed"],
+    )
+    def test_a_document_labelled_plain_text_is_not_the_source(self, body):
+        # An API error or a feed served under a text label: the bytes say what it is.
+        answer = HttpResponse(status=200, content_type="text/plain", body=body.encode())
+        result = content_of(self.fetch(declaring(SOURCE_LINK), answer))
+        assert result.body == substantial_extract("")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
             b"%PDF-1.7\n" + SOURCE.encode(),
             b"GIF89a" + SOURCE.encode(),
             b"\x1f\x8b\x08\x00" + bytes(range(256)) * 4,
