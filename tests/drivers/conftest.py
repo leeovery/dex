@@ -159,6 +159,11 @@ def gh_matching_refs(*names: str) -> GhResult:
     return gh_ok(json.dumps([{"ref": name, "object": {"sha": "0" * 40}} for name in names]))
 
 
+def gh_listing(*entries: tuple[str, str]) -> GhResult:
+    """The contents API's answer for a directory: ``(name, type)`` per entry."""
+    return gh_ok(json.dumps([{"name": name, "type": kind, "size": 0} for name, kind in entries]))
+
+
 def _drain_request(conn: socket.socket) -> None:
     """Read the whole request — headers AND body — before answering.
 
