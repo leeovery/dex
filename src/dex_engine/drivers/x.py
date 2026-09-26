@@ -11,12 +11,16 @@ pointers bottom-to-top (bounded at 100 hops, paced a second apart, ending
 at the first id it has already walked); storage is reading order — root
 first, captured post last, each post attributed. Quoted posts stay inline
 as blockquotes; promoting a quote is a harvest judgment. Chain media is
-pooled, the captured post's first — **photos and videos alike**: both are
-URL downloads, and the media stage already meets an oversize one with its
+pooled, the captured post's first. The first ``video`` in that order is
+heard, not looked at: the post parks for transcription with its smallest
+rendition as the enclosure, the transcript joins the post's body, and its
+file is never pooled — the transcript supersedes it, as it does a reel's. A ``gif`` is a
+silent loop and never transcribes. Every other photo, video and gif is a
+URL download, and the media stage already meets an oversize one with its
 own honest outcome (``skipped``, the 10MB ceiling named, charged to the
-media unit). A media-only post is therefore ``done`` with a minimal
-attributed body, whatever the media is; the "no text or media" park is
-said only when the payload truly holds neither.
+media unit). A media-only post therefore lands with a minimal attributed
+body, whatever the media is; the "no text or media" park is said only
+when the payload truly holds neither.
 
 Incomplete chains are recorded, never silently presented as complete: a
 parent fetch failing mid-walk, or a chain looping back on itself, sets
@@ -44,7 +48,16 @@ import urllib.parse
 from collections.abc import Callable
 
 from dex_engine.pipeline.classify import Classification
-from dex_engine.pipeline.types import Content, Kind, Outcome, Status, Unusable, WorkUnit
+from dex_engine.pipeline.types import (
+    Content,
+    Kind,
+    Need,
+    NeedsCapability,
+    Outcome,
+    Status,
+    Unusable,
+    WorkUnit,
+)
 from dex_engine.pipeline.urls import base_canonical, host_of
 
 from .fetch import FetchFailure, fetch_classified
@@ -237,7 +250,7 @@ def _status_id(url: str) -> str | None:
 
 def _render(
     captured: dict, posts: list[dict], walk_meta: dict[str, str | int | None]
-) -> Content | Unusable:
+) -> Content | NeedsCapability | Unusable:
     """Assemble the outcome: reading-order body, pooled media, attribution meta."""
     has_content = any(
         _text_of(post) or isinstance(post.get("quote"), dict) or _media_urls(post) for post in posts
@@ -246,10 +259,14 @@ def _render(
         return Unusable(evidence="fxtwitter returned no text or media")
     body = "\n\n".join(_render_post(post) for post in reversed(posts))  # root -> captured
     author = captured.get("author") or {}
+    video = _spoken_video(posts)
     meta: dict[str, str | int | None] = {
         "author": f"{author.get('name') or 'unknown'} (@{author.get('screen_name') or 'unknown'})",
         "tweeted": captured.get("created_at"),
-        "via": "fxtwitter",
+        # Never on a transcribe park: `via` is the transcript-provenance
+        # stamp, and a park carrying it tells the drain its body already
+        # holds a transcript. A None value is never written.
+        "via": "fxtwitter" if video is None else None,
     }
     if len(posts) > 1:
         meta["thread_length"] = len(posts)
@@ -260,7 +277,18 @@ def _render(
     # `skipped — media exceeds 10MB ceiling`, charged to the media unit
     # with the size stated, rather than as a park on the post.
     media = [url for post in posts for url in _media_urls(post)]  # captured post's first
-    return Content(meta=meta, body=body, media=media)
+    if video is None:
+        return Content(meta=meta, body=body, media=media)
+    # `enclosure` is the key the transcribe acquisition reads back out of
+    # the park file, and the one whose presence makes the run layer write
+    # that file at all.
+    return NeedsCapability(
+        need=Need.TRANSCRIBE,
+        meta={**meta, "enclosure": _smallest_rendition(video)},
+        body=body,
+        media=[url for url in media if url != video["url"]],
+        reason="post fetched — its video awaits transcription",
+    )
 
 
 def _render_post(post: dict) -> str:
@@ -382,3 +410,32 @@ def _media_note(post: dict) -> str | None:
     if types <= {"video", "gif"}:
         return "(video post)"
     return "(media post)"  # mixed, or a type this driver has not met
+
+
+def _spoken_video(posts: list[dict]) -> dict | None:
+    """The first ``video`` in pool order — the one the post's transcript comes from."""
+    videos = (
+        entry for post in posts for entry in _media_entries(post) if entry.get("type") == "video"
+    )
+    return next(videos, None)
+
+
+def _smallest_rendition(video: dict) -> str:
+    """The video's smallest mp4 rendition, where fxtwitter lists its ``variants``.
+
+    The transcript needs the audio alone, and a field clip's smallest
+    rendition — its audio 32kbps against the default's 128kbps — was heard
+    as the same words (the default is 7x the bytes): only filler words
+    differed. The default rendition of a long 1080p post runs to gigabytes.
+    """
+    listed = video.get("variants")
+    mp4s = [
+        variant
+        for variant in (listed if isinstance(listed, list) else [])
+        if isinstance(variant, dict)
+        and variant.get("content_type") == "video/mp4"
+        and isinstance(variant.get("bitrate"), int)
+        and isinstance(variant.get("url"), str)
+    ]
+    smallest = min(mp4s, key=lambda variant: variant["bitrate"], default=None)
+    return smallest["url"] if smallest is not None else video["url"]

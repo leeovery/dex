@@ -228,7 +228,7 @@ different problem from the page having nothing on it.
 | source | what it does |
 |---|---|
 | **YouTube** | captions where they exist, otherwise the audio is downloaded and transcribed |
-| **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole |
+| **X** | walks the thread up to its root, giving every post in reading order, each attributed, with quoted posts inline. Sharing a thread's *last* post rolls up the whole thing. An incomplete chain is recorded as incomplete and never presented as whole. A post's video is transcribed; photos and any further video are kept beside the thread |
 | **Instagram** | a public post's caption, author and date, read credential-free from the link-preview metadata instagram.com serves, with the media pulled through an embed proxy: video is transcribed, images are kept beside the caption. A private post parks and says to screenshot it |
 | **GitHub** | repos and profiles: README, description, metadata |
 | **Papers** | arXiv and friends |

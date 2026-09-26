@@ -33,8 +33,8 @@ from dex_engine.pipeline.enrichment import (
     TRANSCRIPT_HEADING,
     _yaml_value,
     description_section,
-    instagram_body,
     podcast_body,
+    post_body,
     read_enrichment,
     render_enrichment,
     youtube_body,
@@ -1755,9 +1755,10 @@ TRANSCRIBED = pytest.mark.parametrize(
     [
         (Kind.YOUTUBE, youtube_body, description_section),
         (Kind.PODCAST, podcast_body, str),
-        (Kind.INSTAGRAM, instagram_body, str),
+        (Kind.INSTAGRAM, post_body, str),
+        (Kind.X, post_body, str),
     ],
-    ids=["youtube", "podcast", "instagram"],
+    ids=["youtube", "podcast", "instagram", "x"],
 )
 
 
@@ -1841,7 +1842,7 @@ class TestRerunKeepsItsTranscript:
     def test_a_caption_ending_in_a_newline_still_reads_unchanged(self, instance):
         # The drain reads a park's notes back off disk, stripped; the driver
         # hands them over as the post has them.
-        body = instagram_body("the caption", "the words")
+        body = post_body("the caption", "the words")
         done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
         out = instance.root / str(done.path)
         before = (out.read_bytes(), out.stat().st_mtime_ns)
@@ -1928,7 +1929,7 @@ class TestRerunKeepsItsTranscript:
         # A carousel's stills ride the park beside the video it transcribes;
         # a keep that dropped them would lose them, since nothing downstream
         # sees their URLs again.
-        body = instagram_body("c", "the words")
+        body = post_body("c", "the words")
         done = self.land(instance, Kind.INSTAGRAM, TRANSCRIBER_STAMP, body)
         still = "https://cdn.example.test/still.jpg"
         self.reparked(instance, Kind.INSTAGRAM, self.park("c", media=[still]))
