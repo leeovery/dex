@@ -26,7 +26,7 @@ from dex_engine.pipeline.classify import (
     ProviderInputError,
     ProviderUnavailableError,
 )
-from dex_engine.pipeline.enrichment import pre_transcript, read_enrichment
+from dex_engine.pipeline.enrichment import holds_transcript, pre_transcript, read_enrichment
 from dex_engine.pipeline.registry import build_drivers
 from dex_engine.pipeline.run import _Drain
 from dex_engine.pipeline.transcribe import (
@@ -1218,6 +1218,7 @@ class TestXDrain:
         assert fields["model"] == "medium"
         assert fields["enclosure"] == self.ENCLOSURE  # the re-fetch pointer survives
         assert fields["author"] == "Ines Duarte (@ines)"
+        assert holds_transcript(fields, body)  # what a later rerun lands around
         # The author anchors the prompt, last; the post's text is the vocabulary.
         assert transcriber.calls[0][1].endswith(" — Ines Duarte (@ines)")
         assert transcriber.calls[0][0].name == f"{post.hash}.mp4"
@@ -1559,8 +1560,9 @@ class TestTranscribedVideoRetired:
         assert body.startswith("@ines — ")
         assert "ended without a transcript (its video stopped serving (HTTP 404" in report
         assert "the post stays done as it was re-fetched" in report
-        # The park rewrote the stored post, so the item owes its writing up again.
-        assert "1 rewritten" in report
+        # Only the frontmatter moved (the pointer where the fetch stamp
+        # stood): the body a digest is drawn from is the one it was.
+        assert "rewritten" not in report
         # Nothing was transcribed, so the video it has is kept.
         assert entries[work_hash(self.VIDEO)].status is Status.DONE
         assert (item_dir / "media-0.mp4").exists()
@@ -1623,6 +1625,66 @@ class TestTranscribedVideoRetired:
         assert entries[work_hash(self.VIDEO)].status is Status.DONE
         assert (item_dir / "media-0.mp4").exists()
         assert (item_dir / "media-0.md").exists()
+        # The job ended with the post kept; nothing retries it to want the audio.
+        assert audio_files(instance) == []
+
+    def test_a_park_that_changed_the_body_owes_its_writing_up(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        stored = item_dir / f"x-{self.post_hash()[:6]}.md"
+        stored.write_text(
+            stored.read_text(encoding="utf-8").replace("(video post)", "An older reading."),
+            encoding="utf-8",
+        )
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, entries = self.rerun(instance, video=gone)
+        assert entries[self.post_hash()].status is Status.DONE
+        assert "1 rewritten" in report
+
+    def test_whitespace_around_the_body_is_no_change(self, instance):
+        # A post's text can end in a newline; the file stores its body trimmed.
+        item_dir = self.landed_before_the_fix(instance)
+        stored = item_dir / f"x-{self.post_hash()[:6]}.md"
+        stored.write_text(
+            stored.read_text(encoding="utf-8").replace("(video post)", "Watch this."),
+            encoding="utf-8",
+        )
+        payload = json.loads(fixture_text("fxtwitter", "video-800.json"))
+        payload["tweet"]["text"] = "Watch this.\n"
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        transport = FakeTransport(
+            {"https://api.fxtwitter.com/status/800": json_response(payload), self.VIDEO: gone}
+        )
+        caps = Capabilities(transcribers=(FakeTranscriber(),), extractors=())
+        ctx = TestXDrain().ctx(
+            instance, transport, capabilities=caps, provider_available=caps.available
+        )
+        report = " ".join(run_mod.run(ctx).split())
+        assert "ended without a transcript" in report
+        assert "rewritten" not in report
+
+    def test_a_hand_named_landing_leaves_when_the_post_is_kept(self, instance):
+        # Every route that lands a unit's output drops its earlier view; a
+        # keep lands the re-fetched post, so the item lists one view of it.
+        item_dir = self.landed_before_the_fix(instance)
+        engine_named = item_dir / f"x-{self.post_hash()[:6]}.md"
+        healed = item_dir / "healed-by-hand.md"
+        engine_named.rename(healed)
+        post = ledger.load(instance.ledger_path)[self.post_hash()]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                post, status=Status.DONE, rerun=False, path=f"enrichment/{ITEM}/healed-by-hand.md"
+            ),
+        )
+        ledger.append(instance.ledger_path, dataclasses.replace(post, rerun=True))
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, entries = self.rerun(instance, video=gone)
+        kept = entries[self.post_hash()]
+        assert (kept.status, kept.path) == (Status.DONE, f"enrichment/{ITEM}/{engine_named.name}")
+        assert engine_named.exists()
+        assert not healed.exists()
+        # The hand-named file held another body, so the item owes its writing up.
+        assert "1 rewritten" in report
 
     def waiting_rerun(self, instance, *, park: str | None, status=Status.WAITING, attempts=None):
         """The rerun parked for its video, as the re-fetch left it, with ``park`` on disk."""

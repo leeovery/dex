@@ -32,7 +32,7 @@ from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import Transport, urllib_transport
-from dex_engine.drivers.ytdlp import DownloadAudio, yt_dlp_audio
+from dex_engine.drivers.ytdlp import DownloadAudio, cached_audio, yt_dlp_audio
 from dex_engine.render import surfaces
 
 from . import issues, ledger
@@ -1341,12 +1341,12 @@ class _Drain:
         park, whatever ended the transcription: a silent video, a dead or
         unreachable one, a park that cannot be read back. A rerun reaches
         here only without a stored transcript — one that held a transcript
-        kept it instead of parking (:meth:`_kept_transcript`) — so the file
-        kept is the park itself. The video file an earlier fetch downloaded
-        is left as it is, because for a silent video that file and its
-        description are the only record of it. Everything else parks as
-        ``status`` with ``reason``, a fresh share of the same post included,
-        since nothing has landed for it.
+        landed its re-fetch around it instead of parking
+        (:meth:`_kept_transcript`) — so the file kept is the park itself.
+        The video file an earlier fetch downloaded is left as it is, because
+        for a silent video that file and its description are the only record
+        of it. Everything else parks as ``status`` with ``reason``, a fresh
+        share of the same post included, since nothing has landed for it.
         """
         stored = self._output_file(entry)
         if (
@@ -1355,9 +1355,13 @@ class _Drain:
             and entry.needs is Need.TRANSCRIBE
             and stored.is_file()
         ):
-            self.record_outcome(
-                entry, status=Status.DONE, path=str(stored.relative_to(self.ctx.instance.root))
-            )
+            path = str(stored.relative_to(self.ctx.instance.root))
+            _drop_superseded_outputs(self.ctx.instance, entry, path)
+            self.record_outcome(entry, status=Status.DONE, path=path)
+            # The job ends here, and nothing retries it to want the video.
+            audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
+            if audio is not None:
+                audio.unlink()
             outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
             # Parked in an earlier run, the park's effect is unknown here:
             # counted rewritten, since a needless re-digest costs less than
@@ -1728,7 +1732,7 @@ class _Drain:
         file (nor report the item as changed). ``count=False`` is a park's
         write: it registers no item outcome (a waiting park's partial
         content is not cognitive work yet), only whether it changed what was
-        stored, in :attr:`park_writes`.
+        stored in its body, in :attr:`park_writes`.
 
         Atomic, like every other state write: an interrupted run must not
         leave a half-file behind. A truncated enrichment file is the worst
@@ -1746,6 +1750,13 @@ class _Drain:
         owner = out.parent.name
         content = render_enrichment(entry.url, self.ctx.today(), meta, body or "")
         existed = out.exists()
+        if not count:
+            # A digest is drawn from the body: frontmatter moving under an
+            # unchanged body — a park's pointer where a landing's stamp
+            # stood — is no new material.
+            self.park_writes[entry.hash] = (
+                not existed or read_enrichment(out)[1] != (body or "").strip()
+            )
         if existed and mask_fetched(out.read_text(encoding="utf-8")) == mask_fetched(content):
             # Nothing to write, but something to account for. Reporting this
             # as no outcome at all had a fetch print "2 units processed,
@@ -1754,8 +1765,6 @@ class _Drain:
             # was sitting on disk the whole time.
             if count:
                 self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
-            else:
-                self.park_writes[entry.hash] = False
             return str(out.relative_to(self.ctx.instance.root))
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_text(out, content)
@@ -1770,8 +1779,6 @@ class _Drain:
                 outcome.changed += 1
             else:
                 outcome.new += 1
-        else:
-            self.park_writes[entry.hash] = True
         return str(out.relative_to(self.ctx.instance.root))
 
     # -- extraction assets ----------------------------------------
