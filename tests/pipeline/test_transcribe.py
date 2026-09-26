@@ -20,6 +20,7 @@ from dex_engine.drivers.youtube import YouTubeDriver, _video_meta
 from dex_engine.drivers.ytdlp import ProbeError, YoutubeAudio, cached_audio
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
+from dex_engine.pipeline import transcribe as transcribe_mod
 from dex_engine.pipeline.classify import (
     Classification,
     ProviderInputError,
@@ -1083,6 +1084,22 @@ class TestInstagramDrain:
         )
 
 
+class TestInstagramRerun:
+    def test_a_silent_reel_rerun_still_parks_manual(self, instance):
+        # Keeping a rerun's post is x's; a reel's caption park is the record
+        # its silent disposition already names.
+        drain = TestInstagramDrain()
+        ctx = drain.park_via_driver(instance)
+        parked = entry_for(ctx, drain.POST_URL)
+        ledger.append(instance.ledger_path, dataclasses.replace(parked, rerun=True))
+        silent = FakeTranscriber(
+            raise_=ProviderInputError("whisper-local heard no speech in the audio")
+        )
+        entry = entry_for(drain.drain(instance, transcriber=silent), drain.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert "the caption is already stored" in (entry.reason or "")
+
+
 class TestXDrain:
     """An x post's video parks with the post's body and its URL, then transcribes."""
 
@@ -1138,6 +1155,11 @@ class TestXDrain:
         assert post.status is Status.DONE
         fields, body = read_enrichment(instance.root / str(post.path))
         assert body == f"{self.PARKED_BODY}\n\n## Transcript\n\nClip words."
+        keys = [
+            line.split(":")[0]
+            for line in (instance.root / str(post.path)).read_text(encoding="utf-8").split("\n")
+        ]
+        assert keys.count("url") == keys.count("fetched") == 1  # never carried over twice
         assert fields["via"] == "whisper-local"
         assert fields["model"] == "medium"
         assert fields["enclosure"] == self.ENCLOSURE  # the re-fetch pointer survives
@@ -1193,6 +1215,36 @@ class TestXDrain:
         assert entry.status is Status.BLOCKED
         assert entry.needs is Need.TRANSCRIBE
 
+    @pytest.mark.parametrize(
+        ("declared", "named"), [(734003200, "the video is 700MB"), (None, "the video is over 5MB")]
+    )
+    def test_a_video_past_the_ceiling_parks_naming_its_size(
+        self, instance, monkeypatch, declared, named
+    ):
+        # Held whole in memory between download and transcriber, so a long
+        # video is refused rather than buffered.
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 5 * 1024 * 1024)
+        self.park_via_driver(instance)
+        large = HttpResponse(
+            status=200,
+            content_type="video/mp4",
+            body=b"\x00" * (5 * 1024 * 1024 + 1),
+            content_length=declared,
+        )
+        transport = FakeTransport({self.ENCLOSURE: large})
+        entry = entry_for(self.drain(instance, transport=transport), self.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith(f"{named}, past the 5MB")
+        assert transport.limits == [5 * 1024 * 1024]  # the read itself stopped at the ceiling
+        assert audio_files(instance) == []
+
+    def test_a_video_at_the_ceiling_is_heard(self, instance, monkeypatch):
+        monkeypatch.setattr(transcribe_mod, "POST_VIDEO_MAX_BYTES", 64)
+        self.park_via_driver(instance)
+        exact = HttpResponse(status=200, content_type="video/mp4", body=b"\x00" * 64)
+        ctx = self.drain(instance, transport=FakeTransport({self.ENCLOSURE: exact}))
+        assert entry_for(ctx, self.POST_URL).status is Status.DONE
+
     def test_no_speech_parks_manual_saying_the_post_is_the_record(self, instance):
         self.park_via_driver(instance)
         silent = FakeTranscriber(
@@ -1232,7 +1284,9 @@ class TestTranscribedVideoRetired:
             **fields,
         )
 
-    def landed_before_the_fix(self, instance, *, video_status: Status = Status.DONE) -> Path:
+    def landed_before_the_fix(
+        self, instance, *, video_status: Status = Status.DONE, video_url: str | None = None
+    ) -> Path:
         """The post and its downloaded video (and a photo beside it), as pre-fix x left them."""
         write_item(instance, urls=[self.POST_URL], kinds=["x"])
         item_dir = instance.enrichment_dir / ITEM
@@ -1254,7 +1308,7 @@ class TestTranscribedVideoRetired:
         lines = [
             self.line(self.POST_URL, status=Status.DONE, path=f"enrichment/{ITEM}/{post_file}"),
             self.line(
-                self.VIDEO,
+                video_url or self.VIDEO,
                 status=video_status,
                 path=video_path,
                 reason=reason,
@@ -1270,16 +1324,17 @@ class TestTranscribedVideoRetired:
             ledger.append(instance.ledger_path, entry)
         return item_dir
 
-    def rerun(self, instance, *, video: HttpResponse | None = None) -> tuple[str, dict]:
+    def rerun(
+        self, instance, *, video: HttpResponse | None = None, transcriber=None
+    ) -> tuple[str, dict]:
         responses = {
             **TestXDrain().responses(),
             self.VIDEO: video if video is not None else TestXDrain().video(),
         }
         transport = FakeTransport(responses)
-        caps = Capabilities(
-            transcribers=(FakeTranscriber("whisper-local", text="Clip words.", model="medium"),),
-            extractors=(),
-        )
+        if transcriber is None:
+            transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
+        caps = Capabilities(transcribers=(transcriber,), extractors=())
         ctx = TestXDrain().ctx(
             instance, transport, capabilities=caps, provider_available=caps.available
         )
@@ -1390,11 +1445,161 @@ class TestTranscribedVideoRetired:
         fields, body = read_enrichment(instance.root / post.path)
         assert fields["enclosure"] == self.VIDEO
         assert body.startswith("@ines — ")
-        assert "the post stays done without a transcript" in report
-        assert "(HTTP 404" in report
+        assert "ended without a transcript (its video stopped serving (HTTP 404" in report
+        assert "the post stays done as it was re-fetched" in report
         # Nothing was transcribed, so the video it has is kept.
         assert entries[work_hash(self.VIDEO)].status is Status.DONE
         assert (item_dir / "media-0.mp4").exists()
+
+    def test_a_rerun_whose_video_holds_no_speech_keeps_its_post_and_its_video(self, instance):
+        # Silent and music-only clips are a large share of x video: the
+        # downloaded file and its description are then the only record of it.
+        item_dir = self.landed_before_the_fix(instance)
+        (item_dir / "media-0.md").write_text("Describes `media-0.mp4`\n\nA looping chart.\n")
+        silent = FakeTranscriber(
+            raise_=ProviderInputError("whisper-local heard no speech in the audio")
+        )
+        report, entries = self.rerun(instance, transcriber=silent)
+        post = entries[self.post_hash()]
+        assert post.status is Status.DONE
+        assert post.path == f"enrichment/{ITEM}/x-{self.post_hash()[:6]}.md"
+        assert "ended without a transcript (whisper-local heard no speech in the audio)" in report
+        assert "mark done" not in report  # the disposition belongs to a park, not a landing
+        assert entries[work_hash(self.VIDEO)].status is Status.DONE
+        assert (item_dir / "media-0.mp4").exists()
+        assert (item_dir / "media-0.md").exists()
+
+    def waiting_rerun(self, instance, *, park: str | None, status=Status.WAITING, attempts=None):
+        """The rerun parked for its video, as the re-fetch left it, with ``park`` on disk."""
+        item_dir = self.landed_before_the_fix(instance)
+        if park is None:
+            (item_dir / f"x-{self.post_hash()[:6]}.md").unlink()
+        else:
+            (item_dir / f"x-{self.post_hash()[:6]}.md").write_text(park, encoding="utf-8")
+        line = self.line(
+            self.POST_URL,
+            status=status,
+            needs=Need.TRANSCRIBE,
+            attempts=attempts,
+            reason="post fetched — its video awaits transcription",
+            rerun=True,
+        )
+        ledger.append(instance.ledger_path, line)
+        return item_dir
+
+    def drain_waiting(self, instance, video: HttpResponse) -> tuple[str, dict]:
+        transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
+        ctx = transcribe_ctx(
+            instance, transcriber=transcriber, transport=FakeTransport({self.VIDEO: video})
+        )
+        report = " ".join(run_mod.run_transcribe(ctx).split())
+        return report, ledger.load(instance.ledger_path)
+
+    PARK = (
+        "---\nurl: https://x.com/i/status/800\nauthor: Ines Duarte (@ines)\n"
+        "enclosure: https://video.example.test/ext_tw_video/800/vid/1280x720/v800.mp4\n---\n\n"
+        "@ines — Sat Aug 22 14:40:00 +0000 2026\n\n(video post)\n"
+    )
+
+    def test_a_rerun_whose_post_fetch_escalates_is_not_a_transcript_end(self, instance):
+        # Blocked five times on the post itself: a page outcome, not the end
+        # of a transcription, and never reported as one.
+        self.landed_before_the_fix(instance)
+        post = ledger.load(instance.ledger_path)[self.post_hash()]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(post, status=Status.BLOCKED, attempts=4, reason="rate limited"),
+        )
+        refused = HttpResponse(status=429, content_type="text/html", body=b"")
+        transport = FakeTransport({"https://api.fxtwitter.com/status/800": refused})
+        ctx = TestXDrain().ctx(instance, transport)
+        report = " ".join(run_mod.run(ctx).split())
+        # Four attempts on the line, so this fetch was the fifth.
+        assert ("GET", "https://api.fxtwitter.com/status/800") in transport.calls
+        assert "ended without a transcript" not in report
+
+    def test_a_rerun_whose_park_names_no_video_keeps_its_post(self, instance):
+        park = self.PARK.replace(f"enclosure: {self.VIDEO}\n", "")
+        self.waiting_rerun(instance, park=park)
+        report, entries = self.drain_waiting(instance, TestXDrain().video())
+        post = entries[self.post_hash()]
+        assert post.status is Status.DONE
+        assert "ended without a transcript (enrichment record carries no enclosure URL" in report
+
+    def test_a_rerun_with_no_post_on_disk_parks_as_before(self, instance):
+        # Nothing stored to keep: the park is the honest end.
+        self.waiting_rerun(instance, park=None)
+        _report, entries = self.drain_waiting(instance, TestXDrain().video())
+        post = entries[self.post_hash()]
+        assert post.status is Status.MANUAL
+        assert "no enrichment record" in (post.reason or "")
+
+    def test_a_rerun_whose_blocked_video_escalates_keeps_its_post(self, instance):
+        self.waiting_rerun(instance, park=self.PARK, status=Status.BLOCKED, attempts=4)
+        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+        report, entries = self.drain_waiting(instance, page)
+        post = entries[self.post_hash()]
+        assert post.status is Status.DONE
+        assert "ended without a transcript (still blocked after 5 attempts" in report
+
+    def test_a_fresh_shares_blocked_video_still_escalates_to_manual(self, instance):
+        self.waiting_rerun(instance, park=self.PARK, status=Status.BLOCKED, attempts=4)
+        fresh = ledger.load(instance.ledger_path)[self.post_hash()]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(fresh, rerun=False),
+        )
+        page = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
+        _report, entries = self.drain_waiting(instance, page)
+        post = entries[self.post_hash()]
+        assert post.status is Status.MANUAL
+        assert (post.reason or "").startswith("still blocked after 5 attempts")
+
+    @pytest.mark.parametrize(
+        "old_url",
+        [
+            # The same video under another rendition and tag, as a later fetch hands over.
+            "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/480x270/Ab.mp4?tag=12",
+            "https://video.twimg.com/ext_tw_video/2000000000000000800/pu/vid/avc1/640x360/Cd.mp4",
+        ],
+    )
+    def test_the_old_download_retires_by_the_videos_id_not_its_url(self, instance, old_url):
+        item_dir = self.landed_before_the_fix(instance, video_url=old_url)
+        fresh = "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/1280x720/Ef.mp4?tag=16"
+        report, entries = self.rerun_with_video_url(instance, fresh)
+        assert entries[work_hash(old_url)].status is Status.SKIPPED
+        assert not (item_dir / "media-0.mp4").exists()
+        assert "replaced its downloaded video media-0.mp4" in report
+
+    def test_another_video_of_the_same_post_is_never_retired(self, instance):
+        # A post's second video stays pooled, as a fresh share pools it.
+        other = "https://video.twimg.com/amplify_video/2000000000000000801/vid/avc1/1280x720/Gh.mp4"
+        item_dir = self.landed_before_the_fix(instance, video_url=other)
+        fresh = "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/1280x720/Ef.mp4"
+        _report, entries = self.rerun_with_video_url(instance, fresh)
+        assert entries[work_hash(other)].status is Status.DONE
+        assert (item_dir / "media-0.mp4").exists()
+
+    def rerun_with_video_url(self, instance, url: str) -> tuple[str, dict]:
+        payload = json.loads(fixture_text("fxtwitter", "video-800.json"))
+        for listing in payload["tweet"]["media"].values():
+            for media in listing:
+                media["url"] = url
+        transport = FakeTransport(
+            {
+                "https://api.fxtwitter.com/status/800": json_response(payload),
+                url: TestXDrain().video(),
+            }
+        )
+        caps = Capabilities(
+            transcribers=(FakeTranscriber("whisper-local", text="Clip words.", model="medium"),),
+            extractors=(),
+        )
+        ctx = TestXDrain().ctx(
+            instance, transport, capabilities=caps, provider_available=caps.available
+        )
+        report = " ".join(run_mod.run(ctx).split())
+        return report, ledger.load(instance.ledger_path)
 
 
 class TestCorrectedUnitLandsItsTranscript:

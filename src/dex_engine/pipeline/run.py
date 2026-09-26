@@ -93,7 +93,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import ext_of, resolve_repo_path, work_hash
+from .urls import ext_of, resolve_repo_path, video_identity, work_hash
 
 __all__ = [
     "CAP_BOUNDS",
@@ -986,9 +986,7 @@ class _Drain:
             else:
                 self._drive_unit(entry)
         except ProviderInputError as e:
-            self.record_outcome(
-                entry, status=Status.MANUAL, reason=_provider_input_reason(entry, e)
-            )
+            self._close_unheard(entry, reason=_provider_input_reason(entry, e), cause=scrub(str(e)))
         except Exception as e:  # noqa: BLE001 — the per-unit broad catch, one of two
             self.record_outcome(entry, status=Status.ERROR, error=scrub(f"{type(e).__name__}: {e}"))
             self.error_events.append(
@@ -1161,23 +1159,30 @@ class _Drain:
         transcript stands for the video, so the file and every description
         of it leave, and the child's line closes ``skipped`` with no path —
         nothing counts it any more, neither the describe row, which counts
-        files, nor lint, which asks after every recorded path. A child that
-        already closed without content (skipped over the size ceiling,
-        confirmed gone) holds nothing to retire.
+        files, nor lint, which asks after every recorded path. The child is
+        found by the video it downloaded, not the URL it took: the rendition
+        heard now need not be the one pooled then. A child that already
+        closed without content (skipped over the size ceiling, confirmed
+        gone) holds nothing to retire.
         """
         if not isinstance(enclosure, str):
             return
-        child = self.entries.get(work_hash(enclosure))
-        if (
-            child is None
-            or child.job is not Job.MEDIA
-            or child.parent != entry.hash
-            or child.status in _TERMINAL_NO_CONTENT
-        ):
-            return
+        video = video_identity(enclosure)
+        children = [
+            child
+            for child in self.entries.values()
+            if child.parent == entry.hash
+            and child.job is Job.MEDIA
+            and child.status not in _TERMINAL_NO_CONTENT
+            and video_identity(child.url) == video
+        ]
+        for child in children:
+            self._retire_download(entry, child, (self.ctx.instance.root / landed).parent)
+
+    def _retire_download(self, entry: LedgerEntry, child: LedgerEntry, item_dir: Path) -> None:
         if child.path is not None:
             name = Path(child.path).name
-            described = _drop_described_download((self.ctx.instance.root / landed).parent, name)
+            described = _drop_described_download(item_dir, name)
             self.notes.append(
                 f"item {self.owner_of(entry)}: the transcript of {entry.url} replaced its "
                 f"downloaded video {name}"
@@ -1259,39 +1264,58 @@ class _Drain:
                         "instagram_base_url at another host"
                     ),
                 )
-            case Status.DEAD if entry.kind is Kind.X and entry.rerun:
-                self._land_without_transcript(entry, failure.reason)
             case Status.DEAD if entry.kind is Kind.X:
                 # A post's video can go while the post stands, and the post
                 # the park already stored is a record of it either way.
-                self.record_outcome(
+                self._close_unheard(
                     entry,
-                    status=Status.MANUAL,
                     reason=(
                         f"the post's video stopped serving ({failure.reason}) — requeue the "
                         "unit so the x driver re-resolves it, or mark done to keep the stored "
                         "post as the record"
                     ),
+                    cause=f"its video stopped serving ({failure.reason})",
                 )
             case Status.DEAD | Status.MANUAL:
-                self.record_outcome(entry, status=failure.status, reason=failure.reason)
+                self._close_unheard(entry, reason=failure.reason, status=failure.status)
             case _:
                 raise RuntimeError(f"unclassifiable acquisition failure {failure.status!r}")
 
-    def _land_without_transcript(self, entry: LedgerEntry, why: str) -> None:
-        """Keep a rerun's post as done when the video it would transcribe is gone.
+    def _close_unheard(
+        self,
+        entry: LedgerEntry,
+        *,
+        reason: str,
+        status: Status = Status.MANUAL,
+        cause: str | None = None,
+    ) -> None:
+        """Close a transcribe job that ended without a transcript.
 
-        The rerun re-fetched the post and stored it before reaching for the
-        video, so that file is the landing the post can still have — a rerun
-        never leaves an item less enriched than it found it. A fresh share
-        parks manual instead: nothing has landed for it yet.
+        A rerun of an x post re-fetched and stored the post before reaching
+        for its video, so the post stays done rather than turning into a
+        park, whatever ended the transcription: a silent video, a dead or
+        unreachable one, a park that cannot be read back. The video file an
+        earlier fetch downloaded is left as it is, because for a silent
+        video that file and its description are the only record of it.
+        Everything else parks as ``status`` with ``reason``, a fresh share
+        of the same post included, since nothing has landed for it.
         """
-        path = str(self._output_file(entry).relative_to(self.ctx.instance.root))
-        self.record_outcome(entry, status=Status.DONE, path=path)
-        self.notes.append(
-            f"item {self.owner_of(entry)}: the rerun of {entry.url} could not fetch the "
-            f"video it would transcribe ({why}) — the post stays done without a transcript"
-        )
+        stored = self._output_file(entry)
+        if (
+            entry.rerun
+            and entry.kind is Kind.X
+            and entry.needs is Need.TRANSCRIBE
+            and stored.is_file()
+        ):
+            self.record_outcome(
+                entry, status=Status.DONE, path=str(stored.relative_to(self.ctx.instance.root))
+            )
+            self.notes.append(
+                f"item {self.owner_of(entry)}: the rerun of {entry.url} ended without a "
+                f"transcript ({cause or reason}) — the post stays done as it was re-fetched"
+            )
+            return
+        self.record_outcome(entry, status=status, reason=reason)
 
     def _apply(self, entry: LedgerEntry, fetched: Outcome) -> None:
         """Map what the driver FOUND onto the unit's lifecycle — the one total match.
@@ -1450,11 +1474,7 @@ class _Drain:
         if attempts >= MAX_BLOCKED_ATTEMPTS:
             # Escalation appends attempt context to what was found —
             # it never invents a reason.
-            self.record_outcome(
-                entry,
-                status=Status.MANUAL,
-                reason=f"still blocked after {attempts} attempts — {reason}",
-            )
+            self._close_unheard(entry, reason=f"still blocked after {attempts} attempts — {reason}")
             return
         self.record_outcome(
             entry, status=Status.BLOCKED, needs=needs, attempts=attempts, reason=reason
