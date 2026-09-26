@@ -8,9 +8,9 @@ prose over each value it held; LaTeXML's equation tables stored as rows
 of empty cells; and a LaTeXML table typeset as spans went with the figure
 floating it, so an appendix of nothing but tables vanished whole. A page
 that declares the markdown it was rendered from is now stored from that
-markdown as well. The unit ledgered ``done`` on what survived, and
-``done`` is terminal for the drain, so the fixed extractor never revisits
-those pages on its own.
+markdown as well. The unit ledgered ``done`` on what survived, or parked
+for judgment when too little survived, and neither is a status the drain
+revisits, so the fixed extractor never reaches those pages on its own.
 
 **Membership is every landing the unfixed seam extracted.** Nothing
 stored says whether a page declared a markdown source, wore a scrollbar
@@ -36,16 +36,27 @@ whose engine is 0.2.1 or older:
   huggingface's papers pages, which the paper driver reads as articles
   through the same seam as a web page, so it is a member too.
 
-A ``manual`` or ``skipped`` unit is not a landing and stays parked for
-judgment, as migration 2 left its manual units; a unit still queued,
-waiting or blocked will reach the fixed extractor on its own.
+**So is every page the unfixed seam parked thin.** A page whose
+extraction came back under the substantial bar parked ``manual`` for
+judgment, and a fresh share today might land it: its tables sat in a
+scroll area, or it declares a markdown source. Every rewrite engine, 0.1.0
+on, wrote that park the one way — ``status: manual``, ``reason:
+thin-extraction``, the classifier's constant never reworded — for a web
+page or a paper read as an article (an arXiv full text that extracts thin
+degrades to abstract-only instead of parking). The pre-rewrite engine
+wrote a thin page as ``dead`` with no reason, the same line it wrote for a
+page that was gone, so nothing identifies one and those stay alone. So
+does a manual park for any other reason, and every ``skipped`` unit: a
+paywall or a verdict is judgment the fix does not revisit. A unit still
+queued, waiting or blocked reaches the fixed extractor on its own.
 
-**The engine version on the landing line is the vintage, and it is
-exact.** The fix and this migration ship together in the first release
-after 0.2.1, so every ``done`` line an engine at 0.2.1 or older wrote
-came out of the unfixed seam, and every line the fixed engine writes —
-this migration's reruns landing, a fresh capture's landing — carries a
-newer version. Nothing else separates the two. The stored body cannot
+**The engine version on the line is the vintage, and it is exact.** The
+fix and this migration ship together in the first release after 0.2.1,
+so every landing or thin park an engine at 0.2.1 or older wrote came out
+of the unfixed seam, and every line the fixed engine writes — a rerun's
+landing, a still-thin page's new park, a fresh capture's outcome —
+carries a newer version, because the drain stamps every outcome with the
+engine that wrote it. Nothing else separates the two. The stored body cannot
 (the losses left no mark, above), and the rerun's provenance cannot
 either: ``via: migration-18`` rides the rerun's landing but not a fresh
 capture's, so a re-application after a log race would reseed every page
@@ -73,7 +84,10 @@ every page an older engine stored in a form the current one no longer
 writes: page preparation arrived in 0.1.1 and the ``description`` line
 in 0.1.6, so landings older than those come back rewritten whatever
 this fix did to them — which is the point, since a fresh capture of
-them would read the same way.
+them would read the same way. A thin park has no stored output, so the
+guard has nothing to keep: a page still thin simply parks again, exactly
+as a fresh share would, and one the fixed seam can read lands as new
+material to write up.
 
 Which live item a seed writes under follows migration 2's rule, asked
 of the corpus's own resolution: the stored ``item`` where its corpus file
@@ -82,8 +96,9 @@ through its parent chain, since no frontmatter lists it. A unit nothing
 live claims is a purge honored on the record: skipped with why, naming
 the ``state/exclusions.tsv`` entry where one exists.
 
-Idempotent: a seeded unit's live line is the queued seed, not ``done``,
-until it lands, and it lands stamped by the fixed engine, outside the
+Idempotent: a seeded unit's live line is the queued seed until the
+drain takes it, and whatever the drain then writes — a landing, or a
+still-thin page's park — is stamped by the fixed engine, outside the
 cohort for good.
 """
 
@@ -114,15 +129,21 @@ __all__ = ["ArticleSeamRerun", "build"]
 
 NUMBER = 18
 INTENT = (
-    "re-extract every page the article seam stored before it kept tables, code and math: "
-    "each done web page, and each paper whose text came through it, landed by engine 0.2.1 "
-    "or older requeues as {queued, rerun, via: migration-18}"
+    "re-extract every page the article seam stored or parked thin before it kept tables, "
+    "code and math: each done web page, each paper whose text came through it, and each "
+    "thin-extraction park, written by engine 0.2.1 or older, requeues as {queued, rerun, "
+    "via: migration-18}"
 )
 
 # The last engine whose article seam lost what the fix keeps. The fix
-# ships in the release after it, so the version on a landing dates it.
+# ships in the release after it, so the version on a line dates it.
 _LAST_UNFIXED = (0, 2, 1)
 _SEAM_KINDS = frozenset({Kind.WEB, Kind.PAPER})
+
+# The reason every rewrite engine wrote on a thin park, spelled here
+# rather than imported: a later rewording of the classifier's constant
+# must not change which old lines this migration reads as thin.
+_THIN_EXTRACTION = "thin-extraction"
 
 # What the paper driver writes into an arXiv landing's frontmatter: the
 # id always, and the note only when the full text never arrived.
@@ -160,7 +181,7 @@ class ArticleSeamRerun:
         self._engine_version = engine_version
 
     def apply(self, root: Path) -> MigrationReport:
-        """Requeue every page landing the unfixed article seam extracted.
+        """Requeue every page the unfixed article seam landed or parked thin.
 
         Args:
             root: The instance root.
@@ -180,7 +201,7 @@ class ArticleSeamRerun:
         members = [
             entry
             for entry in latest.values()
-            if _is_unfixed_landing(entry, skipped) and _went_through_seam(root, entry, anomalies)
+            if _is_unfixed_outcome(entry, skipped) and _went_through_seam(root, entry, anomalies)
         ]
         if not members:
             return MigrationReport(skipped=skipped, anomalies=anomalies)
@@ -209,11 +230,11 @@ class ArticleSeamRerun:
         return stamp(entry, today=self._today, now=self._now, engine_version=self._engine_version)
 
 
-def _is_unfixed_landing(entry: LedgerEntry, skipped: list[Skipped]) -> bool:
-    """A page unit landed ``done`` through the seam's kinds by an unfixed engine."""
-    if entry.job is not None or entry.status is not Status.DONE:
+def _is_unfixed_outcome(entry: LedgerEntry, skipped: list[Skipped]) -> bool:
+    """A page unit of the seam's kinds that an unfixed engine landed or parked thin."""
+    if entry.job is not None or entry.kind not in _SEAM_KINDS:
         return False
-    if entry.kind not in _SEAM_KINDS:
+    if entry.status is not Status.DONE and not _parked_thin(entry):
         return False
     try:
         return parse_version(entry.engine) <= _LAST_UNFIXED
@@ -221,17 +242,26 @@ def _is_unfixed_landing(entry: LedgerEntry, skipped: list[Skipped]) -> bool:
         skipped.append(
             Skipped(
                 what=f"ledger entry {entry.hash}",
-                why=f"done {entry.kind.value} landing with unparseable engine {entry.engine!r} "
-                "— cannot tell whether the unfixed extractor stored it; requeue it by hand "
-                "with `enrich mark` if its body lacks tables, code or math the page has",
+                why=f"{entry.status.value} {entry.kind.value} line with unparseable engine "
+                f"{entry.engine!r} — cannot tell whether the unfixed extractor wrote it; "
+                "requeue it by hand with `enrich mark` if its page has tables, code or math "
+                "the stored body lacks, or if it parked thin",
             )
         )
         return False
 
 
+def _parked_thin(entry: LedgerEntry) -> bool:
+    return entry.status is Status.MANUAL and entry.reason == _THIN_EXTRACTION
+
+
 def _went_through_seam(root: Path, entry: LedgerEntry, anomalies: list[str]) -> bool:
-    """Whether the landing's stored text came out of the article seam."""
-    if entry.kind is Kind.WEB:
+    """Whether the landing's stored text, or the thin park, came out of the article seam.
+
+    A paper's thin park did: an arXiv full text that extracts thin degrades
+    to abstract-only instead, so only a paper read as an article parks thin.
+    """
+    if entry.kind is Kind.WEB or _parked_thin(entry):
         return True
     if entry.path is None or not (root / entry.path).is_file():
         return False
@@ -270,13 +300,14 @@ def _seed(entry: LedgerEntry, item: str) -> LedgerEntry:
 def _summary(seeds: list[tuple[LedgerEntry, str]]) -> str:
     pages = sum(1 for entry, _ in seeds if entry.kind is Kind.WEB)
     papers = len(seeds) - pages
+    thin = sum(1 for entry, _ in seeds if _parked_thin(entry))
     reattributed = sum(1 for entry, item in seeds if item != entry.item)
     summary = (
-        f"seeded {len(seeds)} rerun(s) — {pages} web page(s), {papers} paper(s) — landed "
-        "before the extractor kept tables, code blocks and math; they drain after fresh "
-        "work, a page that re-fetches unchanged lands under Already stored owing nothing, "
-        "and a rewritten one comes back under Needs writing up because its digest was "
-        "written from what extraction lost"
+        f"seeded {len(seeds)} rerun(s) — {pages} web page(s), {papers} paper(s), {thin} of "
+        "them parked thin — stored before the extractor kept tables, code blocks and math; "
+        "they drain after fresh work, a page that re-fetches unchanged lands under Already "
+        "stored owing nothing, a rewritten one comes back under Needs writing up because "
+        "its digest was written from what extraction lost, and a page still thin parks again"
     )
     if reattributed:
         summary += f"; {reattributed} re-attributed to the live item that claims the unit"

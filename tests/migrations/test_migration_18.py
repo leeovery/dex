@@ -1,4 +1,4 @@
-"""Tests for migration 18: re-extract every page the unfixed article seam stored."""
+"""Tests for migration 18: re-extract every page the unfixed article seam stored or parked thin."""
 
 import datetime
 
@@ -7,20 +7,25 @@ import pytest
 from dex_engine.migrations import run_pending
 from dex_engine.migrations.migration_18 import build
 from dex_engine.pipeline import ledger
+from dex_engine.pipeline import run as run_mod
 from dex_engine.pipeline.enrichment import render_enrichment
-from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Need, Status
+from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Need, Status, Unusable
 from dex_engine.pipeline.urls import work_hash
+from tests.conftest import FakeDriver
+from tests.pipeline.test_run import make_ctx
 
-TODAY = datetime.date(2026, 10, 2)
-NOW = datetime.datetime(2026, 10, 2, 9, 0, 0, 500000, tzinfo=datetime.UTC)
+TODAY = datetime.date(2026, 9, 22)
+NOW = datetime.datetime(2026, 9, 22, 9, 0, 0, 500000, tzinfo=datetime.UTC)
 ENGINE = "0.2.2"
 UNFIXED = "0.2.1"
-LANDED = datetime.date(2026, 9, 20)
+LANDED = datetime.date(2026, 9, 10)
 
 ITEM = "2026-09-20-docs-page-abc123"
 PAGE_URL = "https://docs.example.test/guide/tables"
 PAPER_URL = "https://arxiv.org/abs/2601.00001"
 REVIEW_URL = "https://openreview.net/forum?id=abc123"
+THIN = "thin-extraction"
+PAYWALL = "payment/login required (HTTP 402)"
 
 
 @pytest.fixture
@@ -63,6 +68,7 @@ def unit(  # noqa: PLR0913 — a fixture builder mirrors the entry's own fields
     depth=None,
     http_shared=False,
     rerun=False,
+    reason=None,
 ):
     unit_hash = work_hash(url)
     return LedgerEntry(
@@ -82,7 +88,7 @@ def unit(  # noqa: PLR0913 — a fixture builder mirrors the entry's own fields
         http_shared=http_shared,
         rerun=rerun,
         via="migration-18" if rerun else ("harvest" if parent else None),
-        reason="thin-extraction" if status in (Status.MANUAL, Status.SKIPPED) else None,
+        reason=reason or (PAYWALL if status in (Status.MANUAL, Status.SKIPPED) else None),
         path=f"enrichment/{item}/{kind.value}-{unit_hash[:6]}.md"
         if status is Status.DONE
         else None,
@@ -105,8 +111,9 @@ ABSTRACT_ONLY = {**FULL_TEXT, "note": "abstract only"}
 
 
 def live_lines(root):
+    # Read as of a month on, so every line a test writes is in the past.
     path = root / "state" / "enrichment-ledger.jsonl"
-    return ledger.latest_readable(path, now=lambda: NOW)
+    return ledger.latest_readable(path, now=lambda: NOW + datetime.timedelta(days=30))
 
 
 def seeds(root):
@@ -229,6 +236,96 @@ class TestNonMembers:
         write_corpus_item(tmp_path, urls=(url,))
         write_ledger(tmp_path, landing)
         assert migration.apply(tmp_path).actions == []
+
+
+class TestThinParks:
+    """A page the unfixed seam parked thin, which a fresh share today might land."""
+
+    @pytest.mark.parametrize("engine", ["0.1.0", "0.1.13", "0.2.0", "0.2.1"])
+    def test_a_thin_park_by_every_unfixed_rewrite_engine_requeues(
+        self, tmp_path, migration, engine
+    ):
+        write_corpus_item(tmp_path)
+        write_ledger(tmp_path, unit(status=Status.MANUAL, reason=THIN, engine=engine))
+        report = migration.apply(tmp_path)
+        (seed,) = seeds(tmp_path)
+        assert (seed.hash, seed.rerun, seed.via) == (work_hash(PAGE_URL), True, "migration-18")
+        assert (seed.reason, seed.engine) == (None, ENGINE)
+        assert report.actions[0].startswith(
+            "seeded 1 rerun(s) — 1 web page(s), 0 paper(s), 1 of them parked thin"
+        )
+
+    def test_a_paper_read_as_an_article_that_parked_thin_requeues(self, tmp_path, migration):
+        # No stored file to read: only the article route ever parks a paper thin.
+        write_corpus_item(tmp_path, urls=(REVIEW_URL,))
+        write_ledger(tmp_path, unit(REVIEW_URL, kind=Kind.PAPER, status=Status.MANUAL, reason=THIN))
+        report = migration.apply(tmp_path)
+        assert [seed.url for seed in seeds(tmp_path)] == [REVIEW_URL]
+        assert "0 web page(s), 1 paper(s), 1 of them parked thin" in report.actions[0]
+
+    def test_a_landing_is_not_counted_as_parked_thin(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_ledger(tmp_path, unit())
+        (action,) = migration.apply(tmp_path).actions
+        assert "0 of them parked thin" in action
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            PAYWALL,
+            f"{PAYWALL}; wayback snapshot extraction was thin",
+            "still blocked after 5 attempts — HTTP 429",
+            "unstated (pre-migration)",
+        ],
+        ids=["paywall", "paywall-thin-snapshot", "escalated-blocked", "pre-rewrite"],
+    )
+    def test_a_manual_park_for_any_other_reason_stays_parked(self, tmp_path, migration, reason):
+        write_corpus_item(tmp_path)
+        path = write_ledger(tmp_path, unit(status=Status.MANUAL, reason=reason))
+        before = path.read_text()
+        assert migration.apply(tmp_path).actions == []
+        assert path.read_text() == before
+
+    def test_a_thin_verdict_closed_skipped_stays_alone(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_ledger(tmp_path, unit(status=Status.SKIPPED, reason=THIN))
+        assert migration.apply(tmp_path).actions == []
+
+    def test_the_pre_rewrite_engines_dead_line_stays_alone(self, tmp_path, migration):
+        # It wrote a thin page and a gone one as the same reasonless dead line.
+        write_corpus_item(tmp_path)
+        write_ledger(tmp_path, unit(status=Status.DEAD, engine="0.0.1"))
+        assert migration.apply(tmp_path).actions == []
+
+    def test_a_park_by_the_fixed_engine_never_requeues(self, tmp_path, migration):
+        write_corpus_item(tmp_path)
+        write_ledger(tmp_path, unit(status=Status.MANUAL, reason=THIN, engine=ENGINE))
+        assert migration.apply(tmp_path).actions == []
+
+    def test_a_page_the_drain_parks_thin_again_stays_out_of_the_cohort(self, instance, migration):
+        # Through the real drain: the rerun re-parks, and that park line
+        # carries the engine that wrote it, so a re-application finds nothing.
+        root = instance.root
+        write_corpus_item(root)
+        path = write_ledger(root, unit(status=Status.MANUAL, reason=THIN))
+        migration.apply(root)
+        later = NOW + datetime.timedelta(hours=1)
+        driver = FakeDriver(fetch_fn=lambda _unit: Unusable(evidence=THIN))
+        run_mod.run(
+            make_ctx(
+                instance, driver, today=lambda: TODAY, now=lambda: later, engine_version=ENGINE
+            )
+        )
+        repark = live_lines(root)[work_hash(PAGE_URL)]
+        assert (repark.status, repark.reason, repark.engine) == (Status.MANUAL, THIN, ENGINE)
+        after_run = path.read_text()
+        again = build(
+            today=lambda: TODAY,
+            now=lambda: later + datetime.timedelta(days=1),
+            engine_version=ENGINE,
+        )
+        assert again.apply(root).actions == []
+        assert path.read_text() == after_run
 
 
 class TestIdempotency:
