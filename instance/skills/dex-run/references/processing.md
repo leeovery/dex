@@ -39,8 +39,9 @@ directory).
    retry queue — read it, act on nothing.
 
 3. **Backstop.** `bin/dex enrich status` — any item listed under **Digest
-   these** is an interrupted previous session: complete its remaining
-   per-item steps now, harvest → lens verdict → digest → place → wiki.
+   these** is an interrupted previous session, or one a rerun took a page
+   from since its digest: complete its remaining per-item steps now,
+   harvest → lens verdict → digest → place → wiki.
    The listing says a digest is owed, not that harvest or the verdict
    ran: the interruption can predate any of those steps, and no surface
    here would catch a skipped harvest before the next health check.

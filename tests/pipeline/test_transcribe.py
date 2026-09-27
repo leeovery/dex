@@ -70,7 +70,15 @@ from tests.drivers.test_instagram import (
     probe_url,
     walk,
 )
-from tests.pipeline.test_run import ITEM, TODAY, entry_for, make_ctx, write_item
+from tests.pipeline.test_run import (
+    ITEM,
+    LATER,
+    TODAY,
+    digest_item,
+    entry_for,
+    make_ctx,
+    write_item,
+)
 
 VIDEO_URL = "https://youtube.com/watch?v=abc123"
 
@@ -1428,7 +1436,7 @@ class TestTranscriptLandsBesideTheVideo:
         return item_dir
 
     def rerun(
-        self, instance, *, video: HttpResponse | None = None, transcriber=None
+        self, instance, *, video: HttpResponse | None = None, transcriber=None, today=None
     ) -> tuple[str, dict]:
         responses = {
             **TestXDrain().responses(),
@@ -1439,7 +1447,7 @@ class TestTranscriptLandsBesideTheVideo:
             transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
         caps = Capabilities(transcribers=(transcriber,), extractors=())
         ctx = TestXDrain().ctx(
-            instance, transport, capabilities=caps, provider_available=caps.available
+            instance, transport, capabilities=caps, provider_available=caps.available, today=today
         )
         report = " ".join(run_mod.run(ctx).split())  # the surface wraps
         return report, ledger.load(instance.ledger_path)
@@ -1568,6 +1576,22 @@ class TestTranscriptLandsBesideTheVideo:
         report, entries = self.rerun(instance, video=gone)
         assert entries[self.post_hash()].status is Status.DONE
         assert "1 rewritten" in report
+
+    @pytest.mark.parametrize(("stored", "listed"), [("(video post)", False), ("An older.", True)])
+    def test_a_kept_post_is_newer_than_its_digest_only_when_its_body_moved(
+        self, instance, stored, listed
+    ):
+        item_dir = self.landed_before_the_fix(instance)
+        post = item_dir / f"x-{self.post_hash()[:6]}.md"
+        post.write_text(
+            post.read_text(encoding="utf-8").replace("(video post)", stored), encoding="utf-8"
+        )
+        digest_item(make_ctx(instance, FakeDriver()))
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, entries = self.rerun(instance, video=gone, today=lambda: LATER)
+        assert "the post stays done as it was re-fetched" in report
+        assert entries[self.post_hash()].date == (LATER if listed else TODAY)
+        assert run_mod.digest_orphans(instance) == ([ITEM] if listed else [])
 
     def test_whitespace_around_the_body_is_no_change(self, instance):
         # A post's text can end in a newline; the file stores its body trimmed.

@@ -42,7 +42,8 @@ the engine: the listing from the enrichment directory, the status from the
 ledger — `enriched` only once every unit the ownership map gives the item
 has landed (or is confirmed gone or deliberately skipped), `raw` while any
 is still owed. A rerun — a landed unit fetched again, as a migration's
-reseed or `enrich fetch` on the item's own URL — is not owed while its
+reseed or `enrich fetch` on the item's own landed URL (a retry of one that
+never landed is fresh work) — is not owed while its
 earlier landing still stands on disk: the item keeps its status while the
 rerun drains or retries. An item with no units at all derives its status
 from the enrichment directory instead: `raw` while nothing is there,
@@ -300,6 +301,14 @@ description and digest, and both come from the owner's note. The run
 report says so ("dead or ruled out" covers the mixed case), and the
 report and the digest backstop name the item until its digest pass is
 recorded; recording that pass is what clears it.
+
+A rerun that closes dead or skipped with its page gone from disk has
+taken that page from the item — a healing migration deleted an output
+it proved wrong, and the source was gone when re-fetched. A digest
+written before that day states what is gone, so the backstop names the
+item, and the run report too when every unit is closed, until a digest
+pass is recorded on or after that day, whatever else the item holds. A
+digest from before pass records were kept does not clear it.
 
 ## 7. Place (judgment — the values ARE the judgment; the verb writes it)
 

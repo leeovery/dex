@@ -194,8 +194,9 @@ other repairs need):
   not yours: those units drain when a provider appears (transcription
   backlogs: `bin/dex enrich transcribe --limit N`), and the ones that
   resolve to you are already listed under **read these yourself**.
-- **Enrichment newer than digest** — an interrupted session: finish
-  digest → place → wiki for each listed item.
+- **Enrichment newer than digest** — an interrupted session, or a rerun
+  that took a page away since the digest: finish digest → place → wiki
+  for each listed item.
 
 A repair can also surface a defect in the ENGINE itself: the lint
 report states something false, a verb writes the wrong thing, a

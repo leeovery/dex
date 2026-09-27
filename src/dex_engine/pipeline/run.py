@@ -1201,16 +1201,7 @@ class _Drain:
         meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
         body = _transcript_body(entry.kind, acquired.prefix, transcript)
-        path = self._write_output(entry, meta, body)
-        # A unit corrected to a transcribable kind (web → podcast) lands its
-        # own output HERE, never through _apply_done — the pre-correction
-        # kind's file leaves on the same rule, or the item carries two views
-        # of one unit forever.
-        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-        title = meta.get("title")
-        self.record_outcome(
-            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
-        )
+        self._land(entry, meta, body)
         # Audio lifecycle: the transcript supersedes the audio — delete on
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
@@ -1341,16 +1332,22 @@ class _Drain:
         ):
             path = str(stored.relative_to(self.ctx.instance.root))
             _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-            self.record_outcome(entry, status=Status.DONE, path=path)
+            # Parked in an earlier run, the park's effect is unknown here:
+            # taken as a rewrite, since a needless re-digest costs less than
+            # a lost one.
+            changed = self.park_writes.get(entry.hash, True)
+            self.record_outcome(
+                entry,
+                status=Status.DONE,
+                path=path,
+                landed=None if changed else self._landed_on(entry, path),
+            )
             # The job ends here, and nothing retries it to want the video.
             audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
             if audio is not None:
                 audio.unlink()
             outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
-            # Parked in an earlier run, the park's effect is unknown here:
-            # counted rewritten, since a needless re-digest costs less than
-            # a lost one.
-            if self.park_writes.get(entry.hash, True):
+            if changed:
                 outcome.changed += 1
             else:
                 outcome.unchanged += 1
@@ -1397,19 +1394,12 @@ class _Drain:
                 assert_never(fetched)
 
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
-        path = None
-        if content.body is not None:
-            if self._kept_larger_stored(entry, content.body):
-                return
-            path = self._write_output(entry, content.meta, content.body)
-            _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-        title = content.meta.get("title")
-        self.record_outcome(
-            entry,
-            status=Status.DONE,
-            path=path,
-            title=title if isinstance(title, str) and path is not None else None,
-        )
+        if content.body is None:
+            self.record_outcome(entry, status=Status.DONE)
+        elif self._kept_larger_stored(entry, content.body):
+            return
+        else:
+            self._land(entry, content.meta, content.body)
         if content.assets:
             self._write_assets(self.entries[entry.hash], content.assets)
         if content.media:
@@ -1481,12 +1471,7 @@ class _Drain:
         refetched = {k: v for k, v in needs.meta.items() if k not in TRANSCRIPT_PROVENANCE}
         meta = {**refetched, **transcript_provenance(stored.fields)}
         notes = _park_notes(entry.kind, needs.body)
-        path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
-        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-        title = meta.get("title")
-        self.record_outcome(
-            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
-        )
+        path = self._land(entry, meta, _transcript_body(entry.kind, notes, split[1]))
         self.notes.append(
             f"kept the stored transcript of {entry.url} under its re-fetched notes "
             f"({needs.reason}) — delete {path} first to transcribe it afresh"
@@ -1686,7 +1671,15 @@ class _Drain:
             path = stored.path
         self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
         self.notes.append(note(path))
-        self.record_outcome(entry, status=Status.DONE, path=path, title=stored.title)
+        self.record_outcome(
+            entry,
+            status=Status.DONE,
+            path=path,
+            title=stored.title,
+            # Dated by the copy's name as it stood: a move to the unit's own
+            # name changes no content, so the line keeps its landing's day.
+            landed=self._landed_on(entry, stored.path),
+        )
 
     def _earlier_kinds_landing(
         self, entry: LedgerEntry, stored: _StoredOutput
@@ -1785,6 +1778,32 @@ class _Drain:
             / f"{entry.kind.value}-{entry.hash[:6]}.md"
         )
 
+    def _land(self, entry: LedgerEntry, meta: dict[str, str | int | None], body: str) -> str:
+        """Write the unit's output and record the unit done on it.
+
+        The fetch, a rerun's kept transcript and the transcribe drain all
+        land here. Each drops the unit's earlier-kind output on the success
+        that replaces it (:func:`_drop_superseded_outputs`) — a unit
+        corrected to a transcribable kind lands through the drain, and
+        without the drop its item carries two views of one unit forever. A
+        write that found its content already stored lands nothing new, and
+        its line keeps the day the stored output landed.
+
+        Returns:
+            The output's path relative to the instance root.
+        """
+        path, wrote = self._write_output(entry, meta, body)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
+        title = meta.get("title")
+        self.record_outcome(
+            entry,
+            status=Status.DONE,
+            path=path,
+            title=title if isinstance(title, str) else None,
+            landed=None if wrote else self._landed_on(entry, path),
+        )
+        return path
+
     def _write_output(
         self,
         entry: LedgerEntry,
@@ -1792,7 +1811,7 @@ class _Drain:
         body: str | None,
         *,
         count: bool = True,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns.
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
@@ -1813,6 +1832,11 @@ class _Drain:
         item's waiting unit drained on the string writes its enrichment
         into ``enrichment/<dead-id>/``, where the item that owes the work
         cannot list it.
+
+        Returns:
+            The output's path relative to the instance root, and whether
+            this call wrote it — False where the file already held this
+            content.
         """
         out = self._output_file(entry)
         owner = out.parent.name
@@ -1833,7 +1857,7 @@ class _Drain:
             # was sitting on disk the whole time.
             if count:
                 self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
-            return str(out.relative_to(self.ctx.instance.root))
+            return str(out.relative_to(self.ctx.instance.root)), False
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_text(out, content)
         # Counted AFTER the write lands: the mkdir and the write can both
@@ -1847,7 +1871,7 @@ class _Drain:
                 outcome.changed += 1
             else:
                 outcome.new += 1
-        return str(out.relative_to(self.ctx.instance.root))
+        return str(out.relative_to(self.ctx.instance.root)), True
 
     # -- extraction assets ----------------------------------------
 
@@ -2192,6 +2216,21 @@ class _Drain:
         """The unit's latest line that recorded an output, superseded or not."""
         return self._landings().get(unit_hash)
 
+    def _landed_on(self, entry: LedgerEntry, path: str) -> datetime.date | None:
+        """The day the unit's output at ``path`` landed, where its landing line says.
+
+        The unit's recorded landing dates only the file it names, matched
+        by name as :func:`_landed_file` resolves one across a rename. A
+        landing naming another file — a heal's, an earlier kind's — dates
+        nothing here, and neither does no landing at all: the line then
+        takes today, since a needless re-digest costs less than a lost one.
+        """
+        landing = self._recorded_output(entry.hash)
+        if landing is None or landing.path is None:
+            return None
+        same_file = PurePosixPath(landing.path).name == PurePosixPath(path).name
+        return landing.date if same_file else None
+
     def _landings(self) -> dict[str, LedgerEntry]:
         """Every unit's latest line that recorded an output, superseded or not."""
         if self._outputs is None:
@@ -2234,12 +2273,15 @@ class _Drain:
 
     # -- recording -------------------------------------------------------
 
-    def record(self, entry: LedgerEntry, *, count: bool = False) -> LedgerEntry:
+    def record(
+        self, entry: LedgerEntry, *, count: bool = False, landed: datetime.date | None = None
+    ) -> LedgerEntry:
         stamped = ledger.stamp(
             entry,
             today=self.ctx.today,
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
+            landed=landed,
         )
         self._appender.append(stamped)
         self._count_write(stamped)
@@ -2297,13 +2339,15 @@ class _Drain:
         title: str | None = None,
         error: str | None = None,
         reason: str | None = None,
+        landed: datetime.date | None = None,
     ) -> None:
         """Write the outcome for a drained entry, provenance carried forward.
 
         Everything but the attribution is carried from the drained line;
         the attribution is asked of the corpus (:meth:`owner_of`), so a
         renamed item's work is recorded against the item that owes it
-        rather than against the id the line was written under.
+        rather than against the id the line was written under. ``landed``
+        dates a line that re-records a stored output (:func:`ledger.stamp`).
         """
         self.record(
             LedgerEntry(
@@ -2329,6 +2373,7 @@ class _Drain:
                 reason=reason,
             ),
             count=True,
+            landed=landed,
         )
 
     # -- item frontmatter (derived from disk, written by corpus.py) ------
@@ -2382,10 +2427,11 @@ class _Drain:
         the opposite of what its frontmatter says.
         """
         sourced = {item_id for items in self.owners.values() for item_id in items}
+        live = set(self.item_status)
         # Digest coverage is filename-resolved (:func:`digested_items`): a
         # renamed item's digest sits under the old id, and asking for the
         # live id's file re-listed the item as owing work it recorded.
-        digested = digested_items(self.ctx.instance, set(self.item_status))
+        digested = digested_items(self.ctx.instance, live)
         self.no_source_items = [
             item_id
             for item_id, status in sorted(self.item_status.items())
@@ -2394,15 +2440,18 @@ class _Drain:
         # The closed-without-content sibling: every unit landed `dead` or
         # was deliberately ruled out, so the engine owes nothing further
         # and no enrichment exists — the owed work is the same description
-        # + digest, from the owner's note. Same shared reading as the
-        # digest backstop (:func:`_terminal_no_content_items`), and it
-        # drops off the moment the item's digest is recorded.
+        # + digest, from the owner's note. Same shared readings as the
+        # digest backstop (:func:`_terminal_no_content_items`,
+        # :func:`_page_lost_since_digest`): it drops off once its digest is
+        # recorded, or, where a rerun took its page away, once a digest
+        # pass is recorded on or after that day.
+        page_lost = _page_lost_since_digest(
+            self.ctx.instance, self.entries, self.owners, _digested_on(self.ctx.instance, live)
+        )
         self.closed_unenriched_items = [
             item_id
-            for item_id in _terminal_no_content_items(
-                self.entries, self.owners, set(self.item_status)
-            )
-            if item_id not in digested
+            for item_id in _terminal_no_content_items(self.entries, self.owners, live)
+            if item_id not in digested or item_id in page_lost
         ]
 
     def derive_undescribed_items(self) -> None:
@@ -3083,7 +3132,7 @@ def _is_cap_refusal(entry: LedgerEntry) -> bool:
 
 
 def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
-    """Re-fetch a unit the item already owns: same depth/parent/via, rerun.
+    """Re-fetch a unit the item already owns: same depth/parent/via.
 
     Never re-parents (re-fetching the item's primary URL must not nest it
     under itself) and never re-spends the URL cap — the unit is already
@@ -3091,7 +3140,17 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
     (:meth:`_Drain.owner_of`), like every write: carried from the held
     line it spells a renamed item's dead id, and a run dying between this
     line and the drain's outcome leaves that spelling standing.
+
+    A rerun is a landed unit fetched again, so the requeue is one only
+    where the held line names a landing, or is a rerun still owed. A retry
+    of a unit that never landed, or that a rerun already closed without
+    content, is fresh work: marked a rerun, each failed retry read as a
+    page taken from the item (:func:`_took_its_page_away`), with nothing
+    changed. The flag rides every later line, so the line that closes the
+    unit keeps that evidence through a compact, which drops a closed
+    unit's landing.
     """
+    holds_landing = existing.path is not None or (existing.rerun and existing.status in OUTSTANDING)
     requeued = dataclasses.replace(
         existing,
         item=drain.owner_of(existing),
@@ -3102,7 +3161,7 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
         title=None,
         error=None,
         reason=None,
-        rerun=True,
+        rerun=holds_landing,
     )
     drain.record(requeued)
     return existing.hash
@@ -3267,7 +3326,11 @@ def digest_orphans(instance: Instance) -> list[str]:
     one mtime and staleness would be undetectable. The two dates are the
     item's newest ``done`` ledger line and its digest pass record — both
     travel in git, and day granularity is the intent (enriching and
-    digesting in one session is not stale).
+    digesting in one session is not stale). A ``done`` line that re-records
+    an output as it stood — a rerun re-fetched to identical content, a
+    stored copy kept — carries the day that output landed
+    (:func:`ledger.stamp`), so the date says when the enrichment last
+    changed, never when a rerun last looked.
 
     An item still owing a unit is never listed, however long it has owed
     it. Such an item derives ``raw``, and a raw item is one the ingest
@@ -3289,15 +3352,19 @@ def digest_orphans(instance: Instance) -> list[str]:
     ruled out ``skipped`` — is the third (:func:`_terminal_no_content_items`):
     nothing landed and nothing owes, so neither of the first two answers
     finds it, yet its description and digest — from the owner's note —
-    are exactly the work still owed.
+    are exactly the work still owed. A live item a rerun took a page from
+    since its last digest pass is the fourth
+    (:func:`_page_lost_since_digest`): losing a page changes its enrichment
+    as surely as landing one does, and the digest it holds states what is
+    gone.
 
     Args:
         instance: The instance.
 
     Returns:
         Item ids that owe no further work and whose enrichment landed
-        after their digest pass (or that have enrichment and no digest at
-        all).
+        after their digest pass, that lost a page since it, or that have
+        enrichment and no digest at all.
     """
     orphans = []
     if not instance.enrichment_dir.is_dir():
@@ -3308,14 +3375,8 @@ def digest_orphans(instance: Instance) -> list[str]:
     enriched_on = _last_enriched(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     recorded = digested_items(instance, live)
-    # A digest pass record names the item as of the day it was recorded,
-    # like the file it covers: resolved the same way, so a pre-rename pass
-    # still dates the live item's digest and the staleness comparison
-    # survives the rename.
-    digested_on: dict[str, datetime.date] = {}
-    for recorded_item, date in _last_digested(instance).items():
-        item_id = _dir_owner(recorded_item, live)
-        digested_on[item_id] = max(digested_on.get(item_id, date), date)
+    digested_on = _digested_on(instance, live)
+    page_lost = _page_lost_since_digest(instance, entries, owners, digested_on) & live
     # A directory's name is the attribution as of the day it was written,
     # like a ledger line's item: a rename interrupted between the corpus
     # file and the enrichment directory leaves the directory under the
@@ -3336,14 +3397,16 @@ def digest_orphans(instance: Instance) -> list[str]:
     # (dead, or ruled out skipped). It has no enrichment directory and no
     # done line, so neither route above finds it — yet it owes exactly
     # what a no-source capture owes, description and digest from the
-    # owner's note, and the no-digest branch below is what lists it. Once
-    # its digest pass is recorded it drops off like any other item
-    # (nothing ever landed, so nothing is ever stale).
+    # owner's note, and the no-digest branch below is what lists it.
     candidates.update(_terminal_no_content_items(entries, owners, live))
+    # The fourth: an item a rerun took a page from since its digest pass.
+    # Its directory may be empty and its other units closed, and the digest
+    # it holds states what is gone.
+    candidates |= page_lost
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
-        if item_id not in recorded:
+        if item_id not in recorded or item_id in page_lost:
             orphans.append(item_id)
             continue
         landed = enriched_on.get(item_id)
@@ -3548,6 +3611,63 @@ def _terminal_no_content_items(
     )
 
 
+def _page_lost_since_digest(
+    instance: Instance,
+    entries: Mapping[str, LedgerEntry] | None,
+    owners: Mapping[str, tuple[str, ...]],
+    digested_on: Mapping[str, datetime.date],
+) -> set[str]:
+    """The items a rerun took a fetched page from since their last digest pass.
+
+    A rerun is a landed unit fetched again, and one whose landing still
+    stands keeps it and records done (:meth:`_Drain._apply_failure`). So a
+    rerun that closed dead or skipped with its page gone from disk took that
+    page from the item: a healing migration deleted an output it proved
+    wrong, and the re-fetch then found the source gone. A digest drawn
+    before that day states what is gone, so only a pass recorded on or
+    after it covers the loss, and a digest older than pass records covers
+    none. Named until then, whatever else the item holds — every unit
+    closed, or a shared unit landed under another item.
+
+    Shared by the run report and the digest backstop, like
+    :func:`_terminal_no_content_items`. An unreadable ledger claims nothing.
+    """
+    if not entries:
+        return set()
+    lost: dict[str, datetime.date] = {}
+    for entry in entries.values():
+        if not _took_its_page_away(instance, entry, owners):
+            continue
+        for item_id in owners.get(entry.hash, (entry.item,)):
+            lost[item_id] = max(lost.get(item_id, entry.date), entry.date)
+    return {
+        item_id
+        for item_id, day in lost.items()
+        if digested_on.get(item_id, datetime.date.min) < day
+    }
+
+
+def _took_its_page_away(
+    instance: Instance, entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]]
+) -> bool:
+    """Whether ``entry`` is a rerun of a fetched page, closed with the page gone from disk.
+
+    The rerun flag is the evidence that the unit had landed: a migration
+    reseeds units it found stored, and ``enrich fetch`` sets it only where
+    the unit holds a landing or is a rerun still owed
+    (:func:`_requeue_in_place`). It rides the closing line, which a
+    compact keeps. A heal that
+    closed the rerun and kept its file took nothing away. The
+    file is looked for at the unit's own name alone, where every page
+    landing stands (:meth:`_Drain.own_output`); a compact drops a closed
+    unit's landing line, so no other name would survive to look under.
+    """
+    if not entry.rerun or entry.job is not None or entry.status not in _TERMINAL_NO_CONTENT:
+        return False
+    page = f"{entry.kind.value}-{entry.hash[:6]}.md"
+    return _landed_file(instance, _owner(entry, owners), page) is None
+
+
 def _last_enriched(
     entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
 ) -> dict[str, datetime.date]:
@@ -3565,6 +3685,21 @@ def _last_enriched(
         for item_id in owners.get(entry.hash, (entry.item,)):
             newest[item_id] = max(newest.get(item_id, entry.date), entry.date)
     return newest
+
+
+def _digested_on(instance: Instance, live: set[str]) -> dict[str, datetime.date]:
+    """Each item's newest digest pass date, keyed by the live item it covers.
+
+    A pass record names the item as of the day it was recorded, like the
+    file it covers: resolved the same way (:func:`_dir_owner`), so a
+    pre-rename pass still dates the live item's digest and every comparison
+    against it survives the rename.
+    """
+    digested_on: dict[str, datetime.date] = {}
+    for recorded_item, date in _last_digested(instance).items():
+        item_id = _dir_owner(recorded_item, live)
+        digested_on[item_id] = max(digested_on.get(item_id, date), date)
+    return digested_on
 
 
 def _last_digested(instance: Instance) -> dict[str, datetime.date]:

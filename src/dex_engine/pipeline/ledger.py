@@ -685,6 +685,7 @@ def stamp(
     today: Callable[[], datetime.date],
     now: Callable[[], datetime.datetime],
     engine_version: str,
+    landed: datetime.date | None = None,
 ) -> LedgerEntry:
     """Return ``entry`` re-stamped with the injected clocks and engine version.
 
@@ -694,16 +695,22 @@ def stamp(
     the write timestamp is what orders this line against another machine's,
     so it is the writer's own clock or nothing.
 
-    There is no carve-out, because nothing writes a line that records no
-    work. ``date`` and ``engine`` answer WHEN, and by which engine, the
-    work this line records was done, and both are load-bearing:
+    ``date`` and ``engine`` answer WHEN, and by which engine, the work this
+    line records was done, and both are load-bearing:
     :func:`dex_engine.pipeline.run.is_drainable` retries an ``error``
     entry once per newer engine, and ``date`` is the day the enrichment
-    landed, which the digest-staleness backstop reads. A line written
-    purely to correct an earlier one's attribution would have to carry
-    both rather than claim them — so the drain asks the corpus who owns a
-    unit at the moment it writes (``run._Drain.owner_of``) instead, and no
-    persisted line is ever re-recorded to change what it says.
+    landed, which the digest-staleness backstop reads. One line lands
+    nothing: a ``done`` line naming an output that stands on disk as it
+    already was — a re-fetch to identical content, a stored copy kept. Its
+    caller passes the day that output landed as ``landed``, and the line
+    carries it: dated today, it called the item newer than its digest, and
+    every rerun that reached an unchanged page sent a session to re-digest
+    it. Nothing else is ever carried, and nothing is lifted off ``entry``: a
+    line written purely to correct an earlier one's attribution would have
+    to carry both fields rather than claim them — so the drain asks the
+    corpus who owns a unit at the moment it writes
+    (``run._Drain.owner_of``) instead, and no persisted line is ever
+    re-recorded to change what it says.
 
     Args:
         entry: The entry to stamp.
@@ -711,8 +718,11 @@ def stamp(
         now: Injected instant clock, UTC-aware — the write timestamp that
             orders this line against another machine's after a union merge.
         engine_version: The running engine's version string.
+        landed: The day the output a ``done`` line re-records landed; None
+            for a line recording work done today.
 
     Returns:
         A copy of the entry with ``date``, ``at`` and ``engine`` set.
     """
-    return replace(entry, date=today(), at=now(), engine=engine_version)
+    date = today() if landed is None else landed
+    return replace(entry, date=date, at=now(), engine=engine_version)

@@ -85,6 +85,7 @@ from tests.test_atomic import failing_fdopen
 
 TODAY = datetime.date(2026, 8, 20)
 NOW = datetime.datetime(2026, 8, 20, 9, 30, 15, 250000, tzinfo=datetime.UTC)
+LATER = datetime.date(2026, 9, 1)
 ITEM = "2026-08-19-example-55ad7b"
 URL = "https://example.test/post"
 
@@ -175,6 +176,24 @@ def heal_recorded_before_custody(
     healed.write_text(content, encoding="utf-8")
     ledger.append(instance.ledger_path, dataclasses.replace(done, path=f"enrichment/{ITEM}/{name}"))
     return healed
+
+
+def on_day(instance: Instance, driver: FakeDriver, day: datetime.date) -> RunContext:
+    """A context whose clocks both read ``day``."""
+    at = datetime.datetime.combine(day, datetime.time(8), tzinfo=datetime.UTC)
+    return make_ctx(instance, driver, today=lambda: day, now=lambda: at)
+
+
+def digest_item(ctx: RunContext, item_id: str = ITEM) -> None:
+    """Digest the item through the verb, its pass dated the context's day."""
+    payload = ctx.instance.cache_dir / "digest.json"
+    payload.write_text(
+        json.dumps(
+            {"id": item_id, "signal": "medium", "topics": ["uncategorized-shares"], "facts": ["f"]}
+        ),
+        encoding="utf-8",
+    )
+    item_digest(payload, ctx=ctx)
 
 
 class TestSeedAndDone:
@@ -1292,6 +1311,18 @@ class TestRerun:
         assert "rewritten" not in report
         assert "Already stored" in report  # accounted for, not new material
 
+    def test_a_kept_stub_stages_none_of_its_own_media(self, instance):
+        # The pictures a stub carries are the preview's, not the article's.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        still = "https://cdn.example.test/preview.jpg"
+        stub = Content(meta={}, body="preview " * 20, media=[still])
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: stub))
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert "kept the stored body" in report
+        assert work_hash(still) not in ledger.load(instance.ledger_path)
+
     def test_a_modest_shrink_is_still_a_rewrite(self, instance):
         # The guard is for a body that lost half of itself, not for an edit:
         # a trimmed page must keep landing or every correction parks.
@@ -1521,6 +1552,46 @@ class TestRerun:
         entry = entry_for(ctx)
         assert (entry.status, entry.rerun, entry.path) == (Status.DONE, True, done.path)
         assert f"kept the stored copy of {URL}" in report
+
+    @pytest.mark.parametrize(
+        "parked",
+        [
+            {"status": Status.BLOCKED, "attempts": 2, "reason": "HTTP 429"},
+            {"status": Status.WAITING, "needs": Need.TRANSCRIBE, "reason": "no captions"},
+            {"status": Status.ERROR, "error": "RuntimeError: boom"},
+        ],
+        ids=["blocked", "waiting", "error"],
+    )
+    def test_the_owners_retry_of_a_parked_unit_starts_it_afresh(self, instance, parked):
+        # The requeue sheds the park's bookkeeping, or the queued line would
+        # carry fields only a park may hold.
+        write_item(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                engine="0.2.0",
+                date=TODAY,
+                **parked,
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        entry = entry_for(ctx)
+        assert (entry.status, entry.rerun) == (Status.DONE, False)
+
+    def test_the_owners_re_fetch_of_a_rerun_still_owed_stays_a_rerun(self, instance):
+        # A migration's reseed carries no path on its live line; its landing
+        # still stands, and the re-fetch keeps it.
+        done = self.land(instance)
+        self.seed_rerun(make_ctx(instance, FakeDriver()))
+        ctx = self.failing(instance, Missing(evidence="HTTP 410"))
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        entry = entry_for(ctx)
+        assert (entry.status, entry.rerun, entry.path) == (Status.DONE, True, done.path)
 
     def test_deleting_the_stored_file_first_lets_the_failure_land(self, instance):
         # The way through the note names, for a source that really is gone.
@@ -2058,6 +2129,178 @@ class TestRerunKeepsItsTranscript:
         self.reparked(instance, Kind.YOUTUBE, park)
         entry = self.live(instance)
         assert (entry.status, entry.needs) == (Status.WAITING, Need.EXTRACT)
+
+
+class TestALandingThatChangedNothingIsNoNewerThanItsDigest:
+    """A done line re-recording an output as it stood keeps the day that output landed.
+
+    The field defect: a healing migration queued a thousand page reruns, and
+    each page that re-fetched to the bytes on disk wrote a done line dated
+    the day of the rerun. The digest backstop reads that date as when the
+    enrichment last changed, so the item was listed under Digest these and a
+    session re-digested a page nothing had touched.
+    """
+
+    def digested(self, instance: Instance) -> LedgerEntry:
+        """The item's page landed and digested, both on the first day."""
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        digest_item(ctx)
+        return entry_for(ctx)
+
+    def rerun(self, instance: Instance, fetched: Outcome | None = None) -> str:
+        """Re-fetch the landed page on a later day."""
+        driver = FakeDriver() if fetched is None else FakeDriver(fetch_fn=lambda _unit: fetched)
+        ctx = on_day(instance, driver, LATER)
+        TestRerun.seed_rerun(ctx)
+        return run_mod.run(ctx)
+
+    def live(self, instance: Instance, url: str = URL) -> LedgerEntry:
+        return entry_for(make_ctx(instance, FakeDriver()), url)
+
+    def test_a_page_re_fetched_to_what_was_stored_is_not_listed(self, instance):
+        done = self.digested(instance)
+        report = self.rerun(instance)
+        assert "Already stored" in report
+        entry = self.live(instance)
+        assert (entry.status, entry.path, entry.date) == (Status.DONE, done.path, TODAY)
+        assert entry.at is not None
+        assert entry.at.date() == LATER  # the write instant is still this run's
+        assert run_mod.digest_orphans(instance) == []
+        status = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "Digest these" not in status
+
+    def test_a_second_unchanged_rerun_still_dates_the_first_landing(self, instance):
+        self.digested(instance)
+        self.rerun(instance)
+        ctx = on_day(instance, FakeDriver(), datetime.date(2026, 9, 15))
+        TestRerun.seed_rerun(ctx)
+        run_mod.run(ctx)
+        assert self.live(instance).date == TODAY
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_rerun_that_changed_the_page_is_listed(self, instance):
+        self.digested(instance)
+        report = self.rerun(instance, Content(meta={}, body="a different body " * 40))
+        assert "1 rewritten" in report
+        assert self.live(instance).date == LATER
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        status = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "Digest these — 1 item whose enrichment is newer than its digest" in status
+
+    def test_a_first_landing_after_the_digest_is_listed(self, instance):
+        self.digested(instance)
+        more = "https://example.test/more"
+        run_mod.fetch_urls(on_day(instance, FakeDriver(), LATER), ITEM, [more])
+        assert self.live(instance, more).date == LATER
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_first_landing_on_content_already_at_its_name_dates_its_own_day(self, instance):
+        # No landing is on record to carry a day from: a file standing at
+        # the engine's name says nothing of when it landed.
+        write_item(instance)
+        digest_item(make_ctx(instance, FakeDriver()))
+        out = instance.enrichment_dir / ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(
+            render_enrichment(URL, TODAY, {"title": "t"}, "substantial body " * 30),
+            encoding="utf-8",
+        )
+        report = run_mod.run(on_day(instance, FakeDriver(), LATER))
+        assert "Already stored" in report
+        assert self.live(instance).date == LATER
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_stub_kept_under_the_stored_page_is_not_listed(self, instance):
+        self.digested(instance)
+        report = self.rerun(instance, Content(meta={}, body="preview " * 20))
+        assert "kept the stored body" in report
+        assert self.live(instance).date == TODAY
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_failed_re_fetch_that_keeps_its_landing_is_not_listed(self, instance):
+        self.digested(instance)
+        report = self.rerun(instance, Missing(evidence="HTTP 404"))
+        assert "kept the stored copy" in report
+        assert self.live(instance).date == TODAY
+        assert run_mod.digest_orphans(instance) == []
+
+    @pytest.mark.parametrize(
+        "fetched",
+        [Missing(evidence="HTTP 404"), Content(meta={}, body="preview " * 2)],
+        ids=["failed", "stub"],
+    )
+    def test_a_copy_kept_and_moved_to_the_units_own_name_keeps_its_landing_day(
+        self, instance, fetched
+    ):
+        # The keep moves a heal's odd-named copy to the unit's own name. Only
+        # the name changed: the content the digest was drawn from stands.
+        done = self.digested(instance)
+        body = "the page, read by hand " * 20
+        heal_recorded_before_custody(instance, done, "read-by-hand.md", body)
+        self.rerun(instance, fetched)
+        entry = self.live(instance)
+        assert (entry.status, entry.path, entry.date) == (Status.DONE, done.path, TODAY)
+        assert (instance.root / str(done.path)).read_text(encoding="utf-8") == body
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_kept_copy_its_landing_does_not_name_dates_its_own_day(self, instance):
+        # The landing names another file, and says nothing of the one kept.
+        done = self.digested(instance)
+        ledger.append(
+            instance.ledger_path, dataclasses.replace(done, path=f"enrichment/{ITEM}/gone.md")
+        )
+        self.rerun(instance, Missing(evidence="HTTP 404"))
+        entry = self.live(instance)
+        assert (entry.path, entry.date) == (done.path, LATER)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_renamed_items_landing_still_dates_its_unchanged_re_fetch(self, instance):
+        # The landing recorded its path under the id the item had then.
+        write_item(instance, NEW_ITEM)
+        out = instance.enrichment_dir / NEW_ITEM / f"web-{work_hash(URL)[:6]}.md"
+        out.parent.mkdir(parents=True)
+        out.write_text(
+            render_enrichment(URL, TODAY, {"title": "t"}, "substantial body " * 30),
+            encoding="utf-8",
+        )
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DONE,
+                engine="0.2.0",
+                date=TODAY,
+                path=f"enrichment/{OLD_ITEM}/{out.name}",
+            ),
+        )
+        digest_item(make_ctx(instance, FakeDriver()), NEW_ITEM)
+        report = self.rerun(instance)
+        assert "Already stored" in report
+        entry = self.live(instance)
+        assert (entry.item, entry.path, entry.date) == (
+            NEW_ITEM,
+            f"enrichment/{NEW_ITEM}/{out.name}",
+            TODAY,
+        )
+        assert run_mod.digest_orphans(instance) == []
+
+    @pytest.mark.parametrize(("notes", "listed"), [("old notes", False), ("new notes", True)])
+    def test_a_kept_transcript_is_listed_only_when_its_notes_moved(self, instance, notes, listed):
+        keeps = TestRerunKeepsItsTranscript()
+        stored = youtube_body("old notes", "the words")
+        keeps.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, stored)
+        digest_item(make_ctx(instance, FakeDriver()))
+        park = keeps.park(description_section(notes))
+        driver = FakeDriver(Kind.YOUTUBE, fetch_fn=lambda _unit: park)
+        report = run_mod.run(on_day(instance, driver, LATER))
+        assert "kept the stored transcript" in report
+        assert self.live(instance).date == (LATER if listed else TODAY)
+        assert run_mod.digest_orphans(instance) == ([ITEM] if listed else [])
 
 
 class TestSupersededOutputDrop:
@@ -3758,7 +4001,8 @@ class TestVerbs:
         run_mod.fetch_urls(ctx, ITEM, [URL])
         entry = ledger.load(instance.ledger_path)[work_hash(URL)]
         assert entry.status is Status.DONE  # requeued in place and re-fetched
-        assert entry.rerun is True
+        # In place: never re-admitted under the item as a harvest promotion.
+        assert (entry.via, entry.depth) == (None, None)
 
     def test_mark_heals_through_the_verb(self, instance):
         write_item(instance)
@@ -4507,6 +4751,212 @@ class TestClosedWithoutContentItems:
         # finding — never work the backstop can ask anyone to digest.
         run_mod.run(self._dead_ctx(instance))
         (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        assert run_mod.digest_orphans(instance) == []
+
+
+class TestARerunThatTookAPageAway:
+    """A rerun closed with its page gone from disk took that page from the item.
+
+    The field defect: a healing migration deleted a github output it proved
+    wrong and seeded a rerun, the re-fetch met a 404, and the unit closed
+    dead. The item's digest, written before pass records were kept, had been
+    drawn from the deleted page, and both surfaces took the file as proof of
+    a digest: the item was named nowhere, with no page left and a digest
+    stating what was gone.
+    """
+
+    ALL_DEAD_REASON = TestClosedWithoutContentItems.ALL_DEAD_REASON
+
+    def landed(self, instance: Instance, urls: list[str] | None = None) -> None:
+        write_item(instance, urls=urls)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+
+    def digest_without_a_pass(self, instance: Instance, item_id: str = ITEM) -> None:
+        """A digest file no pass records, as sessions wrote them before passes were kept."""
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{item_id}.md").write_text("digested\n", encoding="utf-8")
+
+    def lose_the_page(self, instance: Instance, url: str = URL, day: datetime.date = LATER) -> str:
+        """Delete the landed page and seed its rerun, as the migration did; re-fetch on ``day``."""
+        gone = FakeDriver(fetch_fn=lambda _unit: Missing(evidence="HTTP 404"))
+        ctx = on_day(instance, gone, day)
+        done = entry_for(ctx, url)
+        (instance.root / str(done.path)).unlink()
+        requeued = dataclasses.replace(
+            done, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-15"
+        )
+        ledger.append(instance.ledger_path, requeued)
+        return run_mod.run(ctx)
+
+    def test_an_all_dead_item_with_no_digest_pass_is_named_on_both_surfaces(self, instance):
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        report = self.lose_the_page(instance)
+        assert self.ALL_DEAD_REASON in report
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        status = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "Digest these — 1 item" in status
+
+    def test_recording_its_digest_pass_clears_both_surfaces(self, instance):
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        self.lose_the_page(instance)
+        digest_item(on_day(instance, FakeDriver(), LATER))
+        assert run_mod.digest_orphans(instance) == []
+        report = run_mod.run(on_day(instance, FakeDriver(), LATER))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_a_pass_recorded_before_the_page_went_does_not_clear_it(self, instance):
+        self.landed(instance)
+        digest_item(make_ctx(instance, FakeDriver()))
+        report = self.lose_the_page(instance)
+        assert self.ALL_DEAD_REASON in report
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_an_item_with_a_page_still_standing_is_named_by_the_backstop(self, instance):
+        self.landed(instance, urls=["https://example.test/kept", URL])
+        self.digest_without_a_pass(instance)
+        report = self.lose_the_page(instance)
+        assert self.ALL_DEAD_REASON not in report  # one unit still holds its page
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        digest_item(on_day(instance, FakeDriver(), LATER))
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_an_item_left_only_a_shared_page_parked_mid_rerun_is_named(self, instance):
+        # The second field item: its own units closed, its one live unit a
+        # page landed under the item that shared it first, blocked on a
+        # rerun that still stands on that landing. Only the loss finds it.
+        shared = "https://example.test/paper"
+        first = "2026-08-19-a-first-share-111111"
+        write_item(instance, first, urls=[shared])
+        self.landed(instance, urls=[shared, URL])
+        self.digest_without_a_pass(instance)
+        self.digest_without_a_pass(instance, first)
+        self.lose_the_page(instance)
+        refused = FakeDriver(fetch_fn=lambda _unit: Refused(evidence="HTTP 429"))
+        ctx = on_day(instance, refused, LATER)
+        held = entry_for(ctx, shared)
+        requeued = dataclasses.replace(
+            held, status=Status.QUEUED, path=None, title=None, rerun=True
+        )
+        ledger.append(instance.ledger_path, requeued)
+        run_mod.run(ctx)
+        assert entry_for(ctx, shared).status is Status.BLOCKED
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_the_newest_loss_decides_not_the_first_seen(self, instance):
+        second = "https://example.test/second"
+        self.landed(instance, urls=[URL, second])
+        self.lose_the_page(instance, second, LATER)
+        digest_item(on_day(instance, FakeDriver(), datetime.date(2026, 9, 5)))
+        self.lose_the_page(instance, URL, datetime.date(2026, 9, 10))
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_ghost_items_lost_page_is_never_listed(self, instance):
+        # The unit's item has no corpus file left: lint's ghost-item finding.
+        self.landed(instance)
+        self.lose_the_page(instance)
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        assert run_mod.digest_orphans(instance) == []
+
+    def retry(self, instance: Instance, day: datetime.date = LATER) -> LedgerEntry:
+        """The documented retry, `enrich fetch` on the item's own URL, meeting a 404."""
+        gone = FakeDriver(fetch_fn=lambda _unit: Missing(evidence="HTTP 404"))
+        ctx = on_day(instance, gone, day)
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        return entry_for(ctx)
+
+    def test_a_retried_unit_that_never_landed_took_nothing(self, instance):
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _u: Missing(evidence="404"))))
+        self.digest_without_a_pass(instance)
+        entry = self.retry(instance)
+        assert (entry.status, entry.rerun) == (Status.DEAD, False)  # a retry, never a rerun
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_retry_of_a_page_already_lost_is_no_new_loss(self, instance):
+        self.landed(instance)
+        self.lose_the_page(instance)
+        digest_item(on_day(instance, FakeDriver(), LATER))
+        entry = self.retry(instance, datetime.date(2026, 9, 15))
+        assert (entry.status, entry.rerun) == (Status.DEAD, False)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_landed_page_deleted_and_re_fetched_is_lost_through_a_compact(self, instance):
+        # The keep's own note: delete the stored file first to let the failure land.
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        (instance.root / str(entry_for(make_ctx(instance, FakeDriver())).path)).unlink()
+        entry = self.retry(instance)
+        assert (entry.status, entry.rerun) == (Status.DEAD, True)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+        run_mod.compact(make_ctx(instance, FakeDriver()))
+        assert work_hash(URL) not in ledger.latest_outputs(instance.ledger_path)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_a_migrations_lost_page_is_still_lost_after_a_compact(self, instance):
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        self.lose_the_page(instance)
+        run_mod.compact(make_ctx(instance, FakeDriver()))
+        assert work_hash(URL) not in ledger.latest_outputs(instance.ledger_path)
+        assert run_mod.digest_orphans(instance) == [ITEM]
+
+    def test_every_item_sharing_the_page_lost_it(self, instance):
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance, other)
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        self.digest_without_a_pass(instance, other)
+        self.lose_the_page(instance)
+        assert run_mod.digest_orphans(instance) == sorted([ITEM, other])
+
+    def test_an_item_whose_units_died_on_their_first_fetch_keeps_its_older_digest(self, instance):
+        # Nothing ever landed, so a digest from before pass records was drawn
+        # from the owner's note and still covers the item.
+        write_item(instance)
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _u: Missing(evidence="404"))))
+        self.digest_without_a_pass(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver()))
+        assert self.ALL_DEAD_REASON not in report
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_a_heal_that_closed_the_rerun_and_kept_its_page_took_nothing(self, instance):
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        TestRerun.seed_rerun(make_ctx(instance, FakeDriver()))
+        run_mod.mark(
+            on_day(instance, FakeDriver(), LATER),
+            URL,
+            Status.SKIPPED,
+            reason="re-fetch blocked; the stored page stands",
+        )
+        assert run_mod.digest_orphans(instance) == []
+        report = run_mod.run(on_day(instance, FakeDriver(), LATER))
+        assert self.ALL_DEAD_REASON not in report
+
+    def test_a_download_gone_from_disk_is_no_page(self, instance):
+        # A digest naming media no longer on disk is lint's re-emit finding.
+        self.landed(instance)
+        self.digest_without_a_pass(instance)
+        still = "https://cdn.example.test/still.jpg"
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(still),
+                url=still,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.SKIPPED,
+                engine="0.2.0",
+                date=LATER,
+                job=Job.MEDIA,
+                parent=work_hash(URL),
+                depth=1,
+                rerun=True,
+                reason="the URL answers with a page, not media",
+            ),
+        )
         assert run_mod.digest_orphans(instance) == []
 
 
@@ -5311,6 +5761,23 @@ class TestOwnershipIsTheCorpusAnswer:
         later = datetime.date(2026, 8, 22)
         run_mod.fetch_urls(make_ctx(instance, FakeDriver(), today=lambda: later), NEW_ITEM, [URL])
         assert run_mod.digest_orphans(instance) == [NEW_ITEM]
+
+    def test_the_newest_pass_across_a_rename_decides_whatever_the_file_order(self, instance):
+        # A union merge writes two machines' pass lines in git's order, so
+        # the pass recorded last need not be the last line.
+        self._drained_then_renamed(instance)
+        instance.digests_dir.mkdir(parents=True, exist_ok=True)
+        (instance.digests_dir / f"{NEW_ITEM}.md").write_text("digested\n", encoding="utf-8")
+        later = datetime.date(2026, 8, 22)
+        run_mod.fetch_urls(make_ctx(instance, FakeDriver(), today=lambda: later), NEW_ITEM, [URL])
+        instance.passes_path.write_text(
+            "".join(
+                json.dumps({"stage": "digest", "item": item_id, "date": day}) + "\n"
+                for item_id, day in ((OLD_ITEM, "2026-08-23"), (NEW_ITEM, "2026-08-21"))
+            ),
+            encoding="utf-8",
+        )
+        assert run_mod.digest_orphans(instance) == []
 
     def test_write_time_marks_land_under_the_live_owner(self, instance):
         # `mark` is a write like any other: healed on the stored string it
