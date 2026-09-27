@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Getting Started - llama-cpp-python</title>
+</head>
+<body>
+<article>
+<h2 id="installation-configuration">Installation Configuration</h2>
+<p>All <code>llama.cpp</code> cmake build options can be set via the <code>CMAKE_ARGS</code> environment variable or via the <code>--config-settings / -C</code> cli flag during installation.</p>
+<details>
+<summary>CLI / requirements.txt</summary>
+
+They can also be set via `pip install -C / --config-settings` command and saved to a `requirements.txt` file:
+
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip<span class="w"> </span><span class="c1"># ensure pip is up to date</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-C<span class="w"> </span>cmake.args<span class="o">=</span><span class="s2">"-DGGML_BLAS=ON;-DGGML_BLAS_VENDOR=OpenBLAS"</span>
+</span></code></pre></div>
+
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a># requirements.txt
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>llama-cpp-python -C cmake.args="-DGGML_BLAS=ON;-DGGML_BLAS_VENDOR=OpenBLAS"
+</span></code></pre></div>
+
+</details>
+<details>
+<summary>CUDA</summary>
+
+To install with CUDA support, set the `GGML_CUDA=on` environment variable before installing:
+
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">CMAKE_ARGS</span><span class="o">=</span><span class="s2">"-DGGML_CUDA=on"</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python
+</span></code></pre></div>
+
+**Pre-built Wheel (New)**
+
+It is also possible to install a pre-built wheel with CUDA support. As long as your system meets some requirements:
+
+- CUDA Version is 11.8, 12.1, 12.2, 12.3, 12.4, 12.5, 13.0 or 13.2
+- NVIDIA GPU compute capability is 6.0 through 8.9 for CUDA 11.8 wheels, 6.0 or newer for CUDA 12 wheels, or 7.5 or newer for CUDA 13 wheels
+- Python Version is 3.10, 3.11 or 3.12
+
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>--extra-index-url<span class="w"> </span>https://abetlen.github.io/llama-cpp-python/whl/&lt;cuda-version&gt;
+</span></code></pre></div>
+
+Where `<cuda-version>` is one of the following:
+- `cu118`: CUDA 11.8
+- `cu121`: CUDA 12.1
+- `cu122`: CUDA 12.2
+- `cu123`: CUDA 12.3
+- `cu124`: CUDA 12.4
+- `cu125`: CUDA 12.5
+- `cu130`: CUDA 13.0
+- `cu132`: CUDA 13.2
+
+For example, to install the CUDA 12.1 wheel:
+
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>pip<span class="w"> </span>install<span class="w"> </span>llama-cpp-python<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>--extra-index-url<span class="w"> </span>https://abetlen.github.io/llama-cpp-python/whl/cu121
+</span></code></pre></div>
+
+</details>
+<details>
+<summary>M1 Mac Performance Issue</summary>
+
+Note: If you are using Apple Silicon (M1) Mac, make sure you have installed a version of Python that supports arm64 architecture. For example:
+
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>wget<span class="w"> </span>https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>bash<span class="w"> </span>Miniforge3-MacOSX-arm64.sh
+</span></code></pre></div>
+
+Otherwise, while installing it will build the llama.cpp x86 version which will be 10x slower on Apple Silicon (M1) Mac.
+</details>
+</article>
+</body>
+</html>

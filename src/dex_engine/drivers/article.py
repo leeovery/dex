@@ -180,6 +180,18 @@ _TABLE_ROW_RE = re.compile(r"^[ \t]*\|", re.MULTILINE)
 
 _CODE_LINE_CLASS = "line"
 
+# HTML's phrasing content: what a run of text beside a code block is made of.
+_PHRASING_TAGS = frozenset(
+    {
+        "a", "abbr", "audio", "b", "bdi", "bdo", "br", "button", "canvas", "cite", "code",
+        "data", "del", "dfn", "em", "embed", "i", "iframe", "img", "input", "ins", "kbd",
+        "label", "mark", "math", "meter", "object", "output", "picture", "progress", "q",
+        "ruby", "s", "samp", "select", "small", "span", "strong", "sub", "sup", "svg",
+        "textarea", "time", "u", "var", "video", "wbr",
+    }
+)  # fmt: skip
+_LIST_ITEM_TAGS = ("li", "dt", "dd")
+
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
 _TEX_ANNOTATION_TEXT = ".//annotation[@encoding='application/x-tex']//text()"
@@ -244,6 +256,9 @@ def _prepare_page(html: str) -> str:
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
             _flatten_heading(heading)
+    # Last: it sorts a container's children into text and blocks, so it must
+    # read the markup every repair above leaves, the math already text.
+    _set_code_blocks_apart(tree)
     return tostring(tree, encoding="unicode")
 
 
@@ -390,6 +405,128 @@ def _code_lines(tree: "HtmlElement") -> "Iterator[HtmlElement]":
 
 def _ends_its_line(line: "HtmlElement") -> bool:
     return line.text_content().endswith("\n") or (line.tail or "").startswith("\n")
+
+
+def _set_code_blocks_apart(tree: "HtmlElement") -> None:
+    """Give every code block a line of its own, and keep the text around it.
+
+    trafilatura starts a paragraph or a heading on a new line, but not a
+    code block, and it drops text left loose after one. So a block written
+    among loose text came out glued. MkDocs keeps a ``<details>`` section's
+    prose as bare text around each highlighted block, and
+    llama-cpp-python's install page was stored with thirteen fences opening
+    at the end of the sentence before them (``saved to a `requirements.txt`
+    file:`` then the fence), every one read inside out by a renderer, and
+    the prose between the blocks gone. The loose text beside a code block
+    becomes paragraphs, which trafilatura sets apart from the block and
+    keeps.
+
+    A list item needs one more repair: trafilatura writes an item's
+    paragraphs on a single line, the fence with them, so a line break goes
+    in front of the block. It carries a space after it, because trafilatura
+    drops a break with nothing after it, and the fence line opens with that
+    space, which markdown allows. A definition list's terms and
+    descriptions are list items to trafilatura too.
+    """
+    for pre in list(tree.iter("pre")):
+        for block, container in _code_block_levels(pre):
+            _paragraph_loose_text(container)
+            if next(block.iterancestors(*_LIST_ITEM_TAGS), None) is not None:
+                _break_line_before(block)
+
+
+def _code_block_levels(pre: "HtmlElement") -> "Iterator[tuple[HtmlElement, HtmlElement]]":
+    """Each level from the pre out, as the block and its container, up to where its text is.
+
+    Highlighters wrap a block in divs, with copy buttons and a filename
+    beside it, so the text it sits among may be several divs out: the walk
+    ends at the first container that holds loose text or is not a div.
+    """
+    block = pre
+    while (container := block.getparent()) is not None:
+        last = container.tag != "div" or _holds_loose_text(container)
+        yield block, container
+        if last:
+            return
+        block = container
+
+
+def _paragraph_loose_text(container: "HtmlElement | None") -> None:
+    """Wrap each run of loose text in the container, with the phrasing inside it, in a ``<p>``.
+
+    A run holding no loose text of its own stays as it is: a link alone on
+    its line survives extraction, and the same link made a paragraph is
+    dropped as boilerplate.
+    """
+    if container is None or not _holds_loose_text(container):
+        return
+    previous: HtmlElement | None = None
+    lead = container.text
+    container.text = None
+    run: list[HtmlElement] = []
+    for child in list(container):
+        if _is_phrasing(child):
+            run.append(child)
+            continue
+        _close_run(container, previous, lead, run, before=child)
+        previous, lead, run = child, child.tail, []
+        child.tail = None
+    _close_run(container, previous, lead, run, before=None)
+
+
+def _close_run(
+    container: "HtmlElement",
+    previous: "HtmlElement | None",
+    lead: str | None,
+    run: list["HtmlElement"],
+    *,
+    before: "HtmlElement | None",
+) -> None:
+    """Wrap one run in a ``<p>`` where ``before`` stands, or put its lead text back."""
+    from lxml.html import Element  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    if not _any_text(lead, *(node.tail for node in run)):
+        if previous is None:
+            container.text = lead
+        else:
+            previous.tail = lead
+        return
+    paragraph = Element("p")
+    paragraph.text = lead
+    paragraph.extend(run)
+    if before is None:
+        container.append(paragraph)
+    else:
+        before.addprevious(paragraph)
+
+
+def _holds_loose_text(container: "HtmlElement") -> bool:
+    return _any_text(container.text, *(child.tail for child in container))
+
+
+def _any_text(*texts: str | None) -> bool:
+    return any((text or "").strip() for text in texts)
+
+
+def _is_phrasing(node: "HtmlElement") -> bool:
+    """Whether a node belongs to a run of text: a comment, or phrasing holding no code block."""
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    if not isinstance(node, HtmlElement):
+        return True
+    return node.tag in _PHRASING_TAGS and next(node.iter("pre"), None) is None
+
+
+def _break_line_before(block: "HtmlElement") -> None:
+    from lxml.html import Element, HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    siblings = block.itersiblings(preceding=True)
+    previous = next((node for node in siblings if isinstance(node, HtmlElement)), None)
+    if previous is None or not previous.text_content().strip():
+        return
+    line_break = Element("br")
+    line_break.tail = " "
+    block.addprevious(line_break)
 
 
 def _tabulate_latexml_spans(tree: "HtmlElement") -> None:

@@ -5,6 +5,7 @@ thin parking, re-detection, wayback fallback — lives in the article lib,
 and this file pins it through the driver that reads every page that way.
 """
 
+import re
 import socket
 import urllib.parse
 
@@ -40,6 +41,14 @@ URL = "https://example.test/post"
 ARTICLE = fixture_text("web", "article.html")
 THIN = fixture_text("web", "thin.html")
 JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(range(256)) * 8
+CODE_BLOCK = "<pre><code>line_one = 1\nline_two = 2</code></pre>"
+# A fence opening at the end of a line of prose, which every renderer reads
+# as a closing fence.
+GLUED_FENCE = re.compile(r"[^`\s]```\s*$", re.MULTILINE)
+FENCE_LINE = re.compile(r"^ {0,3}```", re.MULTILINE)
+OWN_LINE_FENCE_THEN_TEXT = re.compile(
+    r"^ ?```\nline_one = 1\nline_two = 2\n```\nText after\.$", re.MULTILINE
+)
 
 
 def wayback_lookup_url(url: str) -> str:
@@ -1044,6 +1053,91 @@ class TestExtractionFidelity:
         )
         body = trafilatura_extract(page) or ""
         assert "```\nimport nltk\nnltk.download()\n```" in body
+
+    def test_code_among_loose_text_opens_its_own_line_and_keeps_the_text_after(self):
+        # llama-cpp-python's docs (MkDocs) keep each <details> section's
+        # prose as bare text around its highlighted blocks: thirteen fences
+        # opened at the end of the sentence before them, inverting every
+        # renderer's fence parity, and the prose after each block was gone.
+        page = fixture_text("web", "mkdocs-details-code.html")
+        body = trafilatura_extract(page) or ""
+        assert GLUED_FENCE.search(body) is None
+        assert len(FENCE_LINE.findall(body)) % 2 == 0
+        assert (
+            "saved to a `requirements.txt` file:\n\n```\npip install --upgrade pip # ensure pip"
+        ) in body
+        assert "**Pre-built Wheel (New)** It is also possible to install a pre-built wheel" in body
+        assert (
+            "Otherwise, while installing it will build the llama.cpp x86 version which will be"
+            " 10x slower on Apple Silicon (M1) Mac."
+        ) in body
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            f"<li>Text before:{CODE_BLOCK}Text after.</li>",
+            f"<li><p>Text before:</p>{CODE_BLOCK}<p>Text after.</p></li>",
+            (
+                '<li>Text before: <div class="language-python highlighter-rouge">'
+                f'<div class="highlight">{CODE_BLOCK}</div></div>Text after.</li>'
+            ),
+            (
+                '<li>Text before:<div class="code-block"><div><button aria-label="Copy">'
+                f"</button></div><div><div>{CODE_BLOCK}</div></div></div>Text after.</li>"
+            ),
+            f"<li><p>Text before:</p><h5>Serve it</h5>{CODE_BLOCK}<p>Text after.</p></li>",
+        ],
+        ids=["loose", "paragraphs", "highlighter-wrapped", "copy-buttons", "heading"],
+    )
+    def test_a_list_items_code_block_opens_its_own_line(self, item):
+        # A list item's paragraphs are written on one line, the fence with
+        # them: "Text before:```". Field shapes: CommonMark's tight and loose
+        # items, a Jekyll site's highlighter divs, Mintlify's copy buttons,
+        # and Hugging Face's "Use this model" snippets under a heading.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <ul>{item}<li>Next item.</li></ul>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert GLUED_FENCE.search(body) is None
+        assert OWN_LINE_FENCE_THEN_TEXT.search(body)
+
+    def test_a_definition_lists_code_block_opens_its_own_line(self):
+        # gohugo.io documents each setting as a <dd>, and trafilatura writes
+        # a definition like a list item.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <dl><dt>noClasses</dt><dd>Generate the stylesheet:{CODE_BLOCK}Then link it."
+            "</dd></dl>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert GLUED_FENCE.search(body) is None
+        assert "Then link it." in body
+
+    def test_a_code_block_first_in_its_item_stays_beside_the_marker(self):
+        # Nothing precedes it, so there is no line to break: "- ```" is
+        # already a fence opening an item.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f'      <ul><li><span class="icon"></span>{CODE_BLOCK}</li><li>Next item.</li></ul>\n'
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "- ```\nline_one = 1" in body
+
+    def test_a_link_alone_after_a_code_block_stays_a_link(self):
+        # The rail on the paragraph repair: a run with no loose text of its
+        # own is left as it was. optuna.org's "See full example" buttons
+        # survive as bare links, and made paragraphs they are dropped.
+        lead = "The example below runs the pipeline from the fetch to the ledger line it writes:"
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f'      <div>{lead}{CODE_BLOCK}<a class="btn" href="https://example.test/full.py">'
+            " See the full example </a></div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert f"{lead}\n\n```\nline_one = 1" in body
+        assert "```\n[See the full example](https://example.test/full.py)" in body
 
     def test_katex_math_reads_as_its_tex_source(self):
         # docusaurus.io renders KaTeX, which writes no alttext: the TeX sits
