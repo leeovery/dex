@@ -1,6 +1,7 @@
 """Tests for gitread.py: read-only git queries, and None when git cannot answer."""
 
 import shutil
+import subprocess
 
 import pytest
 
@@ -51,6 +52,23 @@ class TestCheckoutBytes:
         own_git(tmp_path, "init", "-q")
         own_git(tmp_path, "commit", "-q", "--allow-empty", "-m", "empty")
         assert checkout_bytes(tmp_path, "HEAD", "clip.mp4") is None
+
+    def test_a_checkout_waits_longer_than_a_query(self, tmp_path, own_git, monkeypatch):
+        # A checkout may download a whole video from the LFS remote first.
+        own_git(tmp_path, "init", "-q")
+        own_git(tmp_path, "commit", "-q", "--allow-empty", "-m", "empty")
+        waited: list[float] = []
+        real = subprocess.run
+
+        def timed(*args, **kwargs):
+            waited.append(kwargs["timeout"])
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", timed)
+        git_output(tmp_path, ["rev-parse", "HEAD"])
+        checkout_bytes(tmp_path, "HEAD", "clip.mp4")
+        query, checkout = waited
+        assert checkout > query
 
     def test_an_lfs_file_reads_as_its_content_whatever_the_callers_smudge_setting(
         self, tmp_path, own_git, monkeypatch
