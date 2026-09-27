@@ -55,6 +55,7 @@ from .detect import (
 from .enrichment import (
     TRANSCRIPT_PROVENANCE,
     description_text,
+    hand_over_descriptions,
     mask_fetched,
     podcast_body,
     post_body,
@@ -115,6 +116,7 @@ __all__ = [
     "RunContext",
     "digest_orphans",
     "digested_items",
+    "duplicate_media_reason",
     "fetch_urls",
     "head_sniffer",
     "is_cognitive_park",
@@ -2025,7 +2027,11 @@ class _Drain:
         # Cap and oversize skips below land in the report's unit counts —
         # deliberately: they are unit outcomes, unlike the re-entry cap
         # fires, which never surface.
-        slot = self._media_slot(entry)
+        owner = self.owner_of(entry)
+        # One ledger walk serves the slot and the duplicate check alike:
+        # nothing between the two records a line.
+        siblings = self._sibling_downloads(entry, owner)
+        slot = self._media_slot(entry, owner, siblings)
         if slot is None:
             # Capacity checked BEFORE any fetch — no bandwidth spent on a
             # file the cap would refuse. Downloads are synchronous, so
@@ -2077,10 +2083,18 @@ class _Drain:
                 )
                 return
             ext = ext_of(entry.url, default="jpg")
-        owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{ext}"
+        duplicate = self._held_by_a_sibling(owner, siblings, response.body)
+        if duplicate is None:
+            self._land_download(entry, owner, f"media-{slot}.{ext}", response.body)
+        else:
+            self._close_duplicate(
+                entry, self._own_download(entry, owner, slot), duplicate, response.body
+            )
+
+    def _land_download(self, entry: LedgerEntry, owner: str, name: str, body: bytes) -> None:
+        out = self.ctx.instance.enrichment_dir / owner / name
         out.parent.mkdir(parents=True, exist_ok=True)
-        atomic.write_bytes(out, response.body)
+        atomic.write_bytes(out, body)
         self._clear_media_slot(out)
         path = str(out.relative_to(self.ctx.instance.root))
         # A page unit corrected to media work lands here, not through the
@@ -2089,6 +2103,88 @@ class _Drain:
         _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(entry, status=Status.DONE, path=path)
+
+    def _held_by_a_sibling(
+        self, owner: str, siblings: Mapping[str, int], body: bytes
+    ) -> str | None:
+        """The name of a download another unit of the item landed holding exactly ``body``.
+
+        A media URL is its identity, verbatim, so a page re-read after its
+        CDN re-signed or moved an image emits a URL no line has seen, and
+        the same bytes would land again in the next slot, owing a second
+        description of one picture. Only the item's other units' downloads
+        are compared (:meth:`_sibling_downloads`): the unit's own file is
+        its own slot's to settle (:meth:`_close_duplicate`), and a file no
+        path names is nobody's. A sibling is read only where its size
+        already matches.
+        """
+        item_dir = self.ctx.instance.enrichment_dir / owner
+        for name in siblings:
+            held = item_dir / name
+            if (
+                is_media_file(held)
+                and held.stat().st_size == len(body)
+                and held.read_bytes() == body
+            ):
+                return name
+        return None
+
+    def _close_duplicate(
+        self, entry: LedgerEntry, own: Path | None, duplicate: str, body: bytes
+    ) -> None:
+        """Store nothing: the item already holds ``body`` as ``duplicate``.
+
+        A unit with no file of its own closes ``skipped``, taking no slot and
+        owing no description. A unit re-downloaded into its own slot finds
+        the file it landed there before (``own``), which its bytes decide.
+        """
+        # A description belongs to the bytes it read. An earlier file holding
+        # other bytes stays, with its reading, and the unit is recorded done
+        # over it, as the rerun guard keeps a stored copy: moved to
+        # `duplicate`, that reading would describe a different picture, and
+        # deleted, the picture it read would be lost. A true copy leaves, and
+        # its reading, which is of these very bytes, is handed over to
+        # `duplicate` (hand_over_descriptions).
+        if own is not None and own.read_bytes() != body:
+            self._keep_own_download(entry, own, duplicate)
+            return
+        if own is not None:
+            self._give_up_copy(entry, own, duplicate)
+        self.record_outcome(entry, status=Status.SKIPPED, reason=duplicate_media_reason(duplicate))
+
+    def _own_download(self, entry: LedgerEntry, owner: str, slot: int) -> Path | None:
+        """The file the unit landed in the slot it downloads into, where it still stands."""
+        recorded = self._output_path(entry.hash)
+        if recorded is None or _download_slot(recorded) != slot:
+            return None
+        held = self.ctx.instance.enrichment_dir / owner / PurePosixPath(recorded).name
+        return held if is_media_file(held) else None
+
+    def _keep_own_download(self, entry: LedgerEntry, own: Path, duplicate: str) -> None:
+        path = str(own.relative_to(self.ctx.instance.root))
+        self.outcomes.setdefault(own.parent.name, _ItemOutcome()).unchanged += 1
+        self.notes.append(
+            f"kept {path} for {entry.url}: the URL now serves the bytes of {duplicate}, which "
+            f"the item already holds — delete {path} first if the new picture is the truth"
+        )
+        # Nothing landed: the file stands as it did, so the line keeps its
+        # landing's day and the item reads no newer than its digest.
+        self.record_outcome(
+            entry, status=Status.DONE, path=path, landed=self._landed_on(entry, path)
+        )
+
+    def _give_up_copy(self, entry: LedgerEntry, own: Path, duplicate: str) -> None:
+        handover = hand_over_descriptions(own.parent, retired=own.name, kept=duplicate)
+        own.unlink()
+        note = (
+            f"item {own.parent.name}: {entry.url} now serves the bytes of {duplicate}, which "
+            f"its earlier download {own.name} already copied, so the copy left"
+        )
+        if handover.moved is not None:
+            note += f" and the description written of it now covers {duplicate}"
+        elif handover.dropped:
+            note += f" with the description written of it, {duplicate} keeping its own"
+        self.notes.append(f"{note}; re-emit the item's digest if it lists {own.name}")
 
     def _clear_media_slot(self, out: Path) -> None:
         """Drop whatever else stands in this slot beside the file just written.
@@ -2138,7 +2234,9 @@ class _Drain:
                 # else is an engine bug, not a quiet default.
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
-    def _media_slot(self, entry: LedgerEntry) -> int | None:
+    def _media_slot(
+        self, entry: LedgerEntry, owner: str, siblings: Mapping[str, int]
+    ) -> int | None:
         """This unit's media slot — the index its file is named by — or None at the cap.
 
         A slot belongs to the unit whose recorded output names it
@@ -2157,17 +2255,19 @@ class _Drain:
         false reason. The unit's own slot, where a file already stands, is
         overwritten in place and likewise spends nothing new.
         """
-        owner = self.owner_of(entry)
         item_dir = self.ctx.instance.enrichment_dir / owner
-        slot = self._slot_for(entry, owner, item_dir)
+        slot = self._slot_for(entry, item_dir, set(siblings.values()))
         if _slot_held(item_dir, slot):
             return slot
         if self._media_file_count(owner) >= media_cap(entry.kind):
             return None
         return slot
 
-    def _slot_for(self, entry: LedgerEntry, owner: str, item_dir: Path) -> int:
+    def _slot_for(self, entry: LedgerEntry, item_dir: Path, claimed: set[int]) -> int:
         """The slot the unit's own recorded path names, else the lowest nobody holds.
+
+        ``claimed`` is the slots the item's other units name through their
+        recorded paths (:meth:`_sibling_downloads`).
 
         Its own is read off its latest line that recorded an output,
         superseded or not, so a unit re-queued since it landed re-downloads
@@ -2180,7 +2280,6 @@ class _Drain:
         so a download a crash kept from its outcome line lands beside the
         orphan it left, never over it.
         """
-        claimed = self._claimed_slots(entry, owner)
         own = _download_slot(self._output_path(entry.hash))
         if own is not None and own not in claimed:
             return own
@@ -2190,22 +2289,30 @@ class _Drain:
             if slot not in claimed and not _slot_held(item_dir, slot)
         )
 
-    def _claimed_slots(self, entry: LedgerEntry, owner: str) -> set[int]:
-        """The slots the item's other units name through their recorded paths.
+    def _sibling_downloads(self, entry: LedgerEntry, owner: str) -> dict[str, int]:
+        """The downloads the item's other units hold, by file name, each with its slot.
 
         The item is the owning one on both sides (:meth:`owner_of`): the slot
         names a file in ``enrichment/<owner>/``, and a unit that landed
         before a rename recorded its path under the dead id, while the file
         moved with the directory under the same name.
+
+        A unit closed without content — dead, or skipped — holds nothing,
+        whatever landing an earlier line of it recorded: ``compact`` drops
+        that line for such a unit, so counting it would make a slot's owner
+        depend on when the ledger was last compacted. A file of one that
+        still stands is a file no path names: no download lands over it, and
+        none is compared with it.
         """
-        claimed: set[int] = set()
+        downloads: dict[str, int] = {}
         for other in self.entries.values():
-            if other.hash == entry.hash:
+            if other.hash == entry.hash or other.status in _TERMINAL_NO_CONTENT:
                 continue
-            slot = _download_slot(self._output_path(other.hash))
-            if slot is not None and self.owner_of(other) == owner:
-                claimed.add(slot)
-        return claimed
+            recorded = self._output_path(other.hash)
+            slot = _download_slot(recorded)
+            if recorded is not None and slot is not None and self.owner_of(other) == owner:
+                downloads[PurePosixPath(recorded).name] = slot
+        return downloads
 
     def _output_path(self, unit_hash: str) -> str | None:
         """The unit's latest recorded output path, superseded or not."""
@@ -2690,6 +2797,11 @@ def _park_notes(kind: Kind, body: str | None) -> str:
         return ""
     notes = body.strip()
     return description_text(notes) if kind is Kind.YOUTUBE else notes
+
+
+def duplicate_media_reason(held: str) -> str:
+    """The reason a media unit closes ``skipped``: its item already holds its bytes as ``held``."""
+    return f"byte-identical to {held}, which the item already holds"
 
 
 def _drop_superseded_outputs(

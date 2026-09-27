@@ -2590,6 +2590,14 @@ class TestMediaStage:
 
         return fetch
 
+    @staticmethod
+    def distinct_images(urls):
+        """Each URL serving bytes of its own: equal bytes land once, as one file."""
+        return {
+            url: HttpResponse(status=200, content_type="image/png", body=url.encode())
+            for url in urls
+        }
+
     def test_media_downloads_are_ledgered_with_parents_kind(self, instance):
         write_item(instance)
         transport = FakeTransport(
@@ -3091,9 +3099,7 @@ class TestMediaStage:
     def test_media_cap_of_four_files_per_item(self, instance):
         write_item(instance)
         urls = [f"https://cdn.example.test/img-{n}.png" for n in range(MEDIA_MAX_FILES + 2)]
-        responses = {
-            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
-        }
+        responses = self.distinct_images(urls)
         ctx = make_ctx(
             instance,
             FakeDriver(fetch_fn=self.media_fetch(urls)),
@@ -3113,9 +3119,7 @@ class TestMediaStage:
         # and a refusal here is terminal, over a file the item still holds.
         write_item(instance)
         urls = [f"https://cdn.example.test/img-{n}.png" for n in range(MEDIA_MAX_FILES)]
-        responses = {
-            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
-        }
+        responses = self.distinct_images(urls)
         driver = FakeDriver(fetch_fn=self.media_fetch(urls))
         run_mod.run(make_ctx(instance, driver, transport=FakeTransport(responses)))
         responses[urls[0]] = HttpResponse(status=200, content_type="image/png", body=PNG_BYTES)
@@ -3134,9 +3138,7 @@ class TestMediaStage:
         # the set must fail here, not silently drop its own test case.
         write_item(instance)
         urls = [f"https://cdn.example.test/slide-{n}.png" for n in range(MEDIA_MAX_FILES + 4)]
-        responses = {
-            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
-        }
+        responses = self.distinct_images(urls)
         ctx = make_ctx(
             instance,
             FakeDriver(kind=kind, fetch_fn=self.media_fetch(urls)),
@@ -3153,9 +3155,7 @@ class TestMediaStage:
         urls = [
             f"https://cdn.example.test/slide-{n}.png" for n in range(MEDIA_MAX_FILES_POOLED + 2)
         ]
-        responses = {
-            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls
-        }
+        responses = self.distinct_images(urls)
         ctx = make_ctx(
             instance,
             FakeDriver(kind=Kind.INSTAGRAM, fetch_fn=self.media_fetch(urls)),
@@ -3179,9 +3179,7 @@ class TestMediaStage:
         # means lost forever, with a false reason on the record.
         urls = [f"https://cdn.example.test/p{n}.png" for n in range(MEDIA_MAX_FILES + 2)]
         gone = HttpResponse(status=404, content_type="text/html", body=b"")
-        responses = {
-            url: HttpResponse(status=200, content_type="image/png", body=b"p") for url in urls[2:]
-        }
+        responses = self.distinct_images(urls[2:])
         responses[urls[0]] = gone
         responses[urls[1]] = gone
         write_item(instance)
@@ -3596,6 +3594,323 @@ class TestMediaSlots:
             p.relative_to(instance.enrichment_dir).as_posix()
             for p in instance.enrichment_dir.glob("*/media-*")
         ) == [f"{ITEM}/media-0.webp", f"{other_item}/media-0.webp"]
+
+
+class TestDuplicateMedia:
+    """A download whose bytes the item already holds under another unit lands nothing."""
+
+    SIGNED = "https://docs.example.test/~gitbook/image?url=card.png&sign=e0b43641&sv=2"
+    RESIGNED = "https://docs.example.test/~gitbook/image?url=card.png&sign=66c16ad3&sv=3"
+    MOVED = "https://assets.example.test/media/card.png"
+    OTHER = "https://cdn.example.test/diagram.jpg"
+    LATER = "https://cdn.example.test/later.png"
+
+    @staticmethod
+    def _page(*media: str) -> HttpResponse:
+        head = "".join(f'<meta property="og:image" content="{url}">' for url in media)
+        body = f"<html><head>{head}</head><body>page</body></html>".encode()
+        return HttpResponse(status=200, content_type="text/html", body=body)
+
+    @staticmethod
+    def _image(body: bytes) -> HttpResponse:
+        return HttpResponse(status=200, content_type="image/png", body=body)
+
+    @staticmethod
+    def _ctx(instance, served: dict[str, HttpResponse], day: datetime.date = TODAY) -> RunContext:
+        transport = FakeTransport(served)
+        web = WebDriver(transport=transport, extract=lambda _html: "extracted body " * 40)
+        at = datetime.datetime.combine(day, datetime.time(8), tzinfo=datetime.UTC)
+        return make_ctx(
+            instance,
+            FakeDriver(),
+            drivers=[web],
+            transport=transport,
+            today=lambda: day,
+            now=lambda: at,
+        )
+
+    @staticmethod
+    def _on_disk(instance) -> list[str]:
+        return sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("media-*"))
+
+    @staticmethod
+    def _requeue(instance, url: str) -> None:
+        """What a migration's rerun seed does: the landed unit queued again."""
+        landed = ledger.load(instance.ledger_path)[work_hash(url)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(
+                landed, status=Status.QUEUED, path=None, title=None, rerun=True, via="migration-18"
+            ),
+        )
+
+    def _reread_after_the_cdn_resigned(self, instance, body: bytes) -> LedgerEntry:
+        """The page lands its card, then a rerun finds it behind a new signature."""
+        write_item(instance)
+        run_mod.run(
+            self._ctx(instance, {URL: self._page(self.SIGNED), self.SIGNED: self._image(PNG_BYTES)})
+        )
+        self._requeue(instance, URL)
+        run_mod.run(
+            self._ctx(instance, {URL: self._page(self.RESIGNED), self.RESIGNED: self._image(body)})
+        )
+        return ledger.load(instance.ledger_path)[work_hash(self.RESIGNED)]
+
+    def test_a_rerun_whose_image_was_resigned_lands_no_copy(self, instance):
+        resigned = self._reread_after_the_cdn_resigned(instance, PNG_BYTES)
+        assert resigned.status is Status.SKIPPED
+        assert resigned.reason == "byte-identical to media-0.png, which the item already holds"
+        assert resigned.path is None
+        assert self._on_disk(instance) == ["media-0.png"]
+
+    def test_two_urls_serving_one_picture_land_it_once(self, instance):
+        # An og:image and a twitter:image naming one picture under two URLs.
+        write_item(instance)
+        ctx = make_ctx(
+            instance,
+            FakeDriver(
+                fetch_fn=lambda _unit: Content(
+                    meta={}, body="b" * 400, media=[self.SIGNED, self.MOVED]
+                )
+            ),
+            transport=FakeTransport(
+                {self.SIGNED: self._image(PNG_BYTES), self.MOVED: self._image(PNG_BYTES)}
+            ),
+        )
+        run_mod.run(ctx)
+        assert entry_for(ctx, self.MOVED).reason == (
+            "byte-identical to media-0.png, which the item already holds"
+        )
+        assert self._on_disk(instance) == ["media-0.png"]
+
+    def test_the_skipped_copy_owes_no_description(self, instance):
+        self._reread_after_the_cdn_resigned(instance, PNG_BYTES)
+        description = instance.enrichment_dir / ITEM / "media-0.md"
+        description.write_text("Describes `media-0.png`\n\nthe docs card\n", encoding="utf-8")
+        assert run_mod.items_owing_descriptions(instance) == []
+
+    @pytest.mark.parametrize(
+        "body",
+        [PNG_BYTES + b"a new image", PNG_BYTES[:-1] + b"?"],
+        ids=["another-size", "same-size"],
+    )
+    def test_a_rerun_whose_image_changed_lands_it_beside_the_first(self, instance, body):
+        resigned = self._reread_after_the_cdn_resigned(instance, body)
+        assert resigned.status is Status.DONE
+        assert resigned.path == f"enrichment/{ITEM}/media-1.png"
+        assert (instance.root / resigned.path).read_bytes() == body
+        assert self._on_disk(instance) == ["media-0.png", "media-1.png"]
+
+    def test_a_redownload_of_its_own_bytes_still_overwrites_in_place(self, instance):
+        # The unit's own file is never a sibling: compared with it, every
+        # unchanged re-download would close as a copy of itself.
+        write_item(instance)
+        served = {URL: self._page(self.SIGNED), self.SIGNED: self._image(PNG_BYTES)}
+        run_mod.run(self._ctx(instance, served))
+        run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.SIGNED])
+        landed = ledger.load(instance.ledger_path)[work_hash(self.SIGNED)]
+        assert landed.status is Status.DONE
+        assert landed.path == f"enrichment/{ITEM}/media-0.png"
+        assert self._on_disk(instance) == ["media-0.png"]
+
+    def _two_landed(self, instance) -> dict[str, HttpResponse]:
+        """The card in slot 0 and another page's diagram in slot 1, the diagram described."""
+        more = "https://example.test/more"
+        write_item(instance, urls=[URL, more])
+        served = {
+            URL: self._page(self.SIGNED),
+            more: self._page(self.OTHER),
+            self.SIGNED: self._image(PNG_BYTES),
+            self.OTHER: self._image(JPEG_BYTES),
+        }
+        run_mod.run(self._ctx(instance, served))
+        assert self._on_disk(instance) == ["media-0.png", "media-1.jpg"]
+        (instance.enrichment_dir / ITEM / "media-1.md").write_text(
+            "Describes `media-1.jpg`\n\na diagram\n", encoding="utf-8"
+        )
+        return served
+
+    def test_earlier_bytes_of_another_picture_stay_with_their_reading(self, instance):
+        # The URL now serves the card another unit holds, and the diagram it
+        # landed before is kept as the rerun guard keeps a stored copy.
+        served = self._two_landed(instance)
+        served[self.OTHER] = self._image(PNG_BYTES)
+        report = run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert other.status is Status.DONE
+        assert other.path == f"enrichment/{ITEM}/media-1.jpg"
+        item_dir = instance.enrichment_dir / ITEM
+        assert self._on_disk(instance) == ["media-0.png", "media-1.jpg", "media-1.md"]
+        assert (item_dir / "media-1.jpg").read_bytes() == JPEG_BYTES
+        assert (item_dir / "media-1.md").read_text() == "Describes `media-1.jpg`\n\na diagram\n"
+        assert f"kept enrichment/{ITEM}/media-1.jpg for {self.OTHER}" in report
+        assert "### Already stored — 1 unit" in report
+
+    def test_a_kept_earlier_picture_is_no_newer_than_the_items_digest(self, instance):
+        # Nothing landed: the keep carries the day the diagram did, so a
+        # digest written since still covers the item.
+        served = self._two_landed(instance)
+        digest_item(self._ctx(instance, served))
+        served[self.OTHER] = self._image(PNG_BYTES)
+        run_mod.fetch_urls(self._ctx(instance, served, LATER), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert (other.status, other.date) == (Status.DONE, TODAY)
+        assert run_mod.digest_orphans(instance) == []
+        status = run_mod.status_report(self._ctx(instance, served, LATER))
+        assert "Digest these" not in status
+
+    @pytest.mark.parametrize(
+        ("closed", "rerun"), [(False, True), (True, False)], ids=["rerun", "fresh-retry"]
+    )
+    def test_a_kept_earlier_picture_is_kept_however_the_fetch_was_queued(
+        self, instance, closed, rerun
+    ):
+        # Closed dead since it landed, the unit's fetch is queued as a fresh
+        # retry, not a rerun; its landing still names its own slot's file.
+        served = self._two_landed(instance)
+        if closed:
+            landed = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+            gone = dataclasses.replace(landed, status=Status.DEAD, path=None, reason="HTTP 404")
+            ledger.append(instance.ledger_path, gone)
+        served[self.OTHER] = self._image(PNG_BYTES)
+        run_mod.fetch_urls(self._ctx(instance, served, LATER), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert (other.status, other.path, other.date, other.rerun) == (
+            Status.DONE,
+            f"enrichment/{ITEM}/media-1.jpg",
+            TODAY,
+            rerun,
+        )
+        assert self._on_disk(instance) == ["media-0.png", "media-1.jpg", "media-1.md"]
+
+    def _landed_before_the_fix(self, instance, *landings: tuple[str, str, bytes]) -> None:
+        """Done media lines an older engine wrote, each over the file it names."""
+        write_item(instance)
+        run_mod.run(self._ctx(instance, {URL: self._page()}))
+        for url, name, body in landings:
+            ledger.append(
+                instance.ledger_path,
+                LedgerEntry(
+                    hash=work_hash(url),
+                    url=url,
+                    item=ITEM,
+                    kind=Kind.WEB,
+                    status=Status.DONE,
+                    engine="0.2.0",
+                    date=TODAY,
+                    job=Job.MEDIA,
+                    parent=work_hash(URL),
+                    depth=1,
+                    path=f"enrichment/{ITEM}/{name}",
+                ),
+            )
+            (instance.enrichment_dir / ITEM / name).write_bytes(body)
+
+    def _copy_fetched_again(
+        self, instance, *, copy_described: bool = True, sibling_described: bool = False
+    ) -> str:
+        """A copy of the card an engine before the fix landed, fetched again serving the card."""
+        self._landed_before_the_fix(
+            instance,
+            (self.SIGNED, "media-0.png", PNG_BYTES),
+            (self.OTHER, "media-1.png", PNG_BYTES),
+        )
+        item_dir = instance.enrichment_dir / ITEM
+        if sibling_described:
+            (item_dir / "media-0.md").write_text(
+                "Describes `media-0.png`\n\nthe docs card\n", encoding="utf-8"
+            )
+        if copy_described:
+            (item_dir / "media-1.md").write_text(
+                "Describes `media-1.png`\n\nthe docs card, again\n", encoding="utf-8"
+            )
+        served = {URL: self._page(), self.OTHER: self._image(PNG_BYTES)}
+        report = run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert other.status is Status.SKIPPED
+        assert other.reason == "byte-identical to media-0.png, which the item already holds"
+        return report
+
+    def test_a_true_copy_hands_its_reading_to_an_undescribed_sibling(self, instance):
+        report = self._copy_fetched_again(instance)
+        assert self._on_disk(instance) == ["media-0.md", "media-0.png"]
+        assert (instance.enrichment_dir / ITEM / "media-0.md").read_text() == (
+            "Describes `media-0.png`\n\nthe docs card, again\n"
+        )
+        assert "the description written of it now covers media-0.png" in report
+
+    def test_a_true_copy_leaves_a_described_siblings_reading_alone(self, instance):
+        report = self._copy_fetched_again(instance, sibling_described=True)
+        assert self._on_disk(instance) == ["media-0.md", "media-0.png"]
+        assert (instance.enrichment_dir / ITEM / "media-0.md").read_text() == (
+            "Describes `media-0.png`\n\nthe docs card\n"
+        )
+        assert "with the description written of it, media-0.png keeping its own" in report
+
+    def test_an_undescribed_true_copy_simply_leaves(self, instance):
+        report = self._copy_fetched_again(instance, copy_described=False)
+        assert self._on_disk(instance) == ["media-0.png"]
+        assert "already copied, so the copy left; re-emit" in report
+
+    def test_a_copy_given_up_takes_no_page_from_the_item(self, instance):
+        # A rerun closed skipped with its file gone, and a media unit: the
+        # rule naming an item a rerun took a page from passes it by.
+        self._landed_before_the_fix(
+            instance,
+            (self.SIGNED, "media-0.png", PNG_BYTES),
+            (self.OTHER, "media-1.png", PNG_BYTES),
+        )
+        digest_item(self._ctx(instance, {}))
+        served = {URL: self._page(), self.OTHER: self._image(PNG_BYTES)}
+        run_mod.fetch_urls(self._ctx(instance, served, LATER), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert (other.status, other.rerun) == (Status.SKIPPED, True)
+        assert run_mod.digest_orphans(instance) == []
+
+    def test_an_own_slot_whose_file_is_gone_has_nothing_to_settle(self, instance):
+        self._landed_before_the_fix(
+            instance,
+            (self.SIGNED, "media-0.png", PNG_BYTES),
+            (self.OTHER, "media-1.png", PNG_BYTES),
+        )
+        (instance.enrichment_dir / ITEM / "media-1.png").unlink()
+        served = {URL: self._page(), self.OTHER: self._image(PNG_BYTES)}
+        run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.OTHER])
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        assert other.status is Status.SKIPPED
+        assert other.reason == "byte-identical to media-0.png, which the item already holds"
+        assert self._on_disk(instance) == ["media-0.png"]
+
+    def test_a_retired_units_landing_reserves_no_slot(self, instance):
+        # Retired and its file gone, the unit holds nothing — as it would
+        # after the next compact drops the line that landed it.
+        served = self._two_landed(instance)
+        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(other, status=Status.SKIPPED, path=None, reason="retired"),
+        )
+        (instance.enrichment_dir / ITEM / "media-1.jpg").unlink()
+        served[self.LATER] = self._image(PNG_BYTES + b"later")
+        run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.LATER])
+        later = ledger.load(instance.ledger_path)[work_hash(self.LATER)]
+        assert later.path == f"enrichment/{ITEM}/media-1.png"
+
+    def test_a_copy_never_drops_the_sibling_file_its_own_path_names(self, instance):
+        # Damage the slot-by-position drain left: two done lines naming one
+        # file, which holds the second unit's bytes. The first, fetched
+        # again and serving those bytes, gave its slot up to the sibling —
+        # the file under its recorded name is the sibling's, and stays.
+        self._landed_before_the_fix(
+            instance,
+            (self.SIGNED, "media-0.png", PNG_BYTES),
+            (self.OTHER, "media-0.png", PNG_BYTES),
+        )
+        served = {URL: self._page(), self.SIGNED: self._image(PNG_BYTES)}
+        run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.SIGNED])
+        signed = ledger.load(instance.ledger_path)[work_hash(self.SIGNED)]
+        assert signed.status is Status.SKIPPED
+        assert (instance.enrichment_dir / ITEM / "media-0.png").read_bytes() == PNG_BYTES
 
 
 class TestFetchedCountStaysARecount:
