@@ -191,6 +191,9 @@ _PHRASING_TAGS = frozenset(
     }
 )  # fmt: skip
 _LIST_ITEM_TAGS = ("li", "dt", "dd")
+# The text length below which trafilatura deletes a div holding a link that
+# has three children or more (its link-density backtracking, precision off).
+_SHORT_WITH_A_LINK = 100
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -458,7 +461,7 @@ def _paragraph_loose_text(container: "HtmlElement | None") -> None:
     its line survives extraction, and the same link made a paragraph is
     dropped as boilerplate.
     """
-    if container is None or not _holds_loose_text(container):
+    if container is None or not _holds_loose_text(container) or _short_with_a_link(container):
         return
     previous: HtmlElement | None = None
     lead = container.text
@@ -518,6 +521,19 @@ def _worth_a_paragraph(lead: str | None, run: list["HtmlElement"]) -> bool:
         for link in node.iter("a")
     )
     return loose > linked
+
+
+def _short_with_a_link(container: "HtmlElement") -> bool:
+    """Whether trafilatura would delete the container whole once it had three children.
+
+    It deletes a short div holding a link that has three children or more,
+    and the paragraphs set around a code block give it them: a lead, a link,
+    a block and the text after it were lost together where, left as they
+    were, the block and the link were kept.
+    """
+    if next(container.iter("a"), None) is None:
+        return False
+    return len(" ".join(container.text_content().split())) < _SHORT_WITH_A_LINK
 
 
 def _holds_loose_text(container: "HtmlElement") -> bool:

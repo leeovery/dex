@@ -1139,6 +1139,51 @@ class TestExtractionFidelity:
         assert f"{lead}\n\n```\nline_one = 1" in body
         assert "```\n[See the full example](https://example.test/full.py)" in body
 
+    def test_a_short_block_holding_a_link_keeps_its_code_and_link(self):
+        # trafilatura deletes a short div holding a link once it has three
+        # children; given paragraphs around its code block, it had them.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <div>See: <a href="https://example.test/paper.pdf">'
+            f"https://example.test/paper.pdf</a>{CODE_BLOCK}After the block.</div>\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "line_one = 1" in body
+        assert "https://example.test/paper.pdf" in body
+
+    @pytest.mark.parametrize(
+        ("lead", "read"),
+        [
+            (
+                "Run <code>pip install llama-cpp-python</code>:",
+                "Run `pip install llama-cpp-python`:",
+            ),
+            ("Text <!-- a note --> continues here:", "Text continues here:"),
+        ],
+        ids=["inline-code", "comment"],
+    )
+    def test_a_lead_sentence_stays_one_paragraph_before_its_block(self, lead, read):
+        # Its inline code, and a comment inside it, are part of the run.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <div>{lead}{CODE_BLOCK}Then import it.</div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert f"{read}\n\n```\nline_one = 1" in body
+        assert "```\nThen import it." in body
+
+    def test_a_code_block_first_in_its_item_with_text_after_stays_beside_the_marker(self):
+        # The line break goes in only after text before the block.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <ul><li>{CODE_BLOCK}Text after the block.</li><li>Next item.</li></ul>\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "- ```\nline_one = 1" in body
+        assert "Text after the block." in body
+
     def test_a_footnote_after_a_code_block_keeps_its_link(self):
         # A Hacker News comment's references: a marker, then the URL. Made a
         # paragraph, the pair read as boilerplate and the link was dropped.
