@@ -395,16 +395,23 @@ that as two executors. Neither weakens an ordinary run.
   commit as the code and skills that read those files — and ship a
   migration when existing state must move, or a directive when moving it
   takes judgment a migration is not allowed to exercise.
-- **Healing migrations restore the post-fix world.** A fix that leaves
-  damage behind in existing instances ships a migration that brings every
-  affected item to the state a capture made after the fix would be in —
-  indistinguishable from a fresh share. It finds its members by what the
-  engine stored, never by anything one instance happens to hold, so it
-  heals every instance alike. It seeds the fixed code to redo the work; a
-  stored output the fix proves wrong is removed first, while one that is
-  merely incomplete stays as the copy a rerun keeps when its re-fetch
-  fails. Judgment the migration cannot exercise, such as a digest written
-  from the wrong source, goes to its report for the session.
+- **Fix forward; leave stored content alone by default.** An engine fix
+  changes what lands from then on, and content already stored stays as it
+  is, even where the fix would read it better. Instances are other people's
+  data, which nobody here can inspect, so a release that rewrites, deletes
+  or re-queues stored content across every instance is the riskiest thing
+  the engine ships: 0.2.2's healing migrations queued well over a thousand
+  re-fetches from the live web on a large instance to redo stored pages with
+  the fixed code, degraded some, deleted videos, and took a release to stop. Before anything touches existing
+  instance content, stop: run it on a clone of a real instance, read what it
+  actually changes, and weigh that against a mistake in an instance you
+  will never see. A mass re-queue is almost never worth it. Heal only
+  damage a release really did, and from the instance's own git history (a
+  restore, never a re-fetch): by a migration only where it can prove
+  exactly what was damaged, otherwise by a directive, which hands the
+  judgment to the instance's own session. A problem found in the owner's
+  own instances can be fixed by hand there. A default, not a hard rule —
+  but the burden of proof is on touching stored content.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in
