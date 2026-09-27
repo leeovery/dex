@@ -163,15 +163,69 @@ class TestRewrite:
         assert description(instance, "media-1.md").endswith(f"\n\n{TEXT}\n")
 
     def test_a_first_line_naming_no_file_takes_a_fresh_slot(self, instance):
-        # A hand-written description names the file in its own words, with
-        # nothing to read the name out of; a slot number ties a description
-        # to nothing, so the standing reading is left where it is.
+        # A hand-written description that names no file has nothing to read
+        # the name out of; a slot number ties a description to nothing, so
+        # the standing reading is left where it is.
         write_item(instance)
         write_enrichment(instance, "media-0.png")
-        write_enrichment(instance, "media-0.md", text="Description of media-0.png:\nbold lines\n")
+        write_enrichment(instance, "media-0.md", text="A hand-drawn chart:\nbold lines\n")
         describe(instance, "media-0.png")
         assert descriptions(instance) == ["media-0.md", "media-1.md"]
+        assert description(instance, "media-0.md") == "A hand-drawn chart:\nbold lines\n"
         assert description(instance, "media-1.md").startswith("Describes `media-0.png`\n")
+
+    @pytest.mark.parametrize(
+        "standing",
+        [
+            f"# enrichment/{ITEM}/media-0.png\n\nthe old reading\n",
+            "# enrichment/2026-08-19-old-slug-55ad7b/media-0.png\n\nthe old reading\n",
+            "# Description of `media-0.png`\n\nthe old reading\n",
+            "# media-0.png — the item's only media file\n\nthe old reading\n",
+            "Description of media-0.png:\nthe old reading\n",
+            "---\nmedia: media-0.png\nkind: image\n---\n\nthe old reading\n",
+        ],
+        ids=["repo-path", "old-id", "description-of", "heading", "prose", "front-matter"],
+    )
+    def test_a_pre_verb_description_in_any_shape_is_rewritten_in_place(self, instance, standing):
+        write_item(instance)
+        write_enrichment(instance, "media-0.png")
+        write_enrichment(instance, "media-0.md", text=standing)
+        assert describe(instance, "media-0.png", "A wiring diagram.") == (
+            f"rewrote enrichment/{ITEM}/media-0.md · describes media-0.png"
+        )
+        assert descriptions(instance) == ["media-0.md"]
+        assert description(instance) == "Describes `media-0.png`\n\nA wiring diagram.\n"
+
+    def test_a_front_matter_description_of_a_capture_is_rewritten_in_place(self, instance):
+        write_item(instance, media=[PHOTO])
+        write_media(instance)
+        write_enrichment(
+            instance, "media-0.md", text=f'---\nsource: "{PHOTO}"\nkind: image\n---\n\nold\n'
+        )
+        assert describe(instance, PHOTO).startswith(f"rewrote enrichment/{ITEM}/media-0.md")
+        assert descriptions(instance) == ["media-0.md"]
+
+    def test_describing_a_video_again_rewrites_its_own_reading_not_its_posters(self, instance):
+        # The shape two real items hold: slot 0 had a poster frame and a
+        # video, each described; the poster frame is gone since.
+        write_item(instance)
+        write_enrichment(instance, "media-0.mp4")
+        write_enrichment(instance, "media-0.md", text="Describes `media-0.png`\n\nthe card\n")
+        write_enrichment(instance, "media-2.md", text="Describes `media-0.mp4`\n\nthe video\n")
+        assert describe(instance, "media-0.mp4", "The video, read again.") == (
+            f"rewrote enrichment/{ITEM}/media-2.md · describes media-0.mp4"
+        )
+        assert description(instance, "media-0.md") == "Describes `media-0.png`\n\nthe card\n"
+
+    def test_a_pre_verb_description_of_another_file_is_left_alone(self, instance):
+        # The heading names media-1.png, then the page it came from.
+        write_item(instance)
+        write_enrichment(instance, "media-0.png", "media-1.png")
+        standing = "# media-1.png — repo card for `media-0.png`\n\nthe card\n"
+        write_enrichment(instance, "media-0.md", text=standing)
+        describe(instance, "media-0.png")
+        assert descriptions(instance) == ["media-0.md", "media-1.md"]
+        assert description(instance, "media-0.md") == standing
 
     def test_a_pre_verb_description_is_found_by_the_name_its_first_line_carries(self, instance):
         # Written before this verb existed: the same opening, then its own

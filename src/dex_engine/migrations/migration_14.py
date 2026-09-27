@@ -75,7 +75,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from dex_engine import atomic, corpus
-from dex_engine.pipeline.enrichment import described_file
 from dex_engine.pipeline.run import is_media_file
 from dex_engine.pipeline.types import MigrationReport
 from dex_engine.pipeline.urls import resolve_repo_path
@@ -92,6 +91,11 @@ INTENT = (
 _RETIRED_PREFIX = "discarded-"
 _SLOT_RE = re.compile(r"^media-(\d+)\.")
 _BACKTICKED_RE = re.compile(r"`[^`]+`")
+# The first line this migration reads a description's file from, frozen as
+# it shipped: the describe verb's own opening, which a description written
+# before the verb shares and runs on past. The verb has since learned to
+# read older shapes; this migration acts only on the one it was written for.
+_DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
 
 
 def build(
@@ -205,13 +209,23 @@ def _unmoored(root: Path, enrichment: Path) -> list[_Unmoored]:
         if stated is None:
             continue
         for path in sorted(item_dir.glob("media-*.md")):
-            names = described_file(path)
+            names = _described(path)
             if names is None or _carried(root, item_dir, stated, names):
                 continue
             found.append(
                 _Unmoored(item=item, path=path, names=names, in_slot=_slot_media(item_dir, names))
             )
     return found
+
+
+def _described(path: Path) -> str | None:
+    """The file a description's first line names, as this migration reads it; None where none."""
+    try:
+        line = path.read_text(encoding="utf-8").partition("\n")[0]
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = _DESCRIBED_RE.match(line)
+    return None if match is None else match.group(1)
 
 
 def _stated_media(root: Path, item: str) -> tuple[str, ...] | None:
