@@ -378,7 +378,13 @@ _FRONT_MATTER_FILE_RE = re.compile(
 _DOWNLOAD_PATH_RE = re.compile(r"enrichment/[^/]+/([^/]+)")
 # A download's slot is its identity: the bytes name its extension, so a
 # re-download whose format changed stands in the same slot under another one.
-_SLOT_NAME_RE = re.compile(r"media-(\d+)\.[A-Za-z0-9]+")
+# Only a still picture changes format that way — a CDN serving another
+# encoding of the same image — so only stills pair across extensions: a
+# slot can hold a video and its poster frame at once.
+_SLOT_NAME_RE = re.compile(r"media-(\d+)\.([A-Za-z0-9]+)")
+_STILLS = frozenset(
+    {"avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"}
+)
 # That name alone, re-spelled when a reading moves to another file.
 _BACKTICKED_RE = re.compile(r"`[^`]+`")
 _DOWNLOAD_SLOT_RE = re.compile(r"media-(\d+)\.")
@@ -438,30 +444,45 @@ def descriptions_of(item_dir: Path, name: str) -> list[Path]:
     bare name, and a description written before the verb existed may write
     the repo path, under whatever id the item had then — a rename moves the
     directory the description stands in, so the path it names is still this
-    directory's file. A download's slot is its identity, so a name recorded
-    under the extension an earlier download had still covers the file in
-    that slot, once no file stands under that name; and a captured file,
-    which the item keeps under ``media/<id>/``, is named by its bare file
-    name too.
+    directory's file. A still picture's slot is its identity, so a name
+    recorded under the extension an earlier download had still covers the
+    picture in that slot, once no file stands under that name; and a
+    captured file, which the item keeps under ``media/<id>/``, is named by
+    its bare file name too. A description naming ``name`` exactly comes
+    first: the describe verb rewrites the first, and a reading paired only
+    by its slot may be another file's.
     """
-    return [path for path in sorted(item_dir.glob("media-*.md")) if _names(path, name, item_dir)]
+    paired = [
+        (pairing, path)
+        for path in sorted(item_dir.glob("media-*.md"))
+        if (pairing := _pairing(path, name, item_dir)) is not None
+    ]
+    return [path for _, path in sorted(paired)]
 
 
-def _names(description: Path, name: str, item_dir: Path) -> bool:
+_EXACT, _INFERRED = 0, 1
+
+
+def _pairing(description: Path, name: str, item_dir: Path) -> int | None:
+    """How a description names the file ``name``: exactly, by inference, or not at all."""
     described = described_file(description)
     if described is None:
-        return False
+        return None
     download = _DOWNLOAD_PATH_RE.fullmatch(described)
     if download is not None:
         described = download.group(1)
     if described == name:
-        return True
+        return _EXACT
     slot, of_slot = _SLOT_NAME_RE.fullmatch(described), _SLOT_NAME_RE.fullmatch(name)
     if slot is not None and of_slot is not None:
-        # Two files can stand in one slot, a video and its poster frame
-        # among them: each description then names its own exactly.
-        return slot.group(1) == of_slot.group(1) and not (item_dir / described).exists()
-    return "/" in name and "/" not in described and PurePosixPath(name).name == described
+        same_still = (
+            slot.group(1) == of_slot.group(1)
+            and slot.group(2).lower() in _STILLS
+            and of_slot.group(2).lower() in _STILLS
+        )
+        return _INFERRED if same_still and not (item_dir / described).exists() else None
+    bare = "/" in name and "/" not in described and PurePosixPath(name).name == described
+    return _INFERRED if bare else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

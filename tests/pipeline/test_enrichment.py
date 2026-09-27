@@ -286,6 +286,21 @@ class TestDescribedFile:
         (tmp_path / "media-0.md").write_text("# media-0.jpg — a chart\n", encoding="utf-8")
         assert descriptions_of(tmp_path, "media-0.webp") == [tmp_path / "media-0.md"]
 
+    def test_a_reading_naming_the_file_exactly_comes_before_one_paired_by_slot(self, tmp_path):
+        (tmp_path / "media-0.webp").write_bytes(b"RIFF")
+        (tmp_path / "media-0.md").write_text("Describes `media-0.jpg`\n", encoding="utf-8")
+        (tmp_path / "media-1.md").write_text("Describes `media-0.webp`\n", encoding="utf-8")
+        assert descriptions_of(tmp_path, "media-0.webp") == [
+            tmp_path / "media-1.md",
+            tmp_path / "media-0.md",
+        ]
+
+    def test_a_vanished_pictures_reading_never_pairs_with_a_video_in_its_slot(self, tmp_path):
+        # A video and its poster frame shared slot 0; the poster is gone.
+        (tmp_path / "media-0.mp4").write_bytes(b"MP4")
+        (tmp_path / "media-0.md").write_text("Describes `media-0.png`\n", encoding="utf-8")
+        assert descriptions_of(tmp_path, "media-0.mp4") == []
+
     def test_two_files_in_one_slot_each_keep_their_own_reading(self, tmp_path):
         (tmp_path / "media-0.png").write_bytes(b"PNG")
         (tmp_path / "media-0.mp4").write_bytes(b"MP4")

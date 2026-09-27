@@ -205,6 +205,18 @@ class TestRewrite:
         assert describe(instance, PHOTO).startswith(f"rewrote enrichment/{ITEM}/media-0.md")
         assert descriptions(instance) == ["media-0.md"]
 
+    def test_describing_a_video_again_rewrites_its_own_reading_not_its_posters(self, instance):
+        # The shape two real items hold: slot 0 had a poster frame and a
+        # video, each described; the poster frame is gone since.
+        write_item(instance)
+        write_enrichment(instance, "media-0.mp4")
+        write_enrichment(instance, "media-0.md", text="Describes `media-0.png`\n\nthe card\n")
+        write_enrichment(instance, "media-2.md", text="Describes `media-0.mp4`\n\nthe video\n")
+        assert describe(instance, "media-0.mp4", "The video, read again.") == (
+            f"rewrote enrichment/{ITEM}/media-2.md · describes media-0.mp4"
+        )
+        assert description(instance, "media-0.md") == "Describes `media-0.png`\n\nthe card\n"
+
     def test_a_pre_verb_description_of_another_file_is_left_alone(self, instance):
         # The heading names media-1.png, then the page it came from.
         write_item(instance)
