@@ -1,5 +1,9 @@
 """Tests for gitread.py: read-only git queries, and None when git cannot answer."""
 
+import shutil
+
+import pytest
+
 from dex_engine.gitread import checkout_bytes, git_output
 
 
@@ -47,3 +51,18 @@ class TestCheckoutBytes:
         own_git(tmp_path, "init", "-q")
         own_git(tmp_path, "commit", "-q", "--allow-empty", "-m", "empty")
         assert checkout_bytes(tmp_path, "HEAD", "clip.mp4") is None
+
+    def test_an_lfs_file_reads_as_its_content_whatever_the_callers_smudge_setting(
+        self, tmp_path, own_git, monkeypatch
+    ):
+        if shutil.which("git-lfs") is None:
+            pytest.skip("git-lfs is not installed")
+        own_git(tmp_path, "init", "-q")
+        own_git(tmp_path, "lfs", "install", "--local")
+        own_git(tmp_path, "lfs", "track", "*.mp4")
+        (tmp_path / "clip.mp4").write_bytes(b"\x00\xff the video itself")
+        own_git(tmp_path, "add", ".gitattributes", "clip.mp4")
+        own_git(tmp_path, "commit", "-q", "-m", "clip")
+        (tmp_path / "clip.mp4").unlink()
+        monkeypatch.setenv("GIT_LFS_SKIP_SMUDGE", "1")
+        assert checkout_bytes(tmp_path, "HEAD", "clip.mp4") == b"\x00\xff the video itself"

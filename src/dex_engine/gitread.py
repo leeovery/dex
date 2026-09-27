@@ -29,12 +29,14 @@ def checkout_bytes(root: Path, revision: str, path: str) -> bytes | None:
     Read through the working tree's filters, so an LFS-tracked file comes
     back as its content, from the local object store or else from the LFS
     remote. Content neither holds comes back as the committed pointer,
-    which a later ``git add`` stages as the same blob it was.
+    which a later ``git add`` stages as the same blob it was. Smudging is
+    forced on: an owner who sets ``GIT_LFS_SKIP_SMUDGE`` for their own
+    checkouts would otherwise get a pointer back where the file belongs.
     """
     return _git(
         root,
         ["cat-file", "--filters", f"{revision}:{path}"],
-        env={"GIT_LFS_SKIP_DOWNLOAD_ERRORS": "1"},
+        env={"GIT_LFS_SKIP_DOWNLOAD_ERRORS": "1", "GIT_LFS_SKIP_SMUDGE": "0"},
     )
 
 
