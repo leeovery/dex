@@ -1,25 +1,28 @@
-"""Migration 20 — give back from git history what engine 0.2.2 degraded.
+"""Migration 20 — give back from git history the videos engine 0.2.2 deleted.
 
-Engine 0.2.2 did two kinds of damage its own ledger names, and the
-instance's git history holds what stood before each. This migration reads
-that history back through read-only git and puts it where it was, byte
-for byte. It fetches nothing and guesses nothing.
+Engine 0.2.2 deleted videos its own ledger names, and the instance's git
+history holds each as it stood. This migration reads that history back
+through read-only git and puts each where it was, byte for byte. It
+fetches nothing and guesses nothing.
 
-**Videos a transcript retired.** A transcript landing on an x post retired
-the media unit that had downloaded the post's video: it deleted the file
-and every description whose first line named it, and closed the unit
-``skipped`` with the reason "superseded — the transcript of its post
-stands for this video". A transcript cannot stand for a video: a silent
-screen recording was heard as hallucinated text, and the file with its
-description was the only record of what the video showed.
+A transcript landing on an x post retired the media unit that had
+downloaded the post's video: it deleted the file and every description
+whose first line named it, and closed the unit ``skipped`` with the
+reason "superseded — the transcript of its post stands for this video".
+A transcript cannot stand for a video: a silent screen recording was
+heard as hallucinated text, and the file with its description was the
+only record of what the video showed.
 
 Each such unit gets back the file its latest landing recorded, read as
 migration 7 reads a file: from the newest revision holding it (HEAD,
 while its deletion is uncommitted, else the parent of the commit that
 deleted it), through the working tree's filters, so an LFS video comes
 back as the video, or as its committed pointer where no store this
-clone reaches holds it. A compact drops a closed unit's landing line, so
-a landing the ledger no longer holds is found in the ledger's own
+clone reaches holds it. A revision's file is the unit's only where the
+ledger beside it has the unit landed under that name and not yet
+retired: a download that took the path after the retirement left
+another unit's file there. A compact drops a closed unit's landing line,
+so a landing the ledger no longer holds is found in the ledger's own
 committed history, in the commits one pickaxe query finds mentioning the
 unit. Every recorded path is read where the file stands now: by its name
 under the directory of the live item that owns the unit, since a rename
@@ -56,43 +59,22 @@ cannot answer — no repository, a shallow clone, a file never committed —
 nothing is restored, and the report names the file, why, and the
 session's route.
 
-**Pages a 0.2.2 re-read degraded.** Migration 18 queued a rerun of every
-page the article seam extracted, and some re-reads came back worse than
-the copy they replaced: code blocks flattened, notebooks stored as raw
-JSON, the prose after a code block lost. The members are the web and
-paper page units whose live line is a ``done`` landing by engine 0.2.2
-with ``via: migration-18``. What stood before the re-read is in the
-commit that synced 0.2.2, the first one whose ``state/migrations.jsonl``
-records migration 18, found by one pickaxe query. A page is read there at
-the path where its file stands now, else under the same file name in the
-directory its landing at that commit recorded, since an item renamed
-after the sync held it under its old id there.
+No page a 0.2.2 re-read replaced is given back. Counts of fence lines
+and table rows were tried and cannot tell a degraded re-read from a
+better one: on a real instance, the re-reads holding fewer rows had
+dropped table separator lines, junk equation-number rows, or rows the
+live page no longer carried, and most held content the older copy lacked.
 
-A count decides, never a reading: fence lines (a line opening ```` ``` ````
-or ``~~~`` after optional indent) and table rows (a line opening ``|``
-after optional indent). Where the current copy has fewer of either, the
-copy at the sync commit is restored whole, and the unit is recorded done
-at its path with that landing's engine and title and ``via:
-migration-20``, dated today, the day its enrichment changed back. Where
-the item has a digest, the report asks for it to be written again from
-the restored copy: it may have been drawn from the re-read's, and the
-backstop compares days, so a digest written the same day as the restore
-would never list. A page a session already restored by hand holds that
-copy, so its counts match and it stands; so does every re-read that lost
-no fence and no row.
-
-Idempotent: a restored video's unit is ``done``, and a restored page's
-live line is no longer a migration-18 landing by 0.2.2. Every write in a
-restore comes before the line that closes it, so an interrupted apply
-finds the unit again with its files already standing, as its own.
+Idempotent: a restored video's unit is ``done``. Every write in a restore
+comes before the line that closes it, so an interrupted apply finds the
+unit again with its files already standing, as its own.
 """
 
 import datetime
 import itertools
-import json
 import re
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 
@@ -102,22 +84,20 @@ from dex_engine.pipeline.ledger import LedgerSchemaError, append, from_line, res
 from dex_engine.pipeline.ownership import unit_owners
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.run import is_media_file
-from dex_engine.pipeline.types import Job, Kind, LedgerEntry, MigrationReport, Skipped, Status
+from dex_engine.pipeline.types import Job, LedgerEntry, MigrationReport, Skipped, Status
 from dex_engine.pipeline.urls import resolve_repo_path
 
-__all__ = ["RestoreWhatTheReleaseDegraded", "build"]
+__all__ = ["RestoreRetiredVideos", "build"]
 
 NUMBER = 20
 INTENT = (
-    "give back from git history what engine 0.2.2 degraded: every video a landed transcript "
-    "deleted comes back with the descriptions deleted with it, its media unit done again, "
-    "and every page whose 0.2.2 re-read lost code fences or table rows gets the copy the "
-    "0.2.2 sync commit held, to be digested again"
+    "give back from git history every video engine 0.2.2 deleted when a transcript landed "
+    "on its post: the file and the descriptions deleted with it come back, and its media "
+    "unit is done again"
 )
 
 _VIA = "migration-20"
 _LEDGER = "state/enrichment-ledger.jsonl"
-_MIGRATIONS_LOG = "state/migrations.jsonl"
 
 # The reason 0.2.2 closed a media unit with once its post's transcript landed.
 _RETIRED = "superseded — the transcript of its post stands for this video"
@@ -127,17 +107,6 @@ _RETIRED = "superseded — the transcript of its post stands for this video"
 # is what that engine deleted, whatever the verb reads later.
 _DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
 _BACKTICKED_RE = re.compile(r"`[^`]+`")
-
-# The engine whose migration-18 re-reads replaced stored pages, and the
-# record its sync left in the migrations log, spelled as the log writes it.
-_REREAD_ENGINE = "0.2.2"
-_REREAD_VIA = "migration-18"
-_REREAD_LOGGED = '"number": 18,'
-_REREAD_NUMBER = 18
-_PAGES = frozenset({Kind.WEB, Kind.PAPER})
-
-_FENCE_RE = re.compile(r"^[ \t]*(?:```|~~~)", re.MULTILINE)
-_ROW_RE = re.compile(r"^[ \t]*\|", re.MULTILINE)
 
 # A unit closed without content holds nothing, whatever an earlier line of
 # it recorded, so it claims no slot.
@@ -149,12 +118,12 @@ _LFS_POINTER = b"version https://git-lfs"
 
 def build(
     *,
-    today: Callable[[], datetime.date],
+    today: Callable[[], datetime.date],  # noqa: ARG001 — the shared build signature; a restore keeps its landing's date
     now: Callable[[], datetime.datetime],
-    engine_version: str,  # noqa: ARG001 — the shared build signature; every line keeps the engine of its content
-) -> "RestoreWhatTheReleaseDegraded":
-    """Build migration 20; written lines carry the injected clocks."""
-    return RestoreWhatTheReleaseDegraded(today=today, now=now)
+    engine_version: str,  # noqa: ARG001 — and its landing's engine
+) -> "RestoreRetiredVideos":
+    """Build migration 20; written lines carry the injected write instant."""
+    return RestoreRetiredVideos(now=now)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -185,32 +154,26 @@ class _Beside:
     kept_out: list[str] = field(default_factory=list)
 
 
-class RestoreWhatTheReleaseDegraded:
+class RestoreRetiredVideos:
     """Migration 20: see the module docstring."""
 
     number = NUMBER
     intent = INTENT
 
-    def __init__(
-        self,
-        *,
-        today: Callable[[], datetime.date],
-        now: Callable[[], datetime.datetime],
-    ) -> None:
-        """Written lines carry the injected clocks."""
-        self._today = today
+    def __init__(self, *, now: Callable[[], datetime.datetime]) -> None:
+        """Written lines carry the injected write instant."""
         self._now = now
 
     def apply(self, root: Path) -> MigrationReport:
-        """Restore every retired video and every page a 0.2.2 re-read degraded.
+        """Restore every video a landed transcript retired.
 
         Args:
             root: The instance root.
 
         Returns:
-            The report: one action per restored video and page; a skip for
-            every one history could not give back, and for every ledger
-            line that does not parse.
+            The report: one action per restored video; a skip for every one
+            history could not give back, for every digest drawn while a
+            video was gone, and for every ledger line that does not parse.
         """
         path = root / _LEDGER
         if not path.exists():
@@ -226,10 +189,7 @@ class RestoreWhatTheReleaseDegraded:
         )
         places = _Places(root, ledger)
         history = _History(root)
-        actions = [
-            *self._restore_videos(ledger, places, history, skipped),
-            *self._restore_pages(ledger, places, history, skipped),
-        ]
+        actions = self._restore_videos(ledger, places, history, skipped)
         return MigrationReport(actions=actions, skipped=skipped)
 
     def _restore_videos(
@@ -270,7 +230,7 @@ class RestoreWhatTheReleaseDegraded:
         landing: LedgerEntry | None,
     ) -> tuple[str, Skipped | None] | Skipped:
         """Restore one unit's file and descriptions, then record it done where the file stands."""
-        found = _source(history, places, unit, landing)
+        found = _source(history, places, unit, landing, now=ledger.now)
         if isinstance(found, Skipped):
             return found
         target = places.restore_target(unit, found)
@@ -296,87 +256,6 @@ class RestoreWhatTheReleaseDegraded:
         )
         return _restored_video(places, post, found, target, beside), repair
 
-    def _restore_pages(
-        self, ledger: _Ledger, places: "_Places", history: "_History", skipped: list[Skipped]
-    ) -> list[str]:
-        """Give every page a 0.2.2 re-read left with fewer fences or rows its earlier copy."""
-        reread = [entry for entry in ledger.latest.values() if _reread(entry)]
-        if not reread:
-            return []
-        what = f"the {len(reread)} page(s) a 0.2.2 re-read replaced"
-        if not history.readable:
-            skipped.append(Skipped(what=what, why=f"{_NO_GIT}; none was compared"))
-            return []
-        sync = history.sync_commit()
-        if sync is None:
-            skipped.append(Skipped(what=what, why=f"{history.no_sync()}; none was compared"))
-            return []
-        before = history.landings_at(sync, {entry.hash for entry in reread}, now=ledger.now)
-        synced = _Sync(commit=sync, before=before)
-        actions: list[str] = []
-        for page in reread:
-            outcome = self._restore_page(ledger, places, history, synced, page)
-            if isinstance(outcome, Skipped):
-                skipped.append(outcome)
-            elif outcome is not None:
-                action, repair = outcome
-                actions.append(action)
-                if repair is not None:
-                    skipped.append(repair)
-        return actions
-
-    def _restore_page(
-        self,
-        ledger: _Ledger,
-        places: "_Places",
-        history: "_History",
-        sync: "_Sync",
-        page: LedgerEntry,
-    ) -> tuple[str, Skipped | None] | Skipped | None:
-        """Restore one page when its re-read has fewer fence lines or table rows; None when not."""
-        found = _copies(places, history, sync, page)
-        if isinstance(found, str):
-            return Skipped(
-                what=f"{page.item}: {page.path} of {page.url}", why=f"{found}; {_PAGE_UNTOUCHED}"
-            )
-        then, now = _counts(found.content), _counts(found.current.read_bytes())
-        if now[0] >= then[0] and now[1] >= then[1]:
-            return None
-        atomic.write_bytes(found.current, found.content)
-        restored = _page_line(page, found.earlier, item=found.item, path=found.rel)
-        append(ledger.path, replace(restored, date=self._today(), at=self._now()))
-        action = (
-            f"{found.item}: restored {found.rel} from the 0.2.2 sync commit {sync.commit[:12]} — "
-            f"the re-read held {now[0]} fence line(s) and {now[1]} table row(s) where the copy "
-            f"before it held {then[0]} and {then[1]}"
-        )
-        repair = _redigest(
-            places,
-            found.item,
-            "— its digest may have been drawn from the copy the 0.2.2 re-read stored — write "
-            f"it again from the restored {found.rel}",
-        )
-        return action, repair
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _Sync:
-    """The commit that synced 0.2.2, and each re-read page's landing in the ledger it holds."""
-
-    commit: str
-    before: dict[str, LedgerEntry]
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _Copies:
-    """A re-read page's file as it stands, and the copy the sync commit held of it."""
-
-    item: str
-    current: Path
-    rel: str
-    earlier: LedgerEntry
-    content: bytes
-
 
 class _Places:
     """Where the ledger's recorded files stand now, and which unit holds each download slot."""
@@ -395,15 +274,6 @@ class _Places:
         if item is None:
             return None
         return resolve_repo_path(self.root, f"enrichment/{item}/{PurePosixPath(recorded).name}")
-
-    def standing(self, recorded: str, item: str) -> Path | None:
-        """The file a landing recorded: at its path, else by its name under ``item``."""
-        renamed = f"enrichment/{item}/{PurePosixPath(recorded).name}"
-        for repo_path in dict.fromkeys((recorded, renamed)):
-            file = resolve_repo_path(self.root, repo_path)
-            if file is not None and file.is_file():
-                return file
-        return None
 
     def relative(self, file: Path) -> str:
         return str(file.relative_to(self.root))
@@ -504,60 +374,47 @@ class _History:
             )
         return "no commit in history holds it, so it was never committed"
 
-    def no_sync(self) -> str:
-        """Why no commit this clone holds records the 0.2.2 sync."""
-        if self.shallow:
-            return (
-                "this clone is shallow, and no commit it holds records migration 18 in "
-                f"{_MIGRATIONS_LOG} — the 0.2.2 sync commit may lie past its depth"
-            )
-        return (
-            f"no commit records migration 18 in {_MIGRATIONS_LOG}, so the copies the 0.2.2 sync "
-            "left cannot be found"
-        )
-
     def holds(self, revision: str, rel: str) -> bool:
         return git_output(self.root, ["cat-file", "-e", f"{revision}:{rel}"]) is not None
 
-    def holding(self, rel: str) -> str | None:
-        """The newest revision whose tree holds ``rel``, as a full commit id.
+    def holding(self, rel: str, unit: str, *, now: datetime.datetime) -> str | None:
+        """The newest revision whose tree holds the unit's own file at ``rel``, as a full commit id.
 
-        The newest commit that touched the path either wrote it, and then
-        HEAD holds it as that commit left it, the deletion uncommitted, or
-        deleted it, and then its parent holds it as it was last committed.
-        HEAD over the commit that wrote it: the descriptions written of the
-        file since stand beside it there.
+        Each version of the path stands last in HEAD, for the one standing
+        there now, or in the parent of the commit that replaced or deleted
+        it, so those are read newest first. HEAD over the commit that wrote
+        a version: the descriptions written of the file since stand beside
+        it there. A version is the unit's only where the ledger beside it
+        has the unit landed under that file name and not closed: a download
+        that took the slot once the unit was retired left its own file at
+        the same path, and restoring that one would give the unit another
+        unit's video and descriptions.
         """
-        touched = git_output(self.root, ["log", "-n", "1", "--format=%H %P", "--", rel]) or ""
-        commit, *parents = touched.split() or [""]
-        if commit and self.holds(commit, rel):
-            head = git_output(self.root, ["rev-parse", "--verify", "HEAD"])
-            return None if head is None else head.strip()
-        return next((rev for rev in parents if self.holds(rev, rel)), None)
-
-    def sync_commit(self) -> str | None:
-        """The first commit whose migrations log records migration 18: the 0.2.2 sync.
-
-        The pickaxe also finds a commit that took a record away, so each one
-        found is read until one holds the record. A shallow clone's oldest
-        commit reads as adding every file it holds, so the record found
-        there proves nothing about when it was first written.
-        """
-        touched = git_output(
-            self.root,
-            ["log", "--reverse", "--format=%H", f"-S{_REREAD_LOGGED}", "--", _MIGRATIONS_LOG],
+        head = git_output(self.root, ["rev-parse", "--verify", "HEAD"])
+        touched = git_output(self.root, ["log", "--format=%P", "--", rel]) or ""
+        candidates = ([] if head is None else [head.strip()]) + touched.split()
+        name = PurePosixPath(rel).name
+        return next(
+            (
+                revision
+                for revision in dict.fromkeys(candidates)
+                if self.holds(revision, rel) and self._landed(revision, unit, name, now=now)
+            ),
+            None,
         )
-        for commit in (touched or "").split():
-            text = git_output(self.root, ["show", f"{commit}:{_MIGRATIONS_LOG}"])
-            if text is None or not _logs_the_reread(text):
-                continue
-            if self.shallow and not self._has_parent(commit):
-                return None
-            return commit
-        return None
 
-    def _has_parent(self, commit: str) -> bool:
-        return git_output(self.root, ["rev-parse", "--verify", "--quiet", f"{commit}^"]) is not None
+    def _landed(self, revision: str, unit: str, name: str, *, now: datetime.datetime) -> bool:
+        """Whether the ledger ``revision`` holds has the unit landed under ``name``, not closed."""
+        text = git_output(self.root, ["show", f"{revision}:{_LEDGER}"]) or ""
+        lines = list(_records(text, None, only={unit}))
+        live = _latest(lines, now=now).get(unit)
+        landing = _latest(((n, e) for n, e in lines if e.path is not None), now=now).get(unit)
+        return (
+            live is not None
+            and live.status not in _CLOSED
+            and landing is not None
+            and PurePosixPath(landing.path or "").name == name
+        )
 
     def descriptions(self, revision: str, rel: str) -> Iterator[tuple[str, bytes]]:
         """Every description at ``revision`` that 0.2.2 deleted along with ``rel``'s file."""
@@ -605,11 +462,15 @@ _NO_GIT = (
     "git answered nothing here — this is no working clone, or git is not installed — and "
     "history is the only place the earlier copies still exist"
 )
-_PAGE_UNTOUCHED = "the page was left as the re-read stored it"
 
 
 def _source(
-    history: _History, places: _Places, unit: LedgerEntry, landing: LedgerEntry | None
+    history: _History,
+    places: _Places,
+    unit: LedgerEntry,
+    landing: LedgerEntry | None,
+    *,
+    now: datetime.datetime,
 ) -> _Source | Skipped:
     """What a retired unit's file held, as the newest revision holding it, or why none says.
 
@@ -626,7 +487,7 @@ def _source(
         gone = "no live corpus item claims it" if live is None else "its item has no directory"
         return _unrestored(unit, landing.path, gone)
     for rel in dict.fromkeys((places.relative(live), landing.path)):
-        revision = history.holding(rel)
+        revision = history.holding(rel, unit.hash, now=now)
         if revision is None:
             continue
         content = checkout_bytes(history.root, revision, rel)
@@ -634,58 +495,6 @@ def _source(
             return _unrestored(unit, rel, f"git holds it at {revision[:12]} but could not read it")
         return _Source(history_path=rel, revision=revision, content=content, landing=landing)
     return _unrestored(unit, landing.path, history.missing())
-
-
-def _copies(
-    places: "_Places", history: "_History", sync: _Sync, page: LedgerEntry
-) -> _Copies | str:
-    """The page's file as it stands and the copy the sync commit held, or why there is no pair.
-
-    The copy is read at the path where the file stands now, else under
-    the same file name in the directory the landing at that commit
-    recorded: an item renamed after the sync held it under its old id.
-    """
-    item = places.live_item(page)
-    if item is None:
-        return "no live corpus item claims it"
-    current = places.standing(page.path or "", item)
-    if current is None:
-        return (
-            f"its 0.2.2 re-read landed at {page.path}, and no file stands there or under "
-            f"enrichment/{item}/ now"
-        )
-    earlier = _earlier(sync, page)
-    if isinstance(earlier, str):
-        return earlier
-    rel = places.relative(current)
-    renamed = f"{PurePosixPath(earlier.path or '').parent}/{current.name}"
-    tried = list(dict.fromkeys((rel, renamed)))
-    held = next((p for p in tried if history.holds(sync.commit, p)), None)
-    if held is None:
-        return (
-            f"no file stood at {' or '.join(tried)} in the 0.2.2 sync commit "
-            f"{sync.commit[:12]}, so there is no earlier copy to compare"
-        )
-    content = checkout_bytes(history.root, sync.commit, held)
-    if content is None:
-        return f"git holds {held} at {sync.commit[:12]} but could not read it"
-    return _Copies(item=item, current=current, rel=rel, earlier=earlier, content=content)
-
-
-def _earlier(sync: _Sync, page: LedgerEntry) -> LedgerEntry | str:
-    """The page's landing in the ledger the sync commit holds, or why it cannot serve."""
-    earlier = sync.before.get(page.hash)
-    if earlier is None:
-        return (
-            f"no landing of it stood at the 0.2.2 sync commit {sync.commit[:12]}, so there is "
-            "no earlier copy to compare"
-        )
-    if earlier.engine == _REREAD_ENGINE:
-        return (
-            f"the 0.2.2 sync commit {sync.commit[:12]} already holds its re-read, so history "
-            "there cannot say what stood before"
-        )
-    return earlier
 
 
 def _put_descriptions(history: _History, found: _Source, target: Path) -> _Beside:
@@ -748,62 +557,6 @@ def _done(landing: LedgerEntry, *, item: str, path: str, at: datetime.datetime) 
         path=path,
         title=landing.title,
     )
-
-
-def _page_line(page: LedgerEntry, earlier: LedgerEntry, *, item: str, path: str) -> LedgerEntry:
-    """A restored page's line: the unit as it stands, with the restored copy's engine and title.
-
-    Its date and write instant are set by the caller: dated today, because
-    the item's enrichment changed back today, which lists it for a digest
-    written from the restored copy.
-    """
-    return LedgerEntry(
-        hash=page.hash,
-        url=page.url,
-        item=item,
-        kind=page.kind,
-        format=page.format,
-        status=Status.DONE,
-        http_shared=page.http_shared,
-        engine=earlier.engine,
-        date=page.date,
-        job=page.job,
-        via=_VIA,
-        parent=page.parent,
-        depth=page.depth,
-        path=path,
-        title=earlier.title,
-    )
-
-
-def _reread(entry: LedgerEntry) -> bool:
-    """A page whose live line is the landing of 0.2.2's migration-18 re-read."""
-    return (
-        entry.job is None
-        and entry.kind in _PAGES
-        and entry.status is Status.DONE
-        and entry.engine == _REREAD_ENGINE
-        and entry.via == _REREAD_VIA
-        and entry.path is not None
-    )
-
-
-def _counts(content: bytes) -> tuple[int, int]:
-    """A copy's fence lines and table rows."""
-    text = content.decode("utf-8", "replace")
-    return len(_FENCE_RE.findall(text)), len(_ROW_RE.findall(text))
-
-
-def _logs_the_reread(text: str) -> bool:
-    """Whether a migrations log's text records migration 18."""
-    for line in text.split("\n"):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict) and record.get("number") == _REREAD_NUMBER:
-            return True
-    return False
 
 
 def _records(

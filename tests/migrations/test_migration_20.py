@@ -3,7 +3,6 @@
 import dataclasses
 import datetime
 import itertools
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,6 +41,12 @@ DIR = f"enrichment/{ITEM}"
 POST_FILE = f"{DIR}/x-{POST_HASH[:6]}.md"
 VIDEO_FILE = f"{DIR}/media-0.mp4"
 PHOTO_URL = "https://pbs.twimg.com/media/PhAbCdEfGh.jpg"
+OTHER_VIDEO_URL = (
+    "https://video.twimg.com/amplify_video/2102070681387274244/vid/avc1/1080x1920/"
+    "bWvQe8KrTn3pLx0a.mp4?tag=29"
+)
+OTHER_VIDEO_BYTES = b"\x00\x00\x00\x18ftypmp42 another video"
+OTHER_DESCRIPTION = "Describes `media-0.mp4`\n\nA man at a whiteboard.\n"
 
 
 @pytest.fixture
@@ -590,6 +595,57 @@ class TestRestoreVideos:
         assert (field.root / DIR / "media-2.mp4").read_bytes() == VIDEO_BYTES
         assert live(field.root)[VIDEO_HASH].path == f"{DIR}/media-2.mp4"
 
+    def took_the_path(self, field: Field) -> None:
+        """Another video downloaded into the path the retirement freed, and described."""
+        field.write(VIDEO_FILE, OTHER_VIDEO_BYTES)
+        field.write(f"{DIR}/media-0.md", OTHER_DESCRIPTION)
+        write_ledger(field.root, media(Status.DONE, url=OTHER_VIDEO_URL, path=VIDEO_FILE))
+
+    def restored_as_its_own(self, field: Field) -> None:
+        assert (field.root / VIDEO_FILE).read_bytes() == OTHER_VIDEO_BYTES
+        assert (field.root / DIR / "media-0.md").read_text(encoding="utf-8") == OTHER_DESCRIPTION
+        assert (field.root / DIR / "media-1.mp4").read_bytes() == VIDEO_BYTES
+        assert (field.root / DIR / "media-1.md").read_text(encoding="utf-8") == (
+            DESCRIPTION.replace("media-0.mp4", "media-1.mp4")
+        )
+        assert live(field.root)[VIDEO_HASH].path == f"{DIR}/media-1.mp4"
+
+    def test_a_download_that_took_the_path_since_is_not_this_units_file(self, field, migration):
+        field.retired_and_committed()
+        self.took_the_path(field)
+        field.commit("run: another video lands in the freed slot")
+        migration.apply(field.root)
+        self.restored_as_its_own(field)
+
+    def test_a_download_that_took_the_path_in_the_retiring_run_is_not_this_units_file(
+        self, field, migration
+    ):
+        # One commit saved both: the path changed bytes in it, never deleted.
+        field.landed()
+        field.retire()
+        self.took_the_path(field)
+        field.commit("run: rerun at engine v0.2.2")
+        migration.apply(field.root)
+        self.restored_as_its_own(field)
+
+    def test_two_units_retired_from_one_path_each_get_their_own_file(self, field, migration):
+        field.retired_and_committed()
+        self.took_the_path(field)
+        field.commit("run: another video lands in the freed slot")
+        (field.root / VIDEO_FILE).unlink()
+        (field.root / DIR / "media-0.md").unlink()
+        write_ledger(
+            field.root,
+            media(Status.SKIPPED, url=OTHER_VIDEO_URL, engine="0.2.2", reason=RETIRED),
+        )
+        field.commit("run: its post's transcript retired it too")
+        migration.apply(field.root)
+        units = live(field.root)
+        mine, other = units[VIDEO_HASH], units[work_hash(OTHER_VIDEO_URL)]
+        assert mine.path != other.path
+        assert (field.root / (mine.path or "")).read_bytes() == VIDEO_BYTES
+        assert (field.root / (other.path or "")).read_bytes() == OTHER_VIDEO_BYTES
+
     def test_a_slot_another_units_path_names_is_left_to_it(self, field, migration):
         # The other unit's file is missing on disk; its recorded path still holds the slot.
         field.retired_and_committed()
@@ -865,451 +921,6 @@ class TestLfs:
         lfs.git(lfs.root, "add", VIDEO_FILE)
         staged = lfs.git_output("ls-files", "-s", VIDEO_FILE).split()[1].decode()
         assert staged == lfs.git_output("rev-parse", f"HEAD~1:{VIDEO_FILE}").decode().strip()
-
-
-# ---------------------------------------------------------------------------
-# Pages a 0.2.2 re-read degraded
-# ---------------------------------------------------------------------------
-
-PAGE_ITEM = "2026-08-14-docs-page-abc123"
-PAGE_URL = "https://docs.example.test/guide/tables"
-PAGE_HASH = work_hash(PAGE_URL)
-PAGE_FILE = f"enrichment/{PAGE_ITEM}/web-{PAGE_HASH[:6]}.md"
-STORED = (
-    "---\nurl: https://docs.example.test/guide/tables\nfetched: 2026-08-14\n---\n\n"
-    "# Tables\n\n```python\nprint(1)\n```\n\nProse after the code.\n\n"
-    "| a | b |\n|---|---|\n| 1 | 2 |\n"
-)
-FLATTENED = (
-    "---\nurl: https://docs.example.test/guide/tables\nfetched: 2026-09-25\n---\n\n"
-    "# Tables\n\nprint(1)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
-)
-ROWS_LOST = (
-    "---\nurl: https://docs.example.test/guide/tables\nfetched: 2026-09-25\n---\n\n"
-    "# Tables\n\n```python\nprint(1)\n```\n\nProse after the code.\n\na b 1 2\n"
-)
-READ_ON = datetime.date(2026, 8, 14)
-REREAD_ON = datetime.date(2026, 9, 25)
-
-
-def page_line(status: Status, *, engine: str, **fields) -> LedgerEntry:
-    fields.setdefault("date", READ_ON)
-    fields.setdefault("item", PAGE_ITEM)
-    fields.setdefault("kind", Kind.WEB)
-    return line(PAGE_URL, status, engine=engine, **fields)
-
-
-class Site(Repo):
-    """A page 0.2.1 stored, the sync to 0.2.2 that queued its re-read, and the re-read."""
-
-    def landed(self, body: str = STORED, *, engine: str = "0.1.9") -> None:
-        self.git(self.root, "init", "-q")
-        write_corpus(self.root, item=PAGE_ITEM, urls=(PAGE_URL,))
-        self.write(PAGE_FILE, body)
-        write_ledger(
-            self.root,
-            page_line(Status.DONE, engine=engine, path=PAGE_FILE, title="Tables in the guide"),
-        )
-        self.commit("run: ingest the page")
-
-    def synced(self, *, commit: bool = True) -> None:
-        log = self.root / "state" / "migrations.jsonl"
-        with log.open("a", encoding="utf-8") as handle:
-            for number in range(1, 19):
-                record = {"number": number, "engine": "0.2.2", "date": "2026-09-25"}
-                handle.write(json.dumps(record) + "\n")
-        seed = {"via": "migration-18", "rerun": True, "date": REREAD_ON}
-        write_ledger(self.root, page_line(Status.QUEUED, engine="0.2.2", **seed))
-        if commit:
-            self.commit("sync: engine v0.2.2")
-
-    def reread(self, body: str = FLATTENED, *, path: str = PAGE_FILE) -> None:
-        self.write(path, body)
-        write_ledger(self.root, self.reread_line(path))
-        self.commit("run: reruns drained")
-
-    def reread_line(self, path: str = PAGE_FILE, **fields) -> LedgerEntry:
-        written = {
-            "via": "migration-18",
-            "rerun": True,
-            "date": REREAD_ON,
-            "path": path,
-            "title": "Tables — the guide",
-        }
-        return page_line(Status.DONE, engine="0.2.2", **(written | fields))
-
-    def degraded(self, body: str = FLATTENED) -> None:
-        self.landed()
-        self.synced()
-        self.reread(body)
-
-
-@pytest.fixture
-def site(tmp_path, own_git) -> Site:
-    return Site(tmp_path, own_git)
-
-
-class TestRestorePages:
-    @pytest.mark.parametrize("body", [FLATTENED, ROWS_LOST], ids=["fences", "rows"])
-    def test_a_page_the_reread_degraded_gets_the_sync_commits_copy(self, site, migration, body):
-        site.degraded(body)
-        sync = site.git_output("rev-parse", "HEAD~1").decode().strip()
-        report = migration.apply(site.root)
-
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-        page = live(site.root)[PAGE_HASH]
-        assert (page.status, page.path, page.item) == (Status.DONE, PAGE_FILE, PAGE_ITEM)
-        # Dated today, the day the enrichment changed back; the engine and
-        # title of the copy that stands.
-        assert (page.date, page.engine, page.title) == (TODAY, "0.1.9", "Tables in the guide")
-        assert (page.via, page.rerun, page.at) == ("migration-20", False, NOW)
-        (restored,) = report.actions
-        assert restored.startswith(
-            f"{PAGE_ITEM}: restored {PAGE_FILE} from the 0.2.2 sync commit {sync[:12]} — "
-        )
-        assert report.skipped == []  # no digest to write again
-
-    def test_the_report_counts_both_copies(self, site, migration):
-        site.degraded()
-        (restored,) = migration.apply(site.root).actions
-        assert (
-            "the re-read held 0 fence line(s) and 3 table row(s) where the copy before it held "
-            "2 and 3"
-        ) in restored
-
-    def digested(self, site, on: datetime.date) -> Instance:
-        instance = Instance(root=site.root)
-        instance.digests_dir.mkdir(parents=True)
-        (instance.digests_dir / f"{PAGE_ITEM}.md").write_text("digest\n")
-        record = {"item": PAGE_ITEM, "stage": "digest", "date": on.isoformat()}
-        instance.passes_path.write_text(json.dumps(record) + "\n")
-        return instance
-
-    def test_a_digest_drawn_from_the_reread_is_a_repair_for_the_session(self, site, migration):
-        site.degraded()
-        self.digested(site, REREAD_ON)
-        report = migration.apply(site.root)
-        (repair,) = report.skipped
-        assert repair.what == f"state/digests/{PAGE_ITEM}.md"
-        assert repair.why == (
-            f"re-digest {PAGE_ITEM} — its digest may have been drawn from the copy the 0.2.2 "
-            f"re-read stored — write it again from the restored {PAGE_FILE}; carry none of that "
-            "digest's facts forward"
-        )
-        (restored,) = report.actions
-        assert "digest" not in restored
-
-    def test_a_digest_older_than_today_lists_on_the_backstop_too(self, site, migration):
-        site.degraded()
-        instance = self.digested(site, REREAD_ON)
-        assert run_mod.digest_orphans(instance) == []
-        migration.apply(site.root)
-        assert run_mod.digest_orphans(instance) == [PAGE_ITEM]
-
-    def test_a_digest_written_the_day_of_the_restore_is_still_a_repair(self, site, migration):
-        # The backstop compares days, so it cannot see this one: the repair line is the signal.
-        site.degraded()
-        instance = self.digested(site, TODAY)
-        report = migration.apply(site.root)
-        assert run_mod.digest_orphans(instance) == []
-        assert [repair.what for repair in report.skipped] == [f"state/digests/{PAGE_ITEM}.md"]
-
-    @pytest.mark.parametrize(
-        ("stored", "reread", "restored"),
-        [
-            ("~~~\nx\n~~~\n", "x\n", True),
-            ("  ```\n  x\n  ```\n", "x\n", True),
-            ("\t```\nx\n```\n", "x\n", True),
-            ("  | a |\n", "a\n", True),
-            ("text | a |\n", "text a\n", False),
-            ("``` x ```\n", "x\n", True),
-            ("```\nx\n```\n", "```\nx\n```\n| more |\n", False),
-            ("| a |\n", "```\nx\n```\n", True),
-        ],
-    )
-    def test_fence_lines_and_table_rows_decide(self, site, migration, stored, reread, restored):
-        site.landed(stored)
-        site.synced()
-        site.reread(reread)
-        report = migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == (
-            stored if restored else reread
-        )
-        assert len(report.actions) == (1 if restored else 0)
-
-    def test_a_reread_that_lost_nothing_is_left_as_it_is(self, site, migration):
-        site.degraded(STORED.replace("Prose after", "Different prose after"))
-        before = ledger_text(site.root)
-        report = migration.apply(site.root)
-        assert "Different prose after" in (site.root / PAGE_FILE).read_text(encoding="utf-8")
-        assert ledger_text(site.root) == before
-        assert report.actions == report.skipped == []
-
-    def test_a_page_a_session_restored_by_hand_is_not_degraded(self, site, migration):
-        # git restore of the stored copy, then `mark done` on it: the mark
-        # line carries the rerun's provenance and the engine that marked it.
-        site.degraded()
-        site.write(PAGE_FILE, STORED)
-        marked = site.reread_line(title="Tables in the guide")
-        write_ledger(site.root, dataclasses.replace(marked, date=TODAY))
-        site.commit("run: restore the page the re-read flattened")
-        before = ledger_text(site.root)
-        report = migration.apply(site.root)
-        assert ledger_text(site.root) == before
-        assert report.actions == report.skipped == []
-
-    def test_an_item_renamed_after_the_sync_is_read_under_its_old_directory(self, site, migration):
-        new = "2026-08-14-tables-guide-abc123"
-        site.landed()
-        site.synced()
-        (site.root / "corpus" / PAGE_ITEM[:4] / f"{PAGE_ITEM}.md").unlink()
-        write_corpus(site.root, item=new, urls=(PAGE_URL,))
-        (site.root / "enrichment" / PAGE_ITEM).rename(site.root / "enrichment" / new)
-        moved = PAGE_FILE.replace(PAGE_ITEM, new)
-        site.reread(path=moved)
-        report = migration.apply(site.root)
-        assert (site.root / moved).read_text(encoding="utf-8") == STORED
-        assert not (site.root / PAGE_FILE).exists()
-        page = live(site.root)[PAGE_HASH]
-        assert (page.item, page.path) == (new, moved)
-        assert report.skipped == []
-
-    def test_a_reread_recorded_under_a_dead_id_is_read_where_its_file_stands(self, site, migration):
-        # Renamed after the re-read: its line names the old directory.
-        new = "2026-08-14-tables-guide-abc123"
-        site.degraded()
-        (site.root / "corpus" / PAGE_ITEM[:4] / f"{PAGE_ITEM}.md").unlink()
-        write_corpus(site.root, item=new, urls=(PAGE_URL,))
-        (site.root / "enrichment" / PAGE_ITEM).rename(site.root / "enrichment" / new)
-        site.commit("item: rename")
-        migration.apply(site.root)
-        moved = PAGE_FILE.replace(PAGE_ITEM, new)
-        assert (site.root / moved).read_text(encoding="utf-8") == STORED
-        assert live(site.root)[PAGE_HASH].path == moved
-
-    def test_the_first_commit_recording_the_sync_is_the_one_read(self, site, migration):
-        # A union merge can write the record again later; by then the
-        # re-read had landed, and that commit holds the degraded copy.
-        site.degraded()
-        log = site.root / "state" / "migrations.jsonl"
-        record = {"number": 18, "engine": "0.2.2", "date": "2026-09-25"}
-        with log.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
-        site.commit("merge: another machine's sync")
-        migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-    def test_a_commit_that_only_took_the_record_away_is_passed_over(self, site, migration):
-        site.git(site.root, "init", "-q")
-        log = site.root / "state" / "migrations.jsonl"
-        site.write("state/migrations.jsonl", '{"number": 18, "engine": "0.2.2"} torn\n')
-        site.commit("sync: a torn record")
-        log.write_text(
-            "".join(
-                json.dumps({"number": n, "engine": "0.2.1", "date": "2026-09-01"}) + "\n"
-                for n in range(1, 18)
-            )
-        )
-        site.commit("repair: the torn record, the earlier records kept")
-        (site.root / "state" / "migrations.jsonl").unlink()
-        site.commit("repair: the log goes")
-        site.degraded()
-        migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-    def test_a_torn_record_before_the_sync_record_is_passed_over(self, site, migration):
-        site.landed()
-        site.write("state/migrations.jsonl", '{"number": 3, "engi\n')
-        site.synced()
-        site.reread()
-        migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-    def test_a_sync_commit_that_begins_the_history_is_read(self, site, migration):
-        # A history that starts at the sync, as a fresh import of the instance would.
-        site.git(site.root, "init", "-q")
-        write_corpus(site.root, item=PAGE_ITEM, urls=(PAGE_URL,))
-        site.write(PAGE_FILE, STORED)
-        write_ledger(
-            site.root,
-            page_line(Status.DONE, engine="0.1.9", path=PAGE_FILE, title="Tables in the guide"),
-        )
-        site.synced()
-        site.reread()
-        migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-    def test_a_shallow_clone_holding_the_sync_and_its_parent_is_read(
-        self, site, migration, tmp_path
-    ):
-        site.git(site.root, "init", "-q")
-        site.write("README.md", "An instance.\n")
-        site.commit("init")
-        site.degraded()
-        clone = tmp_path / "clone"
-        site.git(tmp_path, "clone", "-q", "--depth", "3", f"file://{site.root}", str(clone))
-        assert (clone / ".git" / "shallow").is_file()
-        migration.apply(clone)
-        assert (clone / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-    def test_the_restored_line_keeps_the_units_lineage_and_license(self, site, migration):
-        parent = work_hash("https://x.com/i/status/1")
-        site.landed()
-        site.synced()
-        site.write(PAGE_FILE, FLATTENED)
-        write_ledger(site.root, site.reread_line(parent=parent, depth=1, http_shared=True))
-        site.commit("run: reruns drained")
-        migration.apply(site.root)
-        page = live(site.root)[PAGE_HASH]
-        assert (page.parent, page.depth, page.http_shared) == (parent, 1, True)
-
-    def test_a_copy_that_is_not_utf_8_still_counts(self, site, migration):
-        site.landed()
-        site.synced()
-        site.write(PAGE_FILE, FLATTENED.encode() + b"caf\xe9\n")
-        write_ledger(site.root, site.reread_line())
-        site.commit("run: reruns drained")
-        (restored,) = migration.apply(site.root).actions
-        assert "the re-read held 0 fence line(s)" in restored
-
-    @pytest.mark.parametrize(
-        "fields",
-        [
-            {"engine": "0.2.3"},
-            {"via": "migration-17"},
-            {"via": None, "rerun": False},
-            {"kind": Kind.X},
-            {"kind": Kind.GITHUB},
-            {"job": Job.ASSET, "parent": POST_HASH, "depth": 1},
-        ],
-    )
-    def test_is_no_member(self, site, migration, fields):
-        site.landed()
-        site.synced()
-        site.write(PAGE_FILE, FLATTENED)
-        write_ledger(site.root, dataclasses.replace(site.reread_line(), **fields))
-        site.commit("run: a landing of another shape")
-        before = ledger_text(site.root)
-        report = migration.apply(site.root)
-        assert ledger_text(site.root) == before
-        assert report.actions == report.skipped == []
-
-    def test_a_paper_is_a_member(self, site, migration):
-        site.landed()
-        site.synced()
-        site.write(PAGE_FILE, FLATTENED)
-        write_ledger(site.root, site.reread_line(kind=Kind.PAPER))
-        site.commit("run: reruns drained")
-        (restored,) = migration.apply(site.root).actions
-        assert restored.startswith(f"{PAGE_ITEM}: restored {PAGE_FILE}")
-
-    def test_a_second_apply_finds_nothing(self, site, migration):
-        site.degraded()
-        migration.apply(site.root)
-        before = ledger_text(site.root)
-        report = migration.apply(site.root)
-        assert ledger_text(site.root) == before
-        assert report.actions == report.skipped == []
-
-    def test_every_page_is_judged_whatever_came_before_it(self, site, migration):
-        # A re-read whose file is gone, read first, and one that degraded.
-        other_url = "https://docs.example.test/guide/missing"
-        other_file = f"enrichment/{PAGE_ITEM}/web-{work_hash(other_url)[:6]}.md"
-        site.git(site.root, "init", "-q")
-        write_ledger(
-            site.root,
-            line(
-                other_url,
-                Status.DONE,
-                engine="0.2.2",
-                kind=Kind.WEB,
-                item=PAGE_ITEM,
-                via="migration-18",
-                rerun=True,
-                path=other_file,
-            ),
-        )
-        site.degraded()
-        report = migration.apply(site.root)
-        assert len(report.skipped) == 1
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == STORED
-
-
-class TestPagesHistoryCannotAnswer:
-    def test_a_page_with_no_landing_at_the_sync_commit_is_named(self, site, migration):
-        # A thin park the re-read landed: nothing stood before it.
-        site.git(site.root, "init", "-q")
-        write_corpus(site.root, item=PAGE_ITEM, urls=(PAGE_URL,))
-        write_ledger(site.root, page_line(Status.MANUAL, engine="0.1.9", reason="thin-extraction"))
-        site.commit("run: parked thin")
-        site.synced()
-        site.reread()
-        report = migration.apply(site.root)
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == FLATTENED
-        (skip,) = report.skipped
-        assert skip.what == f"{PAGE_ITEM}: {PAGE_FILE} of {PAGE_URL}"
-        assert skip.why.startswith("no landing of it stood at the 0.2.2 sync commit ")
-        assert skip.why.endswith("; the page was left as the re-read stored it")
-
-    def test_a_file_the_sync_commit_never_held_is_named(self, site, migration):
-        site.landed()
-        (site.root / PAGE_FILE).unlink()
-        site.synced()
-        site.reread()
-        (skip,) = migration.apply(site.root).skipped
-        assert skip.why.startswith(f"no file stood at {PAGE_FILE} in the 0.2.2 sync commit ")
-
-    def test_a_sync_commit_holding_the_reread_already_is_named(self, site, migration):
-        site.landed()
-        site.synced(commit=False)
-        site.reread()
-        (skip,) = migration.apply(site.root).skipped
-        assert "already holds its re-read" in skip.why
-        assert (site.root / PAGE_FILE).read_text(encoding="utf-8") == FLATTENED
-
-    def test_a_page_whose_file_is_gone_is_named(self, site, migration):
-        site.degraded()
-        (site.root / PAGE_FILE).unlink()
-        (skip,) = migration.apply(site.root).skipped
-        assert skip.why.startswith(f"its 0.2.2 re-read landed at {PAGE_FILE}, and no file")
-        assert not (site.root / PAGE_FILE).exists()
-
-    def test_a_page_no_live_item_claims_is_named(self, site, migration):
-        site.degraded()
-        (site.root / "corpus" / PAGE_ITEM[:4] / f"{PAGE_ITEM}.md").unlink()
-        (skip,) = migration.apply(site.root).skipped
-        assert skip.why.startswith("no live corpus item claims it")
-
-    def test_a_copy_git_cannot_read_back_is_named(self, site, migration, monkeypatch):
-        site.degraded()
-        monkeypatch.setattr(migration_20, "checkout_bytes", lambda *_args: None)
-        (skip,) = migration.apply(site.root).skipped
-        assert f"git holds {PAGE_FILE} at " in skip.why
-        assert "but could not read it" in skip.why
-
-    def test_outside_a_repository_no_page_is_compared(self, site, migration):
-        site.degraded()
-        shutil.rmtree(site.root / ".git")
-        (skip,) = migration.apply(site.root).skipped
-        assert skip.what == "the 1 page(s) a 0.2.2 re-read replaced"
-        assert "git answered nothing here" in skip.why
-        assert skip.why.endswith("; none was compared")
-
-    def test_history_that_never_recorded_the_sync_is_named(self, site, migration):
-        site.landed()
-        write_ledger(site.root, site.reread_line())
-        site.write(PAGE_FILE, FLATTENED)
-        site.commit("run: a re-read with no sync on record")
-        (skip,) = migration.apply(site.root).skipped
-        assert skip.what == "the 1 page(s) a 0.2.2 re-read replaced"
-        assert skip.why.startswith("no commit records migration 18 in state/migrations.jsonl")
-
-    def test_a_shallow_clone_says_its_depth_may_hide_the_sync(self, site, migration, tmp_path):
-        site.degraded()
-        clone = tmp_path / "clone"
-        site.git(tmp_path, "clone", "-q", "--depth", "1", f"file://{site.root}", str(clone))
-        (skip,) = migration.apply(clone).skipped
-        assert "this clone is shallow" in skip.why
 
 
 class TestTolerantRead:
