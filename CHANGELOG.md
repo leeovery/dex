@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-09-27
+
+🐛 Fixed
+
+- Reruns that re-fetch a page to identical content no longer make the item look newer than its digest, which was sending sessions to re-digest pages nothing had actually changed.
+- A `mark ... done` heal now moves its file to the unit's own name so every reader and future healing migration can find it, instead of leaving it wherever the session typed the path.
+- Media re-downloads whose CDN re-signed or moved a URL no longer store a byte-identical duplicate picture and owe it a second description.
+- An item that lost its only page to a rerun (e.g. a healing migration that deleted a disproven output) is now correctly flagged as owing a digest, instead of silently dropping off both the run report and the digest backstop.
+- Corrected-kind reruns (e.g. web → PDF) now redetect and land the new kind properly instead of getting stuck on the earlier kind's stored copy.
+- `enrich fetch` on a unit that never landed is now treated as fresh work rather than a rerun, so a first-ever retry isn't mistaken for a page loss.
+
 ## [0.2.3] - 2026-09-27
 
 🐛 Fixed
