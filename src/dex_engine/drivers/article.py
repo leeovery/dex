@@ -485,7 +485,7 @@ def _close_run(
     """Wrap one run in a ``<p>`` where ``before`` stands, or put its lead text back."""
     from lxml.html import Element  # noqa: PLC0415 — lazy: pulled in with trafilatura
 
-    if not _any_text(lead, *(node.tail for node in run)):
+    if not _worth_a_paragraph(lead, run):
         if previous is None:
             container.text = lead
         else:
@@ -498,6 +498,26 @@ def _close_run(
         container.append(paragraph)
     else:
         before.addprevious(paragraph)
+
+
+def _worth_a_paragraph(lead: str | None, run: list["HtmlElement"]) -> bool:
+    """Whether a run's own text outweighs its links, so that made a paragraph it is kept.
+
+    trafilatura drops a paragraph made mostly of links as boilerplate, and
+    a footnote's marker and URL after a code block are one — a Hacker News
+    comment's ``[1] https://arxiv.org/pdf/...`` was lost that way. Left loose
+    it is kept, as a link alone on its line is.
+    """
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    loose = sum(len((text or "").strip()) for text in (lead, *(node.tail for node in run)))
+    linked = sum(
+        len(link.text_content().strip())
+        for node in run
+        if isinstance(node, HtmlElement)
+        for link in node.iter("a")
+    )
+    return loose > linked
 
 
 def _holds_loose_text(container: "HtmlElement") -> bool:

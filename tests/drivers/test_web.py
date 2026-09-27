@@ -1139,6 +1139,20 @@ class TestExtractionFidelity:
         assert f"{lead}\n\n```\nline_one = 1" in body
         assert "```\n[See the full example](https://example.test/full.py)" in body
 
+    def test_a_footnote_after_a_code_block_keeps_its_link(self):
+        # A Hacker News comment's references: a marker, then the URL. Made a
+        # paragraph, the pair read as boilerplate and the link was dropped.
+        lead = "The paper trains the embeddings so the cosine similarity is meaningful:"
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <div>{lead}{CODE_BLOCK}\n[1] "
+            '<a href="https://example.test/paper.pdf">https://example.test/paper.pdf</a></div>\n'
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert f"{lead}\n\n```\nline_one = 1" in body
+        assert "https://example.test/paper.pdf" in body
+
     def test_katex_math_reads_as_its_tex_source(self):
         # docusaurus.io renders KaTeX, which writes no alttext: the TeX sits
         # in an annotation, and the MathML's own text writes the prime as a
