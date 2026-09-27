@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-09-27
+
+🐛 Fixed
+
+- Videos deleted when a transcript landed on the same post are given back — the file and its description are restored from git history instead of assuming the transcript covers what was shown.
+- Transcripts no longer delete the video they were drawn from — the downloaded video and its description now stay alongside the transcript.
+- Heal reruns queued by earlier releases are cancelled once their stored copy still stands, so months-old content is no longer re-fetched from the live web and sometimes replaced with a worse reading.
+
 ## [0.2.2] - 2026-09-27
 
 ✨ Added
