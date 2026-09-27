@@ -12,8 +12,8 @@ contract — whether a body holds a transcript is said by the ``via`` field,
 so the section headings and the frontmatter cannot be read apart — and
 their composition and split live here too, shared by the youtube driver
 and the transcribe drain. So does the one line a media description opens
-with, naming the file it covers: the describe verb writes it, and both
-that verb and the drain that retires a transcribed video read it back.
+with, naming the file it covers: the describe verb writes it and reads it
+back.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
