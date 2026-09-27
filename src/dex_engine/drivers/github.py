@@ -24,6 +24,7 @@ though they were the document they point at.
 
 import re
 import urllib.parse
+from collections.abc import Callable
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.detect import format_of_name, sniff_format
@@ -125,6 +126,7 @@ _GIST_ID_RE = re.compile(r"[0-9a-f]{32}|[0-9a-f]{20}|\d{1,8}")
 _MAX_GIST_FILE_CHARS = 20_000
 _MAX_BLOB_CHARS = 40_000
 _MAX_README_CHARS = 60_000
+_TRUNCATED = "**Truncated:** cut at {kept:,} of {whole:,} characters; the rest is at {url}"
 _TOP_REPOS = 15
 _TOPIC_LIMIT = 8
 
@@ -162,7 +164,7 @@ class GitHubDriver:
         parts = urllib.parse.urlsplit(unit.url)
         segments = [segment for segment in parts.path.split("/") if segment]
         if host_of(unit.url) == "gist.github.com":
-            return self._fetch_gist(segments)
+            return self._fetch_gist(segments, unit.url)
         if not segments:
             # The root addresses no content unit, and no judgment could
             # pull one out of it either.
@@ -175,12 +177,12 @@ class GitHubDriver:
             return self._fetch_profile(segments[0])
         address = ref_path(unit.url)
         if address is not None:
-            return self._fetch_path(address)
-        return self._fetch_repo_page(segments[0], segments[1], segments[2:])
+            return self._fetch_path(address, unit.url)
+        return self._fetch_repo_page(segments[0], segments[1], segments[2:], unit.url)
 
     # -- routes ----------------------------------------------------------
 
-    def _fetch_gist(self, segments: list[str]) -> Outcome:
+    def _fetch_gist(self, segments: list[str], url: str) -> Outcome:
         gist_id = _gist_id(segments)
         if gist_id is None:
             return Unusable(evidence="gist index page — no single gist to fetch", rescuable=False)
@@ -189,7 +191,8 @@ class GitHubDriver:
             return payload.to_outcome()
         files = payload.get("files") or {}
         body = "\n\n".join(
-            f"### {name}\n```\n{(file or {}).get('content', '')[:_MAX_GIST_FILE_CHARS]}\n```"
+            f"### {name}\n"
+            + _capped((file or {}).get("content", ""), _MAX_GIST_FILE_CHARS, url=url, wrap=_fence)
             for name, file in files.items()
         )
         if not body:
@@ -209,11 +212,11 @@ class GitHubDriver:
         )
         return Content(meta=meta, body=body)
 
-    def _fetch_repo_page(self, owner: str, repo: str, rest: list[str]) -> Outcome:
+    def _fetch_repo_page(self, owner: str, repo: str, rest: list[str], url: str) -> Outcome:
         """Everything a repo URL addresses beyond a path at a ref; no route, no read."""
         match rest:
             case []:
-                return self._fetch_repo(owner, repo)
+                return self._fetch_repo(owner, repo, url)
             case ["issues" | "pull", number, *_] if number.isdigit():
                 return self._fetch_issue(owner, repo, number)
             case ["releases", "download", _, *_, asset] | ["releases", "latest", "download", asset]:
@@ -223,24 +226,24 @@ class GitHubDriver:
             case _:
                 return _unrouted(rest[0])
 
-    def _fetch_path(self, address: RefPath) -> Outcome:
+    def _fetch_path(self, address: RefPath, url: str) -> Outcome:
         found = fetch_path(self._gh, address)
         if isinstance(found, Classification):
             return found.to_outcome()
         if isinstance(found, Blob):
-            return _file_outcome(found)
+            return _file_outcome(found, url)
         if not found.path:
-            return self._fetch_repo(address.owner, address.repo, ref=found.ref)
-        return self._fetch_directory(address, found)
+            return self._fetch_repo(address.owner, address.repo, url, ref=found.ref)
+        return self._fetch_directory(address, found, url)
 
-    def _fetch_directory(self, address: RefPath, tree: Tree) -> Outcome:
+    def _fetch_directory(self, address: RefPath, tree: Tree, url: str) -> Outcome:
         readme = fetch_readme(self._gh, address.owner, address.repo, ref=tree.ref, path=tree.path)
         if isinstance(readme, Classification):
             return readme.to_outcome()
         listing = "\n".join(f"- `{name}`" for name in tree.entries)
         return Content(
             meta={"title": f"{address.owner}/{address.repo}/{tree.path}"},
-            body=f"## README\n\n{_readme_body(readme)}\n\n## Contents\n\n{listing}",
+            body=f"## README\n\n{_readme_body(readme, url)}\n\n## Contents\n\n{listing}",
         )
 
     def _fetch_issue(self, owner: str, repo: str, number: str) -> Outcome:
@@ -252,7 +255,7 @@ class GitHubDriver:
             body=payload.get("body") or "(no body)",
         )
 
-    def _fetch_repo(self, owner: str, repo: str, *, ref: str | None = None) -> Outcome:
+    def _fetch_repo(self, owner: str, repo: str, url: str, *, ref: str | None = None) -> Outcome:
         payload = self._api(f"repos/{owner}/{repo}")
         if isinstance(payload, Classification):
             return payload.to_outcome()
@@ -271,13 +274,13 @@ class GitHubDriver:
             # route, so it must never be dropped from a ref'd reading.
             "ref": ref,
         }
-        return Content(meta=meta, body=_readme_body(readme))
+        return Content(meta=meta, body=_readme_body(readme, url))
 
     def _api(self, endpoint: str) -> dict | Classification:
         return gh_api(self._gh, endpoint)
 
 
-def _file_outcome(blob: Blob) -> Outcome:
+def _file_outcome(blob: Blob, url: str) -> Outcome:
     """A file fenced as source, re-detected as a document, or parked as any other binary."""
     # Named, because a signature is not always there to find: an
     # unsmudged Git-LFS pointer is 130 bytes of honest UTF-8 standing in
@@ -300,7 +303,9 @@ def _file_outcome(blob: Blob) -> Outcome:
         return Unusable(
             evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
         )
-    return Content(meta={"file": blob.path}, body=f"```\n{text[:_MAX_BLOB_CHARS]}\n```")
+    return Content(
+        meta={"file": blob.path}, body=_capped(text, _MAX_BLOB_CHARS, url=url, wrap=_fence)
+    )
 
 
 def _attachment(rest: list[str]) -> Outcome:
@@ -339,8 +344,28 @@ def _unrouted(shape: str) -> Unusable:
     )
 
 
-def _readme_body(readme: str | None) -> str:
-    return (readme or "")[:_MAX_README_CHARS].rstrip() or "(no README)"
+def _readme_body(readme: str | None, url: str) -> str:
+    return _capped(readme or "", _MAX_README_CHARS, url=url, wrap=str.rstrip) or "(no README)"
+
+
+def _capped(text: str, cap: int, *, url: str, wrap: Callable[[str], str]) -> str:
+    """``text`` wrapped whole when it fits, else its lines up to ``cap`` and a line saying so.
+
+    A silent prefix is read as the whole file: the digest written from it
+    cannot know the rest exists. So a cut is followed, outside whatever
+    ``wrap`` puts round the text, by one line naming how much of how much
+    was kept and where the rest is. The cut falls at the last line end the
+    cap allows; only text with no line end inside the cap is cut mid-line.
+    """
+    if len(text) <= cap:
+        return wrap(text)
+    end = text.rfind("\n", 0, cap + 1)
+    kept = text[:end] if end > 0 else text[:cap]
+    return f"{wrap(kept)}\n\n{_TRUNCATED.format(kept=len(kept), whole=len(text), url=url)}"
+
+
+def _fence(text: str) -> str:
+    return f"```\n{text}\n```"
 
 
 def _gist_id(segments: list[str]) -> str | None:

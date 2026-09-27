@@ -56,6 +56,15 @@ ATTACHED_PDF = (
 ATTACHED_PICTURE = "https://github.com/user-attachments/assets/2fad9a87-d37f-4e00-9d4e-1aadf9326e77"
 
 
+def truncated(kept: int, whole: int, url: str) -> str:
+    return f"**Truncated:** cut at {kept:,} of {whole:,} characters; the rest is at {url}"
+
+
+def lines(count: int, width: int) -> str:
+    """``count`` lines of ``width`` characters each, newline included."""
+    return "".join(f"{n:0{width - 1}d}\n" for n in range(count))
+
+
 def unusable_of(outcome: object) -> Unusable:
     assert isinstance(outcome, Unusable), f"expected Unusable, got {outcome!r}"
     return outcome
@@ -220,15 +229,22 @@ class TestRepo:
         assert isinstance(result, Refused)
         assert not result.permanent
 
-    def test_the_readme_is_capped(self):
+    def test_a_readme_over_the_cap_is_cut_at_a_line_and_says_so(self):
+        readme = lines(1_000, 61)
         driver = driver_for(
-            {
-                REPO_ARGS: gh_ok(fixture_text("github", "repo.json")),
-                README_ARGS: gh_ok("x" * 60_001),
-            }
+            {REPO_ARGS: gh_ok(fixture_text("github", "repo.json")), README_ARGS: gh_ok(readme)}
+        )
+        url = "https://github.com/acme/pipeline-kit"
+        body = body_of(driver.fetch(make_unit(url, Kind.GITHUB)))
+        assert body == f"{readme[:59_962]}\n\n{truncated(59_962, 61_000, url)}"
+
+    def test_a_readme_at_the_cap_is_whole(self):
+        readme = lines(1_000, 60)
+        driver = driver_for(
+            {REPO_ARGS: gh_ok(fixture_text("github", "repo.json")), README_ARGS: gh_ok(readme)}
         )
         result = driver.fetch(make_unit("https://github.com/acme/pipeline-kit", Kind.GITHUB))
-        assert body_of(result) == "x" * 60_000
+        assert body_of(result) == readme.rstrip()
 
     def test_a_blank_readme_is_no_readme(self):
         driver = driver_for(
@@ -322,6 +338,21 @@ class TestGist:
         assert isinstance(result, Unusable)
         assert not result.rescuable  # an index addresses no unit; nothing for judgment either
         assert "gist index" in result.evidence
+
+    def test_a_gist_file_over_the_cap_says_so_after_its_fence(self):
+        # The field case: a 20,000-character report stored as the whole gist.
+        report = lines(300, 70)
+        payload = {
+            "description": "report",
+            "files": {"report.md": {"content": report}, "notes.md": {"content": "short\n"}},
+        }
+        driver = driver_for({("api", "gists/abc123def456"): gh_ok(json.dumps(payload))})
+        url = "https://gist.github.com/octomaint/abc123def456"
+        body = body_of(driver.fetch(make_unit(url, Kind.GITHUB)))
+        assert body == (
+            f"### report.md\n```\n{report[:19_949]}\n```\n\n{truncated(19_949, 21_000, url)}"
+            "\n\n### notes.md\n```\nshort\n\n```"
+        )
 
     @pytest.mark.parametrize(
         "gist_id",
@@ -456,6 +487,60 @@ class TestBlob:
         assert isinstance(result, Content)
         assert body_of(result) == "```\ndef detect(): ...\n```"
 
+    def test_a_file_over_the_cap_is_cut_at_a_line_end_and_says_so(self):
+        # The field case: a 65,718-byte module stored as its first 40,000
+        # characters, ending inside an f-string, with nothing to say so.
+        source = lines(1_000, 70)
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        # 571 lines end at 39,970; the 572nd would cross the cap.
+        assert body == f"```\n{source[:39_969]}\n```\n\n{truncated(39_969, 70_000, self.URL)}"
+
+    def test_a_line_ending_on_the_cap_is_kept(self):
+        source = "a\n" + "x" * 39_998 + "\ntail\n"
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\n{source[:40_000]}\n```\n\n{truncated(40_000, 40_006, self.URL)}"
+
+    def test_a_line_ending_one_past_the_cap_is_left_out(self):
+        source = lines(399, 100) + "y" * 101 + "\ntail\n"
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\n{source[:39_899]}\n```\n\n{truncated(39_899, 40_007, self.URL)}"
+
+    def test_the_whole_length_is_counted_in_characters(self):
+        # Bytes would overstate it: every é is two of them in UTF-8.
+        source = "é" * 99 + "\n"
+        driver = driver_for({self.CONTENTS: gh_contents((source * 500).encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body.endswith(truncated(39_999, 50_000, self.URL))
+
+    @pytest.mark.parametrize("size", [40_000, 39_999])
+    def test_a_file_at_or_under_the_cap_is_fenced_whole(self, size):
+        source = lines(400, 100)[: size - 1] + "\n"
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\n{source}\n```"
+
+    def test_a_line_longer_than_the_cap_is_cut_inside_itself(self):
+        # Minified source: no line end to cut at, and nothing kept is worse.
+        source = "x" * 50_000
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\n{'x' * 40_000}\n```\n\n{truncated(40_000, 50_000, self.URL)}"
+
+    def test_a_line_that_would_cross_the_cap_is_left_out_however_long(self):
+        source = "a\n" + "x" * 50_000
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\na\n```\n\n{truncated(1, 50_002, self.URL)}"
+
+    def test_a_line_end_opening_the_file_is_no_place_to_cut(self):
+        source = "\n" + "x" * 50_000
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"```\n{source[:40_000]}\n```\n\n{truncated(40_000, 50_001, self.URL)}"
+
     def test_oversize_blob_parks_manual_never_dead(self):
         # Over 1MB the contents API answers `encoding: "none"` with an empty
         # body — the file is there, just not inline.
@@ -495,10 +580,13 @@ class TestDirectory:
         assert not result.permanent
 
     def test_the_readme_is_capped_and_the_listing_kept_whole(self):
-        readme = gh_ok("x" * 60_001)
-        driver = driver_for({self.CONTENTS: self.LISTING, self.README: readme})
+        readme = lines(1_000, 61)
+        driver = driver_for({self.CONTENTS: self.LISTING, self.README: gh_ok(readme)})
         body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
-        assert body == f"## README\n\n{'x' * 60_000}\n\n## Contents\n\n{self.ENTRIES}"
+        assert body == (
+            f"## README\n\n{readme[:59_962]}\n\n{truncated(59_962, 61_000, self.URL)}"
+            f"\n\n## Contents\n\n{self.ENTRIES}"
+        )
 
     def test_a_blob_link_to_a_directory_reads_the_directory(self):
         # It blocked on the contents API's array answer, then went manual.
@@ -543,6 +631,19 @@ class TestRepoAtRef:
         assert result.meta["title"] == "acme/pipeline-kit"
         assert result.meta["ref"] == "v2"
         assert body_of(result) == "# pipeline-kit v2"
+
+    def test_a_refs_readme_over_the_cap_says_where_the_rest_is(self):
+        readme = lines(1_000, 61)
+        driver = driver_for(
+            {
+                self.ROOT: gh_listing(("README.md", "file")),
+                REPO_ARGS: gh_ok(fixture_text("github", "repo.json")),
+                self.README: gh_ok(readme),
+            }
+        )
+        url = "https://github.com/acme/pipeline-kit/tree/v2"
+        body = body_of(driver.fetch(make_unit(url, Kind.GITHUB)))
+        assert body.endswith(f"\n\n{truncated(59_962, 61_000, url)}")
 
     def test_a_ref_that_does_not_exist_is_dead(self):
         # Read without the root listing, a gone branch would be the repo's
