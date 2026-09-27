@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-27
+
+✨ Added
+- GitHub links now resolve to what they actually point at — directories list a README and contents, raw links and release/attachment downloads pull the real file, and links to commits, wikis, releases and other unrouted pages park instead of silently returning the repo's README.
+- A doc page that declares the markdown it was rendered from is stored from that source, keeping tables and code blocks that HTML extraction used to lose.
+- Article extraction now preserves scroll-wrapped tables and code blocks (Mintlify-style docs), renders MathML/KaTeX and LaTeXML formulas as TeX, and rebuilds LaTeXML's span-based tables and equation layouts instead of dropping them.
+- A long-form X article now renders its code blocks, links, embedded posts, dividers and figures, and pools its images alongside the post.
+- An X post's video is transcribed, with its text joining the transcript the way a podcast or reel's does.
+- Session captures now suffix their filename with a random code to avoid colliding with other machines' commits, and inbox-staged media is keyed by the asset id rather than the file name so repeated filenames no longer collide.
+- Four healing migrations (15–18) requeue units the old GitHub dispatch, X driver, and article extractor previously read incorrectly, so existing instances catch up without a fresh capture.
+
+🔧 Changed
+- A rerun (migration reseed or `enrich fetch` on an existing URL) that fails now keeps the previously stored copy instead of overwriting it with a dead/parked outcome, and reports what the re-fetch met.
+- A rerun that re-parks for transcription keeps its already-landed transcript and lands only the refreshed notes around it, rather than losing the transcript.
+- Media slot assignment is now keyed by each unit's own recorded output path instead of its ledger position, preventing one unit's re-download from overwriting a different unit's file.
+- `enrich compact` now preserves a requeued unit's last landing record alongside its live queued line, so reruns don't lose track of which file is theirs.
+- An item's `raw`/`enriched` status and related coverage checks now treat a rerun whose earlier landing still stands as not owed, instead of holding the item back until the rerun redrains.
+
+🐛 Fixed
+- The GitHub driver no longer misreads `user-attachments` links as a repo, blob links to directories as an error, or `issues/new` as issue "new".
+- A media unit corrected to a different kind (or downloaded again) no longer leaves its earlier output stale in the item's enrichment listing.
+
 ## [0.2.1] - 2026-09-25
 
 🔧 Changed
