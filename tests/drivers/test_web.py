@@ -1173,6 +1173,18 @@ class TestExtractionFidelity:
         assert f"{read}\n\n```\nline_one = 1" in body
         assert "```\nThen import it." in body
 
+    def test_a_paragraph_among_the_loose_text_ends_the_run_before_it(self):
+        # A block element is no part of a run of text, even one holding no
+        # code: the run after it is its own, and opens the block apart.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <div>Loose text before the paragraph, long enough to count as prose:"
+            "<p>A paragraph written as one.</p>More loose text right before the block:"
+            f"{CODE_BLOCK}After the block.</div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "More loose text right before the block:\n\n```\nline_one = 1" in body
+
     def test_a_code_block_first_in_its_item_with_text_after_stays_beside_the_marker(self):
         # The line break goes in only after text before the block.
         page = ARTICLE.replace(
