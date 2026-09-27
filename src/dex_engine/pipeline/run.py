@@ -54,7 +54,6 @@ from .detect import (
 )
 from .enrichment import (
     TRANSCRIPT_PROVENANCE,
-    described_file,
     description_text,
     mask_fetched,
     podcast_body,
@@ -100,7 +99,7 @@ from .types import (
     WorkUnit,
     version_newer,
 )
-from .urls import ext_of, resolve_repo_path, video_identity, work_hash
+from .urls import ext_of, resolve_repo_path, work_hash
 
 __all__ = [
     "CAP_BOUNDS",
@@ -1182,54 +1181,9 @@ class _Drain:
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
         )
-        self._retire_transcribed_media(entry, path, acquired.meta.get("enclosure"))
         # Audio lifecycle: the transcript supersedes the audio — delete on
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
-
-    def _retire_transcribed_media(self, entry: LedgerEntry, landed: str, enclosure: object) -> None:
-        """Retire the unit's media child that downloaded the video just transcribed.
-
-        A post fetched before its video was heard pooled that video as a file
-        owing a description, and a post shared now never has one: the
-        transcript stands for the video, so the file and every description
-        of it leave, and the child's line closes ``skipped`` with no path —
-        nothing counts it any more, neither the describe row, which counts
-        files, nor lint, which asks after every recorded path. The child is
-        found by the video it downloaded, not the URL it took: the rendition
-        heard now need not be the one pooled then. A child that already
-        closed without content (skipped over the size ceiling, confirmed
-        gone) holds nothing to retire.
-        """
-        if not isinstance(enclosure, str):
-            return
-        video = video_identity(enclosure)
-        children = [
-            child
-            for child in self.entries.values()
-            if child.parent == entry.hash
-            and child.job is Job.MEDIA
-            and child.status not in _TERMINAL_NO_CONTENT
-            and video_identity(child.url) == video
-        ]
-        for child in children:
-            self._retire_download(entry, child, (self.ctx.instance.root / landed).parent)
-
-    def _retire_download(self, entry: LedgerEntry, child: LedgerEntry, item_dir: Path) -> None:
-        if child.path is not None:
-            name = Path(child.path).name
-            described = _drop_described_download(item_dir, name)
-            self.notes.append(
-                f"item {self.owner_of(entry)}: the transcript of {entry.url} replaced its "
-                f"downloaded video {name}"
-                + (
-                    " and the description written of it — a digest drawn from that "
-                    "description wants rewriting from the transcript"
-                    if described
-                    else ""
-                )
-            )
-        self.record_outcome(child, status=Status.SKIPPED, reason=_TRANSCRIBED_AWAY)
 
     def _note_first_run(self, transcriber: Transcriber) -> None:
         """Surface an ok-with-caveat availability (the slow first run, explained)."""
@@ -2573,26 +2527,6 @@ def _park_notes(kind: Kind, body: str | None) -> str:
         return ""
     notes = body.strip()
     return description_text(notes) if kind is Kind.YOUTUBE else notes
-
-
-_TRANSCRIBED_AWAY = "superseded — the transcript of its post stands for this video"
-
-
-def _drop_described_download(item_dir: Path, name: str) -> bool:
-    """Remove a media download and every description of it; whether one was described.
-
-    A description names what it covers in its first line: the describe verb
-    writes the download's bare name, and one written before the verb
-    existed wrote its repo path.
-    """
-    (item_dir / name).unlink(missing_ok=True)
-    spellings = {name, f"enrichment/{item_dir.name}/{name}"}
-    descriptions = [
-        path for path in sorted(item_dir.glob("media-*.md")) if described_file(path) in spellings
-    ]
-    for path in descriptions:
-        path.unlink()
-    return bool(descriptions)
 
 
 def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:

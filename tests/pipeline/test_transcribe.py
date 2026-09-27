@@ -1370,8 +1370,8 @@ class TestXDrain:
         assert "mark done to keep it as the record" in (entry.reason or "")
 
 
-class TestTranscribedVideoRetired:
-    """A transcript landing on a post retires the media child that downloaded its video.
+class TestTranscriptLandsBesideTheVideo:
+    """A transcript landing on a post leaves the video it heard where it stands.
 
     The state under test is a post landed before x video transcribed: the
     post done with its body, its video a done media child with a file in
@@ -1397,9 +1397,7 @@ class TestTranscribedVideoRetired:
             **fields,
         )
 
-    def landed_before_the_fix(
-        self, instance, *, video_status: Status = Status.DONE, video_url: str | None = None
-    ) -> Path:
+    def landed_before_the_fix(self, instance, *, video_status: Status = Status.DONE) -> Path:
         """The post and its downloaded video (and a photo beside it), as pre-fix x left them."""
         write_item(instance, urls=[self.POST_URL], kinds=["x"])
         item_dir = instance.enrichment_dir / ITEM
@@ -1417,17 +1415,9 @@ class TestTranscribedVideoRetired:
         (item_dir / "media-1.jpg").write_bytes(b"PHOTO-BYTES")
         (item_dir / "media-1.md").write_text("Describes `media-1.jpg`\n\nA chart.\n")
         reason = None if video_status is Status.DONE else "media exceeds 10MB ceiling"
-        attempts = 5 if video_status is Status.BLOCKED else None
         lines = [
             self.line(self.POST_URL, status=Status.DONE, path=f"enrichment/{ITEM}/{post_file}"),
-            self.line(
-                video_url or self.VIDEO,
-                status=video_status,
-                path=video_path,
-                reason=reason,
-                attempts=attempts,
-                **child,
-            ),
+            self.line(self.VIDEO, status=video_status, path=video_path, reason=reason, **child),
             self.line(
                 self.PHOTO, status=Status.DONE, path=f"enrichment/{ITEM}/media-1.jpg", **child
             ),
@@ -1454,97 +1444,36 @@ class TestTranscribedVideoRetired:
         report = " ".join(run_mod.run(ctx).split())  # the surface wraps
         return report, ledger.load(instance.ledger_path)
 
-    @pytest.mark.parametrize("names", ["media-0.mp4", f"enrichment/{ITEM}/media-0.mp4"])
-    def test_the_video_and_its_description_leave_when_the_transcript_lands(self, instance, names):
-        # A description names its file bare (the verb) or by repo path (before it).
+    def test_the_video_and_its_description_stay_when_the_transcript_lands(self, instance):
+        # A transcript cannot stand for a video: a silent screen recording
+        # was heard as hallucinated text, and deleting the file with its
+        # description threw away the only record of what it showed.
         item_dir = self.landed_before_the_fix(instance)
-        (item_dir / "media-0.md").write_text(f"Describes `{names}`\n\nFrames of a talk.\n")
-        report, entries = self.rerun(instance)
+        (item_dir / "media-0.md").write_text("Describes `media-0.mp4`\n\nFrames of a talk.\n")
+        _report, entries = self.rerun(instance)
 
         post = entries[self.post_hash()]
         assert post.status is Status.DONE
         assert "Clip words." in read_enrichment(instance.root / str(post.path))[1]
         video = entries[work_hash(self.VIDEO)]
-        assert video.status is Status.SKIPPED
-        assert video.path is None  # nothing recorded for lint to find missing
-        assert "transcript" in (video.reason or "")
-        assert not (item_dir / "media-0.mp4").exists()
-        assert not (item_dir / "media-0.md").exists()
-        # The photo beside it, and its description, are no business of the transcript.
-        assert entries[work_hash(self.PHOTO)].status is Status.DONE
-        assert (item_dir / "media-1.jpg").exists()
-        assert (item_dir / "media-1.md").exists()
+        assert (video.status, video.path) == (Status.DONE, f"enrichment/{ITEM}/media-0.mp4")
+        assert (item_dir / "media-0.mp4").read_bytes() == b"VIDEO-BYTES"
+        assert "Frames of a talk." in (item_dir / "media-0.md").read_text()
         assert run_mod.items_owing_descriptions(instance) == []
-        assert "replaced its downloaded video media-0.mp4 and the description" in report
-        assert "wants rewriting from the transcript" in report
 
-    def test_an_undescribed_video_leaves_and_the_describe_row_clears(self, instance):
-        item_dir = self.landed_before_the_fix(instance)
-        assert run_mod.items_owing_descriptions(instance) != []  # the video owes one
-        report, entries = self.rerun(instance)
-        assert entries[work_hash(self.VIDEO)].status is Status.SKIPPED
-        assert not (item_dir / "media-0.mp4").exists()
-        assert run_mod.items_owing_descriptions(instance) == []
-        assert "replaced its downloaded video media-0.mp4" in report
-        assert "wants rewriting" not in report
-
-    def test_a_video_whose_file_is_already_gone_still_retires(self, instance):
-        # A done line whose file went missing is lint's to name; the landing
-        # closes the line all the same, and never fails over the absence.
-        item_dir = self.landed_before_the_fix(instance)
-        (item_dir / "media-0.mp4").unlink()
+    def test_an_undescribed_video_still_owes_its_description(self, instance):
+        self.landed_before_the_fix(instance)
         _report, entries = self.rerun(instance)
-        assert entries[self.post_hash()].status is Status.DONE
-        assert entries[work_hash(self.VIDEO)].status is Status.SKIPPED
-
-    def test_a_video_whose_download_never_landed_closes_with_nothing_to_remove(self, instance):
-        # Out of attempts, so the drain leaves it; the transcript still
-        # stands for it, and nothing will ever download it now.
-        item_dir = self.landed_before_the_fix(instance, video_status=Status.BLOCKED)
-        report, entries = self.rerun(instance)
-        video = entries[work_hash(self.VIDEO)]
-        assert video.status is Status.SKIPPED
-        assert "transcript" in (video.reason or "")
-        assert not (item_dir / "media-0.mp4").exists()
-        assert "replaced its downloaded video" not in report
+        assert entries[work_hash(self.VIDEO)].status is Status.DONE
+        assert run_mod.items_owing_descriptions(instance) == [
+            {"item": ITEM, "binaries": 2, "described": 1}
+        ]
 
     def test_a_video_skipped_over_the_ceiling_is_left_as_it_closed(self, instance):
         self.landed_before_the_fix(instance, video_status=Status.SKIPPED)
-        report, entries = self.rerun(instance)
+        _report, entries = self.rerun(instance)
         video = entries[work_hash(self.VIDEO)]
         assert video.reason == "media exceeds 10MB ceiling"  # no second line written
-        assert "replaced its downloaded video" not in report
-
-    def test_another_posts_download_of_the_same_video_is_never_touched(self, instance):
-        item_dir = self.landed_before_the_fix(instance)
-        other = self.line(
-            self.VIDEO,
-            status=Status.DONE,
-            path=f"enrichment/{ITEM}/media-0.mp4",
-            job=Job.MEDIA,
-            parent=work_hash("https://x.com/i/status/801"),
-            depth=1,
-        )
-        ledger.append(instance.ledger_path, other)
-        _report, entries = self.rerun(instance)
-        assert entries[work_hash(self.VIDEO)].status is Status.DONE
-        assert (item_dir / "media-0.mp4").exists()
-
-    def test_a_page_unit_for_the_videos_url_is_no_download_to_retire(self, instance):
-        # Harvest can promote the video's URL as a page of its own; only the
-        # media download the post pooled is what the transcript stands for.
-        self.landed_before_the_fix(instance)
-        page = self.line(
-            self.VIDEO,
-            status=Status.MANUAL,
-            reason="not a page",
-            via="harvest",
-            parent=self.post_hash(),
-            depth=1,
-        )
-        ledger.append(instance.ledger_path, page)
-        _report, entries = self.rerun(instance)
-        assert entries[work_hash(self.VIDEO)].status is Status.MANUAL
 
     def test_a_rerun_whose_video_is_gone_keeps_its_post_done(self, instance):
         # The rerun stored the post again before reaching for the video; a
@@ -1734,52 +1663,6 @@ class TestTranscribedVideoRetired:
         assert post.status is Status.MANUAL
         assert "no enrichment record" in (post.reason or "")
 
-    @pytest.mark.parametrize(
-        "old_url",
-        [
-            # The same video under another rendition and tag, as a later fetch hands over.
-            "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/480x270/Ab.mp4?tag=12",
-            "https://video.twimg.com/ext_tw_video/2000000000000000800/pu/vid/avc1/640x360/Cd.mp4",
-        ],
-    )
-    def test_the_old_download_retires_by_the_videos_id_not_its_url(self, instance, old_url):
-        item_dir = self.landed_before_the_fix(instance, video_url=old_url)
-        fresh = "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/1280x720/Ef.mp4?tag=16"
-        report, entries = self.rerun_with_video_url(instance, fresh)
-        assert entries[work_hash(old_url)].status is Status.SKIPPED
-        assert not (item_dir / "media-0.mp4").exists()
-        assert "replaced its downloaded video media-0.mp4" in report
-
-    def test_another_video_of_the_same_post_is_never_retired(self, instance):
-        # A post's second video stays pooled, as a fresh share pools it.
-        other = "https://video.twimg.com/amplify_video/2000000000000000801/vid/avc1/1280x720/Gh.mp4"
-        item_dir = self.landed_before_the_fix(instance, video_url=other)
-        fresh = "https://video.twimg.com/amplify_video/2000000000000000800/vid/avc1/1280x720/Ef.mp4"
-        _report, entries = self.rerun_with_video_url(instance, fresh)
-        assert entries[work_hash(other)].status is Status.DONE
-        assert (item_dir / "media-0.mp4").exists()
-
-    def rerun_with_video_url(self, instance, url: str) -> tuple[str, dict]:
-        payload = json.loads(fixture_text("fxtwitter", "video-800.json"))
-        for listing in payload["tweet"]["media"].values():
-            for media in listing:
-                media["url"] = url
-        transport = FakeTransport(
-            {
-                "https://api.fxtwitter.com/status/800": json_response(payload),
-                url: TestXDrain().video(),
-            }
-        )
-        caps = Capabilities(
-            transcribers=(FakeTranscriber("whisper-local", text="Clip words.", model="medium"),),
-            extractors=(),
-        )
-        ctx = TestXDrain().ctx(
-            instance, transport, capabilities=caps, provider_available=caps.available
-        )
-        report = " ".join(run_mod.run(ctx).split())
-        return report, ledger.load(instance.ledger_path)
-
 
 class TestBlockedEscalation:
     """The last blocked attempt: a page keeps its landing, an x transcribe rerun its post.
@@ -1792,10 +1675,10 @@ class TestBlockedEscalation:
     def test_a_page_fetch_rerun_keeps_its_landing(self, instance):
         # Blocked five times on the post itself: a page outcome, kept as a
         # page's landing is, and never reported as a transcript's end.
-        retired = TestTranscribedVideoRetired()
-        retired.landed_before_the_fix(instance)
-        landed = f"enrichment/{ITEM}/x-{retired.post_hash()[:6]}.md"
-        post = ledger.load(instance.ledger_path)[retired.post_hash()]
+        rerun = TestTranscriptLandsBesideTheVideo()
+        rerun.landed_before_the_fix(instance)
+        landed = f"enrichment/{ITEM}/x-{rerun.post_hash()[:6]}.md"
+        post = ledger.load(instance.ledger_path)[rerun.post_hash()]
         ledger.append(
             instance.ledger_path,
             dataclasses.replace(post, status=Status.BLOCKED, attempts=4, reason="rate limited"),
@@ -1803,25 +1686,25 @@ class TestBlockedEscalation:
         refused = HttpResponse(status=429, content_type="text/html", body=b"")
         transport = FakeTransport({"https://api.fxtwitter.com/status/800": refused})
         report = " ".join(run_mod.run(TestXDrain().ctx(instance, transport)).split())
-        entry = ledger.load(instance.ledger_path)[retired.post_hash()]
+        entry = ledger.load(instance.ledger_path)[rerun.post_hash()]
         assert (entry.status, entry.path) == (Status.DONE, landed)
-        assert f"kept the stored copy of {retired.POST_URL}" in report
+        assert f"kept the stored copy of {rerun.POST_URL}" in report
         assert "ended without a transcript" not in report
 
     def test_an_x_transcribe_rerun_keeps_its_post(self, instance):
-        retired = TestTranscribedVideoRetired()
-        retired.waiting_rerun(instance, park=retired.PARK, status=Status.BLOCKED, attempts=4)
-        report, entries = retired.drain_waiting(instance, self.PAGE)
-        assert entries[retired.post_hash()].status is Status.DONE
+        rerun = TestTranscriptLandsBesideTheVideo()
+        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=4)
+        report, entries = rerun.drain_waiting(instance, self.PAGE)
+        assert entries[rerun.post_hash()].status is Status.DONE
         assert "ended without a transcript (still blocked after 5 attempts" in report
 
     def test_a_fresh_x_transcribe_escalates_to_manual(self, instance):
-        retired = TestTranscribedVideoRetired()
-        retired.waiting_rerun(instance, park=retired.PARK, status=Status.BLOCKED, attempts=4)
-        fresh = ledger.load(instance.ledger_path)[retired.post_hash()]
+        rerun = TestTranscriptLandsBesideTheVideo()
+        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=4)
+        fresh = ledger.load(instance.ledger_path)[rerun.post_hash()]
         ledger.append(instance.ledger_path, dataclasses.replace(fresh, rerun=False))
-        _report, entries = retired.drain_waiting(instance, self.PAGE)
-        post = entries[retired.post_hash()]
+        _report, entries = rerun.drain_waiting(instance, self.PAGE)
+        post = entries[rerun.post_hash()]
         assert post.status is Status.MANUAL
         assert (post.reason or "").startswith("still blocked after 5 attempts")
 
@@ -1844,10 +1727,10 @@ class TestBlockedEscalation:
         # A post's own media download: no transcript's end, and no landing
         # the fetch path would keep — even with a file standing at the name
         # a unit of its kind would land under.
-        retired = TestTranscribedVideoRetired()
-        item_dir = retired.landed_before_the_fix(instance)
-        (item_dir / f"x-{work_hash(retired.PHOTO)[:6]}.md").write_text("stray\n")
-        photo = ledger.load(instance.ledger_path)[work_hash(retired.PHOTO)]
+        rerun = TestTranscriptLandsBesideTheVideo()
+        item_dir = rerun.landed_before_the_fix(instance)
+        (item_dir / f"x-{work_hash(rerun.PHOTO)[:6]}.md").write_text("stray\n")
+        photo = ledger.load(instance.ledger_path)[work_hash(rerun.PHOTO)]
         ledger.append(
             instance.ledger_path,
             dataclasses.replace(
@@ -1858,11 +1741,11 @@ class TestBlockedEscalation:
         transport = FakeTransport(
             {
                 "https://api.fxtwitter.com/status/800": json_response({}, status=404),
-                retired.PHOTO: unavailable,
+                rerun.PHOTO: unavailable,
             }
         )
         report = " ".join(run_mod.run(TestXDrain().ctx(instance, transport)).split())
-        entry = ledger.load(instance.ledger_path)[work_hash(retired.PHOTO)]
+        entry = ledger.load(instance.ledger_path)[work_hash(rerun.PHOTO)]
         assert entry.status is Status.MANUAL
         assert (entry.reason or "").startswith("still blocked after 5 attempts")
         assert "ended without a transcript" not in report

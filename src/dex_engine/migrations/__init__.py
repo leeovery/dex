@@ -17,12 +17,15 @@ un-pulled repo, a migration may be applied again — every migration's
 Authoring rules: mechanical and near-instant only. The permitted acts —
 provably-safe state rewrites, queue seeding with provenance, and
 restoring a file from the instance's own git history through read-only
-git (``log``/``show``; migration 7 set the precedent — a restore copies
-a known revision, it invents nothing). Migrations never fetch, never
-transform content, never re-implement pipeline stages; whatever they
-cannot do safely lands in the report's ``skipped``/``anomalies`` for the
-session to repair with judgment — that channel exists exactly so a
-migration can hand cognitive repairs to the session instead of guessing.
+git (``log``/``show``/``cat-file``; migration 7 set the precedent — a
+restore copies a known revision, it invents nothing). A migration never
+fetches a source: reading the instance's own committed content, LFS
+included, from its own store or its LFS remote is a restore, not a
+fetch. Migrations never transform content, never re-implement pipeline
+stages; whatever they cannot do safely lands in the report's
+``skipped``/``anomalies`` for the session to repair with judgment — that
+channel exists exactly so a migration can hand cognitive repairs to the
+session instead of guessing.
 """
 
 import datetime
