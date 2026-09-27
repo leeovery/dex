@@ -28,8 +28,9 @@ because the two settings answer different questions: an article's comment
 section is chrome, and a discussion page's comments are the entire
 artifact. The same preparation repairs markup trafilatura throws away
 with content inside it: scroll-area wrappers its navigation filter
-misreads, MathML, and the LaTeXML shapes of an arXiv rendering. The
-arXiv full text in the paper driver runs through it too.
+misreads, code blocks whose line breaks live in the stylesheet, MathML,
+and the LaTeXML shapes of an arXiv rendering. The arXiv full text in the
+paper driver runs through it too.
 
 A page can make extraction unnecessary: docs sites declare the markdown
 a page was rendered from (``<link rel="alternate" type="text/markdown">``),
@@ -71,7 +72,7 @@ import html as html_lib
 import json
 import re
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -171,6 +172,8 @@ _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 _FEED_LEADS = (b"<rss", b"<feed")
 
+_CODE_LINE_CLASS = "line"
+
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
 _TEX_ANNOTATION_TEXT = ".//annotation[@encoding='application/x-tex']//text()"
@@ -208,8 +211,9 @@ def _prepare_page(html: str) -> str:
     field case that earned it. They come in two families: what
     ``include_links`` costs — empty anchors, and permalink glyphs and
     line breaks in headings — and markup trafilatura throws away with
-    content inside it — scroll areas its navigation filter misreads,
-    MathML, and LaTeXML's tabulars and equation tables.
+    content inside it — scroll areas its navigation filter misreads, code
+    lines whose breaks live in the stylesheet, MathML, and LaTeXML's
+    tabulars and equation tables.
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -222,6 +226,7 @@ def _prepare_page(html: str) -> str:
     except (LxmlError, ValueError):
         return html
     _unmask_scroll_areas(tree)
+    _break_code_lines(tree)
     _tabulate_latexml_spans(tree)
     # Before the rest of the math: an equation row's formulas are one
     # display block, and rendered one element at a time they would come
@@ -340,6 +345,45 @@ def _unmask_scroll_areas(tree: "HtmlElement") -> None:
         if isinstance(element, HtmlElement) and "scrollbar" in _class_attribute(element).lower():
             kept = [token for token in _classes(element) if "scrollbar" not in token.lower()]
             element.set("class", " ".join(kept))
+
+
+def _break_code_lines(tree: "HtmlElement") -> None:
+    """Put a newline between the lines of a code block typeset one element per line.
+
+    Shiki wraps each line of a block in ``<span class="line">``, and a page
+    that renders those spans as components, rather than as Shiki's own
+    string, leaves nothing between them: the breaks live in the stylesheet,
+    which draws each span as a block. trafilatura reads text, so the block
+    came out as one line, and one line of code is inline code — every block
+    of a towardsdatascience.com post was stored as a single backticked line,
+    its statements run together (``from PyPDF2 import PdfReaderimport
+    nltk``). vercel.com's blog draws its lines as ``<div class="line">``
+    the same way.
+
+    A line that already ends in a newline keeps what it has: Shiki's string
+    output puts one between its spans, and Hugo's Chroma ends each span
+    with one. A block's last line keeps what it has too: a break after it
+    adds no line, and it would turn a one-line block into a fenced one.
+    """
+    for line in _code_lines(tree):
+        if line.getnext() is not None and not _ends_its_line(line):
+            line.tail = f"\n{line.tail or ''}"
+
+
+def _code_lines(tree: "HtmlElement") -> "Iterator[HtmlElement]":
+    """Every line element of a code block: a ``line``-classed child of its ``<code>``.
+
+    A child and never a deeper descendant, because deeper in, the class
+    names a token rather than a line: Prism's diff highlighting calls the
+    changed text inside each line element ``line``.
+    """
+    for pre in tree.iter("pre"):
+        for code in pre.iterchildren("code"):
+            yield from (line for line in code if _CODE_LINE_CLASS in _classes(line))
+
+
+def _ends_its_line(line: "HtmlElement") -> bool:
+    return line.text_content().endswith("\n") or (line.tail or "").startswith("\n")
 
 
 def _tabulate_latexml_spans(tree: "HtmlElement") -> None:

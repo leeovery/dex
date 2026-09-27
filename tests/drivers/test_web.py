@@ -924,6 +924,88 @@ class TestExtractionFidelity:
         assert "Sidebar:" not in body
         assert f"Scroller: {chrome}" in body
 
+    def test_code_typeset_one_span_per_line_keeps_its_line_breaks(self):
+        # towardsdatascience.com renders Shiki's line spans with nothing
+        # between them, the breaks drawn by the stylesheet: every block of a
+        # post came back as one backticked line, its statements run
+        # together, over a stored copy that had held all eleven as fences.
+        page = fixture_text("web", "shiki-span-lines.html")
+        body = trafilatura_extract(page) or ""
+        assert (
+            "```\nfrom PyPDF2 import PdfReader\nimport nltk\nnltk.download('punkt')\n"
+            "# Extracting Text from PDF\ndef extract_text_from_pdf(file_path):\n"
+            "    with open(file_path, 'rb') as file:\n"
+        ) in body
+        assert "    return sentences\nsentences = split_text_into_sentences(text)\n```" in body
+        assert body.count("```") == 4
+        assert "PdfReaderimport" not in body
+        assert "we end with a string `text` with 210964 characters of length." in body
+
+    def test_code_typeset_one_div_per_line_keeps_its_line_breaks(self):
+        # vercel.com's blog draws the same layout a div to a line, each
+        # carrying its line number in a button extraction leaves out.
+        lines = "".join(
+            f'<div class="line" data-geist-code-block-line="true"><button aria-hidden="true"'
+            f' type="button">{number}</button><div class="token-line">'
+            f'<span class="token keyword">export</span> {{ default as module{number} }} '
+            '<span class="token keyword">from</span> '
+            f"<span class=\"token string\">'./module{number}'</span>;</div></div>"
+            for number in (1, 2, 3)
+        )
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <pre class="prism-code language-javascript"><code class="font-mono grid">'
+            f"{lines}</code></pre>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert (
+            "```\nexport { default as module1 } from './module1';\n"
+            "export { default as module2 } from './module2';\n"
+            "export { default as module3 } from './module3';\n```"
+        ) in body
+
+    def test_inline_code_is_never_broken_whatever_it_holds(self):
+        # Only a block's lines are repaired: a paragraph's code stays inline.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <p>Call <code><span class="line">ledger.</span><span class="line">load()</span>'
+            "</code> before anything else touches the queue.</p>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Call `ledger.load()` before anything else touches the queue." in body
+
+    def test_a_one_line_block_stays_inline_code(self):
+        # tailwindcss.com's one-command blocks: a break after the only line
+        # adds no line, and it would fence what every extraction before the
+        # repair stored inline.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <pre class="shiki"><code><span class="line"><span>npm</span><span> install'
+            " tailwindcss</span></span></code></pre>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "`npm install tailwindcss`" in body
+        assert "```" not in body
+
+    @pytest.mark.parametrize(
+        "lines",
+        [
+            '<span class="line">import nltk</span>\n<span class="line">nltk.download()</span>',
+            (
+                '<span class="line"><span class="cl">import nltk\n</span></span>'
+                '<span class="line"><span class="cl">nltk.download()\n</span></span>'
+            ),
+        ],
+        ids=["shiki-string-output", "hugo-chroma"],
+    )
+    def test_a_block_whose_lines_already_break_reads_as_before(self, lines):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <pre><code>{lines}</code></pre>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "```\nimport nltk\nnltk.download()\n```" in body
+
     def test_katex_math_reads_as_its_tex_source(self):
         # docusaurus.io renders KaTeX, which writes no alttext: the TeX sits
         # in an annotation, and the MathML's own text writes the prime as a
