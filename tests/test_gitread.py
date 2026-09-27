@@ -1,6 +1,6 @@
 """Tests for gitread.py: read-only git queries, and None when git cannot answer."""
 
-from dex_engine.gitread import git_output
+from dex_engine.gitread import checkout_bytes, git_output
 
 
 class TestGitOutput:
@@ -32,3 +32,18 @@ class TestGitOutput:
         own_git(tmp_path, "add", "latin1.md")
         own_git(tmp_path, "commit", "-q", "-m", "latin-1")
         assert git_output(tmp_path, ["show", "HEAD:latin1.md"]) == "caf�\n"
+
+
+class TestCheckoutBytes:
+    def test_a_committed_file_reads_back_byte_for_byte(self, tmp_path, own_git):
+        own_git(tmp_path, "init", "-q")
+        (tmp_path / "clip.mp4").write_bytes(b"\x00\xff\xfe binary")
+        own_git(tmp_path, "add", "clip.mp4")
+        own_git(tmp_path, "commit", "-q", "-m", "clip")
+        (tmp_path / "clip.mp4").unlink()
+        assert checkout_bytes(tmp_path, "HEAD", "clip.mp4") == b"\x00\xff\xfe binary"
+
+    def test_a_path_the_revision_does_not_hold_is_none(self, tmp_path, own_git):
+        own_git(tmp_path, "init", "-q")
+        own_git(tmp_path, "commit", "-q", "--allow-empty", "-m", "empty")
+        assert checkout_bytes(tmp_path, "HEAD", "clip.mp4") is None

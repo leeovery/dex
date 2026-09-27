@@ -102,7 +102,9 @@ the engine stays unaware of which ones exist.
     always the stored URL, never one an `insteadOf` rewrite expanded.
   - `gitread.py` — read-only git queries (`git -C <root> …`): what git
     printed, or `None` when it cannot answer; the default git seam for
-    `origin.py` and directive 1.
+    `origin.py`, directive 1 and migration 20, whose restores read a file
+    as a checkout would write it (`checkout_bytes`: an LFS file as its
+    content where a store holds it, else as its pointer).
   - `template.py` — the ONE place that knows where the wheel-bundled
     `instance/` tree lives (sync, `dex-new`, the server's prompt).
   - `enrich.py` · `normalize.py` · `inbox.py` · `lint.py` · `sync.py` ·
