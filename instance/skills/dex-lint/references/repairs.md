@@ -60,7 +60,8 @@ other repairs need):
   claims work whose product is missing. Re-fetch the unit — `bin/dex
   enrich fetch <item> <url>` requeues a unit the item already owns —
   or, where you rescue the content by hand, write the enrichment file
-  and close it with `bin/dex enrich mark <url> done --path <file>`.
+  and close it with `bin/dex enrich mark <url> done --path <file>`, which
+  moves it to the unit's own `<kind>-<hash6>.md` and records that name.
 - **Done entries whose output sits under another item's directory** —
   the third referential row, and not the one above: nothing is missing
   here, the output is simply filed where its own item cannot see it. An
@@ -193,8 +194,9 @@ other repairs need):
   not yours: those units drain when a provider appears (transcription
   backlogs: `bin/dex enrich transcribe --limit N`), and the ones that
   resolve to you are already listed under **read these yourself**.
-- **Enrichment newer than digest** — an interrupted session: finish
-  digest → place → wiki for each listed item.
+- **Enrichment newer than digest** — an interrupted session, or a rerun
+  that took a page away since the digest: finish digest → place → wiki
+  for each listed item.
 
 A repair can also surface a defect in the ENGINE itself: the lint
 report states something false, a verb writes the wrong thing, a

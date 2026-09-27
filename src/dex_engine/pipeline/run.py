@@ -64,7 +64,7 @@ from .enrichment import (
     transcript_provenance,
     youtube_body,
 )
-from .ownership import unit_owners
+from .ownership import unit_owners, work_identity
 from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
@@ -115,6 +115,7 @@ __all__ = [
     "RunContext",
     "digest_orphans",
     "digested_items",
+    "duplicate_media_reason",
     "fetch_urls",
     "head_sniffer",
     "is_cognitive_park",
@@ -248,13 +249,43 @@ def _download_slot(path: str | None) -> int | None:
 def _another_kinds_output(path: str, entry: LedgerEntry) -> bool:
     """Whether ``path`` names the unit's own output as a kind it no longer is.
 
-    The file name is the lasting record of the kind that wrote it: a keep
-    after a redetection records the corrected kind on its line beside the
-    earlier kind's file.
+    The file name is the record of the kind that wrote it: a redetected
+    unit's corrected fetch meets the earlier kind's landing here, and a keep
+    records that landing under the kind that wrote it
+    (:meth:`_Drain._keep_stored`), so the name and the line agree.
     """
     name = PurePosixPath(path).name
     return any(
         name == f"{kind.value}-{entry.hash[:6]}.md" for kind in Kind if kind is not entry.kind
+    )
+
+
+def _names_unit(
+    url: str | None, entry: LedgerEntry, drivers: Sequence[SourceDriver]
+) -> bool | None:
+    """Whether a URL a file records is the unit's; None where the file records none.
+
+    Asked of the URL's identity, not its spelling: a file landed before a
+    re-key records the URL as it was spelled then, and two URLs of one
+    identity are one unit.
+    """
+    if url is None:
+        return None
+    return url == entry.url or work_identity(url, drivers) == entry.hash
+
+
+def _page_output(instance: Instance, file: Path) -> bool:
+    """Whether ``file`` can be a page unit's output: markdown in an item's enrichment directory.
+
+    The media family is not: a download and the ``media-<n>.md`` description
+    of it are named by slots the describe verb fills and the describe row
+    counts by name, so a description a unit was closed on stays among them.
+    """
+    resolved = file.resolve()
+    return (
+        resolved.suffix == ".md"
+        and not resolved.name.startswith("media-")
+        and resolved.parent.parent == instance.enrichment_dir.resolve()
     )
 
 
@@ -1171,16 +1202,7 @@ class _Drain:
         meta["via"] = transcriber.name  # raw transcript, stamped via/model
         meta["model"] = transcriber.model
         body = _transcript_body(entry.kind, acquired.prefix, transcript)
-        path = self._write_output(entry, meta, body)
-        # A unit corrected to a transcribable kind (web → podcast) lands its
-        # own output HERE, never through _apply_done — the pre-correction
-        # kind's file leaves on the same rule, or the item carries two views
-        # of one unit forever.
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
-        title = meta.get("title")
-        self.record_outcome(
-            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
-        )
+        self._land(entry, meta, body)
         # Audio lifecycle: the transcript supersedes the audio — delete on
         # success only; pending/failed audio stays cached for the retry.
         acquired.audio.unlink(missing_ok=True)
@@ -1310,17 +1332,23 @@ class _Drain:
             and stored.is_file()
         ):
             path = str(stored.relative_to(self.ctx.instance.root))
-            _drop_superseded_outputs(self.ctx.instance, entry, path)
-            self.record_outcome(entry, status=Status.DONE, path=path)
+            _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
+            # Parked in an earlier run, the park's effect is unknown here:
+            # taken as a rewrite, since a needless re-digest costs less than
+            # a lost one.
+            changed = self.park_writes.get(entry.hash, True)
+            self.record_outcome(
+                entry,
+                status=Status.DONE,
+                path=path,
+                landed=None if changed else self._landed_on(entry, path),
+            )
             # The job ends here, and nothing retries it to want the video.
             audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
             if audio is not None:
                 audio.unlink()
             outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
-            # Parked in an earlier run, the park's effect is unknown here:
-            # counted rewritten, since a needless re-digest costs less than
-            # a lost one.
-            if self.park_writes.get(entry.hash, True):
+            if changed:
                 outcome.changed += 1
             else:
                 outcome.unchanged += 1
@@ -1367,19 +1395,12 @@ class _Drain:
                 assert_never(fetched)
 
     def _apply_content(self, entry: LedgerEntry, content: Content) -> None:
-        path = None
-        if content.body is not None:
-            if self._kept_larger_stored(entry, content.body):
-                return
-            path = self._write_output(entry, content.meta, content.body)
-            _drop_superseded_outputs(self.ctx.instance, entry, path)
-        title = content.meta.get("title")
-        self.record_outcome(
-            entry,
-            status=Status.DONE,
-            path=path,
-            title=title if isinstance(title, str) and path is not None else None,
-        )
+        if content.body is None:
+            self.record_outcome(entry, status=Status.DONE)
+        elif self._kept_larger_stored(entry, content.body):
+            return
+        else:
+            self._land(entry, content.meta, content.body)
         if content.assets:
             self._write_assets(self.entries[entry.hash], content.assets)
         if content.media:
@@ -1451,12 +1472,7 @@ class _Drain:
         refetched = {k: v for k, v in needs.meta.items() if k not in TRANSCRIPT_PROVENANCE}
         meta = {**refetched, **transcript_provenance(stored.fields)}
         notes = _park_notes(entry.kind, needs.body)
-        path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
-        title = meta.get("title")
-        self.record_outcome(
-            entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
-        )
+        path = self._land(entry, meta, _transcript_body(entry.kind, notes, split[1]))
         self.notes.append(
             f"kept the stored transcript of {entry.url} under its re-fetched notes "
             f"({needs.reason}) — delete {path} first to transcribe it afresh"
@@ -1543,9 +1559,9 @@ class _Drain:
         self._keep_stored(
             entry,
             stored,
-            note=(
+            note=lambda path: (
                 f"kept the stored copy of {entry.url}: the re-fetch came back "
-                f"{status.value} ({reason}) — delete {stored.path} first to let "
+                f"{status.value} ({reason}) — delete {path} first to let "
                 "the failure land if the source is really gone"
             ),
         )
@@ -1588,13 +1604,15 @@ class _Drain:
 
         The ledger's word first: the unit's latest landing, superseded or
         not, since a requeue leaves the live line without a path. A landing
-        stands under whatever name it was given — a hand heal's, an old
-        migration's re-keyed one, the name of the kind before a redetection
-        — so no name the engine would choose today can find it, and the
-        line's own title comes with it, which a hand-written file may never
-        state. The path is resolved by file name under the owning item's
-        directory: a rename moves the directory, and a path recorded before
-        it names the dead id.
+        can stand under a name other than the unit's own — the earlier
+        kind's, while a redetected unit's corrected fetch is under way; a
+        description the unit was closed on; one whose own name another
+        file holds (:meth:`own_output`) — so no name the engine
+        would choose today finds every landing, and the line's own title
+        comes with it, which a hand-written file may never state. The path
+        is resolved by file name under the owning item's directory: a
+        rename moves the directory, and a path recorded before it names the
+        dead id.
 
         With no recorded landing on disk, the deterministic
         ``<kind>-<hash6>.md`` stands in only once it proves itself by the
@@ -1624,11 +1642,101 @@ class _Drain:
             path=str(named.relative_to(root)), title=fields.get("title"), fields=fields, body=body
         )
 
-    def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
-        """Record the unit done on its stored output — accounted, never new material."""
+    def _keep_stored(
+        self, entry: LedgerEntry, stored: _StoredOutput, *, note: Callable[[str], str]
+    ) -> None:
+        """Record the unit done on its stored output — accounted, never new material.
+
+        A line's recorded path is the standard name for that line's kind.
+        A copy another kind landed is kept under that kind: a redetected
+        rerun whose corrected fetch failed never became the corrected
+        kind's landing, so the line records the copy as it landed — kind
+        and format restored, path unchanged — and the next rerun
+        re-detects afresh. Recorded under the corrected kind instead, the
+        copy would need that kind's name, and the name is what tells the
+        stub guard which kind wrote it (:meth:`_kept_larger_stored`). Any
+        other copy is kept at the unit's own name, moved there first where
+        it stands under another (:meth:`own_output`). ``note`` is written
+        for the path the copy is kept at.
+        """
+        root = self.ctx.instance.root
+        earlier = self._earlier_kinds_landing(entry, stored)
+        if earlier is None:
+            stands = root / stored.path
+            kept = self.own_output(entry, stands)
+            if kept != stands:
+                stands.replace(kept)
+            path = str(kept.relative_to(root))
+        else:
+            entry = dataclasses.replace(entry, kind=earlier.kind, format=earlier.format)
+            path = stored.path
         self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
-        self.notes.append(note)
-        self.record_outcome(entry, status=Status.DONE, path=stored.path, title=stored.title)
+        self.notes.append(note(path))
+        self.record_outcome(
+            entry,
+            status=Status.DONE,
+            path=path,
+            title=stored.title,
+            # Dated by the copy's name as it stood: a move to the unit's own
+            # name changes no content, so the line keeps its landing's day.
+            landed=self._landed_on(entry, stored.path),
+        )
+
+    def _earlier_kinds_landing(
+        self, entry: LedgerEntry, stored: _StoredOutput
+    ) -> LedgerEntry | None:
+        """The landing ``stored`` is where another kind than the unit's landed it, else None.
+
+        The line and the name must agree on the kind: the ledger's word
+        that the copy is that kind's landing, standing at that kind's name.
+        """
+        landing = self._recorded_output(entry.hash)
+        if landing is None or landing.kind is entry.kind:
+            return None
+        named = f"{landing.kind.value}-{entry.hash[:6]}.md"
+        return landing if PurePosixPath(stored.path).name == named else None
+
+    def own_output(self, entry: LedgerEntry, current: Path) -> Path:
+        """Where the unit's output ``current`` belongs: its own name, or where it stands.
+
+        A page unit's output belongs at ``<kind>-<hash6>.md`` under its
+        owning item (:meth:`_output_file`), the one name every reader and
+        every healing migration looks for. It stays where it stands when it
+        is no page output (:func:`_page_output`), when it records another
+        unit's URL — that unit's output is not this one's to move — or when
+        its own name holds a file not proven the unit's: one recording
+        another URL, none, or unreadable is not the engine's to overwrite.
+        A copy proven the unit's, by the URL it records or as its recorded
+        landing, is superseded by ``current`` and gives way to it.
+        """
+        target = self._output_file(entry)
+        if (
+            entry.job is not None
+            or current.resolve() == target.resolve()
+            or not _page_output(self.ctx.instance, current)
+            or self._records_unit(current, entry) is False
+        ):
+            return current
+        if target.exists() and not self._superseded_copy(entry, target):
+            return current
+        return target
+
+    def _superseded_copy(self, entry: LedgerEntry, file: Path) -> bool:
+        """Whether ``file`` is the unit's own copy: its recorded landing, or recording its URL."""
+        landing = self._recorded_output(entry.hash)
+        if landing is not None and landing.path is not None:
+            landed = _landed_file(self.ctx.instance, self.owner_of(entry), landing.path)
+            if landed is not None and landed.resolve() == file.resolve():
+                return True
+        return self._records_unit(file, entry) is True
+
+    def _records_unit(self, file: Path, entry: LedgerEntry) -> bool | None:
+        """Whether ``file`` records the unit's URL (:func:`_names_unit`); None where unreadable."""
+        try:
+            fields, _body = read_enrichment(file)
+        except (OSError, UnicodeDecodeError):
+            return None
+        return _names_unit(fields.get("url"), entry, self.ctx.drivers)
 
     def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> bool:
         """Keep the stored output when it dwarfs a re-fetched body.
@@ -1655,10 +1763,10 @@ class _Drain:
         self._keep_stored(
             entry,
             stored,
-            note=(
+            note=lambda path: (
                 f"kept the stored body for {entry.url}: the re-fetch returned "
                 f"{len(body)} chars against {len(stored.body)} stored — "
-                f"delete {stored.path} first if the smaller page is the truth"
+                f"delete {path} first if the smaller page is the truth"
             ),
         )
         return True
@@ -1671,6 +1779,32 @@ class _Drain:
             / f"{entry.kind.value}-{entry.hash[:6]}.md"
         )
 
+    def _land(self, entry: LedgerEntry, meta: dict[str, str | int | None], body: str) -> str:
+        """Write the unit's output and record the unit done on it.
+
+        The fetch, a rerun's kept transcript and the transcribe drain all
+        land here. Each drops the unit's earlier-kind output on the success
+        that replaces it (:func:`_drop_superseded_outputs`) — a unit
+        corrected to a transcribable kind lands through the drain, and
+        without the drop its item carries two views of one unit forever. A
+        write that found its content already stored lands nothing new, and
+        its line keeps the day the stored output landed.
+
+        Returns:
+            The output's path relative to the instance root.
+        """
+        path, wrote = self._write_output(entry, meta, body)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
+        title = meta.get("title")
+        self.record_outcome(
+            entry,
+            status=Status.DONE,
+            path=path,
+            title=title if isinstance(title, str) else None,
+            landed=None if wrote else self._landed_on(entry, path),
+        )
+        return path
+
     def _write_output(
         self,
         entry: LedgerEntry,
@@ -1678,7 +1812,7 @@ class _Drain:
         body: str | None,
         *,
         count: bool = True,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Write ``<kind>-<hash6>.md`` deterministically; byte-compare reruns.
 
         The ``fetched:`` stamp is masked out of the comparison — it changes
@@ -1699,6 +1833,11 @@ class _Drain:
         item's waiting unit drained on the string writes its enrichment
         into ``enrichment/<dead-id>/``, where the item that owes the work
         cannot list it.
+
+        Returns:
+            The output's path relative to the instance root, and whether
+            this call wrote it — False where the file already held this
+            content.
         """
         out = self._output_file(entry)
         owner = out.parent.name
@@ -1719,7 +1858,7 @@ class _Drain:
             # was sitting on disk the whole time.
             if count:
                 self.outcomes.setdefault(owner, _ItemOutcome()).unchanged += 1
-            return str(out.relative_to(self.ctx.instance.root))
+            return str(out.relative_to(self.ctx.instance.root)), False
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic.write_text(out, content)
         # Counted AFTER the write lands: the mkdir and the write can both
@@ -1733,7 +1872,7 @@ class _Drain:
                 outcome.changed += 1
             else:
                 outcome.new += 1
-        return str(out.relative_to(self.ctx.instance.root))
+        return str(out.relative_to(self.ctx.instance.root)), True
 
     # -- extraction assets ----------------------------------------
 
@@ -1887,7 +2026,11 @@ class _Drain:
         # Cap and oversize skips below land in the report's unit counts —
         # deliberately: they are unit outcomes, unlike the re-entry cap
         # fires, which never surface.
-        slot = self._media_slot(entry)
+        owner = self.owner_of(entry)
+        # One ledger walk serves the slot and the duplicate check alike:
+        # nothing between the two records a line.
+        siblings = self._sibling_downloads(entry, owner)
+        slot = self._media_slot(entry, owner, siblings)
         if slot is None:
             # Capacity checked BEFORE any fetch — no bandwidth spent on a
             # file the cap would refuse. Downloads are synchronous, so
@@ -1939,18 +2082,101 @@ class _Drain:
                 )
                 return
             ext = ext_of(entry.url, default="jpg")
-        owner = self.owner_of(entry)
-        out = self.ctx.instance.enrichment_dir / owner / f"media-{slot}.{ext}"
+        duplicate = self._held_by_a_sibling(owner, siblings, response.body)
+        if duplicate is None:
+            self._land_download(entry, owner, f"media-{slot}.{ext}", response.body)
+        else:
+            self._close_duplicate(
+                entry, self._own_download(entry, owner, slot), duplicate, response.body
+            )
+
+    def _land_download(self, entry: LedgerEntry, owner: str, name: str, body: bytes) -> None:
+        out = self.ctx.instance.enrichment_dir / owner / name
         out.parent.mkdir(parents=True, exist_ok=True)
-        atomic.write_bytes(out, response.body)
+        atomic.write_bytes(out, body)
         self._clear_media_slot(out)
         path = str(out.relative_to(self.ctx.instance.root))
         # A page unit corrected to media work lands here, not through the
         # page write, and its earlier view — a page enrichment, or a hand
         # heal of the URL under its old kind — leaves on the same rule.
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(entry, status=Status.DONE, path=path)
+
+    def _held_by_a_sibling(
+        self, owner: str, siblings: Mapping[str, int], body: bytes
+    ) -> str | None:
+        """The name of a download another unit of the item landed holding exactly ``body``.
+
+        A media URL is its identity, verbatim, so a page re-read after its
+        CDN re-signed or moved an image emits a URL no line has seen, and
+        the same bytes would land again in the next slot, owing a second
+        description of one picture. Only the item's other units' downloads
+        are compared (:meth:`_sibling_downloads`): the unit's own file is
+        its own slot's to settle (:meth:`_close_duplicate`), and a file no
+        path names is nobody's. A sibling is read only where its size
+        already matches.
+        """
+        item_dir = self.ctx.instance.enrichment_dir / owner
+        for name in siblings:
+            held = item_dir / name
+            if (
+                is_media_file(held)
+                and held.stat().st_size == len(body)
+                and held.read_bytes() == body
+            ):
+                return name
+        return None
+
+    def _close_duplicate(
+        self, entry: LedgerEntry, own: Path | None, duplicate: str, body: bytes
+    ) -> None:
+        """Store nothing: the item already holds ``body`` as ``duplicate``.
+
+        A unit with no file of its own closes ``skipped``, taking no slot and
+        owing no description. A unit re-downloaded into its own slot keeps
+        the file it landed there before (``own``), whatever its bytes.
+        """
+        # A landed file stays, with every description written of it. Given up
+        # for the sibling holding the same bytes, the first-landed original
+        # left and its reading with it, a reading in the pre-verb format was
+        # orphaned naming a deleted file, and a sibling re-downloaded in the
+        # same run could overwrite the one file left holding the picture.
+        # Duplicates already stored are the owner's to settle.
+        if own is not None:
+            self._keep_own_download(entry, own, duplicate, same=own.read_bytes() == body)
+            return
+        self.record_outcome(entry, status=Status.SKIPPED, reason=duplicate_media_reason(duplicate))
+
+    def _own_download(self, entry: LedgerEntry, owner: str, slot: int) -> Path | None:
+        """The file the unit landed in the slot it downloads into, where it still stands."""
+        recorded = self._output_path(entry.hash)
+        if recorded is None or _download_slot(recorded) != slot:
+            return None
+        held = self.ctx.instance.enrichment_dir / owner / PurePosixPath(recorded).name
+        return held if is_media_file(held) else None
+
+    def _keep_own_download(
+        self, entry: LedgerEntry, own: Path, duplicate: str, *, same: bool
+    ) -> None:
+        path = str(own.relative_to(self.ctx.instance.root))
+        self.outcomes.setdefault(own.parent.name, _ItemOutcome()).unchanged += 1
+        if same:
+            self.notes.append(
+                f"kept {path} for {entry.url}: it holds the same bytes as {duplicate}, so the "
+                "item stores one picture twice"
+            )
+        else:
+            self.notes.append(
+                f"kept {path} for {entry.url}: the URL now serves the bytes of {duplicate}, "
+                f"which the item already holds — delete {path} first if the new picture is "
+                "the truth"
+            )
+        # Nothing landed: the file stands as it did, so the line keeps its
+        # landing's day and the item reads no newer than its digest.
+        self.record_outcome(
+            entry, status=Status.DONE, path=path, landed=self._landed_on(entry, path)
+        )
 
     def _clear_media_slot(self, out: Path) -> None:
         """Drop whatever else stands in this slot beside the file just written.
@@ -2000,7 +2226,9 @@ class _Drain:
                 # else is an engine bug, not a quiet default.
                 raise RuntimeError(f"classifier returned unexpected status {status!r}")
 
-    def _media_slot(self, entry: LedgerEntry) -> int | None:
+    def _media_slot(
+        self, entry: LedgerEntry, owner: str, siblings: Mapping[str, int]
+    ) -> int | None:
         """This unit's media slot — the index its file is named by — or None at the cap.
 
         A slot belongs to the unit whose recorded output names it
@@ -2019,17 +2247,19 @@ class _Drain:
         false reason. The unit's own slot, where a file already stands, is
         overwritten in place and likewise spends nothing new.
         """
-        owner = self.owner_of(entry)
         item_dir = self.ctx.instance.enrichment_dir / owner
-        slot = self._slot_for(entry, owner, item_dir)
+        slot = self._slot_for(entry, item_dir, set(siblings.values()))
         if _slot_held(item_dir, slot):
             return slot
         if self._media_file_count(owner) >= media_cap(entry.kind):
             return None
         return slot
 
-    def _slot_for(self, entry: LedgerEntry, owner: str, item_dir: Path) -> int:
+    def _slot_for(self, entry: LedgerEntry, item_dir: Path, claimed: set[int]) -> int:
         """The slot the unit's own recorded path names, else the lowest nobody holds.
+
+        ``claimed`` is the slots the item's other units name through their
+        recorded paths (:meth:`_sibling_downloads`).
 
         Its own is read off its latest line that recorded an output,
         superseded or not, so a unit re-queued since it landed re-downloads
@@ -2042,7 +2272,6 @@ class _Drain:
         so a download a crash kept from its outcome line lands beside the
         orphan it left, never over it.
         """
-        claimed = self._claimed_slots(entry, owner)
         own = _download_slot(self._output_path(entry.hash))
         if own is not None and own not in claimed:
             return own
@@ -2052,22 +2281,30 @@ class _Drain:
             if slot not in claimed and not _slot_held(item_dir, slot)
         )
 
-    def _claimed_slots(self, entry: LedgerEntry, owner: str) -> set[int]:
-        """The slots the item's other units name through their recorded paths.
+    def _sibling_downloads(self, entry: LedgerEntry, owner: str) -> dict[str, int]:
+        """The downloads the item's other units hold, by file name, each with its slot.
 
         The item is the owning one on both sides (:meth:`owner_of`): the slot
         names a file in ``enrichment/<owner>/``, and a unit that landed
         before a rename recorded its path under the dead id, while the file
         moved with the directory under the same name.
+
+        A unit closed without content — dead, or skipped — holds nothing,
+        whatever landing an earlier line of it recorded: ``compact`` drops
+        that line for such a unit, so counting it would make a slot's owner
+        depend on when the ledger was last compacted. A file of one that
+        still stands is a file no path names: no download lands over it, and
+        none is compared with it.
         """
-        claimed: set[int] = set()
+        downloads: dict[str, int] = {}
         for other in self.entries.values():
-            if other.hash == entry.hash:
+            if other.hash == entry.hash or other.status in _TERMINAL_NO_CONTENT:
                 continue
-            slot = _download_slot(self._output_path(other.hash))
-            if slot is not None and self.owner_of(other) == owner:
-                claimed.add(slot)
-        return claimed
+            recorded = self._output_path(other.hash)
+            slot = _download_slot(recorded)
+            if recorded is not None and slot is not None and self.owner_of(other) == owner:
+                downloads[PurePosixPath(recorded).name] = slot
+        return downloads
 
     def _output_path(self, unit_hash: str) -> str | None:
         """The unit's latest recorded output path, superseded or not."""
@@ -2077,6 +2314,21 @@ class _Drain:
     def _recorded_output(self, unit_hash: str) -> LedgerEntry | None:
         """The unit's latest line that recorded an output, superseded or not."""
         return self._landings().get(unit_hash)
+
+    def _landed_on(self, entry: LedgerEntry, path: str) -> datetime.date | None:
+        """The day the unit's output at ``path`` landed, where its landing line says.
+
+        The unit's recorded landing dates only the file it names, matched
+        by name as :func:`_landed_file` resolves one across a rename. A
+        landing naming another file — a heal's, an earlier kind's — dates
+        nothing here, and neither does no landing at all: the line then
+        takes today, since a needless re-digest costs less than a lost one.
+        """
+        landing = self._recorded_output(entry.hash)
+        if landing is None or landing.path is None:
+            return None
+        same_file = PurePosixPath(landing.path).name == PurePosixPath(path).name
+        return landing.date if same_file else None
 
     def _landings(self) -> dict[str, LedgerEntry]:
         """Every unit's latest line that recorded an output, superseded or not."""
@@ -2120,12 +2372,15 @@ class _Drain:
 
     # -- recording -------------------------------------------------------
 
-    def record(self, entry: LedgerEntry, *, count: bool = False) -> LedgerEntry:
+    def record(
+        self, entry: LedgerEntry, *, count: bool = False, landed: datetime.date | None = None
+    ) -> LedgerEntry:
         stamped = ledger.stamp(
             entry,
             today=self.ctx.today,
             now=self.ctx.now,
             engine_version=self.ctx.engine_version,
+            landed=landed,
         )
         self._appender.append(stamped)
         self._count_write(stamped)
@@ -2183,13 +2438,15 @@ class _Drain:
         title: str | None = None,
         error: str | None = None,
         reason: str | None = None,
+        landed: datetime.date | None = None,
     ) -> None:
         """Write the outcome for a drained entry, provenance carried forward.
 
         Everything but the attribution is carried from the drained line;
         the attribution is asked of the corpus (:meth:`owner_of`), so a
         renamed item's work is recorded against the item that owes it
-        rather than against the id the line was written under.
+        rather than against the id the line was written under. ``landed``
+        dates a line that re-records a stored output (:func:`ledger.stamp`).
         """
         self.record(
             LedgerEntry(
@@ -2215,6 +2472,7 @@ class _Drain:
                 reason=reason,
             ),
             count=True,
+            landed=landed,
         )
 
     # -- item frontmatter (derived from disk, written by corpus.py) ------
@@ -2268,10 +2526,11 @@ class _Drain:
         the opposite of what its frontmatter says.
         """
         sourced = {item_id for items in self.owners.values() for item_id in items}
+        live = set(self.item_status)
         # Digest coverage is filename-resolved (:func:`digested_items`): a
         # renamed item's digest sits under the old id, and asking for the
         # live id's file re-listed the item as owing work it recorded.
-        digested = digested_items(self.ctx.instance, set(self.item_status))
+        digested = digested_items(self.ctx.instance, live)
         self.no_source_items = [
             item_id
             for item_id, status in sorted(self.item_status.items())
@@ -2280,15 +2539,18 @@ class _Drain:
         # The closed-without-content sibling: every unit landed `dead` or
         # was deliberately ruled out, so the engine owes nothing further
         # and no enrichment exists — the owed work is the same description
-        # + digest, from the owner's note. Same shared reading as the
-        # digest backstop (:func:`_terminal_no_content_items`), and it
-        # drops off the moment the item's digest is recorded.
+        # + digest, from the owner's note. Same shared readings as the
+        # digest backstop (:func:`_terminal_no_content_items`,
+        # :func:`_page_lost_since_digest`): it drops off once its digest is
+        # recorded, or, where a rerun took its page away, once a digest
+        # pass is recorded on or after that day.
+        page_lost = _page_lost_since_digest(
+            self.ctx.instance, self.entries, self.owners, _digested_on(self.ctx.instance, live)
+        )
         self.closed_unenriched_items = [
             item_id
-            for item_id in _terminal_no_content_items(
-                self.entries, self.owners, set(self.item_status)
-            )
-            if item_id not in digested
+            for item_id in _terminal_no_content_items(self.entries, self.owners, live)
+            if item_id not in digested or item_id in page_lost
         ]
 
     def derive_undescribed_items(self) -> None:
@@ -2529,7 +2791,14 @@ def _park_notes(kind: Kind, body: str | None) -> str:
     return description_text(notes) if kind is Kind.YOUTUBE else notes
 
 
-def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
+def duplicate_media_reason(held: str) -> str:
+    """The reason a media unit closes ``skipped``: its item already holds its bytes as ``held``."""
+    return f"byte-identical to {held}, which the item already holds"
+
+
+def _drop_superseded_outputs(
+    instance: Instance, entry: LedgerEntry, path: str, *, drivers: Sequence[SourceDriver]
+) -> None:
     """Drop the unit's earlier-kind output — once ``path`` replaces it.
 
     A redetection relabels a unit, so its output file is renamed by kind.
@@ -2546,14 +2815,17 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     the line was written, which a rename since leaves naming nothing.
 
     Candidates are every other markdown beside the replacement, and each
-    must PROVE it belongs to this unit by the URL it records: the URL is
-    the unit's identity (two entries under one URL are one hash), so a
-    match is this unit's own earlier output and nothing else's — matching
+    must PROVE it belongs to this unit by the URL it records, read by
+    identity (:func:`_names_unit`): the URL is the unit's identity (two
+    entries under one URL are one hash), so a match is this unit's own
+    earlier output and nothing else's, a copy landed before a re-key and
+    recording the URL as spelled then included — matching
     on names alone once unlinked a hash6 neighbour's enrichment while its
-    ledger line still read ``done``. Names cannot bound the search: a unit
-    healed by hand carries whatever name the healer typed, and a
-    migration-seeded rerun that landed the engine-named file beside it
-    left the item listing two views of one unit. A candidate that cannot
+    ledger line still read ``done``. Names cannot bound the search: a copy
+    can stand under a name other than the unit's own
+    (:meth:`_Drain._stored_output`), and a migration-seeded rerun that
+    landed the engine-named file beside a hand heal's left the item
+    listing two views of one unit. A candidate that cannot
     be read is left alone — an unreadable file is not proof of anything.
     Nothing is dropped for a replacement that is not on disk — a mistyped
     ``mark --path`` must not cost the item its enrichment.
@@ -2569,7 +2841,7 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
             fields, _body = read_enrichment(stale)
         except (OSError, UnicodeDecodeError):
             continue
-        if fields.get("url") == entry.url:
+        if _names_unit(fields.get("url"), entry, drivers):
             stale.unlink()
 
 
@@ -2964,7 +3236,7 @@ def _is_cap_refusal(entry: LedgerEntry) -> bool:
 
 
 def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
-    """Re-fetch a unit the item already owns: same depth/parent/via, rerun.
+    """Re-fetch a unit the item already owns: same depth/parent/via.
 
     Never re-parents (re-fetching the item's primary URL must not nest it
     under itself) and never re-spends the URL cap — the unit is already
@@ -2972,7 +3244,17 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
     (:meth:`_Drain.owner_of`), like every write: carried from the held
     line it spells a renamed item's dead id, and a run dying between this
     line and the drain's outcome leaves that spelling standing.
+
+    A rerun is a landed unit fetched again, so the requeue is one only
+    where the held line names a landing, or is a rerun still owed. A retry
+    of a unit that never landed, or that a rerun already closed without
+    content, is fresh work: marked a rerun, each failed retry read as a
+    page taken from the item (:func:`_took_its_page_away`), with nothing
+    changed. The flag rides every later line, so the line that closes the
+    unit keeps that evidence through a compact, which drops a closed
+    unit's landing.
     """
+    holds_landing = existing.path is not None or (existing.rerun and existing.status in OUTSTANDING)
     requeued = dataclasses.replace(
         existing,
         item=drain.owner_of(existing),
@@ -2983,7 +3265,7 @@ def _requeue_in_place(drain: _Drain, existing: LedgerEntry) -> str:
         title=None,
         error=None,
         reason=None,
-        rerun=True,
+        rerun=holds_landing,
     )
     drain.record(requeued)
     return existing.hash
@@ -3148,7 +3430,11 @@ def digest_orphans(instance: Instance) -> list[str]:
     one mtime and staleness would be undetectable. The two dates are the
     item's newest ``done`` ledger line and its digest pass record — both
     travel in git, and day granularity is the intent (enriching and
-    digesting in one session is not stale).
+    digesting in one session is not stale). A ``done`` line that re-records
+    an output as it stood — a rerun re-fetched to identical content, a
+    stored copy kept — carries the day that output landed
+    (:func:`ledger.stamp`), so the date says when the enrichment last
+    changed, never when a rerun last looked.
 
     An item still owing a unit is never listed, however long it has owed
     it. Such an item derives ``raw``, and a raw item is one the ingest
@@ -3170,15 +3456,19 @@ def digest_orphans(instance: Instance) -> list[str]:
     ruled out ``skipped`` — is the third (:func:`_terminal_no_content_items`):
     nothing landed and nothing owes, so neither of the first two answers
     finds it, yet its description and digest — from the owner's note —
-    are exactly the work still owed.
+    are exactly the work still owed. A live item a rerun took a page from
+    since its last digest pass is the fourth
+    (:func:`_page_lost_since_digest`): losing a page changes its enrichment
+    as surely as landing one does, and the digest it holds states what is
+    gone.
 
     Args:
         instance: The instance.
 
     Returns:
         Item ids that owe no further work and whose enrichment landed
-        after their digest pass (or that have enrichment and no digest at
-        all).
+        after their digest pass, that lost a page since it, or that have
+        enrichment and no digest at all.
     """
     orphans = []
     if not instance.enrichment_dir.is_dir():
@@ -3189,14 +3479,8 @@ def digest_orphans(instance: Instance) -> list[str]:
     enriched_on = _last_enriched(entries, owners)
     live = {path.stem for path in instance.corpus_dir.glob("*/*.md")}
     recorded = digested_items(instance, live)
-    # A digest pass record names the item as of the day it was recorded,
-    # like the file it covers: resolved the same way, so a pre-rename pass
-    # still dates the live item's digest and the staleness comparison
-    # survives the rename.
-    digested_on: dict[str, datetime.date] = {}
-    for recorded_item, date in _last_digested(instance).items():
-        item_id = _dir_owner(recorded_item, live)
-        digested_on[item_id] = max(digested_on.get(item_id, date), date)
+    digested_on = _digested_on(instance, live)
+    page_lost = _page_lost_since_digest(instance, entries, owners, digested_on) & live
     # A directory's name is the attribution as of the day it was written,
     # like a ledger line's item: a rename interrupted between the corpus
     # file and the enrichment directory leaves the directory under the
@@ -3217,14 +3501,16 @@ def digest_orphans(instance: Instance) -> list[str]:
     # (dead, or ruled out skipped). It has no enrichment directory and no
     # done line, so neither route above finds it — yet it owes exactly
     # what a no-source capture owes, description and digest from the
-    # owner's note, and the no-digest branch below is what lists it. Once
-    # its digest pass is recorded it drops off like any other item
-    # (nothing ever landed, so nothing is ever stale).
+    # owner's note, and the no-digest branch below is what lists it.
     candidates.update(_terminal_no_content_items(entries, owners, live))
+    # The fourth: an item a rerun took a page from since its digest pass.
+    # Its directory may be empty and its other units closed, and the digest
+    # it holds states what is gone.
+    candidates |= page_lost
     for item_id in sorted(candidates):
         if item_id in owing:
             continue
-        if item_id not in recorded:
+        if item_id not in recorded or item_id in page_lost:
             orphans.append(item_id)
             continue
         landed = enriched_on.get(item_id)
@@ -3429,6 +3715,63 @@ def _terminal_no_content_items(
     )
 
 
+def _page_lost_since_digest(
+    instance: Instance,
+    entries: Mapping[str, LedgerEntry] | None,
+    owners: Mapping[str, tuple[str, ...]],
+    digested_on: Mapping[str, datetime.date],
+) -> set[str]:
+    """The items a rerun took a fetched page from since their last digest pass.
+
+    A rerun is a landed unit fetched again, and one whose landing still
+    stands keeps it and records done (:meth:`_Drain._apply_failure`). So a
+    rerun that closed dead or skipped with its page gone from disk took that
+    page from the item: a healing migration deleted an output it proved
+    wrong, and the re-fetch then found the source gone. A digest drawn
+    before that day states what is gone, so only a pass recorded on or
+    after it covers the loss, and a digest older than pass records covers
+    none. Named until then, whatever else the item holds — every unit
+    closed, or a shared unit landed under another item.
+
+    Shared by the run report and the digest backstop, like
+    :func:`_terminal_no_content_items`. An unreadable ledger claims nothing.
+    """
+    if not entries:
+        return set()
+    lost: dict[str, datetime.date] = {}
+    for entry in entries.values():
+        if not _took_its_page_away(instance, entry, owners):
+            continue
+        for item_id in owners.get(entry.hash, (entry.item,)):
+            lost[item_id] = max(lost.get(item_id, entry.date), entry.date)
+    return {
+        item_id
+        for item_id, day in lost.items()
+        if digested_on.get(item_id, datetime.date.min) < day
+    }
+
+
+def _took_its_page_away(
+    instance: Instance, entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]]
+) -> bool:
+    """Whether ``entry`` is a rerun of a fetched page, closed with the page gone from disk.
+
+    The rerun flag is the evidence that the unit had landed: a migration
+    reseeds units it found stored, and ``enrich fetch`` sets it only where
+    the unit holds a landing or is a rerun still owed
+    (:func:`_requeue_in_place`). It rides the closing line, which a
+    compact keeps. A heal that
+    closed the rerun and kept its file took nothing away. The
+    file is looked for at the unit's own name alone, where every page
+    landing stands (:meth:`_Drain.own_output`); a compact drops a closed
+    unit's landing line, so no other name would survive to look under.
+    """
+    if not entry.rerun or entry.job is not None or entry.status not in _TERMINAL_NO_CONTENT:
+        return False
+    page = f"{entry.kind.value}-{entry.hash[:6]}.md"
+    return _landed_file(instance, _owner(entry, owners), page) is None
+
+
 def _last_enriched(
     entries: dict[str, LedgerEntry] | None, owners: Mapping[str, tuple[str, ...]]
 ) -> dict[str, datetime.date]:
@@ -3446,6 +3789,21 @@ def _last_enriched(
         for item_id in owners.get(entry.hash, (entry.item,)):
             newest[item_id] = max(newest.get(item_id, entry.date), entry.date)
     return newest
+
+
+def _digested_on(instance: Instance, live: set[str]) -> dict[str, datetime.date]:
+    """Each item's newest digest pass date, keyed by the live item it covers.
+
+    A pass record names the item as of the day it was recorded, like the
+    file it covers: resolved the same way (:func:`_dir_owner`), so a
+    pre-rename pass still dates the live item's digest and every comparison
+    against it survives the rename.
+    """
+    digested_on: dict[str, datetime.date] = {}
+    for recorded_item, date in _last_digested(instance).items():
+        item_id = _dir_owner(recorded_item, live)
+        digested_on[item_id] = max(digested_on.get(item_id, date), date)
+    return digested_on
 
 
 def _last_digested(instance: Instance) -> dict[str, datetime.date]:
@@ -3608,6 +3966,12 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     frontmatter is refreshed in the same call, so a hand-written enrichment
     file is listed the moment its heal lands.
 
+    A done heal takes custody of the page output it names: the file moves
+    to the unit's own name and the line records that name
+    (:meth:`_Drain.own_output`), so a unit healed by hand stands where
+    every reader and every healing migration looks for it, whatever name
+    the session wrote it under. A path naming no file is recorded as given.
+
     A unit is found by its canonical identity, or — failing that — by the
     exact key it was stored under: bad seeds and every media line
     are keyed on the URL verbatim (canonicalization failed, or never ran),
@@ -3660,7 +4024,9 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     # renamed item's unit under the dead id, and the superseded-output drop
     # below then searches a directory the rename moved away.
     drain.resolve_owners()
-    effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
+    written = path if path is not None else (prior.path if status is Status.DONE else None)
+    custody = _custody(drain, prior, status, written)
+    effective_path = custody.recorded
     healed = LedgerEntry(
         hash=prior.hash,
         url=prior.url,
@@ -3703,6 +4069,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
             "stamps the correction in the past, where it loses to the line it was meant to "
             "supersede and `compact` deletes it. Check this machine's clock, then mark again."
         )
+    moved = custody.take()
     if status is Status.DONE and effective_path is not None:
         # A hand-written enrichment closed by mark is one of the unit's own
         # outputs, so it supersedes an earlier kind's exactly as a drained
@@ -3710,7 +4077,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # corrected fetch parks (a scanned PDF, no extractor); without the
         # drop the item keeps two files for one unit and serves the stale
         # pre-correction view to the digest and query layers forever.
-        _drop_superseded_outputs(ctx.instance, healed, effective_path)
+        _drop_superseded_outputs(ctx.instance, healed, effective_path, drivers=ctx.drivers)
     # The heal's own line included: the drain's map is the ledger as of this
     # write, so a heal that completes an item flips its status in the same call.
     # Every item the corpus says owns the unit is refreshed, not the one the
@@ -3723,7 +4090,48 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
             ctx.instance, item_id, entries=drain.entries, owners=drain.owners, owed=owed
         )
     drain.close_ledger()
-    return f"marked {prior.url} ({prior.hash}) {status.value}"
+    return f"marked {prior.url} ({prior.hash}) {status.value}{moved}"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Custody:
+    """The path a heal records, and the move of its file there, where one is due."""
+
+    recorded: str | None
+    moves: tuple[Path, Path] | None = None
+    written: str | None = None
+
+    def take(self) -> str:
+        """Move the file to the recorded name; the confirmation's word on it, if it moved."""
+        if self.moves is None:
+            return ""
+        source, destination = self.moves
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        return f" · {self.written} moved to {self.recorded}, the unit's own name"
+
+
+def _custody(drain: _Drain, prior: LedgerEntry, status: Status, path: str | None) -> _Custody:
+    """What a heal naming ``path`` records, and the move a done heal makes first.
+
+    ``path`` is session-typed, so it is held inside the instance root before
+    anything is read, let alone moved.
+    """
+    root = drain.ctx.instance.root
+    stays = _Custody(recorded=path)
+    if status is not Status.DONE or path is None or resolve_repo_path(root, path) is None:
+        return stays
+    source = root / path
+    if not source.is_file():
+        return stays
+    destination = drain.own_output(prior, source)
+    if destination == source:
+        return stays
+    return _Custody(
+        recorded=str(destination.relative_to(root)),
+        moves=(source, destination),
+        written=path,
+    )
 
 
 def live_item(instance: Instance, item_id: str, *, claim: str) -> str:

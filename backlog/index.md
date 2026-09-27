@@ -19,6 +19,7 @@ The convention:
 
 ## Ideas
 
+- [Heal the 0.2.2 damage through a directive](heal-the-0-2-2-damage.md) — each instance's session repairs what 0.2.2's re-reads replaced or duplicated, from git history, by reading both copies
 - [Page screenshots](page-screenshots.md) — a fast follow to the lens release: a rendered-page capture, so a lens that reads for the look gets it, not only the text
 - [Watchers — feeding sources as a first-class layer](watchers.md) — every feeder becomes a watcher writing standard inbox captures; the next thing to design
 - [Self-tuning cadence](self-tuning-cadence.md) — scheduled runs reschedule their own task: hourly while captures flow, daily when quiet

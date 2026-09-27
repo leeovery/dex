@@ -806,11 +806,10 @@ class TestStamp:
         assert stamped.engine == "0.3.0"
 
     def test_a_prior_lines_date_and_engine_are_never_carried(self):
-        # There is no carve-out: every write records work, so `date` and
-        # `engine` are always this write's. A line written only to correct
-        # an earlier one's attribution would need them carried — the drain
-        # asks the corpus who owns a unit as it writes instead, so no such
-        # line exists.
+        # Nothing is lifted off the entry: a line written only to correct an
+        # earlier one's attribution would need them carried — the drain asks
+        # the corpus who owns a unit as it writes instead, so no such line
+        # exists.
         prior = entry(date=datetime.date(2026, 1, 5), engine="0.1.0")
         stamped = ledger.stamp(
             prior,
@@ -820,6 +819,24 @@ class TestStamp:
         )
         assert stamped.date == datetime.date(2027, 1, 2)
         assert stamped.engine == "0.3.0"
+
+    def test_a_stated_landing_day_dates_the_line_and_nothing_else(self):
+        # A done line re-recording an output as it stood keeps the day that
+        # output landed; the write instant and the engine are still this
+        # write's, since they order the line and say who wrote it.
+        write = datetime.datetime(2027, 1, 2, 14, 30, 5, 125000, tzinfo=datetime.UTC)
+        stamped = ledger.stamp(
+            entry(status=Status.DONE, engine="0.1.0"),
+            today=lambda: datetime.date(2027, 1, 2),
+            now=lambda: write,
+            engine_version="0.3.0",
+            landed=datetime.date(2026, 8, 25),
+        )
+        assert (stamped.date, stamped.at, stamped.engine) == (
+            datetime.date(2026, 8, 25),
+            write,
+            "0.3.0",
+        )
 
     def test_stamping_never_calls_the_ambient_clock(self):
         source = Path(ledger.__file__).read_text(encoding="utf-8")

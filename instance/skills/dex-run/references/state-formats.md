@@ -366,7 +366,14 @@ a malformed record impossible:
   latest means the newest `at` — the UTC write instant every line carries —
   not the last line in the file, because a union merge between two machines
   concatenates their lines in git's order, not in write order. Lines
-  written before `at` shipped carry none and count as oldest. `bin/dex
+  written before `at` shipped carry none and count as oldest. `date` is
+  the day the line's work was done — for a `done` line, the day the
+  output it names landed. A `done` line that re-records an output
+  standing as it was (a rerun re-fetched to identical content, a stored
+  copy kept, moved to the unit's own name or not) carries that earlier
+  day, so its `date` can predate its
+  `at`: the digest backstop reads `date` as when the item's enrichment
+  last changed. `bin/dex
   enrich compact` settles the file down to the winners, keeping beside a
   winner that names no output (a requeued unit) the last line that named
   one — the only record of which file on disk is that unit's own.
@@ -378,7 +385,11 @@ a malformed record impossible:
   it (`depth`, or `url-requested` — the per-item URL budget an `enrich
   fetch` may exceed with `--force`); `forced` marks the fire `--force`
   waived — the unit still entered, and the health check's drift reading
-  skips it; `http_shared` marks a unit admitted from an http-spelled URL
+  skips it; `rerun` marks a landed unit fetched again (a migration's
+  reseed, `enrich fetch` on a landed or still-rerunning unit, never a
+  retry of one that never landed), and a rerun that closes dead or
+  skipped with its page gone is the digest backstop's evidence that the
+  item lost that page; `http_shared` marks a unit admitted from an http-spelled URL
   (a capture's `urls:` line, an `enrich fetch` argument) and licenses
   the fetch's TLS-failure fallback to plain http; `job` marks the units
   that are not fetched pages — `media`
@@ -389,7 +400,10 @@ a malformed record impossible:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
   `job: media` line), so pass the URL as the ledger shows it and the heal
-  lands on that entry.
+  lands on that entry. A page unit's output stands at its own
+  `enrichment/<item>/<kind>-<hash6>.md`, for the line's `kind`, and a done
+  heal moves the file it is given there before recording it (a
+  `media-<n>.md` description stays among the descriptions).
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never
   ran"; `rules` versions the harvest rules). Written by

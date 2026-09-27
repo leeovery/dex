@@ -42,7 +42,8 @@ the engine: the listing from the enrichment directory, the status from the
 ledger — `enriched` only once every unit the ownership map gives the item
 has landed (or is confirmed gone or deliberately skipped), `raw` while any
 is still owed. A rerun — a landed unit fetched again, as a migration's
-reseed or `enrich fetch` on the item's own URL — is not owed while its
+reseed or `enrich fetch` on the item's own landed URL (a retry of one that
+never landed is fresh work) — is not owed while its
 earlier landing still stands on disk: the item keeps its status while the
 rerun drains or retries. An item with no units at all derives its status
 from the enrichment directory instead: `raw` while nothing is there,
@@ -124,6 +125,15 @@ URL) — then close the loop:
 ```
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>
 ```
+
+`mark` takes custody of the file you name: a unit's enrichment stands at
+one name, `<kind>-<hash6>.md` under the item that owns it, so a file
+written under any other name moves there, the ledger records that name,
+and the confirmation says where it went. It stays where you wrote it only
+where it is not the unit's page enrichment to move — a `media-<n>.md`
+description, a file that is not markdown or lies outside `enrichment/`,
+or one recording another URL — or where the unit's own name already holds
+a file that is not the unit's own copy.
 
 Closing the loop is what retires the unit's earlier output: where the kind
 was corrected mid-fetch (a page that turned out to be a PDF), `mark` drops
@@ -292,6 +302,14 @@ report says so ("dead or ruled out" covers the mixed case), and the
 report and the digest backstop name the item until its digest pass is
 recorded; recording that pass is what clears it.
 
+A rerun that closes dead or skipped with its page gone from disk has
+taken that page from the item — a healing migration deleted an output
+it proved wrong, and the source was gone when re-fetched. A digest
+written before that day states what is gone, so the backstop names the
+item, and the run report too when every unit is closed, until a digest
+pass is recorded on or after that day, whatever else the item holds. A
+digest from before pass records were kept does not clear it.
+
 ## 7. Place (judgment — the values ARE the judgment; the verb writes it)
 
 Placement is stated as JSON and applied by the engine — never by editing
@@ -378,8 +396,10 @@ shape.
 A `manual` entry parks for a stated reason (a paywall, a thin extraction,
 a 402, five failed attempts). Where judgment can rescue it — you can fetch
 the page with your own tools, read the content, transcribe the source —
-write the enrichment file beside the mechanical outputs, and **always end
-by writing the ledger through the sanctioned verb**:
+write the enrichment file beside the mechanical outputs — as
+`enrichment/<id>/<kind>-<hash6>.md`, the name `mark` moves it to whatever
+you call it — and **always end by writing the ledger through the
+sanctioned verb**:
 
 ```
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>

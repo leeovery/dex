@@ -13,7 +13,8 @@ so the section headings and the frontmatter cannot be read apart — and
 their composition and split live here too, shared by the youtube driver
 and the transcribe drain. So does the one line a media description opens
 with, naming the file it covers: the describe verb writes it and reads it
-back.
+back, and the hand-over that moves a reading off a byte-identical copy
+re-spells it.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
@@ -31,9 +32,10 @@ differ deliberately:
 import datetime
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
-from dex_engine import frontmatter
+from dex_engine import atomic, frontmatter
 
 __all__ = [
     "CAPTIONS_VIA",
@@ -41,10 +43,13 @@ __all__ = [
     "TRANSCRIPT_HEADING",
     "TRANSCRIPT_PROVENANCE",
     "TRANSCRIPT_SOURCES",
+    "Handover",
     "described_file",
     "description_header",
     "description_section",
     "description_text",
+    "descriptions_of",
+    "hand_over_descriptions",
     "holds_transcript",
     "mask_fetched",
     "podcast_body",
@@ -352,6 +357,9 @@ def _opens_with_transcript(body: str) -> bool:
 # as the whole line; a description written before that verb existed opens
 # the same way and runs on.
 _DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
+# That name alone, re-spelled when a reading moves to another file.
+_BACKTICKED_RE = re.compile(r"`[^`]+`")
+_DOWNLOAD_SLOT_RE = re.compile(r"media-(\d+)\.")
 
 
 def description_header(of: str) -> str:
@@ -374,3 +382,67 @@ def described_file(path: Path) -> str | None:
         return None
     match = _DESCRIBED_RE.match(line)
     return None if match is None else match.group(1)
+
+
+def descriptions_of(item_dir: Path, name: str) -> list[Path]:
+    """Every description in ``item_dir`` whose first line names its file ``name``.
+
+    Read in both spellings the field carries: the describe verb writes the
+    bare name, and a description written before the verb existed wrote the
+    repo path.
+    """
+    spellings = {name, f"enrichment/{item_dir.name}/{name}"}
+    return [
+        path for path in sorted(item_dir.glob("media-*.md")) if described_file(path) in spellings
+    ]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Handover:
+    """What became of a retired file's descriptions: the one moved, and how many went."""
+
+    moved: Path | None
+    dropped: int
+
+
+def hand_over_descriptions(item_dir: Path, *, retired: str, kept: str) -> Handover:
+    """Settle the descriptions of ``retired``, leaving because ``kept`` holds its very bytes.
+
+    One picture, so a reading of either file reads both. Where ``kept`` has
+    a description of its own, every description of ``retired`` goes. Where
+    it has none, the first moves over and the rest go: renamed to the kept
+    slot's ``media-<n>.md`` where that name is free, re-pointed where it
+    stands otherwise, and in its first line only the backticked name
+    changes, because the rest is the session's prose.
+
+    Only for byte-identical files: a description belongs to the bytes it
+    read, and moved to other bytes it would satisfy their describe row with
+    a reading of a different picture.
+
+    The moved description is written before its old name is removed: an
+    interruption between the two leaves the kept file described and the
+    retired file's reading standing, which the next hand-over deletes.
+    """
+    descriptions = descriptions_of(item_dir, retired)
+    if not descriptions or descriptions_of(item_dir, kept):
+        for description in descriptions:
+            description.unlink()
+        return Handover(moved=None, dropped=len(descriptions))
+    first, *rest = descriptions
+    moved = _move_description(first, kept)
+    for description in rest:
+        description.unlink()
+    return Handover(moved=moved, dropped=len(rest))
+
+
+def _move_description(description: Path, kept: str) -> Path:
+    """Re-point ``description`` to ``kept``, under the kept slot's name where it is free."""
+    slot = _DOWNLOAD_SLOT_RE.match(kept)
+    target = description if slot is None else description.with_name(f"media-{slot[1]}.md")
+    if target != description and target.exists():
+        target = description
+    first, sep, rest = description.read_text(encoding="utf-8").partition("\n")
+    atomic.write_text(target, _BACKTICKED_RE.sub(f"`{kept}`", first, count=1) + sep + rest)
+    if target != description:
+        description.unlink()
+    return target

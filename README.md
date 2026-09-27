@@ -306,7 +306,7 @@ launch — and falls back to the tag for a pin an older sync wrote:
 | `dex-enrich transcribe` | drain the waiting transcription cohort (whisper local floor or OpenAI-compatible API; `--limit`, `--model`) |
 | `dex-enrich fetch` | fetch extra URLs into an existing item, ledgered as children (the harvest verb) |
 | `dex-enrich compact` | rewrite the ledger to the latest line per unit, settling union merges; a unit whose latest line names no output keeps the last line that named one |
-| `dex-enrich mark` | heal one ledger entry: the sanctioned correction verb |
+| `dex-enrich mark` | heal one ledger entry: the sanctioned correction verb (a done heal moves the page enrichment it names to the unit's own `<kind>-<hash6>.md`) |
 | `dex-enrich pass` | record a stage completion (harvest/digest/wiki) in `state/passes.jsonl` |
 | `dex-enrich item new` | create a corpus item from a capture file (id rules and provenance; code writes frontmatter) |
 | `dex-enrich item digest` | write an item's digest from a JSON payload — signal, topics and facts are the judgment, the file's shape is the engine's; the digest pass is recorded in the same call |

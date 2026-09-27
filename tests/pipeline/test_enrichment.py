@@ -8,10 +8,13 @@ from dex_engine.capabilities import Capabilities
 from dex_engine.pipeline.enrichment import (
     CAPTIONS_VIA,
     TRANSCRIPT_SOURCES,
+    Handover,
     described_file,
     description_header,
     description_section,
     description_text,
+    descriptions_of,
+    hand_over_descriptions,
     holds_transcript,
     pre_transcript,
     read_enrichment,
@@ -194,3 +197,34 @@ class TestDescribedFile:
         description.write_bytes(b"\xff\xfe not text")
         assert described_file(description) is None
         assert described_file(tmp_path / "absent.md") is None
+
+
+class TestHandOverDescriptions:
+    """A retired copy's readings go where its bytes stay."""
+
+    @staticmethod
+    def _describe(item_dir: Path, name: str, of: str, text: str) -> Path:
+        path = item_dir / name
+        path.write_text(f"{description_header(of)}\n\n{text}\n", encoding="utf-8")
+        return path
+
+    def test_the_first_reading_moves_to_an_undescribed_kept_file_and_the_rest_go(self, tmp_path):
+        self._describe(tmp_path, "media-1.md", "media-1.png", "the card")
+        self._describe(tmp_path, "media-2.md", "media-1.png", "the card, twice")
+        handover = hand_over_descriptions(tmp_path, retired="media-1.png", kept="media-0.png")
+        assert handover == Handover(moved=tmp_path / "media-0.md", dropped=1)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["media-0.md"]
+        assert descriptions_of(tmp_path, "media-0.png") == [tmp_path / "media-0.md"]
+
+    def test_a_described_kept_file_keeps_its_own_reading_alone(self, tmp_path):
+        kept = self._describe(tmp_path, "media-0.md", "media-0.png", "the card")
+        self._describe(tmp_path, "media-1.md", "media-1.png", "the card, again")
+        handover = hand_over_descriptions(tmp_path, retired="media-1.png", kept="media-0.png")
+        assert handover == Handover(moved=None, dropped=1)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["media-0.md"]
+        assert kept.read_text() == "Describes `media-0.png`\n\nthe card\n"
+
+    def test_an_undescribed_retired_file_hands_over_nothing(self, tmp_path):
+        assert hand_over_descriptions(tmp_path, retired="media-1.png", kept="media-0.png") == (
+            Handover(moved=None, dropped=0)
+        )
