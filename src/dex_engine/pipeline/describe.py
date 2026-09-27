@@ -23,17 +23,19 @@ Rewriting is allowed — a session revising its reading describes the file
 again — and the first line is how the earlier description is found: slots
 are counted, never paired to a download's number, so the name that line
 carries is the only tie between a description and the file it covers. The
-line is read for that name rather than matched whole, because a
-description written before this verb existed carries its own prose after
-it and would otherwise be passed over — leaving the stale reading beside
-the new one, both counted, neither marked.
+line is read for that name rather than matched whole, and in every shape a
+description written before this verb existed names its file in — a
+heading, a line of prose, front matter — because one passed over leaves
+the stale reading beside the new one, both counted, neither marked, and
+the count then takes a second reading of one file for a reading of
+another that has none.
 """
 
 from pathlib import Path
 
 from dex_engine import atomic, corpus
 
-from .enrichment import described_file, description_header
+from .enrichment import description_header, descriptions_of
 from .run import RunContext, is_media_file, live_item, refresh_item_frontmatter
 from .types import Instance
 from .urls import resolve_repo_path
@@ -118,9 +120,9 @@ def _carried(instance: Instance, item: corpus.CorpusItem, of: str) -> bool:
 
 def _target(item_dir: Path, of: str) -> Path:
     """The description already covering ``of``, else the lowest free slot."""
-    for path in sorted(item_dir.glob("media-*.md")):
-        if described_file(path) == of:
-            return path
+    standing = descriptions_of(item_dir, of)
+    if standing:
+        return standing[0]
     n = 0
     while (item_dir / f"media-{n}.md").exists():
         n += 1

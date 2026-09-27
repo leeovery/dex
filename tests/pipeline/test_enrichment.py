@@ -198,6 +198,109 @@ class TestDescribedFile:
         assert described_file(description) is None
         assert described_file(tmp_path / "absent.md") is None
 
+    @pytest.mark.parametrize(
+        ("first_line", "named"),
+        [
+            (
+                "# enrichment/2026-08-19-example-55ad7b/media-0.png",
+                ("enrichment/2026-08-19-example-55ad7b/media-0.png"),
+            ),
+            ("# media/55ad7b/photo.jpg", "media/55ad7b/photo.jpg"),
+            ("# Description of `media-0.png`", "media-0.png"),
+            (
+                "# Description of the item's media `media/55ad7b/photo.jpg`",
+                "media/55ad7b/photo.jpg",
+            ),
+            ("# media-0.png — the item's only media file", "media-0.png"),
+            # The path names the file; the backticked name is the page it came from.
+            ("# media-1.png — repo card for `org/model`", "media-1.png"),
+            ("# media-0 — capture media `media/55ad7b/photo.jpg`", "media/55ad7b/photo.jpg"),
+            ("File: `shot.webp` (3840×2160 WebP) — owner capture", "shot.webp"),
+            ("Describes: media-0.png (attached to the post)", "media-0.png"),
+            ("A hand-drawn chart:", None),
+            ("# A diagram of the loop", None),
+        ],
+    )
+    def test_a_pre_verb_first_line_names_its_file_in_its_own_shape(
+        self, tmp_path, first_line, named
+    ):
+        description = tmp_path / "media-0.md"
+        description.write_text(f"{first_line}\n\nThe reading.\n", encoding="utf-8")
+        assert described_file(description) == named
+
+    @pytest.mark.parametrize(
+        ("front", "named"),
+        [
+            ('source: "media/55ad7b/photo.jpg"\nkind: image', "media/55ad7b/photo.jpg"),
+            ("media: media-0.mp4\nkind: video", "media-0.mp4"),
+            ("kind: image\ndescribed_by: session", None),
+        ],
+    )
+    def test_front_matter_names_its_file_by_source_or_media(self, tmp_path, front, named):
+        description = tmp_path / "media-0.md"
+        description.write_text(f"---\n{front}\n---\n\n# A photo\n", encoding="utf-8")
+        assert described_file(description) == named
+
+    @pytest.mark.parametrize(
+        "first_line",
+        [
+            "# media/55ad7b/File-Screenshot 2024-02-21 at 17.46.05.png",
+            (
+                "# Description of the item's media "
+                "`media/55ad7b/File-Screenshot 2024-02-21 at 17.46.05.png`"
+            ),
+            "# media/55ad7b/File-Screenshot 2024-02-21 at 17.46.05.png — the owner's screenshot",
+        ],
+        ids=["path-heading", "backticked", "path-heading-then-prose"],
+    )
+    def test_a_captured_files_name_is_read_whole_through_its_spaces(self, tmp_path, first_line):
+        description = tmp_path / "media-0.md"
+        description.write_text(f"{first_line}\n\nThe reading.\n", encoding="utf-8")
+        assert described_file(description) == (
+            "media/55ad7b/File-Screenshot 2024-02-21 at 17.46.05.png"
+        )
+
+    def test_front_matter_is_read_only_to_its_closing_line(self, tmp_path):
+        # The body below can hold a rule and a line that looks like a key.
+        description = tmp_path / "media-0.md"
+        description.write_text(
+            "---\nkind: image\n---\n\nmedia: media-0.png is its source\n\n---\n\nA chart.\n",
+            encoding="utf-8",
+        )
+        assert described_file(description) is None
+
+    def test_a_repo_path_under_the_items_old_id_names_this_directorys_file(self, tmp_path):
+        # A rename moved the directory the description stands in.
+        item_dir = tmp_path / "2026-08-19-new-slug-55ad7b"
+        item_dir.mkdir()
+        (item_dir / "media-0.md").write_text(
+            "# enrichment/2026-08-19-old-slug-55ad7b/media-0.png\n\nThe reading.\n",
+            encoding="utf-8",
+        )
+        assert descriptions_of(item_dir, "media-0.png") == [item_dir / "media-0.md"]
+        assert descriptions_of(item_dir, "media-1.png") == []
+
+    def test_a_slot_named_under_an_earlier_extension_covers_the_file_standing_in_it(self, tmp_path):
+        # The re-download came back in another format; the reading covers it.
+        (tmp_path / "media-0.webp").write_bytes(b"RIFF")
+        (tmp_path / "media-0.md").write_text("# media-0.jpg — a chart\n", encoding="utf-8")
+        assert descriptions_of(tmp_path, "media-0.webp") == [tmp_path / "media-0.md"]
+
+    def test_two_files_in_one_slot_each_keep_their_own_reading(self, tmp_path):
+        (tmp_path / "media-0.png").write_bytes(b"PNG")
+        (tmp_path / "media-0.mp4").write_bytes(b"MP4")
+        (tmp_path / "media-0.md").write_text("Describes `media-0.png`\n", encoding="utf-8")
+        (tmp_path / "media-2.md").write_text("Describes `media-0.mp4`\n", encoding="utf-8")
+        assert descriptions_of(tmp_path, "media-0.png") == [tmp_path / "media-0.md"]
+        assert descriptions_of(tmp_path, "media-0.mp4") == [tmp_path / "media-2.md"]
+
+    def test_a_captured_file_is_named_by_its_bare_name(self, tmp_path):
+        (tmp_path / "media-0.md").write_text(
+            "# Description of the item's attachment `shot 2024.png`\n", encoding="utf-8"
+        )
+        assert descriptions_of(tmp_path, "media/55ad7b/shot 2024.png") == [tmp_path / "media-0.md"]
+        assert descriptions_of(tmp_path, "media/55ad7b/other.png") == []
+
 
 class TestHandOverDescriptions:
     """A retired copy's readings go where its bytes stay."""

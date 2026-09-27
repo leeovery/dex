@@ -36,12 +36,12 @@ repair belongs to the one session that can read both copies side by side.
   copies and keeps the better one, or merges them; for each duplicate it
   keeps the first-landed file and moves a description over where the kept
   file has none. Digests drawn from a replaced copy are written again.
-- **Descriptions come in two formats.** The describe verb's opens
-  ``Describes `<name>` ``; an older one opens with a heading naming the
-  file's repo path, `# enrichment/<item>/<name>`, and it is common in
-  older instances. `descriptions_of` in `pipeline/enrichment.py` reads only
-  the first, so anything that moves or retires a description must
-  recognise both, or it orphans the older ones.
+- **Descriptions come in many formats.** The describe verb's opens
+  ``Describes `<name>` ``; older ones name their file in a heading, a line
+  of prose or front matter, and they are common in older instances. Find
+  them through `descriptions_of` in `pipeline/enrichment.py`, which reads
+  every shape seen in the field; a description it cannot pair stays where
+  it is.
 - **It fits one run.** While a directive is pending, `dex-inbox`,
   `dex-normalize`, `dex-enrich` and `dex-exclude` refuse, so an open-ended
   directive stalls ingestion. Bound the work, or let the check pass on

@@ -33,7 +33,7 @@ import datetime
 import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dex_engine import atomic, frontmatter
 
@@ -357,6 +357,28 @@ def _opens_with_transcript(body: str) -> bool:
 # as the whole line; a description written before that verb existed opens
 # the same way and runs on.
 _DESCRIBED_RE = re.compile(r"^Describes\s+`([^`]+)`")
+# Descriptions written before the verb name their file in shapes of their
+# own, all found in the field: a heading that is the path
+# (`# enrichment/<item>/media-0.png`, `# media/<id>/File-Screenshot 2024-02-21
+# at 17.46.05.png`), a heading or line of prose that names it
+# (`# media-0.png — the item's only media file`, ``# Description of the
+# item's media `media/<id>/shot.png` ``, ``File: `shot.webp` — ...``,
+# `Describes: media-0.png (...)`), or front matter whose `source:` or `media:`
+# names it. The first file the line names is the one it covers — a heading
+# can name the file and then, backticked, the page it came from — and a
+# backticked name counts whole, since a captured file's name can hold spaces.
+_NAMED_FILE_RE = re.compile(r"(?:enrichment/[^/\s`'\"]+/)?media-\d+\.[A-Za-z0-9]+|media/[^\s`'\"]+")
+_BACKTICKED_NAME_RE = re.compile(r"`([^`]+)`")
+_FILE_LIKE_RE = re.compile(r"(?:enrichment/[^/]+/)?media-\d+\.[A-Za-z0-9]+|media/.+")
+_PATH_HEADING_RE = re.compile(r"^#+\s+((?:media|enrichment)/.+?)(?:\s+—\s.*)?$")
+_FRONT_MATTER_FILE_RE = re.compile(
+    r"^(?:source|media):[ \t]*[\"']?([^\"'\n]+?)[\"']?[ \t]*$", re.MULTILINE
+)
+# A download's repo path, under whatever id its item had when it was written.
+_DOWNLOAD_PATH_RE = re.compile(r"enrichment/[^/]+/([^/]+)")
+# A download's slot is its identity: the bytes name its extension, so a
+# re-download whose format changed stands in the same slot under another one.
+_SLOT_NAME_RE = re.compile(r"media-(\d+)\.[A-Za-z0-9]+")
 # That name alone, re-spelled when a reading moves to another file.
 _BACKTICKED_RE = re.compile(r"`[^`]+`")
 _DOWNLOAD_SLOT_RE = re.compile(r"media-(\d+)\.")
@@ -374,27 +396,72 @@ def described_file(path: Path) -> str | None:
     reason a slot number proves nothing: a capture's media carries no slot
     at all. The line is read for that name rather than matched whole,
     because a description written before the describe verb existed carries
-    its own prose after it.
+    its own prose after it, and names its file in its own shape.
     """
     try:
-        line = path.read_text(encoding="utf-8").partition("\n")[0]
+        text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
+    line, _, rest = text.partition("\n")
+    line = line.strip()
     match = _DESCRIBED_RE.match(line)
-    return None if match is None else match.group(1)
+    if match is not None:
+        return match.group(1)
+    if line == "---":
+        front = _FRONT_MATTER_FILE_RE.search(rest.partition("\n---")[0])
+        return None if front is None else front.group(1).strip()
+    heading = _PATH_HEADING_RE.match(line)
+    if heading is not None:
+        return heading.group(1).strip()
+    return _first_named(line)
+
+
+def _first_named(line: str) -> str | None:
+    """The first file a line names: a path, or a backticked file name read whole."""
+    path = _NAMED_FILE_RE.search(line)
+    quoted = next(
+        (m for m in _BACKTICKED_NAME_RE.finditer(line) if _FILE_LIKE_RE.fullmatch(m.group(1))),
+        None,
+    )
+    if quoted is not None and (path is None or quoted.start() < path.start()):
+        return quoted.group(1)
+    if path is not None:
+        return path.group(0)
+    backticked = _BACKTICKED_NAME_RE.search(line)
+    return None if backticked is None else backticked.group(1)
 
 
 def descriptions_of(item_dir: Path, name: str) -> list[Path]:
     """Every description in ``item_dir`` whose first line names its file ``name``.
 
-    Read in both spellings the field carries: the describe verb writes the
-    bare name, and a description written before the verb existed wrote the
-    repo path.
+    Read in every spelling the field carries: the describe verb writes the
+    bare name, and a description written before the verb existed may write
+    the repo path, under whatever id the item had then — a rename moves the
+    directory the description stands in, so the path it names is still this
+    directory's file. A download's slot is its identity, so a name recorded
+    under the extension an earlier download had still covers the file in
+    that slot, once no file stands under that name; and a captured file,
+    which the item keeps under ``media/<id>/``, is named by its bare file
+    name too.
     """
-    spellings = {name, f"enrichment/{item_dir.name}/{name}"}
-    return [
-        path for path in sorted(item_dir.glob("media-*.md")) if described_file(path) in spellings
-    ]
+    return [path for path in sorted(item_dir.glob("media-*.md")) if _names(path, name, item_dir)]
+
+
+def _names(description: Path, name: str, item_dir: Path) -> bool:
+    described = described_file(description)
+    if described is None:
+        return False
+    download = _DOWNLOAD_PATH_RE.fullmatch(described)
+    if download is not None:
+        described = download.group(1)
+    if described == name:
+        return True
+    slot, of_slot = _SLOT_NAME_RE.fullmatch(described), _SLOT_NAME_RE.fullmatch(name)
+    if slot is not None and of_slot is not None:
+        # Two files can stand in one slot, a video and its poster frame
+        # among them: each description then names its own exactly.
+        return slot.group(1) == of_slot.group(1) and not (item_dir / described).exists()
+    return "/" in name and "/" not in described and PurePosixPath(name).name == described
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
