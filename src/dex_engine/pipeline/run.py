@@ -64,7 +64,7 @@ from .enrichment import (
     transcript_provenance,
     youtube_body,
 )
-from .ownership import unit_owners
+from .ownership import unit_owners, work_identity
 from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
@@ -248,13 +248,43 @@ def _download_slot(path: str | None) -> int | None:
 def _another_kinds_output(path: str, entry: LedgerEntry) -> bool:
     """Whether ``path`` names the unit's own output as a kind it no longer is.
 
-    The file name is the lasting record of the kind that wrote it: a keep
-    after a redetection records the corrected kind on its line beside the
-    earlier kind's file.
+    The file name is the record of the kind that wrote it: a redetected
+    unit's corrected fetch meets the earlier kind's landing here, and a keep
+    records that landing under the kind that wrote it
+    (:meth:`_Drain._keep_stored`), so the name and the line agree.
     """
     name = PurePosixPath(path).name
     return any(
         name == f"{kind.value}-{entry.hash[:6]}.md" for kind in Kind if kind is not entry.kind
+    )
+
+
+def _names_unit(
+    url: str | None, entry: LedgerEntry, drivers: Sequence[SourceDriver]
+) -> bool | None:
+    """Whether a URL a file records is the unit's; None where the file records none.
+
+    Asked of the URL's identity, not its spelling: a file landed before a
+    re-key records the URL as it was spelled then, and two URLs of one
+    identity are one unit.
+    """
+    if url is None:
+        return None
+    return url == entry.url or work_identity(url, drivers) == entry.hash
+
+
+def _page_output(instance: Instance, file: Path) -> bool:
+    """Whether ``file`` can be a page unit's output: markdown in an item's enrichment directory.
+
+    The media family is not: a download and the ``media-<n>.md`` description
+    of it are named by slots the describe verb fills and the describe row
+    counts by name, so a description a unit was closed on stays among them.
+    """
+    resolved = file.resolve()
+    return (
+        resolved.suffix == ".md"
+        and not resolved.name.startswith("media-")
+        and resolved.parent.parent == instance.enrichment_dir.resolve()
     )
 
 
@@ -1176,7 +1206,7 @@ class _Drain:
         # own output HERE, never through _apply_done — the pre-correction
         # kind's file leaves on the same rule, or the item carries two views
         # of one unit forever.
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         title = meta.get("title")
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
@@ -1310,7 +1340,7 @@ class _Drain:
             and stored.is_file()
         ):
             path = str(stored.relative_to(self.ctx.instance.root))
-            _drop_superseded_outputs(self.ctx.instance, entry, path)
+            _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
             self.record_outcome(entry, status=Status.DONE, path=path)
             # The job ends here, and nothing retries it to want the video.
             audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
@@ -1372,7 +1402,7 @@ class _Drain:
             if self._kept_larger_stored(entry, content.body):
                 return
             path = self._write_output(entry, content.meta, content.body)
-            _drop_superseded_outputs(self.ctx.instance, entry, path)
+            _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         title = content.meta.get("title")
         self.record_outcome(
             entry,
@@ -1452,7 +1482,7 @@ class _Drain:
         meta = {**refetched, **transcript_provenance(stored.fields)}
         notes = _park_notes(entry.kind, needs.body)
         path = self._write_output(entry, meta, _transcript_body(entry.kind, notes, split[1]))
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         title = meta.get("title")
         self.record_outcome(
             entry, status=Status.DONE, path=path, title=title if isinstance(title, str) else None
@@ -1543,9 +1573,9 @@ class _Drain:
         self._keep_stored(
             entry,
             stored,
-            note=(
+            note=lambda path: (
                 f"kept the stored copy of {entry.url}: the re-fetch came back "
-                f"{status.value} ({reason}) — delete {stored.path} first to let "
+                f"{status.value} ({reason}) — delete {path} first to let "
                 "the failure land if the source is really gone"
             ),
         )
@@ -1588,13 +1618,15 @@ class _Drain:
 
         The ledger's word first: the unit's latest landing, superseded or
         not, since a requeue leaves the live line without a path. A landing
-        stands under whatever name it was given — a hand heal's, an old
-        migration's re-keyed one, the name of the kind before a redetection
-        — so no name the engine would choose today can find it, and the
-        line's own title comes with it, which a hand-written file may never
-        state. The path is resolved by file name under the owning item's
-        directory: a rename moves the directory, and a path recorded before
-        it names the dead id.
+        can stand under a name other than the unit's own — the earlier
+        kind's, while a redetected unit's corrected fetch is under way; a
+        description the unit was closed on; one whose own name another
+        file holds (:meth:`own_output`) — so no name the engine
+        would choose today finds every landing, and the line's own title
+        comes with it, which a hand-written file may never state. The path
+        is resolved by file name under the owning item's directory: a
+        rename moves the directory, and a path recorded before it names the
+        dead id.
 
         With no recorded landing on disk, the deterministic
         ``<kind>-<hash6>.md`` stands in only once it proves itself by the
@@ -1624,11 +1656,93 @@ class _Drain:
             path=str(named.relative_to(root)), title=fields.get("title"), fields=fields, body=body
         )
 
-    def _keep_stored(self, entry: LedgerEntry, stored: _StoredOutput, *, note: str) -> None:
-        """Record the unit done on its stored output — accounted, never new material."""
+    def _keep_stored(
+        self, entry: LedgerEntry, stored: _StoredOutput, *, note: Callable[[str], str]
+    ) -> None:
+        """Record the unit done on its stored output — accounted, never new material.
+
+        A line's recorded path is the standard name for that line's kind.
+        A copy another kind landed is kept under that kind: a redetected
+        rerun whose corrected fetch failed never became the corrected
+        kind's landing, so the line records the copy as it landed — kind
+        and format restored, path unchanged — and the next rerun
+        re-detects afresh. Recorded under the corrected kind instead, the
+        copy would need that kind's name, and the name is what tells the
+        stub guard which kind wrote it (:meth:`_kept_larger_stored`). Any
+        other copy is kept at the unit's own name, moved there first where
+        it stands under another (:meth:`own_output`). ``note`` is written
+        for the path the copy is kept at.
+        """
+        root = self.ctx.instance.root
+        earlier = self._earlier_kinds_landing(entry, stored)
+        if earlier is None:
+            stands = root / stored.path
+            kept = self.own_output(entry, stands)
+            if kept != stands:
+                stands.replace(kept)
+            path = str(kept.relative_to(root))
+        else:
+            entry = dataclasses.replace(entry, kind=earlier.kind, format=earlier.format)
+            path = stored.path
         self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
-        self.notes.append(note)
-        self.record_outcome(entry, status=Status.DONE, path=stored.path, title=stored.title)
+        self.notes.append(note(path))
+        self.record_outcome(entry, status=Status.DONE, path=path, title=stored.title)
+
+    def _earlier_kinds_landing(
+        self, entry: LedgerEntry, stored: _StoredOutput
+    ) -> LedgerEntry | None:
+        """The landing ``stored`` is where another kind than the unit's landed it, else None.
+
+        The line and the name must agree on the kind: the ledger's word
+        that the copy is that kind's landing, standing at that kind's name.
+        """
+        landing = self._recorded_output(entry.hash)
+        if landing is None or landing.kind is entry.kind:
+            return None
+        named = f"{landing.kind.value}-{entry.hash[:6]}.md"
+        return landing if PurePosixPath(stored.path).name == named else None
+
+    def own_output(self, entry: LedgerEntry, current: Path) -> Path:
+        """Where the unit's output ``current`` belongs: its own name, or where it stands.
+
+        A page unit's output belongs at ``<kind>-<hash6>.md`` under its
+        owning item (:meth:`_output_file`), the one name every reader and
+        every healing migration looks for. It stays where it stands when it
+        is no page output (:func:`_page_output`), when it records another
+        unit's URL — that unit's output is not this one's to move — or when
+        its own name holds a file not proven the unit's: one recording
+        another URL, none, or unreadable is not the engine's to overwrite.
+        A copy proven the unit's, by the URL it records or as its recorded
+        landing, is superseded by ``current`` and gives way to it.
+        """
+        target = self._output_file(entry)
+        if (
+            entry.job is not None
+            or current.resolve() == target.resolve()
+            or not _page_output(self.ctx.instance, current)
+            or self._records_unit(current, entry) is False
+        ):
+            return current
+        if target.exists() and not self._superseded_copy(entry, target):
+            return current
+        return target
+
+    def _superseded_copy(self, entry: LedgerEntry, file: Path) -> bool:
+        """Whether ``file`` is the unit's own copy: its recorded landing, or recording its URL."""
+        landing = self._recorded_output(entry.hash)
+        if landing is not None and landing.path is not None:
+            landed = _landed_file(self.ctx.instance, self.owner_of(entry), landing.path)
+            if landed is not None and landed.resolve() == file.resolve():
+                return True
+        return self._records_unit(file, entry) is True
+
+    def _records_unit(self, file: Path, entry: LedgerEntry) -> bool | None:
+        """Whether ``file`` records the unit's URL (:func:`_names_unit`); None where unreadable."""
+        try:
+            fields, _body = read_enrichment(file)
+        except (OSError, UnicodeDecodeError):
+            return None
+        return _names_unit(fields.get("url"), entry, self.ctx.drivers)
 
     def _kept_larger_stored(self, entry: LedgerEntry, body: str) -> bool:
         """Keep the stored output when it dwarfs a re-fetched body.
@@ -1655,10 +1769,10 @@ class _Drain:
         self._keep_stored(
             entry,
             stored,
-            note=(
+            note=lambda path: (
                 f"kept the stored body for {entry.url}: the re-fetch returned "
                 f"{len(body)} chars against {len(stored.body)} stored — "
-                f"delete {stored.path} first if the smaller page is the truth"
+                f"delete {path} first if the smaller page is the truth"
             ),
         )
         return True
@@ -1948,7 +2062,7 @@ class _Drain:
         # A page unit corrected to media work lands here, not through the
         # page write, and its earlier view — a page enrichment, or a hand
         # heal of the URL under its old kind — leaves on the same rule.
-        _drop_superseded_outputs(self.ctx.instance, entry, path)
+        _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
         self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
         self.record_outcome(entry, status=Status.DONE, path=path)
 
@@ -2529,7 +2643,9 @@ def _park_notes(kind: Kind, body: str | None) -> str:
     return description_text(notes) if kind is Kind.YOUTUBE else notes
 
 
-def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) -> None:
+def _drop_superseded_outputs(
+    instance: Instance, entry: LedgerEntry, path: str, *, drivers: Sequence[SourceDriver]
+) -> None:
     """Drop the unit's earlier-kind output — once ``path`` replaces it.
 
     A redetection relabels a unit, so its output file is renamed by kind.
@@ -2546,14 +2662,17 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
     the line was written, which a rename since leaves naming nothing.
 
     Candidates are every other markdown beside the replacement, and each
-    must PROVE it belongs to this unit by the URL it records: the URL is
-    the unit's identity (two entries under one URL are one hash), so a
-    match is this unit's own earlier output and nothing else's — matching
+    must PROVE it belongs to this unit by the URL it records, read by
+    identity (:func:`_names_unit`): the URL is the unit's identity (two
+    entries under one URL are one hash), so a match is this unit's own
+    earlier output and nothing else's, a copy landed before a re-key and
+    recording the URL as spelled then included — matching
     on names alone once unlinked a hash6 neighbour's enrichment while its
-    ledger line still read ``done``. Names cannot bound the search: a unit
-    healed by hand carries whatever name the healer typed, and a
-    migration-seeded rerun that landed the engine-named file beside it
-    left the item listing two views of one unit. A candidate that cannot
+    ledger line still read ``done``. Names cannot bound the search: a copy
+    can stand under a name other than the unit's own
+    (:meth:`_Drain._stored_output`), and a migration-seeded rerun that
+    landed the engine-named file beside a hand heal's left the item
+    listing two views of one unit. A candidate that cannot
     be read is left alone — an unreadable file is not proof of anything.
     Nothing is dropped for a replacement that is not on disk — a mistyped
     ``mark --path`` must not cost the item its enrichment.
@@ -2569,7 +2688,7 @@ def _drop_superseded_outputs(instance: Instance, entry: LedgerEntry, path: str) 
             fields, _body = read_enrichment(stale)
         except (OSError, UnicodeDecodeError):
             continue
-        if fields.get("url") == entry.url:
+        if _names_unit(fields.get("url"), entry, drivers):
             stale.unlink()
 
 
@@ -3608,6 +3727,12 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     frontmatter is refreshed in the same call, so a hand-written enrichment
     file is listed the moment its heal lands.
 
+    A done heal takes custody of the page output it names: the file moves
+    to the unit's own name and the line records that name
+    (:meth:`_Drain.own_output`), so a unit healed by hand stands where
+    every reader and every healing migration looks for it, whatever name
+    the session wrote it under. A path naming no file is recorded as given.
+
     A unit is found by its canonical identity, or — failing that — by the
     exact key it was stored under: bad seeds and every media line
     are keyed on the URL verbatim (canonicalization failed, or never ran),
@@ -3660,7 +3785,9 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
     # renamed item's unit under the dead id, and the superseded-output drop
     # below then searches a directory the rename moved away.
     drain.resolve_owners()
-    effective_path = path if path is not None else (prior.path if status is Status.DONE else None)
+    written = path if path is not None else (prior.path if status is Status.DONE else None)
+    custody = _custody(drain, prior, status, written)
+    effective_path = custody.recorded
     healed = LedgerEntry(
         hash=prior.hash,
         url=prior.url,
@@ -3703,6 +3830,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
             "stamps the correction in the past, where it loses to the line it was meant to "
             "supersede and `compact` deletes it. Check this machine's clock, then mark again."
         )
+    moved = custody.take()
     if status is Status.DONE and effective_path is not None:
         # A hand-written enrichment closed by mark is one of the unit's own
         # outputs, so it supersedes an earlier kind's exactly as a drained
@@ -3710,7 +3838,7 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
         # corrected fetch parks (a scanned PDF, no extractor); without the
         # drop the item keeps two files for one unit and serves the stale
         # pre-correction view to the digest and query layers forever.
-        _drop_superseded_outputs(ctx.instance, healed, effective_path)
+        _drop_superseded_outputs(ctx.instance, healed, effective_path, drivers=ctx.drivers)
     # The heal's own line included: the drain's map is the ledger as of this
     # write, so a heal that completes an item flips its status in the same call.
     # Every item the corpus says owns the unit is refreshed, not the one the
@@ -3723,7 +3851,48 @@ def mark(  # noqa: PLR0913 — the verb mirrors its CLI flags
             ctx.instance, item_id, entries=drain.entries, owners=drain.owners, owed=owed
         )
     drain.close_ledger()
-    return f"marked {prior.url} ({prior.hash}) {status.value}"
+    return f"marked {prior.url} ({prior.hash}) {status.value}{moved}"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Custody:
+    """The path a heal records, and the move of its file there, where one is due."""
+
+    recorded: str | None
+    moves: tuple[Path, Path] | None = None
+    written: str | None = None
+
+    def take(self) -> str:
+        """Move the file to the recorded name; the confirmation's word on it, if it moved."""
+        if self.moves is None:
+            return ""
+        source, destination = self.moves
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        return f" · {self.written} moved to {self.recorded}, the unit's own name"
+
+
+def _custody(drain: _Drain, prior: LedgerEntry, status: Status, path: str | None) -> _Custody:
+    """What a heal naming ``path`` records, and the move a done heal makes first.
+
+    ``path`` is session-typed, so it is held inside the instance root before
+    anything is read, let alone moved.
+    """
+    root = drain.ctx.instance.root
+    stays = _Custody(recorded=path)
+    if status is not Status.DONE or path is None or resolve_repo_path(root, path) is None:
+        return stays
+    source = root / path
+    if not source.is_file():
+        return stays
+    destination = drain.own_output(prior, source)
+    if destination == source:
+        return stays
+    return _Custody(
+        recorded=str(destination.relative_to(root)),
+        moves=(source, destination),
+        written=path,
+    )
 
 
 def live_item(instance: Instance, item_id: str, *, claim: str) -> str:

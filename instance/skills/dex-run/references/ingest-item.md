@@ -125,6 +125,15 @@ URL) — then close the loop:
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>
 ```
 
+`mark` takes custody of the file you name: a unit's enrichment stands at
+one name, `<kind>-<hash6>.md` under the item that owns it, so a file
+written under any other name moves there, the ledger records that name,
+and the confirmation says where it went. It stays where you wrote it only
+where it is not the unit's page enrichment to move — a `media-<n>.md`
+description, a file that is not markdown or lies outside `enrichment/`,
+or one recording another URL — or where the unit's own name already holds
+a file that is not the unit's own copy.
+
 Closing the loop is what retires the unit's earlier output: where the kind
 was corrected mid-fetch (a page that turned out to be a PDF), `mark` drops
 the superseded `<old-kind>-<hash6>.md` once the file you named is on disk,
@@ -378,8 +387,10 @@ shape.
 A `manual` entry parks for a stated reason (a paywall, a thin extraction,
 a 402, five failed attempts). Where judgment can rescue it — you can fetch
 the page with your own tools, read the content, transcribe the source —
-write the enrichment file beside the mechanical outputs, and **always end
-by writing the ledger through the sanctioned verb**:
+write the enrichment file beside the mechanical outputs — as
+`enrichment/<id>/<kind>-<hash6>.md`, the name `mark` moves it to whatever
+you call it — and **always end by writing the ledger through the
+sanctioned verb**:
 
 ```
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>

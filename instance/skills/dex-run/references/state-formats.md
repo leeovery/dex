@@ -389,7 +389,10 @@ a malformed record impossible:
   `bin/dex enrich mark` — it finds a unit by its canonical identity, or by
   the exact stored key for units recorded verbatim (bad seeds and every
   `job: media` line), so pass the URL as the ledger shows it and the heal
-  lands on that entry.
+  lands on that entry. A page unit's output stands at its own
+  `enrichment/<item>/<kind>-<hash6>.md`, for the line's `kind`, and a done
+  heal moves the file it is given there before recording it (a
+  `media-<n>.md` description stays among the descriptions).
 - `state/passes.jsonl` — per-item stage records `{stage, item, date,
   rules?}` ("ran and promoted nothing" is distinguishable from "never
   ran"; `rules` versions the harvest rules). Written by

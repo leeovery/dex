@@ -9,7 +9,7 @@ import shutil
 import ssl
 import urllib.parse
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import yaml
@@ -160,6 +160,21 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
 
 def entry_for(ctx: RunContext, url: str = URL) -> LedgerEntry:
     return ledger.load(ctx.instance.ledger_path)[work_hash(url)]
+
+
+def heal_recorded_before_custody(
+    instance: Instance, done: LedgerEntry, name: str, content: str
+) -> Path:
+    """A heal an engine before custody recorded under the name the session typed.
+
+    That engine's mark dropped the landing the heal replaced, and its line
+    names the file as the session wrote it.
+    """
+    (instance.root / str(done.path)).unlink()
+    healed = instance.enrichment_dir / ITEM / name
+    healed.write_text(content, encoding="utf-8")
+    ledger.append(instance.ledger_path, dataclasses.replace(done, path=f"enrichment/{ITEM}/{name}"))
+    return healed
 
 
 class TestSeedAndDone:
@@ -483,7 +498,7 @@ class TestFrontmatterRefresh:
         run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-healed.md")
         item = corpus.read_item(path)
         assert item.status == "enriched"
-        assert item.enrichment == ["web-healed.md"]
+        assert item.enrichment == [f"web-{work_hash(URL)[:6]}.md"]
 
     def test_record_pass_refreshes_the_items_frontmatter(self, instance):
         item_id = "2026-08-19-scan-def456"
@@ -529,8 +544,12 @@ class TestFrontmatterRefresh:
         (item_dir / "web-healed.md").write_text("hand-fetched content\n", encoding="utf-8")
         (item_dir / "[draft].md").write_text("also hand-written\n", encoding="utf-8")
         confirmation = run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/web-healed.md")
-        assert confirmation.endswith("done")  # the heal landed, quietly
-        assert entry_for(ctx).status is Status.DONE
+        own = f"enrichment/{ITEM}/web-{work_hash(URL)[:6]}.md"
+        assert confirmation == (  # the heal landed, quietly
+            f"marked {URL} ({work_hash(URL)}) done · enrichment/{ITEM}/web-healed.md moved "
+            f"to {own}, the unit's own name"
+        )
+        assert (entry_for(ctx).status, entry_for(ctx).path) == (Status.DONE, own)
 
     VIDEO_URL = "https://example.test/video"
 
@@ -1558,28 +1577,35 @@ class TestRerun:
         """Close the landed unit on a hand-written file, as a session's heal does."""
         healed = instance.enrichment_dir / ITEM / "read-by-hand.md"
         healed.write_text(body, encoding="utf-8")
-        path = f"enrichment/{ITEM}/{healed.name}"
-        run_mod.mark(make_ctx(instance, FakeDriver()), URL, Status.DONE, path=path)
-        return path
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{healed.name}")
+        return str(entry_for(ctx).path)
 
-    def test_a_landing_under_a_heals_own_name_is_kept(self, instance):
-        # A heal lands on whatever name the session chose, which no name the
-        # engine would pick can find — the recorded path does, and the
-        # ledger's word needs no URL inside the file to back it. The title
-        # is the heal line's too: a hand-written file may state none.
+    def test_a_landing_under_a_heals_own_name_is_kept_at_the_units(self, instance):
+        # An engine before custody recorded a heal under whatever name the
+        # session chose, which no name the engine would pick can find — the
+        # recorded path does, and the ledger's word needs no URL inside the
+        # file to back it. The keep moves it to the unit's own name, where
+        # every reader looks. The title is the heal line's too: a
+        # hand-written file may state none.
         done = self.land(instance)
-        healed = self.heal_by_hand(instance, "the page, read by hand\n")
+        own = instance.root / str(done.path)
+        healed = heal_recorded_before_custody(
+            instance, done, "read-by-hand.md", "the page, read by hand\n"
+        )
         ctx = self.failing(instance, Missing(evidence="HTTP 404"))
         self.seed_rerun(ctx)
         report = run_mod.run(ctx)
         entry = entry_for(ctx)
-        assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
-        assert (instance.root / healed).read_text(encoding="utf-8") == "the page, read by hand\n"
-        assert f"delete {healed} first" in report
+        assert (entry.status, entry.path, entry.title) == (Status.DONE, done.path, done.title)
+        assert own.read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert not healed.exists()
+        assert f"delete {done.path} first" in report
 
     def test_a_stub_never_replaces_a_heals_landing(self, instance):
-        self.land(instance)
+        done = self.land(instance)
         healed = self.heal_by_hand(instance, "the whole article, read by hand " * 40)
+        assert healed == done.path  # the heal took the unit's own name
         ctx = make_ctx(
             instance, FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="preview " * 5))
         )
@@ -1588,8 +1614,9 @@ class TestRerun:
         assert entry_for(ctx).path == healed
         assert "kept the stored body" in report
         assert [p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")] == [
-            "read-by-hand.md"
+            PurePosixPath(healed).name
         ]
+        assert "read by hand" in (instance.root / healed).read_text(encoding="utf-8")
 
     def test_a_renamed_items_landing_is_found_under_the_live_id(self, instance):
         # The landing recorded its path under the id the item had then; the
@@ -1616,7 +1643,10 @@ class TestRerun:
         run_mod.run(ctx)
         entry = entry_for(ctx)
         assert (entry.status, entry.item) == (Status.DONE, NEW_ITEM)
-        assert entry.path == f"enrichment/{NEW_ITEM}/{healed.name}"
+        own = f"enrichment/{NEW_ITEM}/web-{work_hash(URL)[:6]}.md"
+        assert entry.path == own  # kept at the unit's own name under the live id
+        assert (instance.root / own).read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert not healed.exists()
 
     def test_a_recorded_path_naming_nothing_falls_back_on_the_engines_name(self, instance):
         # Proved by the URL inside; with that gone too, the failure lands
@@ -1643,6 +1673,77 @@ class TestRerun:
         run_mod.run(ctx)
         entry = entry_for(ctx)
         assert (entry.status, entry.path, entry.title) == (Status.DONE, healed, done.title)
+
+    def test_a_stub_kept_over_a_heals_own_name_is_kept_at_the_units(self, instance):
+        # The stub guard's keep takes the same road as a failure's, and its
+        # note names the file where it now stands.
+        done = self.land(instance)
+        healed = heal_recorded_before_custody(
+            instance, done, "read-by-hand.md", "the whole article, read by hand " * 40
+        )
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="preview " * 5))
+        )
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert entry_for(ctx).path == done.path
+        assert not healed.exists()
+        assert f"delete {done.path} first if the smaller page is the truth" in report
+
+    def test_a_copy_of_its_own_at_the_units_name_gives_way_to_the_kept_landing(self, instance):
+        # The ledger names the heal; a file of the unit's own at its name —
+        # the URL it records says so — is superseded by the copy kept.
+        done = self.land(instance)
+        healed = heal_recorded_before_custody(
+            instance, done, "read-by-hand.md", "the page, read by hand\n"
+        )
+        own = instance.root / str(done.path)
+        own.write_text(render_enrichment(URL, TODAY, {}, "an older view"), encoding="utf-8")
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        assert entry_for(ctx).path == done.path
+        assert own.read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert not healed.exists()
+
+    @pytest.mark.parametrize(
+        "occupant",
+        [
+            render_enrichment("https://elsewhere.test/other", TODAY, {}, "their page").encode(),
+            b"no frontmatter, so no proof whose it is\n",
+            b"\xff\xfe unreadable",
+        ],
+        ids=["another-url", "no-url", "unreadable"],
+    )
+    def test_a_name_held_by_a_file_not_proven_its_own_keeps_the_copy_where_it_stands(
+        self, instance, occupant
+    ):
+        done = self.land(instance)
+        healed = heal_recorded_before_custody(
+            instance, done, "read-by-hand.md", "the page, read by hand\n"
+        )
+        own = instance.root / str(done.path)
+        own.write_bytes(occupant)
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        assert entry_for(ctx).path == f"enrichment/{ITEM}/{healed.name}"
+        assert healed.read_text(encoding="utf-8") == "the page, read by hand\n"
+        assert own.read_bytes() == occupant
+
+    def test_a_description_the_unit_was_closed_on_is_kept_among_the_descriptions(self, instance):
+        # A unit closed on the description of its capture: the description
+        # family is named by slots the describe row counts by name.
+        done = self.land(instance)
+        description = heal_recorded_before_custody(
+            instance, done, "media-0.md", "Describes `photo.jpg`\n\nwhat it shows\n"
+        )
+        ctx = self.failing(instance, Missing(evidence="HTTP 404"))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        assert entry_for(ctx).path == f"enrichment/{ITEM}/media-0.md"
+        assert description.exists()
+        assert not (instance.root / str(done.path)).exists()
 
 
 class TestARerunOnItsLandingOwesNothing:
@@ -1890,14 +1991,14 @@ class TestRerunKeepsItsTranscript:
         # What a fresh share would hold: the engine-named file, and the
         # heal's copy of the same unit gone with the landing that replaces it.
         transcribed = youtube_body("d", "the words")
-        self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, transcribed)
-        healed = instance.enrichment_dir / ITEM / "transcribed-by-hand.md"
-        healed.write_text(
-            render_enrichment(URL, TODAY, TRANSCRIBER_STAMP, transcribed), encoding="utf-8"
+        done = self.land(instance, Kind.YOUTUBE, TRANSCRIBER_STAMP, transcribed)
+        heal_recorded_before_custody(
+            instance,
+            done,
+            "transcribed-by-hand.md",
+            render_enrichment(URL, TODAY, TRANSCRIBER_STAMP, transcribed),
         )
         ctx = make_ctx(instance, FakeDriver())
-        run_mod.mark(ctx, URL, Status.DONE, path=f"enrichment/{ITEM}/{healed.name}")
-        assert [p.name for p in healed.parent.glob("*.md")] == [healed.name]
         TestRerun.seed_rerun(ctx)
         self.reparked(instance, Kind.YOUTUBE, self.park(description_section("d")))
         named = f"youtube-{work_hash(URL)[:6]}.md"
@@ -1976,6 +2077,23 @@ class TestSupersededOutputDrop:
         assert not healed.exists()
         assert sorted(p.name for p in item_dir.glob("*.md")) == [f"web-{work_hash(URL)[:6]}.md"]
 
+    def test_a_copy_recording_the_url_as_spelled_before_a_re_key_leaves_on_the_landing(
+        self, instance
+    ):
+        # A re-key moved the unit's hash and left its file under the old
+        # one, recording the URL as it was spelled then: one identity, so
+        # one unit, and the landing that replaces it retires it.
+        write_item(instance)
+        item_dir = instance.enrichment_dir / ITEM
+        item_dir.mkdir(parents=True, exist_ok=True)
+        respelled = "http://www.example.test/post/#top"
+        assert work_identity(respelled, [FakeDriver()]) == work_hash(URL)
+        stale = item_dir / f"web-{work_hash(respelled)[:6]}.md"
+        stale.write_text(render_enrichment(respelled, TODAY, {}, "the old view"), encoding="utf-8")
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        assert not stale.exists()
+        assert sorted(p.name for p in item_dir.glob("*.md")) == [f"web-{work_hash(URL)[:6]}.md"]
+
     def test_a_neighbours_output_stays_whatever_it_is_named(self, instance):
         # The URL is the proof of ownership: another unit's file in the same
         # directory records another URL and is never this landing's to drop.
@@ -2004,6 +2122,190 @@ class TestSupersededOutputDrop:
         assert garbled.exists()
         assert not stale.exists()
         assert entry_for(ctx).status is Status.DONE
+
+
+class TestMarkTakesCustody:
+    """A done heal moves the page output it names to the unit's own name and records it."""
+
+    OWN = f"enrichment/{ITEM}/web-{work_hash(URL)[:6]}.md"
+    HEAL = f"enrichment/{ITEM}/article-by-hand.md"
+
+    def parked(self, instance: Instance) -> RunContext:
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: Unusable(evidence="paywalled")))
+        run_mod.run(ctx)
+        return ctx
+
+    def written(self, instance: Instance, path: str, content: bytes = b"read by hand\n") -> Path:
+        file = instance.root / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(content)
+        return file
+
+    def test_a_heal_under_the_sessions_name_lands_at_the_units_own(self, instance):
+        ctx = self.parked(instance)
+        healed = self.written(instance, self.HEAL)
+        confirmation = run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"read by hand\n"
+        assert not healed.exists()
+        assert confirmation.endswith(f" · {self.HEAL} moved to {self.OWN}, the unit's own name")
+        item = corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md")
+        assert (item.status, item.enrichment) == ("enriched", [PurePosixPath(self.OWN).name])
+
+    def test_a_done_heal_naming_no_file_anywhere_records_none(self, instance):
+        ctx = self.parked(instance)
+        confirmation = run_mod.mark(ctx, URL, Status.DONE)
+        assert (entry_for(ctx).status, entry_for(ctx).path) == (Status.DONE, None)
+        assert confirmation == f"marked {URL} ({work_hash(URL)}) done"
+
+    def test_a_heal_that_cannot_be_read_still_moves(self, instance):
+        # Unreadable is no proof it is another unit's.
+        ctx = self.parked(instance)
+        healed = self.written(instance, self.HEAL, b"\xff\xfe not utf-8")
+        run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"\xff\xfe not utf-8"
+        assert not healed.exists()
+
+    def test_a_heal_written_under_another_directory_moves_under_the_owner(self, instance):
+        ctx = self.parked(instance)
+        elsewhere = "enrichment/2026-08-01-elsewhere-000000/read.md"
+        healed = self.written(instance, elsewhere)
+        run_mod.mark(ctx, URL, Status.DONE, path=elsewhere)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"read by hand\n"
+        assert not healed.exists()
+
+    def test_a_heal_replaces_the_units_own_landing_at_its_name(self, instance):
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        self.written(instance, self.HEAL)
+        run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"read by hand\n"
+        assert sorted(p.name for p in (instance.enrichment_dir / ITEM).glob("*.md")) == [
+            PurePosixPath(self.OWN).name
+        ]
+
+    def test_a_heal_replaces_the_earlier_heal_the_ledger_names_at_its_name(self, instance):
+        # The earlier heal records no URL; the ledger's word makes it the unit's.
+        ctx = self.parked(instance)
+        self.written(instance, self.HEAL, b"first reading\n")
+        run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        second = f"enrichment/{ITEM}/second-reading.md"
+        self.written(instance, second, b"second reading\n")
+        run_mod.mark(ctx, URL, Status.DONE, path=second)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"second reading\n"
+        assert not (instance.root / second).exists()
+
+    def test_a_copy_recording_another_spelling_of_the_url_is_the_units_own(self, instance):
+        # A file landed before a re-key records the URL as it was spelled then.
+        ctx = self.parked(instance)
+        respelled = "http://www.example.test/post/#top"
+        assert work_identity(respelled, ctx.drivers) == work_hash(URL)
+        self.written(instance, self.OWN, render_enrichment(respelled, TODAY, {}, "old").encode())
+        self.written(instance, self.HEAL)
+        run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_bytes() == b"read by hand\n"
+
+    @pytest.mark.parametrize(
+        "occupant",
+        [
+            render_enrichment("https://elsewhere.test/other", TODAY, {}, "their page").encode(),
+            b"no frontmatter, so no proof whose it is\n",
+            b"\xff\xfe unreadable",
+        ],
+        ids=["another-url", "no-url", "unreadable"],
+    )
+    def test_a_name_held_by_a_file_not_proven_the_units_leaves_the_heal_where_written(
+        self, instance, occupant
+    ):
+        ctx = self.parked(instance)
+        self.written(instance, self.OWN, occupant)
+        healed = self.written(instance, self.HEAL)
+        confirmation = run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.HEAL
+        assert healed.read_bytes() == b"read by hand\n"
+        assert (instance.root / self.OWN).read_bytes() == occupant
+        assert confirmation == f"marked {URL} ({work_hash(URL)}) done"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            f"enrichment/{ITEM}/media-0.md",  # a description: the describe family
+            f"enrichment/{ITEM}/read-by-hand.txt",  # not markdown
+            "cache/read-by-hand.md",  # outside the enrichment tree
+        ],
+        ids=["description", "not-markdown", "outside-enrichment"],
+    )
+    def test_a_file_that_is_no_page_output_stays_where_it_is(self, instance, path):
+        ctx = self.parked(instance)
+        healed = self.written(instance, path)
+        run_mod.mark(ctx, URL, Status.DONE, path=path)
+        assert entry_for(ctx).path == path
+        assert healed.exists()
+        assert not (instance.root / self.OWN).exists()
+
+    def test_a_file_recording_another_units_url_is_not_this_units_to_move(self, instance):
+        ctx = self.parked(instance)
+        other = render_enrichment("https://elsewhere.test/other", TODAY, {}, "theirs").encode()
+        healed = self.written(instance, self.HEAL, other)
+        run_mod.mark(ctx, URL, Status.DONE, path=self.HEAL)
+        assert entry_for(ctx).path == self.HEAL
+        assert healed.read_bytes() == other
+        assert not (instance.root / self.OWN).exists()
+
+    def test_a_path_escaping_the_root_moves_nothing(self, instance):
+        ctx = self.parked(instance)
+        outside = instance.root.parent / "outside.md"
+        outside.write_text("not the instance's\n", encoding="utf-8")
+        run_mod.mark(ctx, URL, Status.DONE, path="../outside.md")
+        assert outside.read_text(encoding="utf-8") == "not the instance's\n"
+        assert not (instance.root / self.OWN).exists()
+
+    def test_a_done_heal_without_a_path_takes_custody_of_the_carried_landing(self, instance):
+        # An engine before custody recorded the heal under the session's name.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        healed = heal_recorded_before_custody(
+            instance, entry_for(ctx), "read-by-hand.md", "read by hand\n"
+        )
+        run_mod.mark(ctx, URL, Status.DONE)
+        assert entry_for(ctx).path == self.OWN
+        assert (instance.root / self.OWN).read_text(encoding="utf-8") == "read by hand\n"
+        assert not healed.exists()
+
+    def test_a_media_units_file_is_recorded_as_given(self, instance):
+        # A download's name is its slot, never a page unit's.
+        signed = "https://cdn.example.test/hero.png?si=abc123"
+        write_item(instance)
+        fetch = lambda _unit: Content(meta={}, body="b" * 400, media=[signed])  # noqa: E731
+        outage = HttpResponse(status=503, content_type="image/png", body=b"")
+        ctx = make_ctx(
+            instance, FakeDriver(fetch_fn=fetch), transport=FakeTransport({signed: outage})
+        )
+        run_mod.run(ctx)
+        described = f"enrichment/{ITEM}/hero-read-by-hand.md"
+        healed = self.written(instance, described)
+        run_mod.mark(ctx, signed, Status.DONE, path=described)
+        assert entry_for(ctx, signed).path == described
+        assert healed.exists()
+
+    def test_a_heal_that_did_not_land_moves_nothing(self, instance):
+        # A clock set behind the unit's line: the heal loses, and nothing
+        # acts on a correction that did not happen.
+        self.parked(instance)
+        healed = self.written(instance, self.HEAL)
+        behind = make_ctx(instance, FakeDriver(), now=lambda: NOW - datetime.timedelta(days=1))
+        with pytest.raises(ValueError, match="did not take effect"):
+            run_mod.mark(behind, URL, Status.DONE, path=self.HEAL)
+        assert healed.exists()
+        assert not (instance.root / self.OWN).exists()
 
 
 class TestIsMediaFile:
@@ -4838,15 +5140,15 @@ class TestOwnershipIsTheCorpusAnswer:
         self._renamed(instance, status=Status.DONE, path=f"enrichment/{NEW_ITEM}/web-x.md")
         unit_hash = work_hash(URL)
         item_dir = instance.enrichment_dir / NEW_ITEM
-        stale = item_dir / f"web-{unit_hash[:6]}.md"
+        stale = item_dir / f"podcast-{unit_hash[:6]}.md"
         stale.write_text(f"---\nurl: {URL}\nfetched: '2026-08-01'\n---\n\nold\n")
-        fresh = item_dir / f"podcast-{unit_hash[:6]}.md"
+        fresh = item_dir / f"web-{unit_hash[:6]}.md"
         fresh.write_text(f"---\nurl: {URL}\nfetched: '2026-08-02'\n---\n\nnew\n")
         run_mod.mark(
             make_ctx(instance, FakeDriver()),
             URL,
             Status.DONE,
-            path=f"enrichment/{NEW_ITEM}/podcast-{unit_hash[:6]}.md",
+            path=f"enrichment/{NEW_ITEM}/{fresh.name}",
         )
         assert not stale.exists()
         assert fresh.exists()
@@ -5768,7 +6070,7 @@ class TestRedetection:
         self._requeue(ctx, URL)
         report = run_mod.run(make_ctx(instance, web, drivers=[web, files]))
         kept = entry_for(ctx)
-        assert (kept.kind, kept.status) == (Kind.FILE, Status.DONE)
+        assert (kept.kind, kept.status) == (Kind.WEB, Status.DONE)
         assert kept.path == f"enrichment/{ITEM}/{web_out.name}"
         assert f"kept the stored copy of {URL}" in report
         assert corpus.read_item(item_path).enrichment == [web_out.name]
@@ -5785,6 +6087,42 @@ class TestRedetection:
         assert not web_out.exists()
         assert corpus.read_item(item_path).enrichment == [f"file-{done.hash[:6]}.md"]
         assert corpus.read_item(item_path).status == "enriched"
+
+    def test_the_rerun_after_a_kept_correction_re_detects_and_lands_the_new_kind(self, instance):
+        # The keep recorded the web view as the web landing it is, so the
+        # next rerun starts from web: it re-detects the PDF, and a reading
+        # that lands takes the file kind's own name like any other landing.
+        item_path = write_item(instance)
+        mode = {"redetect": False, "extract": False}
+
+        def web_fetch(_unit):
+            if mode["redetect"]:
+                return Redetected(kind=Kind.FILE, format=Format.PDF)
+            return Content(meta={"title": "t"}, body="b" * 400)
+
+        def file_fetch(_unit):
+            if mode["extract"]:
+                return Content(meta={"title": "the pdf"}, body="extracted " * 60)
+            return Unusable(evidence="no extractor for pdf here")
+
+        web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
+        files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
+        ctx = make_ctx(instance, web, drivers=[web, files])
+        run_mod.run(ctx)
+        mode["redetect"] = True
+        self._requeue(ctx, URL)
+        run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        assert (entry_for(ctx).kind, entry_for(ctx).format) == (Kind.WEB, None)
+
+        mode["extract"] = True
+        self._requeue(ctx, URL)
+        report = run_mod.run(make_ctx(instance, web, drivers=[web, files]))
+        landed = entry_for(ctx)
+        own = f"file-{landed.hash[:6]}.md"
+        assert f"re-detected: {URL} — web → file/pdf" in report
+        assert (landed.kind, landed.format, landed.status) == (Kind.FILE, Format.PDF, Status.DONE)
+        assert landed.path == f"enrichment/{ITEM}/{own}"
+        assert corpus.read_item(item_path).enrichment == [own]
 
     # These two URLs share a sha1[:6] (6f0d01) and detect as different
     # kinds, so under one item they want output names that differ only by
@@ -5825,10 +6163,10 @@ class TestRedetection:
 
     def test_a_mark_landed_output_drops_the_superseded_one(self, instance):
         # The route for a web→file correction the engine could not read,
-        # whose rerun kept the web view: the session writes the enrichment
-        # by hand and closes it with `enrich mark ... done --path`. The
-        # stale web view of the PDF must leave with it — the drain's route
-        # is not the only one.
+        # whose corrected fetch parked beside the web view: the session
+        # writes the enrichment by hand and closes it with `enrich mark ...
+        # done --path`. The stale web view of the PDF must leave with it —
+        # the drain's route is not the only one.
         item_path = write_item(instance)
         mode = {"redetect": False}
 
@@ -5838,7 +6176,7 @@ class TestRedetection:
             return Content(meta={"title": "t"}, body="b" * 400)
 
         def file_fetch(_unit):
-            return Unusable(evidence="scanned pdf — no extractor")
+            return NeedsCapability(need=Need.OCR, reason="scanned pdf — no extractor")
 
         web = FakeDriver(kind=Kind.WEB, fetch_fn=web_fetch)
         files = FakeDriver(kind=Kind.FILE, fetch_fn=file_fetch)
@@ -5850,8 +6188,8 @@ class TestRedetection:
         mode["redetect"] = True
         self._requeue(ctx, URL)
         run_mod.run(make_ctx(instance, web, drivers=[web, files]))
-        assert entry_for(ctx).status is Status.DONE
-        assert web_out.exists()  # the failed correction keeps the web landing
+        assert entry_for(ctx).status is Status.WAITING
+        assert web_out.exists()  # the parked correction keeps the web landing
 
         # The session reads the PDF with its eyes and closes the unit.
         hand_written = instance.enrichment_dir / ITEM / f"file-{work_hash(URL)[:6]}.md"

@@ -101,7 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     mark_parser.add_argument(
         "--reason", default=None, help="stated reason (manual/skipped need one)"
     )
-    mark_parser.add_argument("--path", default=None, help="output path, for done heals")
+    mark_parser.add_argument(
+        "--path",
+        default=None,
+        help="output path, for done heals; a page unit's file moves to its own <kind>-<hash6>.md",
+    )
     mark_parser.add_argument(
         "--needs",
         choices=[need.value for need in Need],
