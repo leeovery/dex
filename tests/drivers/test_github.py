@@ -529,11 +529,25 @@ class TestBlob:
         body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
         assert body == f"```\n{'x' * 40_000}\n```\n\n{truncated(40_000, 50_000, self.URL)}"
 
-    def test_a_line_that_would_cross_the_cap_is_left_out_however_long(self):
+    def test_a_line_end_far_back_is_passed_over_for_the_cap(self):
+        # A minified file under a one-line header: cutting at the header's
+        # line end kept a few characters of forty thousand.
         source = "a\n" + "x" * 50_000
         driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
         body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
-        assert body == f"```\na\n```\n\n{truncated(1, 50_002, self.URL)}"
+        assert body == f"```\n{source[:40_000]}\n```\n\n{truncated(40_000, 50_002, self.URL)}"
+
+    @pytest.mark.parametrize(
+        ("line_end", "kept"),
+        [(20_000, 20_000), (19_999, 40_000)],
+        ids=["at-half-the-cap", "just-before-it"],
+    )
+    def test_a_line_end_in_the_caps_second_half_is_where_it_cuts(self, line_end, kept):
+        source = "y" * line_end + "\n" + "x" * 50_000
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        whole = len(source)
+        assert body == f"```\n{source[:kept]}\n```\n\n{truncated(kept, whole, self.URL)}"
 
     def test_a_line_end_opening_the_file_is_no_place_to_cut(self):
         source = "\n" + "x" * 50_000

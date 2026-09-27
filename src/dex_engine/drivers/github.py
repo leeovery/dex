@@ -355,12 +355,15 @@ def _capped(text: str, cap: int, *, url: str, wrap: Callable[[str], str]) -> str
     cannot know the rest exists. So a cut is followed, outside whatever
     ``wrap`` puts round the text, by one line naming how much of how much
     was kept and where the rest is. The cut falls at the last line end the
-    cap allows; only text with no line end inside the cap is cut mid-line.
+    cap allows, where that keeps at least half of it; text whose last line
+    end inside the cap falls earlier — a minified file under a one-line
+    header, a README with one huge line of HTML — is cut mid-line at the
+    cap, rather than kept to a few characters.
     """
     if len(text) <= cap:
         return wrap(text)
     end = text.rfind("\n", 0, cap + 1)
-    kept = text[:end] if end > 0 else text[:cap]
+    kept = text[:end] if end >= cap // 2 else text[:cap]
     return f"{wrap(kept)}\n\n{_TRUNCATED.format(kept=len(kept), whole=len(text), url=url)}"
 
 

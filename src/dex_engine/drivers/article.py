@@ -73,6 +73,7 @@ import html as html_lib
 import json
 import re
 import urllib.parse
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -172,11 +173,10 @@ _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 _FEED_LEADS = (b"<rss", b"<feed")
-# The structure a declared source is held to, counted the same way on both
-# sides: a fence line opens or closes a block, and a table row opens with
-# its pipe.
-_FENCE_LINE_RE = re.compile(r"^[ \t]*(?:`{3,}|~{3,})", re.MULTILINE)
-_TABLE_ROW_RE = re.compile(r"^[ \t]*\|", re.MULTILINE)
+# A fenced block in a declared source, its info string ignored.
+_FENCED_BLOCK_RE = re.compile(
+    r"^(?P<fence>`{3,}|~{3,})[^\n]*\n(?P<body>.*?)\n(?P=fence)[ \t]*$", re.MULTILINE | re.DOTALL
+)
 
 _CODE_LINE_CLASS = "line"
 
@@ -190,10 +190,22 @@ _PHRASING_TAGS = frozenset(
         "textarea", "time", "u", "var", "video", "wbr",
     }
 )  # fmt: skip
+# What ends a run of text though it sits inside phrasing: a link wrapping a
+# card's <div> is a block, and made part of a paragraph it and the text
+# after it were dropped.
+_BLOCK_TAGS = frozenset(
+    {
+        "address", "article", "aside", "blockquote", "details", "dialog", "div", "dl",
+        "fieldset", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+        "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "ul",
+    }
+)  # fmt: skip
 _LIST_ITEM_TAGS = ("li", "dt", "dd")
 # The text length below which trafilatura deletes a div holding a link that
 # has three children or more (its link-density backtracking, precision off).
 _SHORT_WITH_A_LINK = 100
+# A word, as the check that the code-block repair lost nothing counts them.
+_WORD_RE = re.compile(r"\w+")
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -208,13 +220,37 @@ def trafilatura_extract(html: str) -> str | None:
     hyperlinks. It is also, unaccompanied, destructive — see
     :func:`_prepare_page`, which is why the page is prepared first and
     never handed to the extractor raw.
+
+    The code-block repair (:func:`_set_code_blocks_apart`) changes the
+    structure trafilatura judges a page by, and trafilatura's own rules
+    can then drop text — a Blogger post lost nineteen paragraphs once
+    paragraphs set around its code carried it past a threshold trafilatura
+    measures on its own cleaned tree. So where the repair changed the page,
+    the page is extracted without it too, and the repaired extraction is
+    kept only when it holds every word the other does: the repair only
+    ever adds.
     """
-    prepared = _prepare_page(html)
+    repaired = _prepare_page(html)
+    extracted = _extract_prepared(repaired)
+    plain = _prepare_page(html, set_code_apart=False)
+    if plain == repaired:
+        return extracted
+    unrepaired = _extract_prepared(plain)
+    return unrepaired if _drops_words(extracted, unrepaired) else extracted
+
+
+def _extract_prepared(prepared: str) -> str | None:
     body = _extract_markdown(prepared, comments=False)
     discussion = _extract_markdown(prepared, comments=True)
     if discussion is not None and len(discussion) > len(body or "") * _DISCUSSION_RATIO:
         return discussion
     return body
+
+
+def _drops_words(extracted: str | None, unrepaired: str | None) -> bool:
+    """Whether ``extracted`` lacks any word, counted with repeats, that ``unrepaired`` holds."""
+    held = Counter(_WORD_RE.findall(extracted or ""))
+    return bool(Counter(_WORD_RE.findall(unrepaired or "")) - held)
 
 
 def _extract_markdown(html: str, *, comments: bool) -> str | None:
@@ -225,7 +261,7 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
     )
 
 
-def _prepare_page(html: str) -> str:
+def _prepare_page(html: str, *, set_code_apart: bool = True) -> str:
     """Repair the page shapes that break extraction, before trafilatura sees it.
 
     Every repair runs over one parse, and each function below carries the
@@ -261,7 +297,8 @@ def _prepare_page(html: str) -> str:
             _flatten_heading(heading)
     # Last: it sorts a container's children into text and blocks, so it must
     # read the markup every repair above leaves, the math already text.
-    _set_code_blocks_apart(tree)
+    if set_code_apart:
+        _set_code_blocks_apart(tree)
     return tostring(tree, encoding="unicode")
 
 
@@ -430,6 +467,10 @@ def _set_code_blocks_apart(tree: "HtmlElement") -> None:
     drops a break with nothing after it, and the fence line opens with that
     space, which markdown allows. A definition list's terms and
     descriptions are list items to trafilatura too.
+
+    The structure this changes is what trafilatura judges a page by, so the
+    extraction is also run without it and the repair kept only where it
+    loses no word (:func:`trafilatura_extract`).
     """
     for pre in list(tree.iter("pre")):
         for block, container in _code_block_levels(pre):
@@ -545,17 +586,22 @@ def _any_text(*texts: str | None) -> bool:
 
 
 def _is_phrasing(node: "HtmlElement") -> bool:
-    """Whether a node belongs to a run of text: a comment, or phrasing holding no code block."""
+    """Whether a node belongs to a run of text: a comment, or phrasing holding no block."""
     from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
 
     if not isinstance(node, HtmlElement):
         return True
-    return node.tag in _PHRASING_TAGS and next(node.iter("pre"), None) is None
+    return node.tag in _PHRASING_TAGS and next(node.iter(*_BLOCK_TAGS), None) is None
 
 
 def _break_line_before(block: "HtmlElement") -> None:
     from lxml.html import Element, HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
 
+    # The break is a third child for the container, which trafilatura then
+    # deletes whole where it is a short one holding a link.
+    parent = block.getparent()
+    if parent is not None and _short_with_a_link(parent):
+        return
     siblings = block.itersiblings(preceding=True)
     previous = next((node for node in siblings if isinstance(node, HtmlElement)), None)
     if previous is None or not previous.text_content().strip():
@@ -833,33 +879,72 @@ def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
     two come close the page lost nothing to extraction, so keeping the
     extraction costs nothing.
 
-    Length alone is not enough, because a source can be longer and hold
-    less: Pinecone's learn pages declare one that writes each embedded
-    notebook as the CMS's own JSON record, a fenced blob of escaped cells,
-    where the page renders its code and output — one post's source ran
-    1.58 times the extraction's length with two fewer fenced blocks. So the
-    source must also hold at least the extraction's fenced blocks and table
-    rows, the structure it exists to keep. Over 72 docs pages that declare
-    a source, that turned only Pinecone's three notebook posts back to
-    their extraction.
+    A source kept has its notebook records rendered
+    (:func:`_render_notebook_records`).
     """
-    if alternate is not None and _holds_at_least(alternate, extracted or ""):
-        return alternate
+    if alternate is not None and len(alternate) >= len(extracted or ""):
+        return _render_notebook_records(alternate)
     return extracted
 
 
-def _holds_at_least(source: str, extraction: str) -> bool:
-    return all(
-        measure(source) >= measure(extraction) for measure in (len, _fence_lines, _table_rows)
-    )
+def _render_notebook_records(markdown: str) -> str:
+    """The source with each fenced notebook record written as the cells the page shows.
+
+    Pinecone's learn pages declare a source that writes each embedded
+    notebook as the CMS's own JSON record — ``{"_type": "colabBlock",
+    "jsonContent": "<the notebook>"}`` in a fenced block — where the page
+    renders its code and output. Choosing the page's extraction over such a
+    source cost its tables a column and its links; rendered in place, the
+    record reads as the page does and the source keeps everything else. A
+    fenced block that is not such a record is left as it stands.
+    """
+    return _FENCED_BLOCK_RE.sub(_rendered_cells, markdown)
 
 
-def _fence_lines(markdown: str) -> int:
-    return len(_FENCE_LINE_RE.findall(markdown))
+def _rendered_cells(block: "re.Match[str]") -> str:
+    cells = _notebook_cells(block.group("body"))
+    return block.group(0) if cells is None else "\n\n".join(cells)
 
 
-def _table_rows(markdown: str) -> int:
-    return len(_TABLE_ROW_RE.findall(markdown))
+def _notebook_cells(text: str) -> list[str] | None:
+    """A notebook record's cells as markdown, code and output fenced; None for anything else."""
+    try:
+        record = json.loads(text)
+        notebook = json.loads(record["jsonContent"])
+        cells = notebook["cells"]
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(cells, list):
+        return None
+    rendered: list[str] = []
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        source = _cell_text(cell.get("source"))
+        if cell.get("cell_type") != "code":
+            rendered += [source.strip()] if source.strip() else []
+            continue
+        rendered += [f"```\n{source.rstrip()}\n```"] if source.strip() else []
+        for output in cell.get("outputs") or []:
+            text = _output_text(output)
+            rendered += [f"```\n{text.rstrip()}\n```"] if text.strip() else []
+    return rendered or None
+
+
+def _output_text(output: object) -> str:
+    """A cell output's text: a stream's, or a result's plain-text rendering."""
+    if not isinstance(output, dict):
+        return ""
+    data = output.get("data")
+    plain = data.get("text/plain") if isinstance(data, dict) else None
+    return _cell_text(output.get("text")) or _cell_text(plain)
+
+
+def _cell_text(value: object) -> str:
+    """A notebook field's text: written as one string, or as its lines in a list."""
+    if isinstance(value, list):
+        return "".join(line for line in value if isinstance(line, str))
+    return value if isinstance(value, str) else ""
 
 
 def _markdown_alternate(transport: Transport, page: _Page) -> str | None:

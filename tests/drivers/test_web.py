@@ -5,12 +5,14 @@ thin parking, re-detection, wayback fallback — lives in the article lib,
 and this file pins it through the driver that reads every page that way.
 """
 
+import json
 import re
 import socket
 import urllib.parse
 
 import pytest
 
+from dex_engine.drivers import article as article_mod
 from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
@@ -46,6 +48,13 @@ CODE_BLOCK = "<pre><code>line_one = 1\nline_two = 2</code></pre>"
 # as a closing fence.
 GLUED_FENCE = re.compile(r"[^`\s]```\s*$", re.MULTILINE)
 FENCE_LINE = re.compile(r"^ {0,3}```", re.MULTILINE)
+# A block whose closing words only the code-block repair keeps: trafilatura
+# drops text left loose after a code block.
+RESCUED_TEXT = "The words after the other example, which only the repair keeps."
+RESCUED = (
+    "<div>The other example on the page, with a lead long enough to read as prose:"
+    f"<pre><code>other = 1</code></pre>{RESCUED_TEXT}</div>"
+)
 OWN_LINE_FENCE_THEN_TEXT = re.compile(
     r"^ ?```\nline_one = 1\nline_two = 2\n```\nText after\.$", re.MULTILINE
 )
@@ -628,11 +637,11 @@ class TestMarkdownAlternate:
         result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
         assert result.body == {"extraction": extraction, "source": source}[stored]
 
-    def test_a_source_holding_less_code_than_the_page_loses_to_it(self):
+    def test_a_sources_notebook_records_read_as_their_code_and_output(self):
         # pinecone.io's learn posts declare a source that writes each embedded
-        # notebook as the CMS's JSON record, longer than the page and holding
-        # fewer fenced blocks: the rerun stored the JSON over a copy that had
-        # each notebook's code and output as fences of their own.
+        # notebook as the CMS's JSON record; the rerun stored the JSON. The
+        # source is kept, with what only it holds, and each record reads as
+        # the page renders it.
         page = fixture_text("web", "pinecone-notebooks.html")
         source = fixture_text("web", "pinecone-notebooks.md")
         responses = {
@@ -641,26 +650,91 @@ class TestMarkdownAlternate:
         }
         driver = driver_for(responses, extract=trafilatura_extract)
         body = body_of(driver.fetch(make_unit(NOTEBOOK_URL, Kind.WEB)))
-        assert len(source) > len(body)
+        assert "James Briggs · 2023-08-11" in body
         assert "colabBlock" not in body
         assert '```\nres = await rails.generate_async(prompt="Hey there!")\nprint(res)\n```' in body
         assert "```\nHi there! How can I help you?\nHow are you doing today?\n```" in body
 
     @pytest.mark.parametrize(
-        ("source", "stored"),
-        [
-            ("```\n" + "| a |\n| 1 |\n" + "s" * 900, "extraction"),
-            ("```\n```\n" + "| a |\n" + "s" * 900, "extraction"),
-            ("```\n```\n" + "| a |\n| 1 |\n" + "s" * 900, "source"),
-            ("~~~\n~~~\n" + "| a |\n| 1 |\n" + "s" * 900, "source"),
-            ("1. Step\n\n   ```sh\n   run\n   ```\n" + "  | a |\n  | 1 |\n" + "s" * 900, "source"),
-        ],
-        ids=["a-fence-short", "a-row-short", "as-much", "tilde-fences", "indented"],
+        "source",
+        ["```\n" + "| a |\n" + "s" * 900, "> ```console\n> run\n> ```\n" + "s" * 900],
+        ids=["fewer-blocks-and-rows", "callout"],
     )
-    def test_a_source_must_hold_the_extractions_blocks_and_rows(self, source, stored):
+    def test_a_source_as_long_as_the_extraction_is_stored_whatever_its_structure(self, source):
+        # Counting its blocks and rows against the extraction's rejected
+        # faithful sources: docs.docker.com's code sits in callouts, and a
+        # page holding its example twice outnumbered its own source.
         answer = markdown_response(source)
         result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
-        assert body_of(result) == {"extraction": STRUCTURED, "source": source}[stored]
+        assert body_of(result) == source
+
+    @pytest.mark.parametrize(
+        ("record", "rendered"),
+        [
+            (
+                {"cells": [{"cell_type": "markdown", "source": ["Some ", "prose."]}]},
+                "Some prose.",
+            ),
+            (
+                {
+                    "cells": [
+                        {
+                            "cell_type": "code",
+                            "source": "x = 1\nx",
+                            "outputs": [
+                                {"output_type": "execute_result", "data": {"text/plain": ["1"]}}
+                            ],
+                        }
+                    ]
+                },
+                "```\nx = 1\nx\n```\n\n```\n1\n```",
+            ),
+            (
+                {
+                    "cells": [
+                        "not a cell",
+                        {"cell_type": "markdown", "source": "First, the setup."},
+                        {
+                            "cell_type": "code",
+                            "source": ["    indented = True\n", "run()\n"],
+                            "outputs": [
+                                "not an output",
+                                {"output_type": "stream", "text": "done\n"},
+                            ],
+                        },
+                        {"cell_type": "markdown", "source": "Then the result."},
+                    ]
+                },
+                (
+                    "First, the setup.\n\n```\n    indented = True\nrun()\n```\n\n```\ndone\n```"
+                    "\n\nThen the result."
+                ),
+            ),
+        ],
+        ids=["markdown-cell", "result-output", "every-cell-in-order"],
+    )
+    def test_a_notebook_record_renders_each_cell(self, record, rendered):
+        block = json.dumps({"_type": "colabBlock", "jsonContent": json.dumps(record)})
+        tail = "\n\nAfter.\n\n" + "s" * 900
+        source = f"Before.\n\n```json\n{block}\n```{tail}"
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
+        assert body_of(result) == f"Before.\n\n{rendered}{tail}"
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            '{"_type": "codeBlock", "code": "x = 1"}',
+            '{"jsonContent": "not a notebook"}',
+            "{ broken",
+        ],
+        ids=["another-record", "not-a-notebook", "not-json"],
+    )
+    def test_a_fenced_block_that_is_no_notebook_record_stands(self, block):
+        source = f"Before.\n\n```json\n{block}\n```\n\nAfter.\n\n" + "s" * 900
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
+        assert body_of(result) == source
 
     def test_a_source_rescues_a_page_whose_html_extracts_thin(self):
         # docs.perplexity.ai: 692 characters of extraction against 19KB of source.
@@ -1139,18 +1213,117 @@ class TestExtractionFidelity:
         assert f"{lead}\n\n```\nline_one = 1" in body
         assert "```\n[See the full example](https://example.test/full.py)" in body
 
-    def test_a_short_block_holding_a_link_keeps_its_code_and_link(self):
-        # trafilatura deletes a short div holding a link once it has three
-        # children; given paragraphs around its code block, it had them.
+    def test_a_repair_that_would_cost_a_word_is_not_kept(self, monkeypatch):
+        # trafilatura's own rules can drop text once the repair changes a
+        # page's structure; whatever the cause, the repaired extraction
+        # stands only where it holds every word the plain one does.
+        def costly(tree):
+            for pre in list(tree.iter("pre")):
+                pre.getparent().remove(pre)
+
+        monkeypatch.setattr(article_mod, "_set_code_blocks_apart", costly)
         page = ARTICLE.replace(
             "      <p>Politeness matters",
-            '      <div>See: <a href="https://example.test/paper.pdf">'
-            f"https://example.test/paper.pdf</a>{CODE_BLOCK}After the block.</div>\n"
+            f"      <div>A lead sentence before the example:{CODE_BLOCK}After it.</div>\n"
             "      <p>Politeness matters",
         )
         body = trafilatura_extract(page) or ""
         assert "line_one = 1" in body
+
+    def test_a_repair_is_kept_where_the_page_without_it_extracts_nothing(self, monkeypatch):
+        def adding(tree):
+            paragraph = tree.makeelement("p", {})
+            paragraph.text = "A paragraph the repair gave the page. " * 20
+            tree.find(".//body").append(paragraph)
+
+        monkeypatch.setattr(article_mod, "_set_code_blocks_apart", adding)
+        body = trafilatura_extract("<html><body></body></html>") or ""
+        assert "A paragraph the repair gave the page." in body
+
+    def test_a_repair_that_only_adds_is_kept(self):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <div>The lead sentence for the example, long enough to be prose:"
+            f"{CODE_BLOCK}The text after the example, which was dropped before.</div>\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "The text after the example, which was dropped before." in body
+
+    def test_a_post_written_in_divs_keeps_its_paragraphs_around_a_code_block(self):
+        # trafilatura reads divs' own text only while the page's <p> text is
+        # short; paragraphs around one code block carried a blog written in
+        # divs past that, and every other paragraph of the post was lost.
+        paragraphs = "".join(
+            f"<div>Paragraph {n} of the post, written in a div as this blog writes it.</div>"
+            for n in range(8)
+        )
+        loose = "Loose words around the example, as the post runs on. " * 16
+        page = (
+            "<html><head><title>A post</title></head><body><div class='post'>"
+            f"{paragraphs}<div>{loose}{CODE_BLOCK}{loose}</div></div></body></html>"
+        )
+        body = trafilatura_extract(page) or ""
+        assert all(f"Paragraph {n} of the post" in body for n in range(8))
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            (
+                '<li><div>Run <a href="https://example.test/installer">the installer</a>: '
+                f"{CODE_BLOCK}</div></li>"
+            ),
+            (
+                '<li><div>Run it: <a href="https://example.test/installer">the installer</a>'
+                f"{CODE_BLOCK}</div></li>"
+            ),
+        ],
+        ids=["link-in-lead", "link-before-block"],
+    )
+    def test_a_short_linked_block_in_a_list_item_keeps_its_code(self, item):
+        # The line break before the block was a third child for the div,
+        # which trafilatura then deleted whole. The item is left as it was,
+        # and the rest of the page keeps its repair.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <ol>{item}<li>Next item.</li></ol>\n      {RESCUED}\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "line_one = 1" in body
+        assert "the installer" in body
+        assert RESCUED_TEXT in body
+
+    def test_a_link_wrapping_a_block_ends_the_run_before_it(self):
+        # A card's <div> inside a link is no part of a paragraph: made one,
+        # the card and the text after it were dropped, and with them the
+        # repair everywhere else on the page.
+        lead = "The cards below each open one part of the guide, in reading order:"
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f'      <div>{lead}<a href="/card"><div>Card title</div></a>'
+            f"The text after the card, and the example:{CODE_BLOCK}After.</div>\n"
+            f"      {RESCUED}\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Card title" in body
+        assert "The text after the card, and the example:" in body
+        assert RESCUED_TEXT in body
+
+    def test_a_short_block_holding_a_link_keeps_its_code_and_link(self):
+        # trafilatura deletes a short div holding a link once it has three
+        # children; given paragraphs around its code block, it had them. The
+        # block is left as it was, and the rest of the page keeps its repair.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <div>See: <a href="https://example.test/paper.pdf">'
+            f"https://example.test/paper.pdf</a>{CODE_BLOCK}After the block.</div>\n"
+            f"      {RESCUED}\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "line_one = 1" in body
         assert "https://example.test/paper.pdf" in body
+        assert RESCUED_TEXT in body
 
     @pytest.mark.parametrize(
         ("lead", "read"),
@@ -1184,6 +1357,7 @@ class TestExtractionFidelity:
         )
         body = trafilatura_extract(page) or ""
         assert "More loose text right before the block:\n\n```\nline_one = 1" in body
+        assert "\n\nA paragraph written as one.\n\n" in body
 
     def test_a_code_block_first_in_its_item_with_text_after_stays_beside_the_marker(self):
         # The line break goes in only after text before the block.
