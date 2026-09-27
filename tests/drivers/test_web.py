@@ -373,6 +373,11 @@ DOCS_SOURCE_URL = "https://docs.typesafe.ai/model-jaggedness/jev-1.13.md"
 SOURCE_LINK = '<link rel="alternate" type="text/markdown" href="/post.md">'
 SOURCE_URL = "https://example.test/post.md"
 SOURCE = "# The post, as its author wrote it\n\n" + "A line of the markdown source.\n" * 30
+NOTEBOOK_URL = "https://www.pinecone.io/learn/nemo-guardrails-intro/"
+NOTEBOOK_SOURCE_URL = "https://www.pinecone.io/learn/nemo-guardrails-intro/md/"
+# An extraction with one fenced block and a two-row table: the structure a
+# source must hold at least as much of.
+STRUCTURED = "```\nprint(1)\n```\n\n| a | b |\n| 1 | 2 |\n\n" + "extracted body " * 40
 
 
 class TestMarkdownAlternate:
@@ -613,6 +618,40 @@ class TestMarkdownAlternate:
         source = "s" * source_chars
         result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
         assert result.body == {"extraction": extraction, "source": source}[stored]
+
+    def test_a_source_holding_less_code_than_the_page_loses_to_it(self):
+        # pinecone.io's learn posts declare a source that writes each embedded
+        # notebook as the CMS's JSON record, longer than the page and holding
+        # fewer fenced blocks: the rerun stored the JSON over a copy that had
+        # each notebook's code and output as fences of their own.
+        page = fixture_text("web", "pinecone-notebooks.html")
+        source = fixture_text("web", "pinecone-notebooks.md")
+        responses = {
+            NOTEBOOK_URL: html_response(page),
+            NOTEBOOK_SOURCE_URL: markdown_response(source),
+        }
+        driver = driver_for(responses, extract=trafilatura_extract)
+        body = body_of(driver.fetch(make_unit(NOTEBOOK_URL, Kind.WEB)))
+        assert len(source) > len(body)
+        assert "colabBlock" not in body
+        assert '```\nres = await rails.generate_async(prompt="Hey there!")\nprint(res)\n```' in body
+        assert "```\nHi there! How can I help you?\nHow are you doing today?\n```" in body
+
+    @pytest.mark.parametrize(
+        ("source", "stored"),
+        [
+            ("```\n" + "| a |\n| 1 |\n" + "s" * 900, "extraction"),
+            ("```\n```\n" + "| a |\n" + "s" * 900, "extraction"),
+            ("```\n```\n" + "| a |\n| 1 |\n" + "s" * 900, "source"),
+            ("~~~\n~~~\n" + "| a |\n| 1 |\n" + "s" * 900, "source"),
+            ("1. Step\n\n   ```sh\n   run\n   ```\n" + "  | a |\n  | 1 |\n" + "s" * 900, "source"),
+        ],
+        ids=["a-fence-short", "a-row-short", "as-much", "tilde-fences", "indented"],
+    )
+    def test_a_source_must_hold_the_extractions_blocks_and_rows(self, source, stored):
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
+        assert body_of(result) == {"extraction": STRUCTURED, "source": source}[stored]
 
     def test_a_source_rescues_a_page_whose_html_extracts_thin(self):
         # docs.perplexity.ai: 692 characters of extraction against 19KB of source.

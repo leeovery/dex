@@ -38,8 +38,9 @@ and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
 and stores it whenever it answers as markdown or plain text and carries
-at least what extraction found. The title, description and og:image
-still come from the HTML.
+at least what extraction found: its length, and its fenced blocks and
+table rows. The title, description and og:image still come from the
+HTML.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -171,6 +172,11 @@ _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 _FEED_LEADS = (b"<rss", b"<feed")
+# The structure a declared source is held to, counted the same way on both
+# sides: a fence line opens or closes a block, and a table row opens with
+# its pipe.
+_FENCE_LINE_RE = re.compile(r"^[ \t]*(?:`{3,}|~{3,})", re.MULTILINE)
+_TABLE_ROW_RE = re.compile(r"^[ \t]*\|", re.MULTILINE)
 
 _CODE_LINE_CLASS = "line"
 
@@ -653,10 +659,34 @@ def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
     the page has — a stub, an error body served with a 200 — and where the
     two come close the page lost nothing to extraction, so keeping the
     extraction costs nothing.
+
+    Length alone is not enough, because a source can be longer and hold
+    less: Pinecone's learn pages declare one that writes each embedded
+    notebook as the CMS's own JSON record, a fenced blob of escaped cells,
+    where the page renders its code and output — one post's source ran
+    1.58 times the extraction's length with two fewer fenced blocks. So the
+    source must also hold at least the extraction's fenced blocks and table
+    rows, the structure it exists to keep. Over 72 docs pages that declare
+    a source, that turned only Pinecone's three notebook posts back to
+    their extraction.
     """
-    if alternate is not None and len(alternate) >= len(extracted or ""):
+    if alternate is not None and _holds_at_least(alternate, extracted or ""):
         return alternate
     return extracted
+
+
+def _holds_at_least(source: str, extraction: str) -> bool:
+    return all(
+        measure(source) >= measure(extraction) for measure in (len, _fence_lines, _table_rows)
+    )
+
+
+def _fence_lines(markdown: str) -> int:
+    return len(_FENCE_LINE_RE.findall(markdown))
+
+
+def _table_rows(markdown: str) -> int:
+    return len(_TABLE_ROW_RE.findall(markdown))
 
 
 def _markdown_alternate(transport: Transport, page: _Page) -> str | None:

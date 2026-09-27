@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NeMo Guardrails: The Missing Manual | Pinecone</title>
+<link rel="alternate" type="text/markdown" href="https://www.pinecone.io/learn/nemo-guardrails-intro/md/"/>
+</head>
+<body>
+<main>
+<article>
+<h1 class="text-h1">NeMo Guardrails: The Missing Manual</h1>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">The adoption of chatbots across industries is unparalleled by any previous technology event. Gartner predicts that by 2027, chatbots will become the primary communication channel for ~25% of <em>all</em> organizations [1].</p>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">We would use these two configuration files to initialize a <code>LLMRails</code> object like so:</p>
+<div class="my-50"><div class="codeblock-light bg-text-secondary relative grid w-full rounded-lg text-[0.75rem] leading-[1.3125rem]"><pre class="relative language-python line-numbers overflow-auto"><code class="language-python line-numbers">from nemoguardrails import LLMRails, RailsConfig
+
+# initialize rails config
+config = RailsConfig.from_content(
+    yaml_content=yaml_content
+    colang_content=colang_content
+)
+# create rails
+rails = LLMRails(config)</code></pre><div class="z-1 absolute right-3 top-3"><button aria-label="Copy code to clipboard" class="group rounded-md border p-1.5 transition-opacity hover:opacity-100 border-text-secondary/40 "></button></div></div></div>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">With our rails initialized, we can begin asking questions and interacting with our Guardrails protected LLM.</p>
+<div class="my-50 flex flex-col gap-25 rounded-5 border border-[#ddd] p-25 font-mono"><div class="flex flex-col gap-25"><div class="flex flex-col gap-3 md:flex-row [&amp;&gt;div]:my-0"><div class="w-20 shrink-0 text-[0.9375rem] text-[#7e7e7e]">In[5]:</div><div class="my-50"><div class="codeblock-light bg-text-secondary relative grid w-full rounded-lg text-[0.75rem] leading-[1.3125rem]"><pre class="relative language-python line-numbers overflow-auto"><code class="language-python line-numbers">res = await rails.generate_async(prompt=&quot;Hey there!&quot;)
+print(res)</code></pre><div class="z-1 absolute right-3 top-3"><button aria-label="Copy code to clipboard" class="group rounded-md border p-1.5 transition-opacity hover:opacity-100 border-text-secondary/40 "></button></div></div></div></div><div class="flex flex-col gap-3 md:flex-row [&amp;&gt;div]:my-0"><div class=" w-20 shrink-0 text-[0.9375rem] text-[#7e7e7e]">Out[5]:</div><div class="grid"><pre class="overflow-auto pb-25 pr-25"><code>Hi there! How can I help you?
+How are you doing today?
+</code></pre></div></div></div></div>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">With this typical greeting, we don&#x27;t activate any protective guardrails. However, we see the <code>greeting</code> flow is activated as the chatbot generates one line from the <code>bot express greeting</code> message and then follows with a new line generated from the <code>bot ask how are you</code> message.</p>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">Let&#x27;s try asking a more political question:</p>
+<div class="my-50 flex flex-col gap-25 rounded-5 border border-[#ddd] p-25 font-mono"><div class="flex flex-col gap-25"><div class="flex flex-col gap-3 md:flex-row [&amp;&gt;div]:my-0"><div class="w-20 shrink-0 text-[0.9375rem] text-[#7e7e7e]">In[6]:</div><div class="my-50"><div class="codeblock-light bg-text-secondary relative grid w-full rounded-lg text-[0.75rem] leading-[1.3125rem]"><pre class="relative language-python line-numbers overflow-auto"><code class="language-python line-numbers">res = await rails.generate_async(prompt=&quot;what do you think of the president?&quot;)
+print(res)</code></pre><div class="z-1 absolute right-3 top-3"><button aria-label="Copy code to clipboard" class="group rounded-md border p-1.5 transition-opacity hover:opacity-100 border-text-secondary/40 "></button></div></div></div></div><div class="flex flex-col gap-3 md:flex-row [&amp;&gt;div]:my-0"><div class=" w-20 shrink-0 text-[0.9375rem] text-[#7e7e7e]">Out[6]:</div><div class="grid"><pre class="overflow-auto pb-25 pr-25"><code>I&#x27;m a shopping assistant, I don&#x27;t like to talk of politics.
+However, I can help you with shopping related tasks. Is there anything I can help you with?
+</code></pre></div></div></div></div>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">Here we see the <code>bot answer politics</code> message block is activated, returning our hardcoded response of <code>&quot;I&#x27;m a shopping assistant, I don&#x27;t like to talk of politics&quot;</code>. Following this, the chatbot generates a response from the <code>bot offer help</code> message.</p>
+<p class="mt-4 text-body leading-6 [&amp;_b]:font-semibold [&amp;_strong]:font-semibold text-text-primary">Using very simple guardrails, we&#x27;ve successfully managed to protect our chatbot against the topic of politics. This example is one use case of guardrails — but there are many more. Let&#x27;s take a look at a few of those.</p>
+</article>
+</main>
+</body>
+</html>
