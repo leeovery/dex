@@ -55,7 +55,6 @@ from .detect import (
 from .enrichment import (
     TRANSCRIPT_PROVENANCE,
     description_text,
-    hand_over_descriptions,
     mask_fetched,
     podcast_body,
     post_body,
@@ -2135,21 +2134,18 @@ class _Drain:
         """Store nothing: the item already holds ``body`` as ``duplicate``.
 
         A unit with no file of its own closes ``skipped``, taking no slot and
-        owing no description. A unit re-downloaded into its own slot finds
-        the file it landed there before (``own``), which its bytes decide.
+        owing no description. A unit re-downloaded into its own slot keeps
+        the file it landed there before (``own``), whatever its bytes.
         """
-        # A description belongs to the bytes it read. An earlier file holding
-        # other bytes stays, with its reading, and the unit is recorded done
-        # over it, as the rerun guard keeps a stored copy: moved to
-        # `duplicate`, that reading would describe a different picture, and
-        # deleted, the picture it read would be lost. A true copy leaves, and
-        # its reading, which is of these very bytes, is handed over to
-        # `duplicate` (hand_over_descriptions).
-        if own is not None and own.read_bytes() != body:
-            self._keep_own_download(entry, own, duplicate)
-            return
+        # A landed file stays, with every description written of it. Given up
+        # for the sibling holding the same bytes, the first-landed original
+        # left and its reading with it, a reading in the pre-verb format was
+        # orphaned naming a deleted file, and a sibling re-downloaded in the
+        # same run could overwrite the one file left holding the picture.
+        # Duplicates already stored are the owner's to settle.
         if own is not None:
-            self._give_up_copy(entry, own, duplicate)
+            self._keep_own_download(entry, own, duplicate, same=own.read_bytes() == body)
+            return
         self.record_outcome(entry, status=Status.SKIPPED, reason=duplicate_media_reason(duplicate))
 
     def _own_download(self, entry: LedgerEntry, owner: str, slot: int) -> Path | None:
@@ -2160,31 +2156,27 @@ class _Drain:
         held = self.ctx.instance.enrichment_dir / owner / PurePosixPath(recorded).name
         return held if is_media_file(held) else None
 
-    def _keep_own_download(self, entry: LedgerEntry, own: Path, duplicate: str) -> None:
+    def _keep_own_download(
+        self, entry: LedgerEntry, own: Path, duplicate: str, *, same: bool
+    ) -> None:
         path = str(own.relative_to(self.ctx.instance.root))
         self.outcomes.setdefault(own.parent.name, _ItemOutcome()).unchanged += 1
-        self.notes.append(
-            f"kept {path} for {entry.url}: the URL now serves the bytes of {duplicate}, which "
-            f"the item already holds — delete {path} first if the new picture is the truth"
-        )
+        if same:
+            self.notes.append(
+                f"kept {path} for {entry.url}: it holds the same bytes as {duplicate}, so the "
+                "item stores one picture twice"
+            )
+        else:
+            self.notes.append(
+                f"kept {path} for {entry.url}: the URL now serves the bytes of {duplicate}, "
+                f"which the item already holds — delete {path} first if the new picture is "
+                "the truth"
+            )
         # Nothing landed: the file stands as it did, so the line keeps its
         # landing's day and the item reads no newer than its digest.
         self.record_outcome(
             entry, status=Status.DONE, path=path, landed=self._landed_on(entry, path)
         )
-
-    def _give_up_copy(self, entry: LedgerEntry, own: Path, duplicate: str) -> None:
-        handover = hand_over_descriptions(own.parent, retired=own.name, kept=duplicate)
-        own.unlink()
-        note = (
-            f"item {own.parent.name}: {entry.url} now serves the bytes of {duplicate}, which "
-            f"its earlier download {own.name} already copied, so the copy left"
-        )
-        if handover.moved is not None:
-            note += f" and the description written of it now covers {duplicate}"
-        elif handover.dropped:
-            note += f" with the description written of it, {duplicate} keeping its own"
-        self.notes.append(f"{note}; re-emit the item's digest if it lists {own.name}")
 
     def _clear_media_slot(self, out: Path) -> None:
         """Drop whatever else stands in this slot beside the file just written.

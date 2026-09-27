@@ -3806,55 +3806,54 @@ class TestDuplicateMedia:
             )
             (instance.enrichment_dir / ITEM / name).write_bytes(body)
 
-    def _copy_fetched_again(
-        self, instance, *, copy_described: bool = True, sibling_described: bool = False
+    def _pair_fetched_again(
+        self, instance, url: str, *, described: tuple[str, ...] = ("media-0.md", "media-1.md")
     ) -> str:
-        """A copy of the card an engine before the fix landed, fetched again serving the card."""
+        """A pair of one picture an engine before the fix landed; one unit fetched again."""
         self._landed_before_the_fix(
             instance,
             (self.SIGNED, "media-0.png", PNG_BYTES),
             (self.OTHER, "media-1.png", PNG_BYTES),
         )
         item_dir = instance.enrichment_dir / ITEM
-        if sibling_described:
-            (item_dir / "media-0.md").write_text(
-                "Describes `media-0.png`\n\nthe docs card\n", encoding="utf-8"
+        for name in described:
+            (item_dir / name).write_text(
+                f"Describes `{name.replace('.md', '.png')}`\n\nthe docs card, {name}\n",
+                encoding="utf-8",
             )
-        if copy_described:
-            (item_dir / "media-1.md").write_text(
-                "Describes `media-1.png`\n\nthe docs card, again\n", encoding="utf-8"
+        served = {URL: self._page(), url: self._image(PNG_BYTES)}
+        return run_mod.fetch_urls(self._ctx(instance, served), ITEM, [url])
+
+    @pytest.mark.parametrize(
+        "described",
+        [("media-0.md", "media-1.md"), ("media-1.md",), ("media-0.md",), ()],
+        ids=["both", "copy-only", "original-only", "neither"],
+    )
+    @pytest.mark.parametrize("fetched", ["copy", "original"])
+    def test_a_landed_file_of_a_duplicate_pair_stays_with_its_reading(
+        self, instance, described, fetched
+    ):
+        # Giving either file up for the other deleted a picture and the
+        # reading written of it: the original too, where it was fetched again.
+        url = self.OTHER if fetched == "copy" else self.SIGNED
+        own = "media-1.png" if fetched == "copy" else "media-0.png"
+        report = self._pair_fetched_again(instance, url, described=described)
+        item_dir = instance.enrichment_dir / ITEM
+        assert self._on_disk(instance) == sorted(["media-0.png", "media-1.png", *described])
+        for name in described:
+            assert (item_dir / name).read_text() == (
+                f"Describes `{name.replace('.md', '.png')}`\n\nthe docs card, {name}\n"
             )
-        served = {URL: self._page(), self.OTHER: self._image(PNG_BYTES)}
-        report = run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.OTHER])
-        other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
-        assert other.status is Status.SKIPPED
-        assert other.reason == "byte-identical to media-0.png, which the item already holds"
-        return report
-
-    def test_a_true_copy_hands_its_reading_to_an_undescribed_sibling(self, instance):
-        report = self._copy_fetched_again(instance)
-        assert self._on_disk(instance) == ["media-0.md", "media-0.png"]
-        assert (instance.enrichment_dir / ITEM / "media-0.md").read_text() == (
-            "Describes `media-0.png`\n\nthe docs card, again\n"
+        unit = ledger.load(instance.ledger_path)[work_hash(url)]
+        assert (unit.status, unit.path, unit.date) == (
+            Status.DONE,
+            f"enrichment/{ITEM}/{own}",
+            TODAY,
         )
-        assert "the description written of it now covers media-0.png" in report
+        assert f"kept enrichment/{ITEM}/{own} for {url}: it holds the same bytes as" in report
 
-    def test_a_true_copy_leaves_a_described_siblings_reading_alone(self, instance):
-        report = self._copy_fetched_again(instance, sibling_described=True)
-        assert self._on_disk(instance) == ["media-0.md", "media-0.png"]
-        assert (instance.enrichment_dir / ITEM / "media-0.md").read_text() == (
-            "Describes `media-0.png`\n\nthe docs card\n"
-        )
-        assert "with the description written of it, media-0.png keeping its own" in report
-
-    def test_an_undescribed_true_copy_simply_leaves(self, instance):
-        report = self._copy_fetched_again(instance, copy_described=False)
-        assert self._on_disk(instance) == ["media-0.png"]
-        assert "already copied, so the copy left; re-emit" in report
-
-    def test_a_copy_given_up_takes_no_page_from_the_item(self, instance):
-        # A rerun closed skipped with its file gone, and a media unit: the
-        # rule naming an item a rerun took a page from passes it by.
+    def test_a_kept_copy_takes_no_page_from_the_item(self, instance):
+        # Nothing landed and nothing left: a digest written before still covers the item.
         self._landed_before_the_fix(
             instance,
             (self.SIGNED, "media-0.png", PNG_BYTES),
@@ -3864,8 +3863,32 @@ class TestDuplicateMedia:
         served = {URL: self._page(), self.OTHER: self._image(PNG_BYTES)}
         run_mod.fetch_urls(self._ctx(instance, served, LATER), ITEM, [self.OTHER])
         other = ledger.load(instance.ledger_path)[work_hash(self.OTHER)]
-        assert (other.status, other.rerun) == (Status.SKIPPED, True)
+        assert (other.status, other.rerun) == (Status.DONE, True)
         assert run_mod.digest_orphans(instance) == []
+
+    def test_one_run_over_a_pair_loses_no_picture(self, instance):
+        # The original serves the card both files hold; the copy's URL now
+        # serves another picture. Given up for the copy, the original left,
+        # and the copy's re-download then overwrote the last file holding it.
+        self._landed_before_the_fix(
+            instance,
+            (self.SIGNED, "media-0.png", PNG_BYTES),
+            (self.OTHER, "media-1.png", PNG_BYTES),
+        )
+        (instance.enrichment_dir / ITEM / "media-0.md").write_text(
+            "Describes `media-0.png`\n\nthe docs card\n", encoding="utf-8"
+        )
+        new_picture = PNG_BYTES + b"a new picture"
+        served = {
+            URL: self._page(),
+            self.SIGNED: self._image(PNG_BYTES),
+            self.OTHER: self._image(new_picture),
+        }
+        run_mod.fetch_urls(self._ctx(instance, served), ITEM, [self.SIGNED, self.OTHER])
+        item_dir = instance.enrichment_dir / ITEM
+        assert (item_dir / "media-0.png").read_bytes() == PNG_BYTES
+        assert (item_dir / "media-0.md").read_text() == "Describes `media-0.png`\n\nthe docs card\n"
+        assert (item_dir / "media-1.png").read_bytes() == new_picture
 
     def test_an_own_slot_whose_file_is_gone_has_nothing_to_settle(self, instance):
         self._landed_before_the_fix(
