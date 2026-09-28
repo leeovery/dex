@@ -36,6 +36,7 @@ from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailable
 from dex_engine.pipeline.transcribe import (
     PROMPT_MAX_TOKENS,
     estimated_tokens,
+    holds_words,
     keep_last_tokens,
 )
 from dex_engine.pipeline.types import Availability
@@ -240,7 +241,8 @@ class WhisperApi:
 
         Raises:
             ProviderInputError: ffmpeg could not read/segment the audio, the
-                API rejected it (HTTP 400), or it held no speech — manual.
+                API rejected it (HTTP 400), or it held no speech: no letter
+                or digit came back — manual.
             ProviderUnavailableError: The ffmpeg binary is not runnable, or
                 the endpoint refused or failed (auth, rate limit, outage,
                 connection) — the job stays waiting with the reason.
@@ -252,7 +254,7 @@ class WhisperApi:
                 prompt = _chunk_prompt(initial_prompt, texts)
                 texts.append(self._transcribe_chunk(chunk, prompt))
         text = " ".join(part for part in (t.strip() for t in texts) if part)
-        if not text:
+        if not holds_words(text):
             raise ProviderInputError("whisper-api heard no speech in the audio")
         return text
 
