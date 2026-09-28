@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-09-28
+
+✨ Added
+- A post's video is checked for speech before any transcriber hears it — a silent screen recording, music clip, or muted video no longer comes back with invented text.
+
+🔧 Changed
+- A shared unit's rewrite (a new transcript, digest, or media file) now credits every item that shares its URL, not just the one holding the file on disk.
+- A transcript with no actual letters or digits (just emoji or symbols) is now treated as no speech, whether from whisper-api or whisper-local.
+
 ## [0.2.5] - 2026-09-28
 
 ✨ Added
