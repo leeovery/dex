@@ -206,7 +206,9 @@ class TestHistory:
         # heal migrations and cancelled their re-reads in one sync.
         field.landed()
         field.synced()
-        assert "Nothing below asks for work: go to step 5." in materials(field.root)
+        text = materials(field.root)
+        assert text.startswith("Earlier commit: ")
+        assert "Nothing below asks for work: go to step 5." in text
         field.reread("Intro line.")
         assert "asks for work" not in materials(field.root)
 
@@ -240,7 +242,8 @@ class TestPages:
         assert "## Pages a re-read replaced (1)" in text
         assert f"- Re-read by migration 18: {URL}" in text
         assert f"- Earlier path: `{PAGE}`" in text
-        assert "code fences 2 → 0; table rows 2 → 1" in text
+        assert page_.words == (14, 4)
+        assert "- Words 14 → 4 (10 lost, 0 gained); code fences 2 → 0; table rows 2 → 1" in text
         assert "- Digest: written after the earlier commit" in text
         assert "`ledgers`" in text
         assert "  > A closing thought about ledgers." in text
@@ -426,7 +429,9 @@ class TestTranscripts:
             True,
         )
         text = materials(field.root)
+        assert text.startswith("Earlier commit: ")
         assert f"- Post: {POST_URL}, transcript written by engine {engine}" in text
+        assert "- Digest: written after the transcript landed" in text
         assert "- The post: @a — a clip" in text
         assert "- The transcript: 🍢🍢🍢" in text
 
@@ -507,6 +512,7 @@ class TestTranscripts:
         found = survey(field.root)
         assert not isinstance(found, str)
         assert found.transcripts[0].digest_since is False
+        assert "- Digest: written before the transcript landed" in materials(field.root)
 
     def test_a_post_never_digested_has_no_digest_written_after_its_transcript(self, field):
         field.healed(EARLIER)
@@ -886,6 +892,14 @@ class TestCheck:
             "`z` is new",
         ):
             assert any(named in u for u in unmet), named
+
+    def test_a_wiki_page_renamed_is_named(self, field):
+        field.healed(self.LOST)
+        field.write("wiki/ledgers.md", "a page")
+        field.commit("run: a wiki page")
+        record(field, f"- {PAGE}: kept")
+        field.git(field.root, "mv", "wiki/ledgers.md", "wiki/books.md")
+        assert any("`wiki/books.md` changed" in u for u in check(field.root))
 
     def test_a_new_wiki_page_is_named_new_even_staged_and_edited(self, field):
         # A page under wiki/ may change; the directive adds none.
