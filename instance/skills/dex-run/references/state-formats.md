@@ -155,7 +155,9 @@ check written in code. Sync lists the pending ones on its report, and the
 run performs them after the pull (`preparation.md`, step 5). While any is
 pending, the content commands (`bin/dex inbox`, `normalize`, `enrich` and
 `exclude`) refuse before touching anything, exit non-zero and point at
-`bin/dex directive list`. Every other command runs as usual.
+`bin/dex directive list`, save a `bin/dex enrich` verb the pending
+directive's own instructions run, such as `enrich item digest`. Every other
+command runs as usual.
 
 - `bin/dex directive list` prints the pending directives in numeric
   order, each with its intent, and how to perform them, or says that none

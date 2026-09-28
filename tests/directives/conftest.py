@@ -14,13 +14,20 @@ import pytest
 from dex_engine.directives import Directive
 
 
-def make_directive(number: int, *, unmet: Sequence[str] = (), intent: str = "") -> Directive:
+def make_directive(
+    number: int,
+    *,
+    unmet: Sequence[str] = (),
+    intent: str = "",
+    permits: frozenset[str] = frozenset(),
+) -> Directive:
     """A directive whose check reports ``unmet``, whatever the instance holds."""
     return Directive(
         number=number,
         intent=intent or f"fixture directive {number}",
         instructions=f"# Directive {number}\n\nDo the fixture work for {number}.\n",
         check=lambda _root: list(unmet),
+        permits=permits,
     )
 
 

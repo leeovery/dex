@@ -28,16 +28,19 @@ base is better than a broken one. Change a file only when comparing it
 with its earlier copy shows that 0.2.2 made it worse: it lost knowledge the
 earlier copy held, or it holds text its source never said. When you are in
 doubt, leave it as it is. Never remove knowledge the item holds nowhere
-else.
+else. What counts as knowledge is what this instance reads for, as its
+`lens.md` states, or everything of substance when it has no lens; a page's
+navigation and chrome never are.
 
 Nothing is read again from the web to repair a page: a re-read is how this
 damage was done, and nothing can judge a re-read before it lands. Git
-history holds every earlier copy.
+history holds every earlier copy. Nothing is deleted either: every file
+this directive changes is changed in place.
 
 This directive edits only the files the materials name, the digests of
-their items, and pages under `wiki/`. It works with git and file edits
-alone: every `bin/dex enrich` command refuses while a directive is pending,
-and none is needed until step 6.
+their items, and pages under `wiki/`. It works with git, file edits and one
+engine verb, `bin/dex enrich item digest`, which runs while this directive
+is pending. Every other `bin/dex enrich` command refuses until it is done.
 
 ## The materials
 
@@ -45,7 +48,7 @@ The materials are printed after these instructions, between the
 `===== materials` line and the `===== end of materials =====` line. They
 open with the **earlier commit**: this instance as it stood just before
 0.2.2's migrations ran. Every "earlier copy" below is a file as that commit
-holds it. Five lists follow, each under a heading of its own, with a line
+holds it. Six lists follow, each under a heading of its own, with a line
 saying there is nothing in place of a list that is empty:
 
 1. **Pages a re-read replaced**: every stored page whose re-read lost
@@ -53,19 +56,22 @@ saying there is nothing in place of a list that is empty:
    github reading, x post or x article. Each entry gives the file's path
    now and in the earlier commit, how many words, code fences and table
    rows each copy holds, the words the copy now lacks, the lines of the
-   earlier copy holding them, the lines of the copy now holding words the
-   earlier copy lacked, and whether the item's digest was written after the
-   earlier commit.
+   earlier copy the copy now lacks, the lines of the copy now the earlier
+   copy lacked, and whether the item's digest was written after the
+   earlier commit. An x post is compared without its transcript, which
+   list 3 judges.
 2. **Re-reads that lost nothing**: pages a re-read changed without losing
-   a word, a code block or a table row. They owe no judgment; they are
-   listed so that every change is accounted for. Leave them as they are.
+   a word, a code fence or a table row. They owe no judgment; leave them as
+   they are.
 3. **Transcripts on x posts**: every x post whose stored copy holds a
-   transcript that engine 0.2.2 or later wrote, with the start of the post,
-   the transcript, and whether the item's digest was written after the
-   transcript landed.
+   transcript an engine wrote without first asking whether its video held
+   speech, with the start of the post, the transcript, and whether the
+   item's digest was written after the transcript landed.
 4. **Digests written while a video was gone**: every item whose digest was
    written after 0.2.2 deleted its video and before 0.2.3 gave it back.
-5. **Videos no history holds**: every video 0.2.2 deleted that git history
+5. **Files a re-read removed**: every file an item held at the earlier
+   commit that it holds nowhere now, where a re-read touched the item.
+6. **Videos no history holds**: every video 0.2.2 deleted that git history
    cannot give back.
 
 When the materials say history cannot answer here, because this is no git
@@ -92,13 +98,13 @@ the file itself is the other. Then decide one of three:
   `git show <earlier commit>:<earlier path> > <path now>`, and change
   nothing in it.
 - **Merged**, when each copy holds knowledge the other lacks. Start from
-  the copy that holds more, keep its frontmatter, and add each passage only
-  the other copy holds, word for word, in the place it held there.
+  the copy that holds more, keep its frontmatter, and add each passage of
+  knowledge only the other copy holds, word for word, in the place it held
+  there.
 
 A github entry whose earlier copy is a repository's README, for a link
 that names something inside the repository, was a misread the re-read
-corrected: keep it. For an x post, judge the post here and its transcript
-in step 2.
+corrected: keep it.
 
 ## 2. Judge each transcript
 
@@ -112,35 +118,52 @@ clip. When you cannot tell, it is speech: keep it.
 
 Take out a transcript that is not speech. Delete its `## Transcript`
 heading and everything after it, with the blank line before the heading.
-In the frontmatter, delete the `model:` line and put back the `via:` line
-the file had before the transcript landed, which `git log -p -- <path>`
-shows, or delete the `via:` line when it had none. Keep every other line,
-`enclosure:` included. Then search `wiki/` for the item's id, and take out
-any statement a page makes that came only from that transcript.
+In the frontmatter, delete the `model:` line, and change the `via:` line,
+where it stands, back to the value it had before the transcript landed,
+which `git log -p -- <path>` shows; delete the `via:` line when the file had
+none. Keep every other line, `enclosure:` included. Then search `wiki/` for
+the item's id, and take out any statement a page makes that came only from
+that transcript. `wiki/log.md` is the record of past runs: leave it.
 
-## 3. Remove each digest drawn from what you replaced
+## 3. Settle each digest
 
-A digest written from a copy that this directive replaces states what that
-copy said. Delete `state/digests/<id>.md` for:
+A digest written from a copy you replaced states what that copy said, and
+one written while a video was gone describes the item without it. Settle
+the digest, `state/digests/<id>.md`, of:
 
-- each item where you restored or merged a page, or took out a transcript,
-  when the materials say its digest was written after the earlier commit,
-  or after the transcript landed; and
-- each item under **Digests written while a video was gone**.
+- each item where you restored or merged a page, or took out a transcript;
+- each item under **Digests written while a video was gone**; and
+- each item under **Files a re-read removed** whose removed file held
+  knowledge the item now holds nowhere else.
 
-Deleting a digest is how this directive has it written again. Once the
-directive is done, the run's backstop, `bin/dex enrich status`, lists under
-**Digest these** every item that has no digest, and the run writes each one
-from the item as it now stands. Git history keeps the digest you delete. A
-digest written before the earlier commit was drawn from the earlier copies
-and still holds, so keep it, and delete no digest this step does not name.
+Read the digest beside the item as it now stands, then do one of two:
+
+- **Keep** it when it states nothing that is no longer so and misses
+  nothing of substance the item now holds.
+- **Revise** it otherwise. Write its payload with every fact the digest
+  states that is still true, corrected where the repair changed it, and
+  what the item now holds that the digest lacks: the knowledge of a page
+  you restored, a video that came back, a removed file's knowledge that
+  lives nowhere else. Keep its signal, topics and entities unless the
+  repair makes one wrong. Write the payload to `cache/digest.json` in the
+  shape the run's ingest procedure uses (`{"id", "signal", "topics",
+  "facts"}`, `entities` optional), and run
+  `bin/dex enrich item digest --file cache/digest.json`. The verb writes
+  the file, derives its date and its media list from what the item holds
+  on disk, and records the digest pass. A fact left out of the payload is
+  gone from the digest, so carry every one that still holds.
+
+Never delete a digest, and never edit one by hand: the verb is its writer.
+Leave every other file under **Files a re-read removed** gone; git history
+keeps each of them.
 
 ## 4. Record each outcome
 
 Write `cache/directive-3.md` with one line for every entry under **Pages a
-re-read replaced** and every entry under **Transcripts on x posts**, each
-naming its path exactly as the materials give it. An x post listed under
-both takes a line for each.
+re-read replaced**, every entry under **Transcripts on x posts**, and every
+digest you settled in step 3. Name each path exactly as the materials give
+it, without backticks. An x post listed under both lists takes a line for
+each.
 
 ```
 - <path>: kept — <why, in a few words>
@@ -148,36 +171,40 @@ both takes a line for each.
 - <path>: merged — <what each copy alone held>
 - <path>: speech
 - <path>: not speech — <what it was>
+- state/digests/<id>.md: kept — <why, in a few words>
+- state/digests/<id>.md: revised — <what changed>
 ```
 
 ## 5. Check and record
 
 Run `bin/dex directive done 3`. It confirms that the record has a line for
-every entry, that each kept page and each post whose transcript is speech
-is unchanged, that each restored page is its earlier copy byte for byte,
-that each merged page differs from both copies, that each post whose
-transcript is not speech holds none, that exactly the digests step 3 names
-are gone, and that nothing outside the files this directive names has
+every entry and every digest step 3 names, that each kept page, each post
+whose transcript is speech and each kept digest is unchanged, that each
+restored page is its earlier copy byte for byte, that each merged page
+differs from both copies, that each post whose transcript is not speech
+holds none, that each revised digest was written again, that no file is
+deleted, and that nothing outside the files this directive names has
 changed. It records the directive only when every condition holds. Run it
 even when you could not finish the steps above, and when it refuses, do
 what its output says.
 
 ## 6. Ask again for each video no history holds
 
-Once the directive is recorded, `bin/dex enrich` runs again. For each video
-under **Videos no history holds**, run `bin/dex enrich mark <url> queued`,
-with the video's address exactly as the materials give it. The run then
-downloads it again where the address still serves it, and it owes a
-description like any other download. This is the one thing this directive
-fetches: the video itself, which nothing else can give back.
+Once the directive is recorded, every `bin/dex enrich` command runs again.
+For each video under **Videos no history holds**, run
+`bin/dex enrich mark <url> queued`, with the video's address exactly as the
+materials give it. The run then downloads it again where the address still
+serves it, and it owes a description like any other download. This is the
+one thing this directive fetches: the video itself, which nothing else can
+give back.
 
 ## 7. Commit
 
-Commit every file you changed or deleted, the ledger when step 6 changed
-it, and `state/directives.jsonl` together as one commit. The subject is the
-first line `bin/dex directive show 3` printed, `directive 3: ` followed by
-this directive's intent. The body names every change, so the owner can
-find each earlier copy:
+Commit every file you changed, the ledger when step 6 changed it, and
+`state/directives.jsonl` together as one commit. The subject is the first
+line `bin/dex directive show 3` printed, `directive 3: ` followed by this
+directive's intent. The body names every change, so the owner can find each
+earlier copy:
 
 ```
 Earlier copies: git show <earlier commit>:<earlier path>
@@ -191,14 +218,16 @@ Merged:
 Transcripts taken out:
 - <path>: <what it was>
 
-Digests to write again:
-- <item id>
+Digests revised:
+- <item id>: <what changed>
 
 Videos asked for again:
 - <url>
 ```
 
-Leave out a list that would be empty. When nothing changed, the body is one
-line saying so. Write the message to `cache/directive-3-message.txt` and
-commit with `git commit -F cache/directive-3-message.txt`, which keeps its
-quotes and backticks exactly as written.
+Write the first line as it stands with the earlier commit's hash in place
+of `<earlier commit>`, keeping `<earlier path>` as written. Leave out a list
+that would be empty. When nothing changed, the body is one line saying so.
+Write the message to `cache/directive-3-message.txt` and commit with
+`git commit -F cache/directive-3-message.txt`, which keeps its quotes and
+backticks exactly as written.

@@ -113,6 +113,28 @@ class TestDiscover:
         assert directive.materials is not None
         assert directive.materials(tmp_path / "dex-cooking") == "# dex-cooking\n"
 
+    def test_a_directive_carries_the_verbs_its_work_runs(self, fixture_package):
+        source = directive_module("digests") + '\nPERMITS = frozenset({"item digest"})\n'
+        package = fixture_package({"directive_1.py": source, "directive_1.md": "do it"})
+        [directive] = discover(package)
+        assert directive.permits == frozenset({"item digest"})
+
+    def test_verbs_are_optional(self, fixture_package):
+        package = fixture_package(
+            {"directive_1.py": directive_module("one"), "directive_1.md": "do it"}
+        )
+        [directive] = discover(package)
+        assert directive.permits == frozenset()
+
+    @pytest.mark.parametrize(
+        "permits", ['["item digest"]', '{"item digest"}', "frozenset({''})", "frozenset({7})"]
+    )
+    def test_verbs_that_are_not_a_frozenset_of_names_are_loud(self, fixture_package, permits):
+        source = directive_module("digests") + f"\nPERMITS = {permits}\n"
+        package = fixture_package({"directive_1.py": source, "directive_1.md": "do it"})
+        with pytest.raises(DirectiveError, match="PERMITS"):
+            discover(package)
+
     def test_materials_are_optional(self, fixture_package):
         package = fixture_package(
             {"directive_1.py": directive_module("one"), "directive_1.md": "do it"}
@@ -262,6 +284,24 @@ class TestRefuseWhilePending:
         with pytest.raises(DirectivesPendingError) as refused:
             refuse_while_pending(tmp_path, [make_directive(1)])
         assert str(refused.value) == PENDING_REFUSAL.format(count="1 directive")
+
+    def test_a_verb_the_pending_directive_permits_runs(self, tmp_path):
+        digests = make_directive(1, permits=frozenset({"item digest"}))
+        refuse_while_pending(tmp_path, [digests], verb="item digest")
+
+    @pytest.mark.parametrize("verb", ["run", "mark", "item describe", None])
+    def test_a_verb_it_does_not_permit_still_refuses(self, tmp_path, verb):
+        digests = make_directive(1, permits=frozenset({"item digest"}))
+        with pytest.raises(DirectivesPendingError):
+            refuse_while_pending(tmp_path, [digests], verb=verb)
+
+    def test_a_verb_runs_only_while_every_pending_directive_permits_it(self, tmp_path):
+        # One directive's allowance never opens the door ahead of another's work.
+        digests = make_directive(2, permits=frozenset({"item digest"}))
+        with pytest.raises(DirectivesPendingError):
+            refuse_while_pending(tmp_path, [make_directive(1), digests], verb="item digest")
+        append_done(log_path(tmp_path), number=1, engine=ENGINE, date=TODAY)
+        refuse_while_pending(tmp_path, [make_directive(1), digests], verb="item digest")
 
     def test_the_refusal_names_the_command_that_performs_them(self):
         assert "`bin/dex directive list`" in PENDING_REFUSAL

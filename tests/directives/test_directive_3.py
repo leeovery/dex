@@ -233,6 +233,55 @@ class TestPages:
         assert found.pages[0].digest_since is False
         assert "- Digest: unchanged since the earlier commit" in materials(field.root)
 
+    def test_only_lines_the_copy_now_lacks_are_quoted(self, field):
+        # The closing line moved up and the intro was reworded: the moved
+        # line stands in the copy now, so only the reworded one is gone.
+        field.healed(f"{CLOSING}\n\nIntro, reworded.\n\n```python\nprint('kept')\n```\n\n{TABLE}")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.pages[0].lost_lines == ("Intro line.",)
+
+    def test_a_post_whose_text_is_as_it_was_owes_nothing_here(self, field):
+        # Its transcript is the transcript list's to judge.
+        field.landed()
+        field.write(POST, render_enrichment(POST_URL, LANDED, {"via": "fxtwitter"}, "@a — a clip"))
+        field.append(entry(POST_URL, Status.DONE, path=POST))
+        field.commit("run: the post, before 0.2.2")
+        field.synced()
+        fields: dict[str, str | int | None] = {"via": "whisper-api", "model": "whisper-1"}
+        field.write(
+            POST, render_enrichment(POST_URL, HEALED, fields, post_body("@a — a clip", "🍢🍢"))
+        )
+        field.append(
+            entry(
+                POST_URL,
+                Status.DONE,
+                engine="0.2.2",
+                date=HEALED,
+                rerun=True,
+                via="migration-16",
+                path=POST,
+            )
+        )
+        field.commit("run: the post heard")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert (found.pages, found.unharmed) == ((), ())
+        assert [t.path for t in found.transcripts] == [POST]
+
+    def test_a_file_a_reread_removed_is_listed(self, field):
+        field.landed()
+        reading = f"enrichment/{ITEM}/media-0.md"
+        field.write(reading, "Describes `media-0.png`\n\nA dashboard, read by eye.\n")
+        field.commit("run: a reading")
+        field.synced()
+        (field.root / reading).unlink()
+        field.reread("Intro line.")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.removed == ((reading, ITEM),)
+        assert f"- `{reading}` (item {ITEM})" in materials(field.root)
+
 
 class TestTranscripts:
     def post(
@@ -351,15 +400,22 @@ class TestVideos:
 
 class TestCheck:
     LOST = "Intro line."
+    NO_DIGEST_LINE = f"`{RECORD}` has no kept or revised line for `{DIGEST}` (step 4)"
 
-    def test_a_missing_record_is_named(self, field):
+    def test_a_listed_page_with_no_record_line_is_named(self, field):
         field.healed(self.LOST)
-        unmet = check(field.root)
-        assert f"`{RECORD}` is missing" in unmet[0]
+        assert check(field.root) == [
+            f"`{RECORD}` has no kept, restored or merged line for `{PAGE}` (step 4)"
+        ]
 
     def test_a_kept_page_left_as_it_stands_passes(self, field):
         field.healed(self.LOST)
         record(field, f"- {PAGE}: kept — the lost lines were page chrome")
+        assert check(field.root) == []
+
+    def test_a_record_line_may_name_its_path_in_backticks(self, field):
+        field.healed(self.LOST)
+        record(field, f"- `{PAGE}`: kept")
         assert check(field.root) == []
 
     def test_a_kept_page_that_changed_is_named(self, field):
@@ -369,31 +425,57 @@ class TestCheck:
         unmet = check(field.root)
         assert any("is recorded kept but has changed" in u for u in unmet)
 
-    def test_a_restore_needs_the_earlier_copy_byte_for_byte_and_its_digest_gone(self, field):
+    def test_a_restore_needs_the_earlier_copy_byte_for_byte_and_its_digest_settled(self, field):
         earlier = field.healed(self.LOST)
         record(field, f"- {PAGE}: restored — the re-read lost the code and the closing thought")
         field.write(PAGE, page(EARLIER) + " ")
         unmet = check(field.root)
         assert any("is not its earlier copy byte for byte" in u and earlier in u for u in unmet)
         field.write(PAGE, page(EARLIER))
-        assert check(field.root) == [
-            f"`{DIGEST}` is drawn from what this directive replaced: delete it (step 3)"
-        ]
-        (field.root / DIGEST).unlink()
+        assert check(field.root) == [self.NO_DIGEST_LINE]
+        record(field, f"- {PAGE}: restored", f"- {DIGEST}: revised — drawn from the earlier copy")
+        unchanged = (
+            f"`{DIGEST}` is recorded revised but is unchanged: write it with "
+            "`bin/dex enrich item digest --file cache/digest.json` (step 3)"
+        )
+        assert check(field.root) == [unchanged]
+        field.write(DIGEST, "---\nid: x\n---\n- drawn from the earlier copy again\n")
+        field.write("state/passes.jsonl", '{"item": "x", "stage": "digest"}\n')
         assert check(field.root) == []
 
-    def test_a_restore_keeps_a_digest_drawn_from_the_earlier_copy(self, field):
+    def test_a_digest_kept_must_be_left_as_it_stands(self, field):
         field.healed(self.LOST, redigest=False)
-        record(field, f"- {PAGE}: restored")
+        record(field, f"- {PAGE}: restored", f"- {DIGEST}: kept — drawn from the earlier copy")
         field.write(PAGE, page(EARLIER))
         assert check(field.root) == []
+        field.write(DIGEST, "edited by hand")
+        assert any(f"`{DIGEST}` is recorded kept but has changed" in u for u in check(field.root))
+
+    def test_no_digest_may_be_deleted(self, field):
+        # An unattended session's permissions refuse the deletion, and a
+        # digest can hold what nothing else in the item holds.
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: kept")
         (field.root / DIGEST).unlink()
-        assert any(f"`{DIGEST}` changed" in u for u in check(field.root))
+        deleted = (
+            f"`{DIGEST}` was deleted, and this directive deletes nothing: put it back with "
+            f"`git checkout HEAD -- {DIGEST}`"
+        )
+        assert check(field.root) == [deleted]
+
+    def test_a_revised_digest_nothing_named_is_still_held_to_its_line(self, field):
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: kept", f"- {DIGEST}: revised — a fact corrected")
+        field.write(DIGEST, "---\nid: x\n---\n- corrected\n")
+        assert check(field.root) == []
 
     def test_a_merge_must_differ_from_both_copies(self, field):
         field.healed(self.LOST)
-        record(field, f"- {PAGE}: merged — the intro from the re-read, the rest from before")
-        (field.root / DIGEST).unlink()
+        record(
+            field,
+            f"- {PAGE}: merged — the intro from the re-read, the rest from before",
+            f"- {DIGEST}: kept",
+        )
         assert any("is recorded merged but holds one copy whole" in u for u in check(field.root))
         field.write(PAGE, page(EARLIER + "\n\nOne more line only the re-read held."))
         assert check(field.root) == []
@@ -420,7 +502,7 @@ class TestCheck:
         field.write("wiki/ledgers.md", "a page, corrected")
         assert check(field.root) == []
 
-    def test_a_transcript_that_is_not_speech_must_be_taken_out_with_its_digest(self, field):
+    def test_a_transcript_that_is_not_speech_must_be_taken_out_and_its_digest_settled(self, field):
         field.healed(EARLIER)
         TestTranscripts().post(field, engine="0.2.2")
         record(field, f"- {POST}: not speech — a line of emoji over a silent clip")
@@ -430,9 +512,9 @@ class TestCheck:
             POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, "@a — a clip")
         )
         assert check(field.root) == [
-            f"`{POST_DIGEST}` is drawn from what this directive replaced: delete it (step 3)"
+            f"`{RECORD}` has no kept or revised line for `{POST_DIGEST}` (step 4)"
         ]
-        (field.root / POST_DIGEST).unlink()
+        record(field, f"- {POST}: not speech", f"- {POST_DIGEST}: kept — it never used the words")
         assert check(field.root) == []
 
     def test_a_transcript_kept_as_speech_must_still_be_there(self, field):
@@ -443,13 +525,14 @@ class TestCheck:
         field.write(POST, "gone")
         assert any("is recorded speech but holds no transcript" in u for u in check(field.root))
 
-    def test_a_digest_written_while_the_video_was_gone_must_be_deleted(self, field):
+    def test_a_digest_written_while_the_video_was_gone_must_be_settled(self, field):
         field.healed(EARLIER)
         TestVideos().restore(field, digest_in_between=True)
         assert check(field.root) == [
-            f"`{POST_DIGEST}` is drawn from what this directive replaced: delete it (step 3)"
+            f"`{RECORD}` has no kept or revised line for `{POST_DIGEST}` (step 4)"
         ]
-        (field.root / POST_DIGEST).unlink()
+        record(field, f"- {POST_DIGEST}: revised — the video is back")
+        field.write(POST_DIGEST, "---\nid: p\n---\n- the video is back\n")
         assert check(field.root) == []
 
 
@@ -457,6 +540,10 @@ class TestShipped:
     def test_the_engine_ships_it_after_the_first_two(self):
         numbers = [d.number for d in discover()]
         assert numbers[:3] == [1, 2, 3]
+
+    def test_it_permits_the_digest_verb_alone(self):
+        (shipped,) = [d for d in discover() if d.number == 3]
+        assert shipped.permits == frozenset({"item digest"})
 
     def test_show_prints_the_instructions_then_the_materials(self, field):
         field.healed("Intro line.")

@@ -49,47 +49,60 @@ one that first recorded migration 15, which holds the instance as it stood
 before the heal ran. The materials list, per instance:
 
 1. **Pages a re-read replaced** that lost a word, a code fence or a content
-   table row against their earlier copy, with the words lost, the lines
-   holding them, the lines gained, and whether the digest was written since.
+   table row against their earlier copy, with the words lost, the lines the
+   copy now lacks, the lines gained, and whether the digest was written
+   since. A post is compared without its transcript, which list 3 judges.
    The session keeps, restores (byte for byte) or merges each.
 2. **Re-reads that lost nothing**, listed for the account and owing nothing.
-3. **Transcripts on x posts** that an engine from 0.2.2 up to the one that
-   first asks for speech wrote (#184's fix), with the post and the
+3. **Transcripts on x posts** that an engine from 0.2.2 up to 0.2.6, the
+   first to ask for speech (#184's fix), wrote, with the post and the
    transcript. The session keeps speech and takes out what is not, with any
    wiki statement drawn only from it.
 4. **Digests written while a video was gone**: after the earlier commit and
    before migration 20 gave the video back.
-5. **Videos no history holds**: requeued after the directive is recorded.
+5. **Files a re-read removed** from an item it touched, left gone unless
+   one held knowledge the item now holds nowhere else, which then goes into
+   the digest.
+6. **Videos no history holds**: requeued after the directive is recorded.
 
 Left alone, on purpose: duplicate pictures a re-read's re-signed image URLs
-landed twice (clutter, not loss, and closing one needs a ledger verb the
-directive cannot run); readings migration 15 deleted whose re-read died
-(each was the repository's README stored for a link to something else);
+landed twice (clutter, not loss, and closing one needs a ledger verb);
 pages whose first landing came through the heal (nothing earlier to lose);
 and a session's own edits during the 0.2.2 runs, made with both copies in
 view.
 
-## Git and file edits only
+## Nothing deleted; digests revised by their verb
 
-Every `dex-enrich` command refuses while a directive is pending, so the
-session cannot write a digest or a ledger line during it. A digest drawn
-from a copy the session replaced is deleted instead: once the directive is
-recorded, the run's backstop lists every item without a digest under
-**Digest these**, and the run writes it from the item as it stands. That
-keeps the directive's own work to reading, restoring and recording, which
-matters because a directive a run cannot finish is thrown away and tried
-again every run while content work waits. On the owner's largest instance
-the materials list 66 pages to judge (about 130,000 characters).
+The first draft had the session delete each digest drawn from a copy it
+replaced, for the run's backstop to write again. Clone sessions of the
+owner's instances showed both halves wrong. An unattended session in auto
+mode is refused `rm` and `git rm` of a tracked file as irreversible, so the
+directive could never complete, and a directive a run cannot finish is
+performed again every run while content work waits. And a digest can hold
+knowledge nothing else in the item holds: one carried facts from a live
+reading of a page that no enrichment file records.
+
+So nothing is deleted. Each affected digest is settled by judgment, kept
+when it states nothing that is no longer so, or revised through
+`enrich item digest` with every fact still true carried forward and what
+the repair brought back added. The framework gained the one thing that
+needed: a directive names in `PERMITS` the `dex-enrich` verbs its own work
+runs, and those run while every pending directive permits them; every other
+content command still refuses. Directive 3 permits the digest verb alone.
+A directive never asks a session to delete a tracked file.
+
+On the owner's largest instance the materials list 66 pages to judge (about
+130,000 characters), most of them page chrome a session keeps at a glance.
 
 ## The check
 
-The session records one outcome per listed page and transcript in
-`cache/directive-3.md`. The check holds the record to the files: a kept
-page and a transcript kept as speech are unchanged, a restored page is its
-earlier copy byte for byte, a merged page differs from both copies, a
-transcript taken out is gone, exactly the digests the rules name are
-deleted, and nothing outside the listed files, their digests and `wiki/`
-has changed. It verifies that every outcome was recorded and is what the
+The session records one outcome per listed page, transcript and settled
+digest in `cache/directive-3.md`. The check holds the record to the files:
+a kept page, a transcript kept as speech and a kept digest are unchanged, a
+restored page is its earlier copy byte for byte, a merged page differs from
+both copies, a transcript taken out is gone, a revised digest was written
+again, no file is deleted, and nothing outside the listed files, their
+digests, the digest pass log and `wiki/` has changed. It verifies that every outcome was recorded and is what the
 files hold, never that the judgment was right; that rests on the
 instructions and on running the directive over clones of the owner's
 instances, with real sessions, before it ships.

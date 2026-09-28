@@ -349,7 +349,8 @@ ones an instance has not completed, and
 the run performs them after its pull and before the inbox, unattended and in
 order, one commit each. Until they are done, the content commands
 (`dex-inbox`, `dex-normalize`, `dex-enrich`, `dex-exclude`) refuse and point
-at `dex-directive list`, and each directive command's output names the step
+at `dex-directive list`, save a `dex-enrich` verb the pending directive names
+for its own work, and each directive command's output names the step
 after it, so a session holding instructions older than the engine it just
 synced still performs the directives before it touches any content. A sync
 that changes the instructions a run began with (CLAUDE.md, the contract or a

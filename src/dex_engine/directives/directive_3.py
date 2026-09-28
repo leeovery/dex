@@ -19,10 +19,16 @@ is given is the list the check holds it to. An instance whose history
 cannot answer (no repository, a shallow clone, the migrations never run)
 has nothing that can be shown worse, so it completes with nothing to do.
 
+Nothing is deleted. A digest drawn from what the session replaced is kept
+or revised through the digest verb, the one ``dex-enrich`` verb this
+directive permits while it is pending: a digest can hold knowledge nothing
+else in the item holds, and an unattended session's permissions refuse to
+delete a tracked file.
+
 The check reads the session's record, ``cache/directive-3.md``, against
-the files: every listed page and transcript has an outcome, each outcome is
-what the file now holds, exactly the digests the instructions name are
-gone, and nothing outside the files the directive names has changed.
+the files: every listed page, transcript and digest has an outcome, each
+outcome is what the file now holds, no digest is gone, and nothing outside
+the files the directive names has changed.
 """
 
 import datetime
@@ -37,22 +43,38 @@ from dex_engine.pipeline.enrichment import (
     holds_transcript,
     mask_fetched,
     parse_enrichment,
+    pre_transcript,
     split_transcript,
 )
 from dex_engine.pipeline.ledger import LedgerSchemaError, from_line, resolution_key
 from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Status, parse_version
 
-__all__ = ["INTENT", "RECORD", "Page", "Survey", "Transcript", "check", "materials", "survey"]
+__all__ = [
+    "INTENT",
+    "PERMITS",
+    "RECORD",
+    "Page",
+    "Survey",
+    "Transcript",
+    "check",
+    "materials",
+    "survey",
+]
 
 INTENT = (
     "repair what engine 0.2.2's re-reads and transcripts did to stored content, from git "
     "history, changing only what is shown to be worse"
 )
 
+# The digest verb, so a digest drawn from what the session replaced is
+# revised by its writer rather than deleted.
+PERMITS = frozenset({"item digest"})
+
 RECORD = "cache/directive-3.md"
 
 _LEDGER = "state/enrichment-ledger.jsonl"
 _MIGRATIONS = "state/migrations.jsonl"
+_PASSES = "state/passes.jsonl"
 _DIGESTS = "state/digests"
 
 # How numbered_log writes the records of the first heal migration and of
@@ -67,15 +89,17 @@ _RESTORED = "migration-20"
 _RETIRED = "superseded — the transcript of its post stands for this video"
 
 # x posts' video was first transcribed by 0.2.2, and first asked for speech
-# before any transcriber heard it by the engine below: a transcript either
-# side of that range was not written from unasked silence.
+# before any transcriber heard it by 0.2.6: a transcript either side of that
+# range was not written from unasked silence.
 _FIRST_TRANSCRIBING = (0, 2, 2)
 _FIRST_ASKING = (0, 2, 6)
 
 _WORD_RE = re.compile(r"\w+")
-_RECORD_RE = re.compile(r"^- (?P<path>\S+?): (?P<outcome>kept|restored|merged|speech|not speech)\b")
-_PAGE_OUTCOMES = frozenset({"kept", "restored", "merged"})
-_CHANGED = frozenset({"restored", "merged"})
+_RECORD_RE = re.compile(
+    r"^- `?(?P<path>[^`\s]+?)`?: (?P<outcome>kept|restored|merged|speech|not speech|revised)\b"
+)
+_PAGE_OUTCOMES = frozenset({"restored", "merged"})
+_DIGEST_OUTCOMES = frozenset({"kept", "revised"})
 
 # How much of each change the materials quote; the session reads the rest
 # from git when it needs it.
@@ -139,11 +163,12 @@ class Survey:
     unharmed: tuple[Page, ...]
     transcripts: tuple[Transcript, ...]
     gone_digests: tuple[str, ...]
+    removed: tuple[tuple[str, str], ...]
     videos: tuple[tuple[str, str], ...]
 
 
 def materials(root: Path) -> str:
-    """The list for this instance: every page, transcript, digest and video to judge."""
+    """The list for this instance: every page, transcript, digest and file to judge."""
     found = survey(root)
     if isinstance(found, str):
         return (
@@ -177,8 +202,12 @@ def survey(root: Path) -> Survey | str:
     landed_now = _latest(((n, e) for n, e in head if e.path), now=now)
     landed_before = _latest(((n, e) for n, e in _ledger_at(root, earlier) if e.path), now=now)
     changed: list[Page] = []
+    folders: dict[str, str] = {}
     for unit_hash, healed in sorted(_healed(head, now=now).items()):
-        page = _page(root, earlier, healed, landed_now.get(unit_hash), landed_before.get(unit_hash))
+        before, after = landed_before.get(unit_hash), landed_now.get(unit_hash)
+        if before is not None and before.path and after is not None and after.path:
+            folders[_folder(before.path)] = _folder(after.path)
+        page = _page(root, earlier, healed, after, before)
         if page is not None:
             changed.append(page)
     return Survey(
@@ -187,6 +216,7 @@ def survey(root: Path) -> Survey | str:
         unharmed=tuple(page for page in changed if not page.lost_something),
         transcripts=tuple(_transcripts(root, live, landed_now)),
         gone_digests=tuple(_gone_digests(root, earlier, live, landed_now)),
+        removed=tuple(_removed(root, earlier, folders)),
         videos=tuple(
             sorted(
                 (entry.url, entry.item)
@@ -266,7 +296,11 @@ def _page(
     landed_now: LedgerEntry | None,
     landed_before: LedgerEntry | None,
 ) -> Page | None:
-    """The unit's page now beside its earlier copy; None where nothing changed or either is gone."""
+    """The unit's page now beside its earlier copy; None where nothing changed or either is gone.
+
+    A post is read without its transcript, which the transcript list
+    judges: a post whose text is as it was owes nothing here.
+    """
     if landed_now is None or landed_now.path is None:
         return None
     if landed_before is None or landed_before.path is None:
@@ -279,12 +313,11 @@ def _page(
     earlier_text = earlier_bytes.decode("utf-8", "replace")
     if mask_fetched(now_text) == mask_fetched(earlier_text):
         return None
-    before_body, now_body = parse_enrichment(earlier_text)[1], parse_enrichment(now_text)[1]
-    before_words, now_words = (
-        Counter(_WORD_RE.findall(before_body)),
-        Counter(_WORD_RE.findall(now_body)),
-    )
-    lost, gained = before_words - now_words, now_words - before_words
+    before_body, now_body = _readable(earlier_text), _readable(now_text)
+    if before_body == now_body:
+        return None
+    before_words = Counter(_WORD_RE.findall(before_body))
+    now_words = Counter(_WORD_RE.findall(now_body))
     item = _item_of(landed_now.path)
     return Page(
         path=landed_now.path,
@@ -294,29 +327,28 @@ def _page(
         via=healed.via or "",
         earlier=earlier_bytes,
         now=now_bytes,
-        lost=lost,
-        gained=gained,
+        lost=before_words - now_words,
+        gained=now_words - before_words,
         words=(before_words.total(), now_words.total()),
         fences=(_fences(before_body), _fences(now_body)),
         rows=(_rows(before_body), _rows(now_body)),
-        lost_lines=tuple(_lines_holding(before_body, lost)),
-        gained_lines=tuple(_lines_holding(now_body, gained)),
+        lost_lines=tuple(_lines_only_in(before_body, now_body)),
+        gained_lines=tuple(_lines_only_in(now_body, before_body)),
         digest_since=_digest_written_since(root, earlier, item),
     )
 
 
-def _lines_holding(body: str, words: Counter[str]) -> list[str]:
-    """The lines of ``body`` holding the words ``words`` counts, each word spent once."""
-    left = Counter(words)
-    shown: list[str] = []
-    for line in body.split("\n"):
-        held = [word for word in _WORD_RE.findall(line) if left[word] > 0]
-        if not held:
-            continue
-        for word in held:
-            left[word] -= 1
-        shown.append(line.strip()[:_LINE_CHARS])
-    return shown
+def _readable(text: str) -> str:
+    """An enrichment file's body, without the transcript a transcriber appended."""
+    fields, body = parse_enrichment(text)
+    return pre_transcript(fields, body)
+
+
+def _lines_only_in(body: str, other: str) -> list[str]:
+    """Each distinct non-blank line of ``body`` that ``other`` holds nowhere, in order."""
+    held = {line.strip() for line in other.split("\n")}
+    only = (line.strip() for line in body.split("\n"))
+    return [line[:_LINE_CHARS] for line in dict.fromkeys(only) if line and line not in held]
 
 
 def _fences(body: str) -> int:
@@ -335,6 +367,10 @@ def _rows(body: str) -> int:
 def _item_of(path: str) -> str:
     parts = PurePosixPath(path).parts
     return parts[1] if len(parts) > 2 else ""  # noqa: PLR2004 — enrichment/<item>/<file>
+
+
+def _folder(path: str) -> str:
+    return str(PurePosixPath(path).parent)
 
 
 def _digest(item: str) -> str:
@@ -430,6 +466,16 @@ def _gone_digests(
             yield item
 
 
+def _removed(root: Path, earlier: str, folders: dict[str, str]) -> Iterator[tuple[str, str]]:
+    """(earlier path, item now) of each file a healed item held then and holds nowhere now."""
+    for before, after in sorted(folders.items()):
+        then = (git_output(root, ["ls-tree", "--name-only", earlier, f"{before}/"]) or "").split()
+        now = set((git_output(root, ["ls-tree", "--name-only", "HEAD", f"{after}/"]) or "").split())
+        for path in then:
+            if f"{after}/{PurePosixPath(path).name}" not in now:
+                yield path, PurePosixPath(after).name
+
+
 # ---------------------------------------------------------------------------
 # The materials
 # ---------------------------------------------------------------------------
@@ -449,7 +495,7 @@ def _render(found: Survey) -> str:
     for page in found.pages:
         out += _page_block(page)
     out += _heading("Re-reads that lost nothing", len(found.unharmed))
-    out += [f"- `{page.path}`: gained {page.gained.total()} words" for page in found.unharmed]
+    out += [f"- `{page.path}`: gained {_words(page.gained.total())}" for page in found.unharmed]
     out += _gap(found.unharmed)
     out += _heading("Transcripts on x posts", len(found.transcripts))
     for transcript in found.transcripts:
@@ -457,6 +503,9 @@ def _render(found: Survey) -> str:
     out += _heading("Digests written while a video was gone", len(found.gone_digests))
     out += [f"- `{_digest(item)}`" for item in found.gone_digests]
     out += _gap(found.gone_digests)
+    out += _heading("Files a re-read removed", len(found.removed))
+    out += [f"- `{path}` (item {item})" for path, item in found.removed]
+    out += _gap(found.removed)
     out += _heading("Videos no history holds", len(found.videos))
     out += [f"- {url} (item {item})" for url, item in found.videos]
     return "\n".join(out).rstrip("\n") + "\n"
@@ -468,6 +517,10 @@ def _heading(title: str, count: int) -> list[str]:
 
 def _gap(entries: tuple[object, ...]) -> list[str]:
     return [""] if entries else []
+
+
+def _words(count: int) -> str:
+    return f"{count} word" if count == 1 else f"{count} words"
 
 
 def _page_block(page: Page) -> list[str]:
@@ -493,13 +546,9 @@ def _page_block(page: Page) -> list[str]:
         named = ", ".join(f"`{word}`" + (f" ({n})" if n > 1 else "") for word, n in common)
         more = len(page.lost) - len(common)
         block.append(f"- Words lost: {named}" + (f", and {more} more" if more > 0 else ""))
+    block += _quoted("Lines of the earlier copy the copy now lacks", page.lost_lines, _LOST_LINES)
     block += _quoted(
-        "Lines of the earlier copy holding words the copy now lacks", page.lost_lines, _LOST_LINES
-    )
-    block += _quoted(
-        "Lines of the copy now holding words the earlier copy lacked",
-        page.gained_lines,
-        _GAINED_LINES,
+        "Lines of the copy now the earlier copy lacked", page.gained_lines, _GAINED_LINES
     )
     return [*block, ""]
 
@@ -537,38 +586,35 @@ def _transcript_block(transcript: Transcript) -> list[str]:
 
 def _unmet(root: Path, found: Survey) -> list[str]:
     unmet: list[str] = []
-    record = _record(root, unmet) if found.pages or found.transcripts else {}
-    doomed: set[str] = set(found.gone_digests)
+    record = _record(root, unmet)
     touched: set[str] = set()
+    owed: set[str] = set(found.gone_digests)
     for page in found.pages:
         outcome = record.get((page.path, "page"))
         unmet += _page_unmet(root, found.earlier, page, outcome)
-        if outcome in _CHANGED:
+        if outcome in _PAGE_OUTCOMES:
             touched.add(page.path)
-            if page.digest_since:
-                doomed.add(page.item)
+            owed.add(page.item)
     for transcript in found.transcripts:
         outcome = record.get((transcript.path, "transcript"))
         unmet += _transcript_unmet(root, transcript, outcome)
         if outcome == "not speech":
             touched.add(transcript.path)
-            if transcript.digest_since:
-                doomed.add(transcript.item)
-    unmet += [
-        f"`{_digest(item)}` is drawn from what this directive replaced: delete it (step 3)"
-        for item in sorted(doomed)
-        if (root / _digest(item)).exists()
-    ]
-    unmet += _outside(root, touched, doomed)
+            owed.add(transcript.item)
+    revised = _digests_unmet(root, record, owed, unmet)
+    unmet += _outside(root, touched, revised)
     return unmet
 
 
 def _record(root: Path, unmet: list[str]) -> dict[tuple[str, str], str]:
-    """The session's record as (path, list) -> outcome; a missing or doubled line is named."""
+    """The session's record as (path, list) -> outcome; a doubled line is named.
+
+    An absent record is only an unmet condition where something is listed:
+    the entries missing from it say so one by one.
+    """
     try:
         text = (root / RECORD).read_text(encoding="utf-8")
     except FileNotFoundError:
-        unmet.append(f"`{RECORD}` is missing: write it as step 4 says, one line for every entry")
         return {}
     except (OSError, UnicodeDecodeError) as e:
         unmet.append(
@@ -580,7 +626,7 @@ def _record(root: Path, unmet: list[str]) -> dict[tuple[str, str], str]:
         match = _RECORD_RE.match(line.strip())
         if match is None:
             continue
-        key = (match["path"], "page" if match["outcome"] in _PAGE_OUTCOMES else "transcript")
+        key = (match["path"], _list_of(match["path"], match["outcome"]))
         if key in record and record[key] != match["outcome"]:
             unmet.append(
                 f"`{RECORD}` records `{match['path']}` as both {record[key]} and "
@@ -590,9 +636,17 @@ def _record(root: Path, unmet: list[str]) -> dict[tuple[str, str], str]:
     return record
 
 
+def _list_of(path: str, outcome: str) -> str:
+    if path.startswith(f"{_DIGESTS}/"):
+        return "digest"
+    if outcome in {"speech", "not speech"}:
+        return "transcript"
+    return "page"
+
+
 def _page_unmet(root: Path, earlier: str, page: Page, outcome: str | None) -> list[str]:
     held = _working(root, page.path)
-    if outcome is None:
+    if outcome not in {"kept", "restored", "merged"}:
         return [f"`{RECORD}` has no kept, restored or merged line for `{page.path}` (step 4)"]
     if outcome == "kept" and held != page.now:
         why = (
@@ -616,7 +670,7 @@ def _page_unmet(root: Path, earlier: str, page: Page, outcome: str | None) -> li
 
 
 def _transcript_unmet(root: Path, transcript: Transcript, outcome: str | None) -> list[str]:
-    if outcome is None:
+    if outcome not in {"speech", "not speech"}:
         return [f"`{RECORD}` has no speech or not speech line for `{transcript.path}` (step 4)"]
     held = _working(root, transcript.path)
     fields, body = parse_enrichment((held or b"").decode("utf-8", "replace"))
@@ -636,26 +690,59 @@ def _transcript_unmet(root: Path, transcript: Transcript, outcome: str | None) -
     return [why]
 
 
-def _outside(root: Path, touched: set[str], doomed: set[str]) -> list[str]:
+def _digests_unmet(
+    root: Path, record: dict[tuple[str, str], str], owed: set[str], unmet: list[str]
+) -> set[str]:
+    """Hold each settled digest to its outcome; returns the digests recorded revised."""
+    revised: set[str] = set()
+    recorded = {path: outcome for (path, kind), outcome in record.items() if kind == "digest"}
+    for item in sorted(owed):
+        path = _digest(item)
+        if path not in recorded and (root / path).exists():
+            unmet.append(f"`{RECORD}` has no kept or revised line for `{path}` (step 4)")
+    for path, outcome in sorted(recorded.items()):
+        held, head = _working(root, path), checkout_bytes(root, "HEAD", path)
+        if outcome == "revised" and (held is None or held == head):
+            unmet.append(
+                f"`{path}` is recorded revised but is unchanged: write it with "
+                "`bin/dex enrich item digest --file cache/digest.json` (step 3)"
+            )
+        elif outcome == "kept" and held != head:
+            unmet.append(
+                f"`{path}` is recorded kept but has changed: put it back with "
+                f"`git checkout HEAD -- {path}`"
+            )
+        if outcome == "revised":
+            revised.add(path)
+    return revised
+
+
+def _outside(root: Path, touched: set[str], revised: set[str]) -> list[str]:
     """Every change in the tree this directive's instructions do not name."""
     status = git_output(
         root, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
     )
     if status is None:
         return []
-    deletable = {_digest(item) for item in doomed}
     unmet: list[str] = []
     for path, state in _changes(status):
         if state == "M" and (path in touched or path.startswith("wiki/")):
             continue
-        if state == "D" and path in deletable:
+        # The digest verb writes both, and creates either where none stood.
+        if state in {"M", "?"} and (path in revised or path == _PASSES):
             continue
         if state == "?":
             unmet.append(f"`{path}` is new, and this directive adds nothing: remove it")
             continue
+        if state == "D":
+            unmet.append(
+                f"`{path}` was deleted, and this directive deletes nothing: put it back with "
+                f"`git checkout HEAD -- {path}`"
+            )
+            continue
         unmet.append(
             f"`{path}` changed, and this directive changes only the pages it restores or "
-            "merges, the transcripts it takes out, the digests step 3 names and pages under "
+            "merges, the transcripts it takes out, the digests it revises and pages under "
             f"`wiki/`: put it back with `git checkout HEAD -- {path}`"
         )
     return unmet

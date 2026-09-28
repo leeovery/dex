@@ -53,16 +53,21 @@ the engine stays unaware of which ones exist.
     touches state.
   - `directives/` — numbered directives: judgment work on an instance's
     own files that a migration may not do. Each is `directive_<n>.py`
-    (its intent, a check that names every unmet condition, and optional
+    (its intent, a check that names every unmet condition, optional
     materials: text rendered for the instance, which `dex-directive show`
     prints between marker lines, and `show <n> --materials` alone, byte
-    for byte) with its instructions beside it as `directive_<n>.md`. Sync
+    for byte, and optional `PERMITS`: the `dex-enrich` verbs its own work
+    runs) with its instructions beside it as `directive_<n>.md`. Sync
     lists the pending ones, the run session performs them after the pull,
     `dex-directive done` records each in `state/directives.jsonl` only
     once its check passes, and `dex-new` records every shipped one as
     done. While any is pending, `dex-inbox`, `dex-normalize`, `dex-enrich`
     and `dex-exclude` refuse through the package's one gate,
-    `refuse_while_pending`, called from each CLI's `main`. The procedure
+    `refuse_while_pending`, called from each CLI's `main`, save a
+    `dex-enrich` verb every pending directive permits. A directive never
+    asks a session to delete a tracked file: an unattended session's
+    permissions refuse it, and a directive that cannot complete is
+    retried every run while content waits. The procedure
     lives in the commands' output, never in the synced skills: `list`
     says how to perform the pending ones, and `done`, refusing an unmet
     check, says what the run does next, so a session holding instructions
@@ -82,8 +87,9 @@ the engine stays unaware of which ones exist.
     15 was recorded, list each changed page with what it lost, each
     transcript an unasking engine wrote, and each digest drawn while a
     video was gone; the session keeps, restores from history or merges,
-    takes out what is not speech, and deletes the digests drawn from
-    what it replaced for the run's backstop to write again.
+    takes out what is not speech, and keeps or revises each digest drawn
+    from what it replaced through `enrich item digest`, the one verb it
+    permits, carrying forward every fact still true.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
