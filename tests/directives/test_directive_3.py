@@ -52,6 +52,28 @@ def entry(url: str, status: Status, *, engine: str = "0.1.17", **fields: object)
     return LedgerEntry(hash=work_hash(url), url=url, status=status, engine=engine, **fields)  # ty: ignore[invalid-argument-type]
 
 
+def video(
+    url: str,
+    status: Status,
+    reason: str | None = None,
+    *,
+    path: str | None = None,
+    at: datetime.datetime | None = None,
+) -> LedgerEntry:
+    """A ledger line for a video of the post's."""
+    stamped = {"at": at} if at is not None else {}
+    return entry(
+        url,
+        status,
+        job=Job.MEDIA,
+        parent=POST_UNIT,
+        depth=1,
+        reason=reason,
+        path=path,
+        **stamped,
+    )
+
+
 def page(body: str, *, fetched: datetime.date = LANDED) -> str:
     return render_enrichment(URL, fetched, {"title": "A page worth keeping"}, body)
 
@@ -543,21 +565,14 @@ class TestVideos:
 
     def test_only_a_video_0_2_2_retired_is_asked_for_again(self, field):
         field.healed(EARLIER)
-        media = {"job": Job.MEDIA, "parent": POST_UNIT, "depth": 1}
         field.append(
-            entry(
-                "https://video.example.test/901.mp4",
-                Status.SKIPPED,
-                reason="set aside by the owner",
-                **media,
-            ),
-            entry(
+            video("https://video.example.test/901.mp4", Status.SKIPPED, "set aside by the owner"),
+            video(
                 "https://video.example.test/902.mp4",
                 Status.DONE,
                 path=f"enrichment/{POST_ITEM}/media-1.mp4",
-                **media,
             ),
-            entry(VIDEO_URL, Status.SKIPPED, reason=RETIRED, **media),
+            video(VIDEO_URL, Status.SKIPPED, RETIRED),
         )
         field.commit("run: three videos")
         found = survey(field.root)
@@ -568,13 +583,12 @@ class TestVideos:
         # A clock that jumped back: the second line loses to the first.
         field.healed(EARLIER)
         other = "https://video.example.test/903.mp4"
-        media = {"job": Job.MEDIA, "parent": POST_UNIT, "depth": 1}
         late = datetime.datetime(2026, 9, 20, tzinfo=datetime.UTC)
         early = datetime.datetime(2026, 8, 20, tzinfo=datetime.UTC)
         field.append(
-            entry(other, Status.SKIPPED, reason="set aside by the owner", at=late, **media),
-            entry(other, Status.QUEUED, at=early, **media),
-            entry(VIDEO_URL, Status.SKIPPED, reason=RETIRED, **media),
+            video(other, Status.SKIPPED, "set aside by the owner", at=late),
+            video(other, Status.QUEUED, at=early),
+            video(VIDEO_URL, Status.SKIPPED, RETIRED),
         )
         field.commit("run: a clock that jumped back")
         found = survey(field.root)
