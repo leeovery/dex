@@ -275,6 +275,15 @@ class TestPages:
         assert not isinstance(found, str)
         assert [p.fences for p in found.pages] == [(2, 0)]
 
+    def test_a_fence_indented_in_a_list_counts(self, field):
+        listed = "1. Install:\n\n   ```bash\n   pip install ledgers\n   ```"
+        field.landed(body=f"Intro line.\n\n{listed}")
+        field.synced()
+        field.reread("Intro line.\n\n1. Install:\n\n   pip install ledgers")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert [p.fences for p in found.pages] == [(2, 0)]
+
     def test_a_unit_that_first_landed_through_the_heal_has_no_earlier_copy(self, field):
         field.landed()
         field.synced()
@@ -435,7 +444,9 @@ class TestTranscripts:
             if text is not None:
                 field.write(path, render_enrichment(url, HEALED, {"via": "fxtwitter"}, text))
             field.append(entry(url, Status.DONE, engine=engine, date=HEALED, path=path))
-        field.commit("run: three posts")
+        # And one the owner marked done by hand, which never landed a file.
+        field.append(entry("https://x.com/i/status/74", Status.DONE, engine="0.2.2"))
+        field.commit("run: four posts")
         assert all(work_hash(url) < POST_UNIT for url in passed_over)
         self.post(field, engine="0.2.2")
         found = survey(field.root)
@@ -591,6 +602,18 @@ class TestVideos:
             video(VIDEO_URL, Status.SKIPPED, RETIRED),
         )
         field.commit("run: a clock that jumped back")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.videos == ((VIDEO_URL, POST_ITEM),)
+
+    def test_two_lines_stamped_the_same_instant_go_by_their_order(self, field):
+        field.healed(EARLIER)
+        same = datetime.datetime(2026, 9, 20, tzinfo=datetime.UTC)
+        field.append(
+            video(VIDEO_URL, Status.SKIPPED, "set aside by the owner", at=same),
+            video(VIDEO_URL, Status.SKIPPED, RETIRED, at=same),
+        )
+        field.commit("run: two lines in one instant")
         found = survey(field.root)
         assert not isinstance(found, str)
         assert found.videos == ((VIDEO_URL, POST_ITEM),)
@@ -853,14 +876,24 @@ class TestCheck:
         field.write("state/passes.jsonl", '{"item": "x", "stage": "digest"}\n')
         field.write("stray-a.md", "new")
         field.write("stray-b.md", "new")
+        field.write("z", "new")
         unmet = check(field.root)
         for named in (
             f"`{DIGEST}` was deleted",
             "`state/enrichment-ledger.jsonl` changed",
             "`stray-a.md` is new",
             "`stray-b.md` is new",
+            "`z` is new",
         ):
             assert any(named in u for u in unmet), named
+
+    def test_a_new_wiki_page_is_named_even_staged(self, field):
+        # A page under wiki/ may change; the directive adds none.
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: kept")
+        field.write("wiki/new.md", "a page")
+        field.git(field.root, "add", "wiki/new.md")
+        assert any("`wiki/new.md` changed" in u for u in check(field.root))
 
     def test_a_renamed_file_is_named_once_by_its_new_path(self, field):
         field.healed(self.LOST)
