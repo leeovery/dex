@@ -11,3 +11,17 @@ business site in one production instance (2026-08-19), hand-healed into
 ledger disagree. Close these out with `bin/dex enrich mark` during each
 instance's post-merge sync review; it is per-instance content work, not
 engine work.
+
+A dead owner also blocks a second item (#192), and that part is engine
+work. A URL is enriched under one item only, so `enrich fetch` from
+another item refuses it as "already enriches under item X" — even when
+X's unit has been `dead` since an early engine and nothing of it is on
+disk. The refusal is false, and the live content is unreachable from the
+item that wants it until someone thinks to fetch it on X's own URL, which
+lands it. Seen in one instance on 2026-09-27: two GitHub blobs dead
+since engine 0.0.1, both answering today; the same instance holds seven
+more dead private-repo blob units from 0.0.1 whose files exist, most
+likely condemned before fetches were authenticated. Picking this up means
+deciding what a second item's fetch does when the owner holds only a dead
+verdict (requeue the owner's unit in place is the obvious candidate),
+alongside reseeding the early engine's dead verdicts generically.
