@@ -40,6 +40,8 @@ from pathlib import Path, PurePosixPath
 
 from dex_engine.gitread import checkout_bytes, git_output
 from dex_engine.pipeline.enrichment import (
+    TRANSCRIPT_PROVENANCE,
+    TRANSCRIPT_SOURCES,
     holds_transcript,
     mask_fetched,
     parse_enrichment,
@@ -101,7 +103,7 @@ _MERGE_HEADING = "# From the copy saved on "
 _UNDATED_MERGE_HEADING = "# From the earlier copy"
 
 # Taking a transcript out rewrites these, and step 2 owns that rewrite.
-_TRANSCRIPT_FIELDS = frozenset({"model", "via"})
+_TRANSCRIPT_FIELDS = frozenset(TRANSCRIPT_PROVENANCE)
 
 _WORD_RE = re.compile(r"\w+")
 _RECORD_RE = re.compile(
@@ -143,6 +145,7 @@ class Page:
     lost_lines: tuple[str, ...]
     gained_lines: tuple[str, ...]
     digest_since: bool
+    transcript: bool = False
 
     @property
     def lost_something(self) -> bool:
@@ -344,6 +347,7 @@ def _page(
         lost_lines=tuple(_lines_only_in(before_body, now_body)),
         gained_lines=tuple(_lines_only_in(now_body, before_body)),
         digest_since=_digest_written_since(root, earlier, item),
+        transcript=holds_transcript(*parse_enrichment(now_text)),
     )
 
 
@@ -390,6 +394,10 @@ def _folder(path: str) -> str:
 
 def _digest(item: str) -> str:
     return f"{_DIGESTS}/{item}.md"
+
+
+def _corpus(item: str) -> str:
+    return f"corpus/{item[:4]}/{item}.md"
 
 
 def _digest_written_since(root: Path, since: str, item: str) -> bool:
@@ -560,6 +568,11 @@ def _page_block(page: Page) -> list[str]:
         f"- Digest: {digest}",
         f"- Merge heading: `{_merge_heading(page.earlier)}`",
     ]
+    if page.transcript:
+        block.append(
+            "- The copy now ends in a transcript, which a restore would take away: keep or "
+            "merge this page, unless step 2 takes the transcript out"
+        )
     if page.lost:
         common = page.lost.most_common(_LOST_WORDS)
         named = ", ".join(f"`{word}`" + (f" ({n})" if n > 1 else "") for word, n in common)
@@ -616,9 +629,10 @@ def _unmet(root: Path, found: Survey) -> list[str]:
         if outcome in _PAGE_OUTCOMES:
             touched.add(page.path)
             owed.add(page.item)
+    listed = {page.path for page in found.pages}
     for transcript in found.transcripts:
         outcome = record.get((transcript.path, "transcript"))
-        unmet += _transcript_unmet(root, transcript, outcome)
+        unmet += _transcript_unmet(root, transcript, outcome, page=transcript.path in listed)
         if outcome == "not speech":
             touched.add(transcript.path)
             owed.add(transcript.item)
@@ -672,6 +686,15 @@ def _page_unmet(
     if outcome not in {"kept", "restored", "merged"}:
         return [f"`{RECORD}` has no kept, restored or merged line for `{page.path}` (step 4)"]
     held = _working(root, page.path)
+    if outcome == "restored" and page.transcript and not transcript_out:
+        # The earlier copy holds no transcript, so a restore would take away
+        # one that stays; merging keeps it and brings back what was lost.
+        why = (
+            f"`{page.path}` is recorded restored, but its copy now ends in a transcript a "
+            "restore would take away: put it back with "
+            f"`git checkout HEAD -- {page.path}` and merge it instead, as step 1 says"
+        )
+        return [why]
     if outcome == "restored":
         why = (
             None
@@ -753,25 +776,45 @@ def _decoded(content: bytes) -> str:
     return content.decode("utf-8", "replace")
 
 
-def _transcript_unmet(root: Path, transcript: Transcript, outcome: str | None) -> list[str]:
+def _transcript_unmet(
+    root: Path, transcript: Transcript, outcome: str | None, *, page: bool
+) -> list[str]:
+    """Hold a post's transcript to its outcome; a post listed as a page has its page held there."""
+    path = transcript.path
     if outcome not in {"speech", "not speech"}:
-        return [f"`{RECORD}` has no speech or not speech line for `{transcript.path}` (step 4)"]
-    held = _working(root, transcript.path)
-    fields, body = parse_enrichment((held or b"").decode("utf-8", "replace"))
+        return [f"`{RECORD}` has no speech or not speech line for `{path}` (step 4)"]
+    held = _working(root, path)
+    fields, body = parse_enrichment(_decoded(held or b""))
     holds = held is not None and holds_transcript(fields, body)
     if outcome == "speech" and not holds:
         why = (
-            f"`{transcript.path}` is recorded speech but holds no transcript: put it back "
-            f"with `git checkout HEAD -- {transcript.path}`"
+            f"`{path}` is recorded speech but holds no transcript: put it back with "
+            f"`git checkout HEAD -- {path}`"
         )
-    elif outcome == "not speech" and holds:
-        why = (
-            f"`{transcript.path}` is recorded not speech but still holds its transcript: "
-            "take it out as step 2 says"
-        )
-    else:
+        return [why]
+    if outcome == "speech":
         return []
-    return [why]
+    if holds:
+        why = (
+            f"`{path}` is recorded not speech but still holds its transcript: take it out as "
+            "step 2 says"
+        )
+        return [why]
+    unmet: list[str] = []
+    if "model" in fields or fields.get("via") in TRANSCRIPT_SOURCES:
+        unmet.append(
+            f"`{path}` still names its transcriber: delete its `model:` line and set `via:` back "
+            "to the value it had before the transcript landed, as step 2 says"
+        )
+    head = checkout_bytes(root, "HEAD", path)
+    if not page and held is not None and head is not None:
+        before = _page_part(_decoded(head), transcript_out=True)
+        if _page_part(_decoded(held), transcript_out=True) != before:
+            unmet.append(
+                f"`{path}` is recorded not speech, but more than its transcript changed: put it "
+                f"back with `git checkout HEAD -- {path}` and take out only what step 2 names"
+            )
+    return unmet
 
 
 def _digests_unmet(
@@ -810,8 +853,11 @@ def _outside(root: Path, touched: set[str], revised: set[str]) -> list[str]:
     if status is None:
         return []
     unmet: list[str] = []
+    # The digest verb refreshes the item's corpus listing when it is stale,
+    # as it is after a sync gave back files and no run has read them since.
+    listed = {_corpus(PurePosixPath(digest).stem) for digest in revised}
     for path, state in _changes(status):
-        if state == "M" and (path in touched or path.startswith("wiki/")):
+        if state == "M" and (path in touched or path in listed or path.startswith("wiki/")):
             continue
         # The digest verb writes both, and creates either where none stood.
         if state in {"M", "?"} and (path in revised or path == _PASSES):

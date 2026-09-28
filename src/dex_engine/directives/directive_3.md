@@ -107,7 +107,9 @@ the file itself is the other. Then decide one of three:
   error page, or another article at the same address, lost everything the
   earlier copy held. Write the earlier copy back byte for byte with
   `git show <earlier commit>:<earlier path> > <path now>`, and change
-  nothing in it.
+  nothing in it. A post whose copy now ends in a transcript, which its
+  entry says, is never restored while that transcript stays: the earlier
+  copy holds none, so merge it instead.
 - **Merged**, when each copy holds knowledge the other lacks. The copy now
   stays as it stands, frontmatter and all. Add a section after its last
   line, or before its `## Transcript` heading when it has one, headed as
@@ -187,7 +189,9 @@ Read the digest beside the item as it now stands, then do one of two:
   (`{"id", "signal", "topics", "facts"}`, `entities` optional), and run
   `bin/dex enrich item digest --file cache/digest.json`. The verb writes
   the file, derives its date and its media list from what the item holds
-  on disk, and records the digest pass. A fact left out of the payload is
+  on disk, records the digest pass, and brings the item's corpus listing,
+  `corpus/<year>/<id>.md`, up to date when it has fallen behind the item's
+  files; all of that is the verb's writing. A fact left out of the payload is
   gone from the digest, so carry every one that still holds. When only
   the media list is wrong, the payload is the digest's own facts as they
   stand, and the verb writes the list.
@@ -225,7 +229,8 @@ whose transcript is speech and each kept digest is unchanged, that each
 restored page is its earlier copy byte for byte, that each merged page
 is its copy now with one section added whose every line the earlier copy
 holds word for word, that each post whose transcript is not speech
-holds none, that each revised digest was written again, that no file is
+holds none, names no transcriber and is otherwise as it was, that each
+revised digest was written again, that no file is
 deleted, and that nothing outside the files this directive names has
 changed. It records the directive only when every condition holds. Run it
 even when you could not finish the steps above, and when it refuses, do
@@ -244,7 +249,8 @@ give back.
 ## 7. Commit
 
 Commit every file you changed, with what the digest verb wrote (the
-digests and `state/passes.jsonl`), the ledger when step 6 changed it, and
+digests, `state/passes.jsonl`, and any corpus listing it brought up to
+date), the ledger when step 6 changed it, and
 `state/directives.jsonl`, together as one commit. The subject is the first
 line `bin/dex directive show 3` printed, `directive 3: ` followed by this
 directive's intent. The body names every change, so the owner can find each

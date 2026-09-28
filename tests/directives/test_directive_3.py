@@ -1,13 +1,14 @@
 """Tests for directive 3: what 0.2.2's re-reads and transcripts left, judged against git history."""
 
 import datetime
+import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from dex_engine import numbered_log
+from dex_engine import enrich, numbered_log
 from dex_engine.directive import MATERIALS_BEGIN, show
 from dex_engine.directives import directive_3, discover
 from dex_engine.directives.directive_3 import RECORD, check, materials, survey
@@ -825,6 +826,90 @@ class TestCheck:
         body = post_body(f"@a — a clip\n\n{section}", "🍢🍢")
         field.write(POST, render_enrichment(POST_URL, HEALED, fields, body))
         assert any("its copy now has changed" in u for u in check(field.root))
+
+    def test_a_post_whose_transcript_stays_is_never_restored(self, field):
+        # The earlier copy holds no transcript: a restore would take it away,
+        # and a transcript kept as speech could then never pass.
+        self.lost_post(field)
+        assert "- The copy now ends in a transcript" in materials(field.root)
+        record(
+            field,
+            f"- {POST}: restored — the second line",
+            f"- {POST}: speech",
+            f"- {POST_DIGEST}: kept — it never used the words",
+        )
+        before = "@a — a clip\n\nand a second line"
+        field.write(POST, render_enrichment(POST_URL, LANDED, {"via": "fxtwitter"}, before))
+        unmet = check(field.root)
+        assert any("ends in a transcript a restore would take away" in u for u in unmet)
+        record(
+            field,
+            f"- {POST}: restored — the second line",
+            f"- {POST}: not speech — a line of emoji",
+            f"- {POST_DIGEST}: kept — it never used the words",
+        )
+        assert check(field.root) == []
+
+    def test_a_post_whose_later_transcript_is_listed_nowhere_is_never_restored(self, field):
+        # Transcribed again by an engine that asks for speech first: its
+        # transcript is no one's to take out, so a restore would lose it.
+        self.lost_post(field)
+        field.append(entry(POST_URL, Status.DONE, engine="0.2.6", date=HEALED, path=POST))
+        field.commit("run: the post heard by an asking engine")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert ([p.path for p in found.pages], found.transcripts) == ([POST], ())
+        record(field, f"- {POST}: restored", f"- {POST_DIGEST}: kept — it never used the words")
+        before = "@a — a clip\n\nand a second line"
+        field.write(POST, render_enrichment(POST_URL, LANDED, {"via": "fxtwitter"}, before))
+        assert any("a restore would take away" in u for u in check(field.root))
+
+    def test_taking_a_transcript_out_takes_out_nothing_else(self, field):
+        field.healed(EARLIER)
+        TestTranscripts().post(field, engine="0.2.2")
+        record(
+            field,
+            f"- {POST}: not speech — a line of emoji",
+            f"- {POST_DIGEST}: kept — it never used the words",
+        )
+        field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, ""))
+        assert any("more than its transcript changed" in u for u in check(field.root))
+        left = {**self.TAKEN_OUT, "model": "whisper-1"}
+        field.write(POST, render_enrichment(POST_URL, HEALED, left, "@a — a clip"))
+        assert any("still names its transcriber" in u for u in check(field.root))
+        field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, "@a — a clip"))
+        assert check(field.root) == []
+
+    def test_the_digest_verbs_refresh_of_the_items_listing_is_no_stray_change(
+        self, field, monkeypatch
+    ):
+        # The verb rewrites the corpus listing when it is stale, as it is
+        # after a sync gave back files that no run has read since.
+        field.healed(self.LOST)
+        done = field.root / "state" / "directives.jsonl"
+        for number in (1, 2):
+            numbered_log.append(done, number=number, engine="0.2.0", date=LANDED)
+        field.write(
+            f"corpus/{ITEM[:4]}/{ITEM}.md",
+            f"---\nid: {ITEM}\nsource: discord\nchannel: general\nshared_by: owner\n"
+            f"date: {LANDED}\nurls:\n  - {URL}\nkinds: [web]\nstatus: enriched\n"
+            "enrichment: []\n---\nnote\n",
+        )
+        field.commit("run: directives 1 and 2, and a listing gone stale")
+        record(field, f"- {PAGE}: restored", f"- {DIGEST}: revised — the earlier copy's facts")
+        field.write(PAGE, page(EARLIER))
+        payload = {"id": ITEM, "signal": "low", "topics": ["ledgers"], "facts": [CLOSING]}
+        field.write("cache/digest.json", json.dumps(payload))
+        monkeypatch.chdir(field.root)
+        enrich.main(["item", "digest", "--file", "cache/digest.json"])
+        changed = subprocess.run(  # noqa: S603 — test-built args, no shell
+            ["git", "-C", str(field.root), "status", "--porcelain"],  # noqa: S607
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        assert f" M corpus/{ITEM[:4]}/{ITEM}.md" in changed
+        assert check(field.root) == []
 
     def lost_post(self, field: Field) -> None:
         """A post a heal re-read shortened and gave a transcript an unasking engine wrote."""
