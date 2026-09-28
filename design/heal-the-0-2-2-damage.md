@@ -91,18 +91,75 @@ runs, and those run while every pending directive permits them; every other
 content command still refuses. Directive 3 permits the digest verb alone.
 A directive never asks a session to delete a tracked file.
 
-On the owner's largest instance the materials list 66 pages to judge (about
-130,000 characters), most of them page chrome a session keeps at a glance.
+On the owner's largest instance the materials list 95 pages to judge (about
+207,000 characters), most of them page chrome a session keeps at a glance.
+
+## A merge is the copy now plus a dated section
+
+The first merge rule had the session splice each passage only the earlier
+copy held back where it had stood. Clone sessions showed what that makes of
+a page the site had changed in the meantime: a models table holding both
+an old model's row and the row that replaced it, and a price list mixing
+two months' plans, a page that never existed at any moment. A merge now
+leaves the copy now as it stands and adds one section after it, before any
+transcript, headed `## From the copy saved on <date>` with the earlier
+copy's fetch date, holding each passage of knowledge only the earlier copy
+held, word for word. What the site has dropped reads as what it was, and a
+copy that was only read short loses nothing by the heading. A passage the
+copy now holds in an updated form, a changed number, name or version, or
+the same facts reworded, was not lost and stays out.
+
+The fixed shape makes the merge checkable: the copy now must be intact
+above the section, its transcript below it unchanged, and every line of the
+section a line of the earlier copy. A session that damaged the page while
+merging, or paraphrased, is refused. The merge is one edit to the page
+file, never a page assembled from numbered line ranges: a clone session
+that stitched pages together from line ranges was refused by auto mode's
+permission check, and a line number one off loses a line without a trace.
+
+A github link into a repository, where the earlier copy is the repository's
+README, stays corrected even when the correct reading is a thin folder
+listing; the README's knowledge goes into the digest where nothing else in
+the item holds it. In every such case on the owner's instances the digest
+already carried it.
+
+## A permission refused is still filed
+
+A clone session stopped by its own permissions held back the issue the
+failure procedure asks for, reading the refusal as its environment's fault
+rather than an engine defect. That leaves an instance whose directive can
+never complete, every content command refused, and nobody told. A directive
+must complete in an unattended run, so one that did not is the engine's to
+fix whatever stopped it, a refused permission included, and the failure
+procedure says so.
+
+## Testing it
+
+Subagent sessions pointed at clones gave the first rounds of findings, but
+auto mode judges their commands in the context of the public engine
+repository they were started in. The last rounds ran what a scheduled run
+is: a headless Claude Code session in auto mode, started in the clone,
+nobody answering a prompt, the instance's own CLAUDE.md, contract and
+skills loaded, the clone's machinery brought to the engine under test by
+that engine's own `sync()`, issues kept local and the remote unpushable.
+Two of those sessions, running side by side, wrote the materials to the
+same file under `/tmp`, and each read the other's instance; both noticed.
+Scheduled runs of several instances on one machine can overlap the same
+way, so the instructions keep the materials, and every file of the
+session's own, under the instance's `cache/`.
 
 ## The check
 
 The session records one outcome per listed page, transcript and settled
 digest in `cache/directive-3.md`. The check holds the record to the files:
 a kept page, a transcript kept as speech and a kept digest are unchanged, a
-restored page is its earlier copy byte for byte, a merged page differs from
-both copies, a transcript taken out is gone, a revised digest was written
-again, no file is deleted, and nothing outside the listed files, their
-digests, the digest pass log and `wiki/` has changed. It verifies that every outcome was recorded and is what the
-files hold, never that the judgment was right; that rests on the
-instructions and on running the directive over clones of the owner's
-instances, with real sessions, before it ships.
+restored page is its earlier copy byte for byte, a merged page is its copy
+now with the one dated section of the earlier copy's lines, a transcript
+taken out is gone, a revised digest was written again, no file is deleted,
+and nothing outside the listed files, their digests, the digest pass log
+and `wiki/` has changed. A page is judged apart from its transcript: a post
+listed both as a page and as a transcript can be kept as a page with its
+transcript taken out. The check verifies that every outcome was recorded
+and is what the files hold, never that the judgment was right; that rests
+on the instructions and on running the directive over clones of the
+owner's instances, with real sessions, before it ships.

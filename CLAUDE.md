@@ -72,7 +72,9 @@ the engine stays unaware of which ones exist.
     says how to perform the pending ones, and `done`, refusing an unmet
     check, says what the run does next, so a session holding instructions
     older than the engine it just synced still does it right. A directive
-    always completes unattended and never waits on the owner. Directive 1
+    always completes unattended and never waits on the owner, so one that
+    did not is filed as an engine defect whatever stopped it, a refused
+    permission included. Directive 1
     rehomes an owner-written CLAUDE.md, which its code finds in git
     history and prints in its materials beside the server and channel
     ids read from the head of each Discord export (scope into `lens.md`,
@@ -86,8 +88,11 @@ the engine stays unaware of which ones exist.
     read from the ledger and git history at the commit before migration
     15 was recorded, list each changed page with what it lost, each
     transcript an unasking engine wrote, and each digest drawn while a
-    video was gone; the session keeps, restores from history or merges,
-    takes out what is not speech, and keeps or revises each digest drawn
+    video was gone; the session keeps, restores from history or merges (a
+    merge leaves the copy now whole and adds the earlier copy's lost
+    passages word for word under one dated section, which the check holds
+    line by line), takes out what is not speech, and keeps or revises each
+    digest drawn
     from what it replaced through `enrich item digest`, the one verb it
     permits, carrying forward every fact still true.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
