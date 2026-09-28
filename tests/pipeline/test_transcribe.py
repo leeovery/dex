@@ -1565,6 +1565,20 @@ class TestTranscriptLandsBesideTheVideo:
         # The job ended with the post kept; nothing retries it to want the audio.
         assert audio_files(instance) == []
 
+    def test_a_changed_park_is_owed_by_every_item_sharing_the_post(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance, other, urls=[self.POST_URL], kinds=["x"])
+        stored = item_dir / f"x-{self.post_hash()[:6]}.md"
+        stored.write_text(
+            stored.read_text(encoding="utf-8").replace("(video post)", "An older reading."),
+            encoding="utf-8",
+        )
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, _entries = self.rerun(instance, video=gone)
+        assert f"**{ITEM}** ↳ 1 rewritten" in report
+        assert f"**{other}** ↳ 1 rewritten" in report
+
     def test_a_park_that_changed_the_body_owes_its_writing_up(self, instance):
         item_dir = self.landed_before_the_fix(instance)
         stored = item_dir / f"x-{self.post_hash()[:6]}.md"
