@@ -560,20 +560,21 @@ def _quoted(label: str, lines: tuple[str, ...], cap: int) -> list[str]:
     return [f"- {label} ({shown}):", *(f"  > {line}" for line in lines[:cap])]
 
 
+def _excerpt(text: str, cap: int) -> str:
+    """``text`` whole when it fits, else its first ``cap`` characters marked as cut."""
+    text = text.strip()
+    return text if len(text) <= cap else f"{text[:cap]}… ({len(text)} characters)"
+
+
 def _transcript_block(transcript: Transcript) -> list[str]:
     after = "after" if transcript.digest_since else "before"
-    body = transcript.transcript
-    shown = (
-        body
-        if len(body) <= _TRANSCRIPT_CHARS
-        else f"{body[:_TRANSCRIPT_CHARS]}… ({len(body)} characters)"
-    )
+    shown = _excerpt(transcript.transcript, _TRANSCRIPT_CHARS)
     return [
         f"### `{transcript.path}`",
         "",
         f"- Post: {transcript.url}, transcript written by engine {transcript.engine}",
         f"- Digest: written {after} the transcript landed",
-        f"- The post: {transcript.post[:_POST_CHARS].strip() or '(no text)'}",
+        f"- The post: {_excerpt(transcript.post, _POST_CHARS) or '(no text)'}",
         f"- The transcript: {shown}",
         "",
     ]
@@ -705,7 +706,8 @@ def _digests_unmet(
         if outcome == "revised" and (held is None or held == head):
             unmet.append(
                 f"`{path}` is recorded revised but is unchanged: write it with "
-                "`bin/dex enrich item digest --file cache/digest.json` (step 3)"
+                "`bin/dex enrich item digest --file cache/digest.json` (step 3), or record "
+                "it kept when the verb wrote it as it stood"
             )
         elif outcome == "kept" and held != head:
             unmet.append(

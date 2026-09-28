@@ -436,7 +436,8 @@ class TestCheck:
         record(field, f"- {PAGE}: restored", f"- {DIGEST}: revised — drawn from the earlier copy")
         unchanged = (
             f"`{DIGEST}` is recorded revised but is unchanged: write it with "
-            "`bin/dex enrich item digest --file cache/digest.json` (step 3)"
+            "`bin/dex enrich item digest --file cache/digest.json` (step 3), or record it "
+            "kept when the verb wrote it as it stood"
         )
         assert check(field.root) == [unchanged]
         field.write(DIGEST, "---\nid: x\n---\n- drawn from the earlier copy again\n")

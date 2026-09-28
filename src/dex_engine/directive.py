@@ -57,11 +57,14 @@ and `git clean -fd` leaves ignored files such as `cache/` and `.env` alone. Resi
 the tree trips the next run's guard.
 2. Perform no further directive this run, since a later one may build on this one.
 3. File the engine defect with `bin/dex issue`, per the "Engine defects" rubric in \
-`.claude/skills/dex-run/references/processing.md`, with "verb": "directive", "expected": \
-"directive {number} completes and passes its own check" and "observed": "directive {number} \
-did not complete on this instance", worded exactly so, because the same wording on every \
-later run is what dedups the report to one issue. Put what the check reported, in abstract \
-terms, in `steps`, and the concrete detail in `note`.
+`.claude/skills/dex-run/references/processing.md`, whatever stopped the directive, a command \
+this session's permissions refused included: a directive must complete in an unattended run, \
+so one that did not is the engine's to fix, and the issue is how its maintainer hears of it. \
+Use "verb": "directive", "expected": "directive {number} completes and passes its own check" \
+and "observed": "directive {number} did not complete on this instance", worded exactly so, \
+because the same wording on every later run is what dedups the report to one issue. Put what \
+the check reported and what stopped the directive, in abstract terms, in `steps`, and the \
+concrete detail in `note`.
 4. Continue the run without content work: the content commands refuse while directive \
 {number} is pending, so go on to the steps that need none of them."""
 

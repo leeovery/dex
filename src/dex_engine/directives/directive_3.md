@@ -88,7 +88,10 @@ the file itself is the other. Then decide one of three:
 - **Kept**, when what was lost is not knowledge: navigation, banners,
   cookie and subscription prompts, share and comment widgets, lists of
   related articles, a date, a counter, a table's separator line or empty
-  row, or the same words in another layout. Most entries end here.
+  row, or the same words in another layout. Most entries end here. That
+  list names what is never knowledge; anything else is knowledge when the
+  lens reads for it, wherever on the page it stands, such as a quoted
+  customer's words or a plan's name, price and what it includes.
 - **Restored**, when the re-read lost knowledge its earlier copy held and
   gained none of its own: prose, code, a table's rows, a list, a caption, a
   notebook's cells. A page that now holds something else entirely, such as
@@ -100,10 +103,19 @@ the file itself is the other. Then decide one of three:
 - **Merged**, when each copy holds knowledge the other lacks. Start from
   the copy that holds more, keep its frontmatter, and add each passage of
   knowledge only the other copy holds, word for word, in the place it held
-  there.
+  there, or where it reads right when the page around it has changed. A
+  passage brings what it needs to read as it did there: the heading it
+  stood under, and a table's header row with the rows it adds. Make the
+  merge on the page file itself. When you start from the earlier copy,
+  first write it back as a restore does. Then add each passage with an
+  edit of its own. Never assemble a page from numbered line ranges or with
+  a script: a line number one off drops or doubles a line without a trace,
+  and an edit shows exactly what it adds.
 
-A github entry whose earlier copy is a repository's README, for a link
-that names something inside the repository, was a misread the re-read
+What a site has changed or dropped since the page was saved counts the
+same as what an extractor lost: the owner saved the page as it was. A
+github entry whose earlier copy is a repository's README, for a link that
+names something inside the repository, was a misread the re-read
 corrected: keep it.
 
 ## 2. Judge each transcript
@@ -139,7 +151,11 @@ the digest, `state/digests/<id>.md`, of:
 Read the digest beside the item as it now stands, then do one of two:
 
 - **Keep** it when it states nothing that is no longer so and misses
-  nothing of substance the item now holds.
+  nothing of substance the item now holds. A fact is no longer so when
+  the repair changed what it describes: a transcript you took out, a
+  video it says is gone that is back, a passage it says a page lacks that
+  you put back. A digest whose media list lacks a file the item now holds
+  misses that file.
 - **Revise** it otherwise. Write its payload with every fact the digest
   states that is still true, corrected where the repair changed it, and
   what the item now holds that the digest lacks: the knowledge of a page
@@ -151,11 +167,13 @@ Read the digest beside the item as it now stands, then do one of two:
   `bin/dex enrich item digest --file cache/digest.json`. The verb writes
   the file, derives its date and its media list from what the item holds
   on disk, and records the digest pass. A fact left out of the payload is
-  gone from the digest, so carry every one that still holds.
+  gone from the digest, so carry every one that still holds. When only
+  the media list is wrong, the payload is the digest's own facts as they
+  stand, and the verb writes the list.
 
 Never delete a digest, and never edit one by hand: the verb is its writer.
-Leave every other file under **Files a re-read removed** gone; git history
-keeps each of them.
+Leave every file under **Files a re-read removed** gone, whether or not
+its knowledge went into a digest; git history keeps each of them.
 
 ## 4. Record each outcome
 
@@ -163,7 +181,8 @@ Write `cache/directive-3.md` with one line for every entry under **Pages a
 re-read replaced**, every entry under **Transcripts on x posts**, and every
 digest you settled in step 3. Name each path exactly as the materials give
 it, without backticks. An x post listed under both lists takes a line for
-each.
+each. When those lists are empty and you settled no digest, there is
+nothing to record: write no file.
 
 ```
 - <path>: kept — <why, in a few words>
@@ -200,8 +219,9 @@ give back.
 
 ## 7. Commit
 
-Commit every file you changed, the ledger when step 6 changed it, and
-`state/directives.jsonl` together as one commit. The subject is the first
+Commit every file you changed, with what the digest verb wrote (the
+digests and `state/passes.jsonl`), the ledger when step 6 changed it, and
+`state/directives.jsonl`, together as one commit. The subject is the first
 line `bin/dex directive show 3` printed, `directive 3: ` followed by this
 directive's intent. The body names every change, so the owner can find each
 earlier copy:
@@ -227,7 +247,8 @@ Videos asked for again:
 
 Write the first line as it stands with the earlier commit's hash in place
 of `<earlier commit>`, keeping `<earlier path>` as written. Leave out a list
-that would be empty. When nothing changed, the body is one line saying so.
+that would be empty. When nothing changed, the body is one line saying so,
+with no line of earlier copies.
 Write the message to `cache/directive-3-message.txt` and commit with
 `git commit -F cache/directive-3-message.txt`, which keeps its quotes and
 backticks exactly as written.
