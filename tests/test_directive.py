@@ -86,6 +86,11 @@ class TestList:
     def test_the_next_step_performs_each_through_show(self):
         assert "`bin/dex directive show <n>`" in LIST_NEXT
 
+    def test_the_next_step_keeps_saved_output_inside_the_instance(self):
+        # Sessions of two instances once saved `show` to one /tmp file at
+        # the same time, each reading the other's materials.
+        assert "under `cache/`, never in a shared directory such as `/tmp`" in LIST_NEXT
+
     def test_one_pending_directive_is_counted_in_the_singular(self, instance):
         assert list_pending(instance, [make_directive(1)]).startswith("1 directive pending")
 
