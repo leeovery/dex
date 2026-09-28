@@ -637,7 +637,8 @@ def _unmet(root: Path, found: Survey) -> list[str]:
             touched.add(transcript.path)
             owed.add(transcript.item)
     revised = _digests_unmet(root, record, owed, unmet)
-    unmet += _outside(root, touched, revised)
+    settled = {PurePosixPath(path).stem for path, kind in record if kind == "digest"}
+    unmet += _outside(root, touched, revised, settled)
     return unmet
 
 
@@ -845,7 +846,7 @@ def _digests_unmet(
     return revised
 
 
-def _outside(root: Path, touched: set[str], revised: set[str]) -> list[str]:
+def _outside(root: Path, touched: set[str], revised: set[str], settled: set[str]) -> list[str]:
     """Every change in the tree this directive's instructions do not name."""
     status = git_output(
         root, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
@@ -854,8 +855,9 @@ def _outside(root: Path, touched: set[str], revised: set[str]) -> list[str]:
         return []
     unmet: list[str] = []
     # The digest verb refreshes the item's corpus listing when it is stale,
-    # as it is after a sync gave back files and no run has read them since.
-    listed = {_corpus(PurePosixPath(digest).stem) for digest in revised}
+    # as it is after a sync gave back files and no run has read them since,
+    # and the refresh stands even where the digest itself was then kept.
+    listed = {_corpus(item) for item in settled}
     for path, state in _changes(status):
         if state == "M" and (path in touched or path in listed or path.startswith("wiki/")):
             continue

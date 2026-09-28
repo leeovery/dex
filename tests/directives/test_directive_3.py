@@ -913,6 +913,10 @@ class TestCheck:
         ).stdout
         assert f" M corpus/{ITEM[:4]}/{ITEM}.md" in changed
         assert check(field.root) == []
+        # The digest put back and kept after all: the refresh still stands.
+        field.git(field.root, "checkout", "HEAD", "--", DIGEST)
+        record(field, f"- {PAGE}: restored", f"- {DIGEST}: kept — its facts held already")
+        assert check(field.root) == []
 
     def lost_post(self, field: Field) -> None:
         """A post a heal re-read shortened and gave a transcript an unasking engine wrote."""
