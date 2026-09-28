@@ -506,6 +506,9 @@ def _render(found: Survey) -> str:
         ),
         "",
     ]
+    owed = (found.pages, found.transcripts, found.gone_digests, found.removed, found.videos)
+    if not any(owed):
+        out += ["Nothing below asks for work: go to step 5.", ""]
     out += _heading("Pages a re-read replaced", len(found.pages))
     for page in found.pages:
         out += _page_block(page)

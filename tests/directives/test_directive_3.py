@@ -160,6 +160,15 @@ class TestHistory:
         assert survey(field.root) == "0.2.2's migrations never ran here"
         assert check(field.root) == []
 
+    def test_re_reads_cancelled_before_any_landed_leave_nothing_asking_for_work(self, field):
+        # An instance that went from 0.2.1 straight to a release that ran the
+        # heal migrations and cancelled their re-reads in one sync.
+        field.landed()
+        field.synced()
+        assert "Nothing below asks for work: go to step 5." in materials(field.root)
+        field.reread("Intro line.")
+        assert "asks for work" not in materials(field.root)
+
     def test_the_earlier_commit_is_the_one_before_migration_15_was_recorded(self, field):
         earlier = field.healed("Intro line.\n\nA closing thought about ledgers.")
         found = survey(field.root)

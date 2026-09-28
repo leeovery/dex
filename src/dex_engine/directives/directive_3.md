@@ -45,8 +45,14 @@ is pending. Every other `bin/dex enrich` command refuses until it is done.
 ## The materials
 
 The materials are printed after these instructions, between the
-`===== materials` line and the `===== end of materials =====` line. They
-open with the **earlier commit**: this instance as it stood just before
+`===== materials` line and the `===== end of materials =====` line. To
+keep them in a file, write them with
+`bin/dex directive show 3 --materials > cache/directive-3-materials.md`.
+Every file this directive's work writes stays inside this instance, and
+anything of your own goes under `cache/`, never a shared directory such as
+`/tmp`: another instance's run may be working on the same machine at the
+same time. The materials open with the **earlier commit**: this instance
+as it stood just before
 0.2.2's migrations ran. Every "earlier copy" below is a file as that commit
 holds it. Six lists follow, each under a heading of its own, with a line
 saying there is nothing in place of a list that is empty:
@@ -76,7 +82,9 @@ saying there is nothing in place of a list that is empty:
 
 When the materials say history cannot answer here, because this is no git
 repository, the clone is shallow, or 0.2.2's migrations never ran, nothing
-here can be shown to be worse: go to step 5.
+here can be shown to be worse: go to step 5. The same holds when they say
+nothing asks for work, which is how an instance looks when 0.2.2's
+re-reads were cancelled before any of them landed.
 
 ## 1. Judge each page a re-read replaced
 
@@ -108,7 +116,8 @@ the file itself is the other. Then decide one of three:
   heading, put each passage of knowledge only the earlier copy holds,
   word for word, in the order it had there. A passage brings what it
   needs to read as it did: the heading it stood under, and a table's
-  header row with the rows it adds. A passage the copy now holds in an
+  header row with the rows it adds. Its own headings keep the level they
+  had, whatever that is. A passage the copy now holds in an
   updated form was not lost, whether a row or sentence with a number, a
   name or a version changed, or the same facts in other words: leave it
   out. The heading keeps what the site has since dropped from reading as
