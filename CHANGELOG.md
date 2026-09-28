@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - 2026-09-28
+
+🐛 Fixed
+- A fetched GitHub file or X code listing that itself contained a code fence no longer closes the wrapper early and reads the rest of the content inside out.
+- A notebook cell's own fence lines no longer break the fence wrapped around it — same fix, shared by all three drivers.
+- The run report now also names an item whose rerun took a page away since its last digest, alongside items that lost every page, so it's clear a new digest is owed.
+
 ## [0.2.6] - 2026-09-28
 
 ✨ Added
