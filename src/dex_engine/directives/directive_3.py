@@ -702,7 +702,7 @@ def _page_unmet(
 def _page_part(text: str, *, transcript_out: bool) -> tuple[dict[str, str], str]:
     """A page's frontmatter and its body above any transcript."""
     fields, body = parse_enrichment(text)
-    notes = pre_transcript(fields, body).rstrip()
+    notes = pre_transcript(fields, body)
     if transcript_out:
         fields = {key: value for key, value in fields.items() if key not in _TRANSCRIPT_FIELDS}
     return fields, notes

@@ -28,6 +28,8 @@ POST_UNIT = work_hash(POST_URL)
 POST = f"enrichment/{POST_ITEM}/x-{POST_UNIT[:6]}.md"
 POST_DIGEST = f"state/digests/{POST_ITEM}.md"
 VIDEO_URL = "https://video.example.test/900.mp4"
+# The reason 0.2.2 closed a video with when its post's transcript landed.
+RETIRED = "superseded — the transcript of its post stands for this video"
 
 TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
 CLOSING = "A closing thought about ledgers."
@@ -279,6 +281,38 @@ class TestPages:
         found = survey(field.root)
         assert not isinstance(found, str)
         assert found.pages[0].lost_lines == ("Intro line.",)
+        assert found.pages[0].gained_lines == ("Intro, reworded.",)
+        text = materials(field.root)
+        assert "- Lines of the copy now the earlier copy lacked (1):\n  > Intro, reworded." in text
+
+    def test_a_rerun_no_heal_migration_asked_for_is_not_listed(self, field):
+        # The owner's own re-read of a page is no damage of 0.2.2's, whatever it lost.
+        field.landed()
+        field.synced()
+        field.write(PAGE, page("Intro line.", fetched=HEALED))
+        field.append(entry(URL, Status.DONE, engine="0.2.2", date=HEALED, rerun=True, path=PAGE))
+        field.commit("run: the owner's re-read")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert (found.pages, found.unharmed) == ((), ())
+
+    def test_a_page_gone_from_the_tree_is_not_listed(self, field):
+        field.healed("Intro line.")
+        (field.root / PAGE).unlink()
+        field.commit("run: the item's files went")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.pages == ()
+
+    def test_a_ledger_line_that_does_not_parse_hides_nothing_after_it(self, field):
+        field.landed()
+        with (field.root / "state" / "enrichment-ledger.jsonl").open("a") as handle:
+            handle.write("{not a ledger line\n")
+        field.synced()
+        field.reread("Intro line.")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert [page_.path for page_ in found.pages] == [PAGE]
 
     def test_a_post_whose_text_is_as_it_was_owes_nothing_here(self, field):
         # Its transcript is the transcript list's to judge.
@@ -360,9 +394,66 @@ class TestTranscripts:
             "🍢🍢🍢",
             True,
         )
-        assert "- The transcript: 🍢🍢🍢" in materials(field.root)
+        text = materials(field.root)
+        assert f"- Post: {POST_URL}, transcript written by engine {engine}" in text
+        assert "- The post: @a — a clip" in text
+        assert "- The transcript: 🍢🍢🍢" in text
 
-    @pytest.mark.parametrize("engine", ["0.2.1", "0.2.6", "0.3.0"])
+    def test_posts_passed_over_before_it_hide_nothing(self, field):
+        # Each post here sorts before the one holding a transcript, and each
+        # is passed over at a different point.
+        field.healed(EARLIER)
+        passed_over = {
+            "https://x.com/i/status/70": ("0.1.17", "@b — an older post"),
+            "https://x.com/i/status/81": ("0.2.2", None),
+            "https://x.com/i/status/82": ("0.2.2", "@c — a post with no video"),
+        }
+        for url, (engine, text) in passed_over.items():
+            path = f"enrichment/{POST_ITEM}/x-{work_hash(url)[:6]}.md"
+            if text is not None:
+                field.write(path, render_enrichment(url, HEALED, {"via": "fxtwitter"}, text))
+            field.append(entry(url, Status.DONE, engine=engine, date=HEALED, path=path))
+        field.commit("run: three posts")
+        assert all(work_hash(url) < POST_UNIT for url in passed_over)
+        self.post(field, engine="0.2.2")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert [transcript.path for transcript in found.transcripts] == [POST]
+
+    def test_a_transcript_on_anything_but_a_post_is_not_judged_here(self, field):
+        # Podcasts and videos were transcribed long before 0.2.2.
+        field.healed(EARLIER)
+        episode = "https://podcast.example.test/episode-1"
+        path = f"enrichment/{ITEM}/podcast-{work_hash(episode)[:6]}.md"
+        fields: dict[str, str | int | None] = {"via": "whisper-api", "model": "whisper-1"}
+        field.write(path, render_enrichment(episode, HEALED, fields, post_body("notes", "words")))
+        field.append(
+            entry(
+                episode,
+                Status.DONE,
+                engine="0.2.2",
+                date=HEALED,
+                item=ITEM,
+                kind=Kind.PODCAST,
+                path=path,
+            )
+        )
+        field.commit("run: an episode")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.transcripts == ()
+
+    def test_a_post_queued_to_be_read_again_is_not_judged(self, field):
+        # The next run reads it with an engine that asks for speech first.
+        field.healed(EARLIER)
+        self.post(field, engine="0.2.2")
+        field.append(entry(POST_URL, Status.QUEUED, engine="0.2.7", rerun=True))
+        field.commit("run: the post asked for again")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.transcripts == ()
+
+    @pytest.mark.parametrize("engine", ["0.2.1", "0.2.6", "0.3.0", "not a version"])
     def test_a_transcript_from_outside_the_unasking_engines_is_not(self, field, engine):
         field.healed(EARLIER)
         self.post(field, engine=engine)
@@ -442,13 +533,87 @@ class TestVideos:
                 job=Job.MEDIA,
                 parent=POST_UNIT,
                 depth=1,
-                reason="superseded — the transcript of its post stands for this video",
+                reason=RETIRED,
             )
         )
         field.commit("run: a video retired")
         found = survey(field.root)
         assert not isinstance(found, str)
         assert found.videos == ((VIDEO_URL, POST_ITEM),)
+
+    def test_only_a_video_0_2_2_retired_is_asked_for_again(self, field):
+        field.healed(EARLIER)
+        media = {"job": Job.MEDIA, "parent": POST_UNIT, "depth": 1}
+        field.append(
+            entry(
+                "https://video.example.test/901.mp4",
+                Status.SKIPPED,
+                reason="set aside by the owner",
+                **media,
+            ),
+            entry(
+                "https://video.example.test/902.mp4",
+                Status.DONE,
+                path=f"enrichment/{POST_ITEM}/media-1.mp4",
+                **media,
+            ),
+            entry(VIDEO_URL, Status.SKIPPED, reason=RETIRED, **media),
+        )
+        field.commit("run: three videos")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.videos == ((VIDEO_URL, POST_ITEM),)
+
+    def test_a_line_stamped_out_of_order_hides_nothing_after_it(self, field):
+        # A clock that jumped back: the second line loses to the first.
+        field.healed(EARLIER)
+        other = "https://video.example.test/903.mp4"
+        media = {"job": Job.MEDIA, "parent": POST_UNIT, "depth": 1}
+        late = datetime.datetime(2026, 9, 20, tzinfo=datetime.UTC)
+        early = datetime.datetime(2026, 8, 20, tzinfo=datetime.UTC)
+        field.append(
+            entry(other, Status.SKIPPED, reason="set aside by the owner", at=late, **media),
+            entry(other, Status.QUEUED, at=early, **media),
+            entry(VIDEO_URL, Status.SKIPPED, reason=RETIRED, **media),
+        )
+        field.commit("run: a clock that jumped back")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.videos == ((VIDEO_URL, POST_ITEM),)
+
+    def test_a_digest_written_before_the_heal_is_not_listed_and_hides_nothing(self, field):
+        # The page's digest was last written at the earlier commit, before
+        # 0.2.2 took any video; it sorts before the post, whose digest was
+        # written while the post's video was gone.
+        field.landed()
+        field.synced()
+        field.reread(EARLIER, redigest=False)
+        field.write(POST_DIGEST, "---\nid: p\n---\n- the video is gone\n")
+        field.commit("run: re-digest while the video is gone")
+        page_video = "https://video.example.test/page.mp4"
+        for url, parent, item in (
+            (page_video, UNIT, ITEM),
+            (VIDEO_URL, POST_UNIT, POST_ITEM),
+        ):
+            path = f"enrichment/{item}/media-0.mp4"
+            field.write(path, "VIDEO")
+            field.append(
+                entry(
+                    url,
+                    Status.DONE,
+                    job=Job.MEDIA,
+                    parent=parent,
+                    depth=1,
+                    item=item,
+                    via="migration-20",
+                    path=path,
+                )
+            )
+        field.record_migrations(19, 20, engine="0.2.4")
+        field.commit("sync: engine v0.2.4")
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.gone_digests == (POST_ITEM,)
 
 
 class TestCheck:
@@ -578,10 +743,12 @@ class TestCheck:
             f"- {POST}: not speech — a line of emoji",
             f"- {POST_DIGEST}: kept — it never used the words",
         )
-        field.write(
-            POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, "@a — a clip")
-        )
+        field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, "@a — a clip"))
         assert check(field.root) == []
+
+    # A transcript taken out as step 2 says: `model:` gone, `via:` back to
+    # the fetch that stood before the transcript landed.
+    TAKEN_OUT: dict[str, str | int | None] = {"enclosure": VIDEO_URL, "via": "fxtwitter"}  # noqa: RUF012 — read only
 
     def test_a_post_merged_whose_transcript_came_out_keeps_its_page(self, field):
         self.lost_post(field)
@@ -592,7 +759,7 @@ class TestCheck:
             f"- {POST_DIGEST}: kept — it never used the words",
         )
         body = f"@a — a clip\n\n# From the copy saved on {LANDED}\n\nand a second line"
-        field.write(POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, body))
+        field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, body))
         assert check(field.root) == []
 
     def test_a_merged_post_keeps_its_transcript_below_the_section(self, field):
@@ -660,6 +827,56 @@ class TestCheck:
         unmet = check(field.root)
         assert any(f"`corpus/{ITEM[:4]}/{ITEM}.md` changed" in u for u in unmet)
         assert any("`stray.md` is new" in u for u in unmet)
+
+    def test_every_change_it_does_not_name_is_named_whatever_comes_before_it(self, field):
+        # In the tree's order: an allowed restore, a deleted digest, a changed
+        # ledger, the digest verb's log, then two new files.
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: restored", f"- {DIGEST}: kept")
+        field.write(PAGE, page(EARLIER))
+        (field.root / DIGEST).unlink()
+        field.append(entry(URL, Status.DONE, path=PAGE))
+        field.write("state/passes.jsonl", '{"item": "x", "stage": "digest"}\n')
+        field.write("stray-a.md", "new")
+        field.write("stray-b.md", "new")
+        unmet = check(field.root)
+        for named in (
+            f"`{DIGEST}` was deleted",
+            "`state/enrichment-ledger.jsonl` changed",
+            "`stray-a.md` is new",
+            "`stray-b.md` is new",
+        ):
+            assert any(named in u for u in unmet), named
+
+    def test_a_renamed_file_is_named_once_by_its_new_path(self, field):
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: kept")
+        field.git(field.root, "mv", f"corpus/{ITEM[:4]}/{ITEM}.md", "corpus/moved.md")
+        unmet = check(field.root)
+        assert len(unmet) == 1
+        assert unmet[0].startswith("`corpus/moved.md` changed")
+
+    def test_a_file_changed_then_deleted_is_named_deleted(self, field):
+        field.healed(self.LOST)
+        record(field, f"- {PAGE}: kept")
+        corpus = f"corpus/{ITEM[:4]}/{ITEM}.md"
+        field.write(corpus, "rewritten")
+        field.git(field.root, "add", corpus)
+        (field.root / corpus).unlink()
+        assert any(f"`{corpus}` was deleted" in u for u in check(field.root))
+
+    def test_a_record_may_open_with_a_title(self, field):
+        field.healed(self.LOST)
+        record(field, "# Directive 3", "", f"- {PAGE}: kept — the lost lines were page chrome")
+        assert check(field.root) == []
+
+    def test_an_unreadable_record_is_named(self, field):
+        field.healed(self.LOST)
+        (field.root / RECORD).parent.mkdir(parents=True, exist_ok=True)
+        (field.root / RECORD).write_bytes(b"- \xff\xfe: kept\n")
+        assert (
+            f"`{RECORD}` is unreadable (UnicodeDecodeError): write it again as step 4 says"
+        ) in check(field.root)
 
     def test_a_wiki_page_may_change(self, field):
         field.healed(self.LOST)
