@@ -168,13 +168,13 @@ class TestScaffold:
         assert pending(root, shipped) == []
 
     def test_the_engines_own_directives_are_recorded_done_at_birth(self, tmp_path):
-        # An instance born from this template is already in the shape both
-        # directives convert an older one to: its own lens.md, and the
-        # template's README.
+        # An instance born from this template is already in the shape the
+        # directives convert an older one to: its own lens.md, the
+        # template's README, and nothing an older engine's re-reads touched.
         root = tmp_path / "dex-cooking"
         scaffold(root, run=RecordingRun(), template=TEMPLATE)
         records = [json.loads(line) for line in directives_log(root).read_text().splitlines()]
-        assert [record["number"] for record in records] == [1, 2]
+        assert [record["number"] for record in records] == [1, 2, 3]
         assert [record["number"] for record in records] == [d.number for d in discover()]
         assert pending(root) == []
 

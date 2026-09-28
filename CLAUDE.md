@@ -74,7 +74,14 @@ the engine stays unaware of which ones exist.
     instructions claim authority over config in their own text, because
     the first run after the release still holds the previous release's
     instructions, which forbid editing config unattended. Directive 2
-    rewrites the README from the template.
+    rewrites the README from the template. Directive 3 repairs what
+    0.2.2's heal re-reads and x-post transcripts left: its materials,
+    read from the ledger and git history at the commit before migration
+    15 was recorded, list each changed page with what it lost, each
+    transcript an unasking engine wrote, and each digest drawn while a
+    video was gone; the session keeps, restores from history or merges,
+    takes out what is not speech, and deletes the digests drawn from
+    what it replaced for the run's backstop to write again.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -409,9 +416,10 @@ that as two executors. Neither weakens an ordinary run.
   damage a release really did, and from the instance's own git history (a
   restore, never a re-fetch): by a migration only where it can prove
   exactly what was damaged, otherwise by a directive, which hands the
-  judgment to the instance's own session. A problem found in the owner's
-  own instances can be fixed by hand there. A default, not a hard rule —
-  but the burden of proof is on touching stored content.
+  judgment to the instance's own session. The owner's own instances heal
+  through the same mechanism, never by hand first, so every instance gets
+  the repair that was tested. A default, not a hard rule — but the burden
+  of proof is on touching stored content.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in
