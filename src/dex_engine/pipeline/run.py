@@ -1187,7 +1187,9 @@ class _Drain:
         if entry.kind in _STORED_WITH_THE_VIDEO and self.ctx.hears_speech(acquired.audio) is False:
             # A post's video is asked before any transcriber hears it, since
             # silence comes back from one as invented speech. Nothing reached
-            # a provider, so the per-run cap stays unspent.
+            # a provider, so the per-run cap stays unspent, and the download
+            # goes: a retry would fetch the same silence and hear it again.
+            acquired.audio.unlink(missing_ok=True)
             raise ProviderInputError(NO_SPEECH_DETECTED)
         # The budget is spent HERE — only an attempt that reaches a
         # provider burns the per-run cap: failed acquisitions and

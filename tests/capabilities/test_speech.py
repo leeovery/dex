@@ -15,6 +15,8 @@ import pytest
 from dex_engine.capabilities.transcribe import speech
 from dex_engine.capabilities.transcribe.speech import cannot_tell, hears_speech
 
+SPEECH = Path(__file__).resolve().parents[1] / "fixtures" / "audio" / "speech.opus"
+
 
 def silence(path: Path, seconds: int) -> Path:
     """A 16kHz mono WAV of digital silence."""
@@ -51,6 +53,13 @@ class TestHearsSpeech:
         # is heard as holding nothing, where a transcriber would invent text.
         assert hears_speech(silence(tmp_path / "quiet.wav", 2)) is False
 
+    def test_real_speech_is_heard(self):
+        # The real decoder and the real detector on a voice: a detector gone
+        # deaf would park every talking video as holding no speech. Three
+        # seconds of Neil Armstrong on the Moon (NASA, public domain, from
+        # Wikimedia Commons' "Armstrong Small Step.ogg"), radio noise and all.
+        assert hears_speech(SPEECH) is True
+
     def test_speech_found_anywhere_is_speech(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             faster_whisper.vad, "get_speech_timestamps", lambda *_a, **_k: [{"start": 0, "end": 8}]
@@ -66,9 +75,9 @@ class TestHearsSpeech:
         rates: list[object] = []
         decode = faster_whisper.audio.decode_audio
 
-        def spy(path: str, **kwargs: object):
-            rates.append(kwargs.get("sampling_rate"))
-            return decode(path, **kwargs)
+        def spy(path: str, *, sampling_rate: int | None = None, split_stereo: bool = False):
+            rates.append(sampling_rate)
+            return decode(path, sampling_rate=sampling_rate or 16000, split_stereo=split_stereo)
 
         monkeypatch.setattr(faster_whisper.audio, "decode_audio", spy)
         assert hears_speech(silence(tmp_path / "quiet.wav", 1)) is False

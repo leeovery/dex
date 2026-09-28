@@ -1420,8 +1420,10 @@ class TestVoiceDetection:
             f"{run_mod.NO_SPEECH_DETECTED} — the post is already stored; mark done to keep it "
             "as the record, or rescue by hand"
         )
-        # Asked about the very clip the transcriber would have heard.
+        # Asked about the very clip the transcriber would have heard, which
+        # then leaves the cache: a retry would only hear the same silence.
         assert [clip.name for clip in detector.asked] == [f"{work_hash(self.X.POST_URL)}.mp4"]
+        assert audio_files(instance) == []
 
     @pytest.mark.parametrize("answer", [True, None])
     def test_speech_or_no_answer_reaches_the_transcriber(self, instance, answer):
