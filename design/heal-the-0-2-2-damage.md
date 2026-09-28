@@ -120,8 +120,7 @@ permission check, and a line number one off loses a line without a trace.
 A github link into a repository, where the earlier copy is the repository's
 README, stays corrected even when the correct reading is a thin folder
 listing; the README's knowledge goes into the digest where nothing else in
-the item holds it. In every such case on the owner's instances the digest
-already carried it.
+the item holds it.
 
 ## A permission refused is still filed
 
