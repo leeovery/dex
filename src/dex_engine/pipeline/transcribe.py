@@ -43,6 +43,7 @@ __all__ = [
     "acquire_post_audio",
     "acquire_youtube_audio",
     "estimated_tokens",
+    "holds_words",
     "keep_first_tokens",
     "keep_last_tokens",
 ]
@@ -72,6 +73,18 @@ _MB = 1024 * 1024
 # A post's video is held whole in memory between its download and the
 # transcriber, and an x video can run for hours.
 POST_VIDEO_MAX_BYTES = 512 * _MB
+
+
+def holds_words(transcript: str) -> bool:
+    """Whether a transcript holds a word: any letter or digit, in any script.
+
+    Whisper answers audio with no speech in it with text that is not
+    language as readily as with an empty string: a music-only clip came
+    back as a line of skewer emoji. A transcript without a single letter or
+    digit said nothing, exactly as an empty one did, and a provider reports
+    it the same way.
+    """
+    return any(char.isalnum() for char in transcript)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

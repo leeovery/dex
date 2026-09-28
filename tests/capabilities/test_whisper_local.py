@@ -134,6 +134,13 @@ class TestTranscribe:
         with pytest.raises(ProviderInputError, match="no speech"):
             local(FakeModel([])).transcribe(Path("/audio/silence.wav"), "")
 
+    def test_a_transcript_without_a_letter_or_digit_is_bad_input(self):
+        with pytest.raises(ProviderInputError, match="whisper-local heard no speech"):
+            local(FakeModel(["🍢🍢", " ♪"])).transcribe(Path("/audio/music.wav"), "")
+
+    def test_a_digit_alone_is_speech(self):
+        assert local(FakeModel([" 42"])).transcribe(Path("/audio/count.wav"), "") == "42"
+
     def test_model_load_failure_keeps_the_job_waiting(self):
         def load(_name: str):
             raise OSError("connection reset downloading model.bin")

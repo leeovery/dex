@@ -11,6 +11,7 @@ import pytest
 
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.capabilities.transcribe.speech import cannot_tell
 from dex_engine.drivers.instagram import InstagramDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
@@ -131,7 +132,7 @@ def seed_waiting(
     return entry
 
 
-def transcribe_ctx(instance, *, transcriber=None, download=None, transport=None):
+def transcribe_ctx(instance, *, transcriber=None, download=None, transport=None, hears=None):
     caps = Capabilities(
         transcribers=(transcriber if transcriber is not None else FakeTranscriber(),),
         extractors=(),
@@ -143,7 +144,20 @@ def transcribe_ctx(instance, *, transcriber=None, download=None, transport=None)
         provider_available=caps.available,
         download_audio=download if download is not None else FakeDownload(),
         transport=transport if transport is not None else FakeTransport({}),
+        hears_speech=hears if hears is not None else cannot_tell,
     )
+
+
+class FakeDetector:
+    """A scriptable voice detector: one answer, and every clip it was asked about."""
+
+    def __init__(self, *, answer: bool | None) -> None:
+        self.answer = answer
+        self.asked: list[Path] = []
+
+    def __call__(self, audio: Path) -> bool | None:
+        self.asked.append(audio)
+        return self.answer
 
 
 def audio_files(instance: Instance) -> list[str]:
@@ -914,11 +928,13 @@ class TestInstagramDrain:
     def record(self, instance, entry: LedgerEntry) -> Path:
         return instance.enrichment_dir / ITEM / f"instagram-{entry.hash[:6]}.md"
 
-    def drain(self, instance, *, transcriber=None, transport=None) -> run_mod.RunContext:
+    def drain(
+        self, instance, *, transcriber=None, transport=None, hears=None
+    ) -> run_mod.RunContext:
         """One transcribe drain against a canned proxy download."""
         if transport is None:
             transport = FakeTransport({self.ENCLOSURE: self.video()})
-        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport, hears=hears)
         run_mod.run_transcribe(ctx)
         return ctx
 
@@ -1194,10 +1210,12 @@ class TestXDrain:
         run_mod.run(ctx)
         return ctx
 
-    def drain(self, instance, *, transcriber=None, transport=None) -> run_mod.RunContext:
+    def drain(
+        self, instance, *, transcriber=None, transport=None, hears=None
+    ) -> run_mod.RunContext:
         if transport is None:
             transport = FakeTransport({self.ENCLOSURE: self.video()})
-        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport)
+        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport, hears=hears)
         run_mod.run_transcribe(ctx)
         return ctx
 
@@ -1378,6 +1396,85 @@ class TestXDrain:
         assert "mark done to keep it as the record" in (entry.reason or "")
 
 
+class TestVoiceDetection:
+    """A post's video is asked for speech before any transcriber hears it.
+
+    Given silence, a transcriber invents speech: a silent screen recording
+    came back as sentences nobody said. A clip the detector finds silent
+    takes the path a provider's own no-speech finding takes, and costs no
+    provider call.
+    """
+
+    X = TestXDrain()
+    REEL = TestInstagramDrain()
+
+    def test_a_silent_post_video_never_reaches_a_transcriber(self, instance):
+        self.X.park_via_driver(instance)
+        transcriber = FakeTranscriber("whisper-api", text="Invented words.")
+        detector = FakeDetector(answer=False)
+        ctx = self.X.drain(instance, transcriber=transcriber, hears=detector)
+        entry = entry_for(ctx, self.X.POST_URL)
+        assert transcriber.calls == []
+        assert entry.status is Status.MANUAL
+        assert entry.reason == (
+            f"{run_mod.NO_SPEECH_DETECTED} — the post is already stored; mark done to keep it "
+            "as the record, or rescue by hand"
+        )
+        # Asked about the very clip the transcriber would have heard, which
+        # then leaves the cache: a retry would only hear the same silence.
+        assert [clip.name for clip in detector.asked] == [f"{work_hash(self.X.POST_URL)}.mp4"]
+        assert audio_files(instance) == []
+
+    @pytest.mark.parametrize("answer", [True, None])
+    def test_speech_or_no_answer_reaches_the_transcriber(self, instance, answer):
+        self.X.park_via_driver(instance)
+        transcriber = FakeTranscriber("whisper-api", text="Clip words.")
+        ctx = self.X.drain(instance, transcriber=transcriber, hears=FakeDetector(answer=answer))
+        assert entry_for(ctx, self.X.POST_URL).status is Status.DONE
+        assert len(transcriber.calls) == 1
+
+    def test_a_silent_reel_names_its_caption_as_the_record(self, instance):
+        self.REEL.park_via_driver(instance)
+        ctx = self.REEL.drain(instance, hears=FakeDetector(answer=False))
+        entry = entry_for(ctx, self.REEL.POST_URL)
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith(f"{run_mod.NO_SPEECH_DETECTED} — the caption")
+
+    def test_silent_clips_spend_no_transcription_slot(self, instance):
+        # Nothing reached a provider, so a run capped at one hears both.
+        write_item(instance, urls=[self.X.POST_URL, self.REEL.POST_URL])
+        pages = FakeTransport(
+            {
+                **self.X.responses(),
+                self.REEL.POST_URL: og_page(caption=self.REEL.CAPTION, code=REEL_CODE),
+                **walk(REEL_CODE, "video/mp4"),
+            }
+        )
+        drivers = [
+            XDriver(transport=pages, pace=lambda _seconds: None),
+            InstagramDriver(base_url=PROXY_BASE, transport=pages, pace=lambda _seconds: None),
+        ]
+        run_mod.run(make_ctx(instance, FakeDriver(), drivers=drivers, transport=pages))
+        videos = FakeTransport(
+            {self.X.ENCLOSURE: self.X.video(), self.REEL.ENCLOSURE: self.REEL.video()}
+        )
+        ctx = transcribe_ctx(instance, transport=videos, hears=FakeDetector(answer=False))
+        run_mod.run_transcribe(ctx, limit=1)
+        assert entry_for(ctx, self.X.POST_URL).status is Status.MANUAL
+        assert entry_for(ctx, self.REEL.POST_URL).status is Status.MANUAL
+
+    def test_long_form_audio_is_never_asked(self, instance):
+        # Speech by nature, and hours long: decoding it all to ask would
+        # cost more memory than a silent clip costs.
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        detector = FakeDetector(answer=False)
+        ctx = transcribe_ctx(instance, hears=detector)
+        run_mod.run_transcribe(ctx)
+        assert entry_for(ctx, VIDEO_URL).status is Status.DONE
+        assert detector.asked == []
+
+
 class TestTranscriptLandsBesideTheVideo:
     """A transcript landing on a post leaves the video it heard where it stands.
 
@@ -1436,7 +1533,13 @@ class TestTranscriptLandsBesideTheVideo:
         return item_dir
 
     def rerun(
-        self, instance, *, video: HttpResponse | None = None, transcriber=None, today=None
+        self,
+        instance,
+        *,
+        video: HttpResponse | None = None,
+        transcriber=None,
+        today=None,
+        hears=None,
     ) -> tuple[str, dict]:
         responses = {
             **TestXDrain().responses(),
@@ -1447,7 +1550,12 @@ class TestTranscriptLandsBesideTheVideo:
             transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
         caps = Capabilities(transcribers=(transcriber,), extractors=())
         ctx = TestXDrain().ctx(
-            instance, transport, capabilities=caps, provider_available=caps.available, today=today
+            instance,
+            transport,
+            capabilities=caps,
+            provider_available=caps.available,
+            today=today,
+            hears_speech=hears if hears is not None else cannot_tell,
         )
         report = " ".join(run_mod.run(ctx).split())  # the surface wraps
         return report, ledger.load(instance.ledger_path)
@@ -1564,6 +1672,31 @@ class TestTranscriptLandsBesideTheVideo:
         assert (item_dir / "media-0.md").exists()
         # The job ended with the post kept; nothing retries it to want the audio.
         assert audio_files(instance) == []
+
+    def test_a_rerun_whose_video_the_detector_finds_silent_keeps_its_post(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        transcriber = FakeTranscriber("whisper-api", text="Invented words.")
+        report, entries = self.rerun(
+            instance, transcriber=transcriber, hears=FakeDetector(answer=False)
+        )
+        assert transcriber.calls == []
+        assert entries[self.post_hash()].status is Status.DONE
+        assert f"ended without a transcript ({run_mod.NO_SPEECH_DETECTED})" in report
+        assert (item_dir / "media-0.mp4").exists()
+
+    def test_a_changed_park_is_owed_by_every_item_sharing_the_post(self, instance):
+        item_dir = self.landed_before_the_fix(instance)
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance, other, urls=[self.POST_URL], kinds=["x"])
+        stored = item_dir / f"x-{self.post_hash()[:6]}.md"
+        stored.write_text(
+            stored.read_text(encoding="utf-8").replace("(video post)", "An older reading."),
+            encoding="utf-8",
+        )
+        gone = HttpResponse(status=404, content_type="text/html", body=b"")
+        report, _entries = self.rerun(instance, video=gone)
+        assert f"**{ITEM}** ↳ 1 rewritten" in report
+        assert f"**{other}** ↳ 1 rewritten" in report
 
     def test_a_park_that_changed_the_body_owes_its_writing_up(self, instance):
         item_dir = self.landed_before_the_fix(instance)

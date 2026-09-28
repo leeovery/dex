@@ -230,6 +230,19 @@ class TestTranscribe:
         with pytest.raises(ProviderInputError, match="no speech"):
             api(FakePost([ok("  ")])).transcribe(audio, "")
 
+    def test_a_transcript_without_a_letter_or_digit_is_bad_input(self, tmp_path):
+        # A music-only clip came back from whisper-1 as a line of skewer emoji.
+        audio = tmp_path / "music.mp3"
+        audio.write_bytes(b"x")
+        with pytest.raises(ProviderInputError, match="whisper-api heard no speech"):
+            api(FakePost([ok("🍢🍢🍢 ♪ … !")])).transcribe(audio, "")
+
+    @pytest.mark.parametrize("words", ["3, 2, 1", "사운드", "Go."])
+    def test_a_letter_or_digit_in_any_script_is_speech(self, tmp_path, words):
+        audio = tmp_path / "clip.mp3"
+        audio.write_bytes(b"x")
+        assert api(FakePost([ok(words)])).transcribe(audio, "") == words
+
 
 class TestChunkPrompt:
     TITLE = "Ledgers as Work Queues"

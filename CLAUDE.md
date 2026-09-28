@@ -28,8 +28,10 @@ the engine stays unaware of which ones exist.
   - `drivers/` — one per source shape: youtube, x, instagram, github,
     paper, podcast, web (catch-all, always last), file; `transport.py` is
     the HTTP seam.
-  - `capabilities/` — transcribe (whisper-local floor, whisper-api),
-    extract (anydoc, csv-builtin, cognitive floor), ocr (cognitive floor).
+  - `capabilities/` — transcribe (whisper-local floor, whisper-api, and
+    `speech.py`, the voice detection a post's video meets before either
+    hears it), extract (anydoc, csv-builtin, cognitive floor), ocr
+    (cognitive floor).
   - `render/` — `kernel.py` (markdown composition primitives),
     `surfaces.py` (named report surfaces), `cli.py` (`dex-render`).
     Judgment decides, code renders. `design/ingestion-pipeline.md` §11

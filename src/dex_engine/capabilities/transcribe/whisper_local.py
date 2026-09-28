@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError, scrub
+from dex_engine.pipeline.transcribe import holds_words
 from dex_engine.pipeline.types import Availability
 
 __all__ = ["LoadedModel", "WhisperLocal", "load_whisper_model", "model_is_cached"]
@@ -182,7 +183,8 @@ class WhisperLocal:
             ProviderUnavailableError: The model could not be loaded (a failed
                 download, a broken cache) — the job stays waiting.
             ProviderInputError: The audio could not be decoded, holds no
-                audio stream, or yielded no speech — the manual path.
+                audio stream, or yielded no speech: no letter or digit came
+                back — the manual path.
         """
         try:
             model = self._load(self.model)
@@ -208,6 +210,6 @@ class WhisperLocal:
             raise ProviderInputError(
                 f"whisper-local could not decode the audio: {scrub(str(e))}"
             ) from e
-        if not text:
+        if not holds_words(text):
             raise ProviderInputError("whisper-local heard no speech in the audio")
         return text
