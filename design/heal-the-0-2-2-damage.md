@@ -153,7 +153,14 @@ Two of those sessions, running side by side, wrote the materials to the
 same file under `/tmp`, and each read the other's instance; both noticed.
 Scheduled runs of several instances on one machine can overlap the same
 way, so the instructions keep the materials, and every file of the
-session's own, under the instance's `cache/`.
+session's own, under the instance's `cache/`, and so does the line `directive
+list` ends with, since a session saves `show`'s output before it reads it.
+
+The final round passed on all five of the owner's instances, with no
+permission refused: the largest kept 89 of 95 pages, merged 5 and restored
+1; the others merged three pages between them, took out five transcripts of
+silent videos, and one found nothing to do. Every diff was read, and none
+held a change that was not a repair.
 
 ## The check
 
