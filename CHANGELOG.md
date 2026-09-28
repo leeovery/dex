@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-09-28
+
+✨ Added
+- Directive 3 repairs what engine 0.2.2's re-reads and x-post transcripts left in stored content — each page is kept, restored from git history, or merged, and transcripts that aren't speech are taken out.
+- Directives can name the `dex-enrich` verbs their own work runs, and only those verbs run while the directive is pending.
+
+🔧 Changed
+- `dex-enrich item digest` now runs while a directive that permits it is pending, so digests drawn from replaced content can be revised in place.
+- Directives no longer ask a session to delete a tracked file, since unattended permissions refuse it.
+- A directive stopped by a refused permission is now filed as an engine defect, like any other failure to complete.
+- Directive instructions tell sessions to save output under `cache/` inside the instance, not a shared directory such as `/tmp`, so two instances' runs on one machine no longer read each other's files.
+
 ## [0.2.7] - 2026-09-28
 
 🐛 Fixed
