@@ -710,8 +710,23 @@ class TestMarkdownAlternate:
                     "\n\nThen the result."
                 ),
             ),
+            (
+                # A printed prompt template holds fence lines of its own.
+                {
+                    "cells": [
+                        {
+                            "cell_type": "code",
+                            "source": "print(template)",
+                            "outputs": [
+                                {"output_type": "stream", "text": "Answer:\n```\nx\n```\n"}
+                            ],
+                        }
+                    ]
+                },
+                "```\nprint(template)\n```\n\n````\nAnswer:\n```\nx\n```\n````",
+            ),
         ],
-        ids=["markdown-cell", "result-output", "every-cell-in-order"],
+        ids=["markdown-cell", "result-output", "every-cell-in-order", "fence-in-output"],
     )
     def test_a_notebook_record_renders_each_cell(self, record, rendered):
         block = json.dumps({"_type": "colabBlock", "jsonContent": json.dumps(record)})
@@ -721,14 +736,33 @@ class TestMarkdownAlternate:
         result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
         assert body_of(result) == f"Before.\n\n{rendered}{tail}"
 
+    def test_a_notebook_record_in_a_crlf_source_renders(self):
+        record = {"cells": [{"cell_type": "markdown", "source": "Some prose."}]}
+        block = json.dumps({"_type": "colabBlock", "jsonContent": json.dumps(record)})
+        tail = "\r\n\r\nAfter.\r\n\r\n" + "s" * 900
+        source = f"Before.\r\n\r\n```json\r\n{block}\r\n```{tail}"
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: STRUCTURED)
+        assert "colabBlock" not in body_of(result)
+        assert "Some prose." in body_of(result)
+
     @pytest.mark.parametrize(
         "block",
         [
             '{"_type": "codeBlock", "code": "x = 1"}',
             '{"jsonContent": "not a notebook"}',
             "{ broken",
+            # An API's documented payload with the same keys, not the CMS's record.
+            json.dumps(
+                {
+                    "_type": "apiExample",
+                    "jsonContent": json.dumps(
+                        {"cells": [{"cell_type": "markdown", "source": "An example payload."}]}
+                    ),
+                }
+            ),
         ],
-        ids=["another-record", "not-a-notebook", "not-json"],
+        ids=["another-record", "not-a-notebook", "not-json", "same-keys-other-type"],
     )
     def test_a_fenced_block_that_is_no_notebook_record_stands(self, block):
         source = f"Before.\n\n```json\n{block}\n```\n\nAfter.\n\n" + "s" * 900
@@ -1229,6 +1263,29 @@ class TestExtractionFidelity:
         )
         body = trafilatura_extract(page) or ""
         assert "line_one = 1" in body
+
+    @pytest.mark.parametrize(
+        ("repaired", "plain", "kept"),
+        [
+            ("Use Docker\n\n```\ndocker run\n```", "Use Dockerdocker run", "repaired"),
+            ("After installation, verify it", "NoteAfter installation, verify it", "plain"),
+        ],
+        ids=["words-unglued", "a-word-lost"],
+    )
+    def test_the_repair_stands_where_it_only_sets_glued_words_apart(
+        self, monkeypatch, repaired, plain, kept
+    ):
+        # The run without the repair glues a heading or a note onto the
+        # words after it; the repair setting them apart loses no word. One
+        # it drops outright ("Note") still sends the page back.
+        monkeypatch.setattr(
+            article_mod,
+            "_prepare_page",
+            lambda _html, *, set_code_apart=True: "repaired" if set_code_apart else "plain",
+        )
+        outputs = {"repaired": repaired, "plain": plain}
+        monkeypatch.setattr(article_mod, "_extract_prepared", outputs.get)
+        assert trafilatura_extract("<html></html>") == outputs[kept]
 
     def test_a_repair_is_kept_where_the_page_without_it_extracts_nothing(self, monkeypatch):
         def adding(tree):

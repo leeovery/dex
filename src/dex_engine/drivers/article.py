@@ -37,10 +37,10 @@ a page was rendered from (``<link rel="alternate" type="text/markdown">``),
 and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
-and stores it whenever it answers as markdown or plain text and carries
-at least what extraction found: its length, and its fenced blocks and
-table rows. The title, description and og:image still come from the
-HTML.
+and stores it whenever it answers as markdown or plain text and is at
+least as long as what extraction found, with any notebook it holds as a
+CMS record rendered as the page shows it. The title, description and
+og:image still come from the HTML.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -70,6 +70,7 @@ media sample, and the article wins.
 """
 
 import html as html_lib
+import itertools
 import json
 import re
 import urllib.parse
@@ -173,10 +174,18 @@ _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 _FEED_LEADS = (b"<rss", b"<feed")
-# A fenced block in a declared source, its info string ignored.
+# A fenced block in a declared source holding a JSON object, its info
+# string ignored. The body must open the object: a block that cannot is
+# never scanned for its closer, which a source whose closers do not match
+# (CRLF lines, indented fences) made a scan to the document's end for each.
 _FENCED_BLOCK_RE = re.compile(
-    r"^(?P<fence>`{3,}|~{3,})[^\n]*\n(?P<body>.*?)\n(?P=fence)[ \t]*$", re.MULTILINE | re.DOTALL
+    r"^(?P<fence>`{3,}|~{3,})[^\n]*\n(?P<body>\{.*?)\n(?P=fence)[ \t\r]*$",
+    re.MULTILINE | re.DOTALL,
 )
+# The record type Pinecone's CMS writes a notebook as, the one rendered.
+_NOTEBOOK_RECORD_TYPE = "colabBlock"
+# A run of backticks opening a line, which a fence around it must outrun.
+_BACKTICK_RUN_RE = re.compile(r"^[ \t]*(`+)", re.MULTILINE)
 
 _CODE_LINE_CLASS = "line"
 
@@ -248,9 +257,15 @@ def _extract_prepared(prepared: str) -> str | None:
 
 
 def _drops_words(extracted: str | None, unrepaired: str | None) -> bool:
-    """Whether ``extracted`` lacks any word, counted with repeats, that ``unrepaired`` holds."""
-    held = Counter(_WORD_RE.findall(extracted or ""))
-    return bool(Counter(_WORD_RE.findall(unrepaired or "")) - held)
+    """Whether ``extracted`` lacks any word, counted with repeats, that ``unrepaired`` holds.
+
+    A word the unrepaired run holds only because it glued two together —
+    ``Dockerdocker``, ``withgit`` — is held where the repair set the two
+    apart: un-gluing them is what the repair is for.
+    """
+    words = _WORD_RE.findall(extracted or "")
+    lacking = Counter(_WORD_RE.findall(unrepaired or "")) - Counter(words)
+    return bool(lacking - Counter(a + b for a, b in itertools.pairwise(words)))
 
 
 def _extract_markdown(html: str, *, comments: bool) -> str | None:
@@ -910,6 +925,8 @@ def _notebook_cells(text: str) -> list[str] | None:
     """A notebook record's cells as markdown, code and output fenced; None for anything else."""
     try:
         record = json.loads(text)
+        if record["_type"] != _NOTEBOOK_RECORD_TYPE:
+            return None
         notebook = json.loads(record["jsonContent"])
         cells = notebook["cells"]
     except (ValueError, TypeError, KeyError):
@@ -924,11 +941,23 @@ def _notebook_cells(text: str) -> list[str] | None:
         if cell.get("cell_type") != "code":
             rendered += [source.strip()] if source.strip() else []
             continue
-        rendered += [f"```\n{source.rstrip()}\n```"] if source.strip() else []
+        rendered += [_fenced(source.rstrip())] if source.strip() else []
         for output in cell.get("outputs") or []:
             text = _output_text(output)
-            rendered += [f"```\n{text.rstrip()}\n```"] if text.strip() else []
+            rendered += [_fenced(text.rstrip())] if text.strip() else []
     return rendered or None
+
+
+def _fenced(text: str) -> str:
+    """``text`` in a code fence longer than any backtick run opening one of its lines.
+
+    A cell or an output can hold fence lines of its own — a printed prompt
+    template, a model's answer with a code block in it — and a bare fence
+    around it would close there and read the rest inside out.
+    """
+    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
 
 
 def _output_text(output: object) -> str:
