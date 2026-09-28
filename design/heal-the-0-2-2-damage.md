@@ -102,12 +102,14 @@ a page the site had changed in the meantime: a models table holding both
 an old model's row and the row that replaced it, and a price list mixing
 two months' plans, a page that never existed at any moment. A merge now
 leaves the copy now as it stands and adds one section after it, before any
-transcript, headed `## From the copy saved on <date>` with the earlier
+transcript, headed `# From the copy saved on <date>` with the earlier
 copy's fetch date, holding each passage of knowledge only the earlier copy
 held, word for word. What the site has dropped reads as what it was, and a
 copy that was only read short loses nothing by the heading. A passage the
 copy now holds in an updated form, a changed number, name or version, or
-the same facts reworded, was not lost and stays out.
+the same facts reworded, was not lost and stays out. The heading is level
+one because the passages bring their own section headings, which a
+second-level heading would leave reading as outside it.
 
 The fixed shape makes the merge checkable: the copy now must be intact
 above the section, its transcript below it unchanged, and every line of the
@@ -119,8 +121,14 @@ permission check, and a line number one off loses a line without a trace.
 
 A github link into a repository, where the earlier copy is the repository's
 README, stays corrected even when the correct reading is a thin folder
-listing; the README's knowledge goes into the digest where nothing else in
-the item holds it.
+listing, and its digest owes nothing for the README: the README was never
+what the link named, and 0.2.2's re-read fixed those items rather than
+damaging them. One round told the session to carry each README's knowledge
+into the digest where nothing else in the item held it. On the owner's
+largest instance that revised 20 digests with facts about the repository
+around the thing shared, such as a coding tool's install commands in the
+digest of a technique write-up shared from inside its repository, which
+is noise in a digest rather than knowledge restored.
 
 ## A permission refused is still filed
 

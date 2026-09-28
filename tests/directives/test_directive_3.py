@@ -229,7 +229,7 @@ class TestPages:
         text = materials(field.root)
         assert "`word0`" in text
         assert ", and 6 more" in text
-        assert text.count("`word") == 24  # noqa: PLR2004 — the cap
+        assert text.count("`word") == 24
 
     def test_a_reread_that_only_gained_is_listed_as_losing_nothing(self, field):
         field.healed(EARLIER + "\n\nA new section the site added.")
@@ -523,7 +523,7 @@ class TestCheck:
         field.write(DIGEST, "---\nid: x\n---\n- corrected\n")
         assert check(field.root) == []
 
-    SECTION = f"## From the copy saved on {LANDED}"
+    SECTION = f"# From the copy saved on {LANDED}"
     NOW = "Intro line.\n\nA line only the re-read found."
 
     def merged(self, field: Field, *lines: str) -> None:
@@ -591,7 +591,7 @@ class TestCheck:
             f"- {POST}: not speech — a line of emoji",
             f"- {POST_DIGEST}: kept — it never used the words",
         )
-        body = f"@a — a clip\n\n## From the copy saved on {LANDED}\n\nand a second line"
+        body = f"@a — a clip\n\n# From the copy saved on {LANDED}\n\nand a second line"
         field.write(POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, body))
         assert check(field.root) == []
 
@@ -603,7 +603,7 @@ class TestCheck:
             f"- {POST}: speech",
             f"- {POST_DIGEST}: kept — it never used the words",
         )
-        section = f"## From the copy saved on {LANDED}\n\nand a second line"
+        section = f"# From the copy saved on {LANDED}\n\nand a second line"
         fields: dict[str, str | int | None] = {
             "via": "whisper-api",
             "model": "whisper-1",

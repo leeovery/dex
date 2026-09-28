@@ -96,9 +96,9 @@ _FIRST_ASKING = (0, 2, 6)
 
 # What a merge adds goes under this heading, dated by the earlier copy's
 # fetch, so nothing the site has since dropped reads as the page's current
-# state.
-_MERGE_HEADING = "## From the copy saved on "
-_UNDATED_MERGE_HEADING = "## From the earlier copy"
+# state. Level one, so the passages' own section headings nest under it.
+_MERGE_HEADING = "# From the copy saved on "
+_UNDATED_MERGE_HEADING = "# From the earlier copy"
 
 # Taking a transcript out rewrites these, and step 2 owns that rewrite.
 _TRANSCRIPT_FIELDS = frozenset({"model", "via"})

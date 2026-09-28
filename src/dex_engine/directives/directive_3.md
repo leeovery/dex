@@ -111,13 +111,14 @@ the file itself is the other. Then decide one of three:
 - **Merged**, when each copy holds knowledge the other lacks. The copy now
   stays as it stands, frontmatter and all. Add a section after its last
   line, or before its `## Transcript` heading when it has one, headed as
-  the entry's **Merge heading** gives it: `## From the copy saved on`
+  the entry's **Merge heading** gives it: `# From the copy saved on`
   and the date the earlier copy's `fetched:` line gives. Under that
   heading, put each passage of knowledge only the earlier copy holds,
   word for word, in the order it had there. A passage brings what it
   needs to read as it did: the heading it stood under, and a table's
   header row with the rows it adds. Its own headings keep the level they
-  had, whatever that is. A passage the copy now holds in an
+  had, whatever that is. A line the copy now holds only in part comes in
+  whole, as the earlier copy has it. A passage the copy now holds in an
   updated form was not lost, whether a row or sentence with a number, a
   name or a version changed, or the same facts in other words: leave it
   out. The heading keeps what the site has since dropped from reading as
@@ -133,8 +134,9 @@ What a site has changed or dropped since the page was saved counts the
 same as what an extractor lost: the owner saved the page as it was. A
 github entry whose earlier copy is a repository's README, for a link that
 names something inside the repository, was a misread the re-read
-corrected: keep it. When that README held knowledge the item now holds
-nowhere else, its digest included, step 3 settles the item's digest.
+corrected: keep it, even where the page it now holds is short. The README
+was never what the link named, so it held none of the item's knowledge,
+and the item's digest owes nothing for it.
 
 ## 2. Judge each transcript
 
@@ -162,9 +164,7 @@ one written while a video was gone describes the item without it. Settle
 the digest, `state/digests/<id>.md`, of:
 
 - each item where you restored or merged a page, or took out a transcript;
-- each item under **Digests written while a video was gone**;
-- each item whose misread README you kept out, when the README held
-  knowledge the item now holds nowhere else; and
+- each item under **Digests written while a video was gone**; and
 - each item under **Files a re-read removed** whose removed file held
   knowledge the item now holds nowhere else.
 
@@ -180,8 +180,8 @@ Read the digest beside the item as it now stands, then do one of two:
 - **Revise** it otherwise. Write its payload with every fact the digest
   states that is still true, corrected where the repair changed it, and
   what the repair brought back that the digest lacks: the knowledge of a
-  page you restored or merged, a video that came back, a misread README's
-  or a removed file's knowledge that lives nowhere else. Keep its signal,
+  page you restored or merged, a video that came back, a removed file's
+  knowledge that lives nowhere else. Keep its signal,
   topics and entities unless the repair makes one wrong. Write the payload
   to `cache/digest.json` in the shape the run's ingest procedure uses
   (`{"id", "signal", "topics", "facts"}`, `entities` optional), and run
