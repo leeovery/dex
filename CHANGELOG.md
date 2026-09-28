@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-09-28
+
+✨ Added
+- Description files are now recognized in every shape seen in the field (path headings, prose, front matter), not just the two formats known before — older instances' descriptions pair with their files correctly instead of orphaning.
+- Fenced-code and blob-text fetches from GitHub (gists, repo files, READMEs) that exceed the size cap now end with a line saying how much was kept and where to find the rest, instead of cutting off silently.
+- Extracted pages now repair code blocks whose line breaks live only in the page's stylesheet (Shiki/Prism-style renderers), and set code blocks apart from surrounding prose so neither the code nor the text around it gets glued together or dropped.
+- Pinecone-style embedded notebook records in a page's declared markdown source are now rendered as their actual code and output cells instead of raw JSON.
+
+🐛 Fixed
+- GitHub content truncation now cuts at a line boundary rather than mid-line, and counts length in characters rather than bytes so multi-byte text isn't over-counted.
+
 ## [0.2.4] - 2026-09-27
 
 🐛 Fixed
