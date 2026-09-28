@@ -18,6 +18,7 @@ from hypothesis import strategies as st
 
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.capabilities.transcribe.speech import cannot_tell
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.podcast import PodcastDriver
@@ -140,6 +141,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
     provider_available=no_providers,
     capabilities=None,
     download_audio=refuse_download,
+    hears_speech=cannot_tell,
     sleep=None,
     gh=None,
 ) -> RunContext:
@@ -154,6 +156,7 @@ def make_ctx(  # noqa: PLR0913 — the builder mirrors RunContext's seams
         provider_available=provider_available,
         capabilities=capabilities,
         download_audio=download_audio,
+        hears_speech=hears_speech,
         sleep=sleep if sleep is not None else (lambda _seconds: None),
         gh=gh if gh is not None else refuse_gh,
     )

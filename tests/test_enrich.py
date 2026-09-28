@@ -7,6 +7,7 @@ import os
 import pytest
 
 from dex_engine.capabilities import Capabilities
+from dex_engine.capabilities.transcribe.speech import hears_speech
 from dex_engine.capabilities.transcribe.whisper_api import WhisperApi
 from dex_engine.enrich import _load_env, build_parser, main
 from dex_engine.pipeline.run import RunContext
@@ -166,6 +167,7 @@ class TestMain:
         assert ctx.instance.root == instance.root
         assert ctx.drivers == []
         assert ctx.provider_available == ctx.capabilities.available
+        assert ctx.hears_speech is hears_speech
         assert ctx.engine_version == engine_version()
         assert ctx.command == "enrich transcribe"
         assert ctx.now().tzinfo is datetime.UTC

@@ -328,7 +328,8 @@ launch — and falls back to the tag for a pin an older sync wrote:
 The pipeline is ledger-driven (`state/enrichment-ledger.jsonl` is the work
 queue, append-only, last-line-per-unit): drivers per source shape, one central
 failure classifier (blocked is never dead), capabilities with a free local
-floor (faster-whisper transcription, document extraction), and an issue filer
+floor (faster-whisper transcription, whose voice detection keeps a post's
+silent video from any transcriber, and document extraction), and an issue filer
 that reports engine bugs upstream, sanitized by construction, so that every
 instance heals through releases and sync.
 

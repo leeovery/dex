@@ -30,6 +30,7 @@ from typing import assert_never
 
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
+from dex_engine.capabilities.transcribe.speech import HearsSpeech, cannot_tell
 from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.transport import Transport, urllib_transport
 from dex_engine.drivers.ytdlp import DownloadAudio, cached_audio, yt_dlp_audio
@@ -110,6 +111,7 @@ __all__ = [
     "MEDIA_MAX_BYTES",
     "MEDIA_MAX_FILES",
     "MEDIA_MAX_FILES_POOLED",
+    "NO_SPEECH_DETECTED",
     "POOLED_MEDIA_KINDS",
     "RERUN_DRAIN_CAP",
     "RunContext",
@@ -303,6 +305,9 @@ def _is_transcribe_job(entry: LedgerEntry) -> bool:
 # a silent video meets names it.
 _STORED_WITH_THE_VIDEO = {Kind.INSTAGRAM: "the caption", Kind.X: "the post"}
 
+# What a post's park says when voice detection found no speech in its video.
+NO_SPEECH_DETECTED = "voice detection found no speech in the video"
+
 
 def _provider_input_reason(entry: LedgerEntry, error: ProviderInputError) -> str:
     """The manual-park reason for input a provider could not use.
@@ -362,6 +367,9 @@ class RunContext:
     provider_available: Callable[[Need, Format | None], Availability] = no_providers
     capabilities: Capabilities | None = None
     download_audio: DownloadAudio = yt_dlp_audio
+    # Voice detection before a post's video is transcribed; the CLI wires
+    # the real detector, and the null seam lets every clip through.
+    hears_speech: HearsSpeech = cannot_tell
     sleep: Callable[[float], None] = time.sleep
     # The issue filer's seams: the gh runner and the CLI command the
     # issue body names. Injected so filing tests are hermetic.
@@ -1176,6 +1184,11 @@ class _Drain:
         if isinstance(acquired, Classification):
             self._apply_acquisition_failure(entry, acquired)
             return
+        if entry.kind in _STORED_WITH_THE_VIDEO and self.ctx.hears_speech(acquired.audio) is False:
+            # A post's video is asked before any transcriber hears it, since
+            # silence comes back from one as invented speech. Nothing reached
+            # a provider, so the per-run cap stays unspent.
+            raise ProviderInputError(NO_SPEECH_DETECTED)
         # The budget is spent HERE — only an attempt that reaches a
         # provider burns the per-run cap: failed acquisitions and
         # provider-missing passes must not starve the drainable cohort.

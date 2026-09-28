@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .capabilities import Capabilities
+from .capabilities.transcribe.speech import hears_speech
 from .directives import refuse_while_pending
 from .pipeline.capture import item_new
 from .pipeline.describe import item_describe
@@ -285,6 +286,7 @@ def main(argv: list[str] | None = None) -> None:
             engine_version=engine_version(),
             provider_available=capabilities.available,
             capabilities=capabilities,
+            hears_speech=hears_speech,
             command=f"enrich {args.command}",
         )
         output = _dispatch(args, ctx)
