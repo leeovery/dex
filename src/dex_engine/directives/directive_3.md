@@ -51,11 +51,11 @@ saying there is nothing in place of a list that is empty:
 1. **Pages a re-read replaced**: every stored page whose re-read lost
    something its earlier copy held, whatever its kind: web page, paper,
    github reading, x post or x article. Each entry gives the file's path
-   now and in the earlier commit, how many words, code blocks and table
-   rows each copy holds, the lines of the earlier copy holding words the
-   copy now lacks, the lines of the copy now holding words the earlier copy
-   lacked, and whether the item's digest was written after the earlier
-   commit.
+   now and in the earlier commit, how many words, code fences and table
+   rows each copy holds, the words the copy now lacks, the lines of the
+   earlier copy holding them, the lines of the copy now holding words the
+   earlier copy lacked, and whether the item's digest was written after the
+   earlier commit.
 2. **Re-reads that lost nothing**: pages a re-read changed without losing
    a word, a code block or a table row. They owe no judgment; they are
    listed so that every change is accounted for. Leave them as they are.
