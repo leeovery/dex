@@ -324,10 +324,17 @@ class TestPages:
 
 class TestTranscripts:
     def post(
-        self, field: Field, *, engine: str, via: str = "whisper-api", digest_after: bool = True
+        self,
+        field: Field,
+        *,
+        engine: str,
+        via: str = "whisper-api",
+        digest_before: bool = True,
+        digest_after: bool = True,
     ) -> None:
-        field.write(POST_DIGEST, "---\nid: p\n---\n- before\n")
-        field.commit("run: a digest from before")
+        if digest_before:
+            field.write(POST_DIGEST, "---\nid: p\n---\n- before\n")
+            field.commit("run: a digest from before")
         fields: dict[str, str | int | None] = {
             "via": via,
             "model": "whisper-1",
@@ -373,6 +380,13 @@ class TestTranscripts:
     def test_a_digest_last_written_before_the_transcript_landed_is_said_to_be(self, field):
         field.healed(EARLIER)
         self.post(field, engine="0.2.2", digest_after=False)
+        found = survey(field.root)
+        assert not isinstance(found, str)
+        assert found.transcripts[0].digest_since is False
+
+    def test_a_post_never_digested_has_no_digest_written_after_its_transcript(self, field):
+        field.healed(EARLIER)
+        self.post(field, engine="0.2.2", digest_before=False, digest_after=False)
         found = survey(field.root)
         assert not isinstance(found, str)
         assert found.transcripts[0].digest_since is False
