@@ -57,9 +57,9 @@ saying there is nothing in place of a list that is empty:
    now and in the earlier commit, how many words, code fences and table
    rows each copy holds, the words the copy now lacks, the lines of the
    earlier copy the copy now lacks, the lines of the copy now the earlier
-   copy lacked, and whether the item's digest was written after the
-   earlier commit. An x post is compared without its transcript, which
-   list 3 judges.
+   copy lacked, whether the item's digest was written after the earlier
+   commit, and the heading a merge puts its section under. An x post is
+   compared without its transcript, which list 3 judges.
 2. **Re-reads that lost nothing**: pages a re-read changed without losing
    a word, a code fence or a table row. They owe no judgment; leave them as
    they are.
