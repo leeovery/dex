@@ -1286,6 +1286,33 @@ class TestRerun:
         assert "1 rewritten" in report
         assert "Already stored" not in report
 
+    def test_a_rewrite_of_a_shared_unit_is_owed_by_every_item_sharing_it(self, instance):
+        # One URL in two captures is one unit, its file under the first; the
+        # rewrite is new material to both, so both are on the work list.
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance)
+        write_item(instance, other)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        richer = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="a different body " * 40))
+        ctx = make_ctx(instance, richer)
+        self.seed_rerun(ctx)
+        report = " ".join(run_mod.run(ctx).split())
+        assert "Needs writing up — 2 items have new material" in report
+        assert f"**{ITEM}** ↳ 1 rewritten" in report
+        assert f"**{other}** ↳ 1 rewritten" in report
+
+    def test_an_unchanged_shared_unit_is_accounted_for_once(self, instance):
+        # One unit re-fetched to what was stored is one unit on the books.
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance)
+        write_item(instance, other)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        self.seed_rerun(ctx)
+        report = " ".join(run_mod.run(ctx).split())
+        assert "Needs writing up" not in report
+        assert "Already stored — 1 unit re-fetched to what was on disk" in report
+
     def test_a_rerun_that_halves_the_stored_body_keeps_the_stored_file(self, instance):
         # The field defect: a rerun's live fetch was refused, wayback served
         # the member-only preview, and the run traded a complete article for

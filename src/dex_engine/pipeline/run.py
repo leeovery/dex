@@ -715,6 +715,15 @@ class _Drain:
         """
         return self.owners.get(entry.hash) or (entry.item,)
 
+    def claimants(self, entry: LedgerEntry, holder: str) -> tuple[str, ...]:
+        """Who owes writing up a unit's new material: the item holding its file, then the rest.
+
+        A URL two items list is one unit, whose file stands under one of
+        them, but its new material is new to both: naming the holder alone
+        left the other to surface later on the digest backstop.
+        """
+        return (holder, *(owner for owner in self.owners_of(entry) if owner != holder))
+
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
 
@@ -1347,11 +1356,11 @@ class _Drain:
             audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
             if audio is not None:
                 audio.unlink()
-            outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
             if changed:
-                outcome.changed += 1
+                for claimant in self.claimants(entry, self.owner_of(entry)):
+                    self.outcomes.setdefault(claimant, _ItemOutcome()).changed += 1
             else:
-                outcome.unchanged += 1
+                self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
             self.notes.append(
                 f"item {self.owner_of(entry)}: the rerun of {entry.url} ended without a "
                 f"transcript ({cause or reason}) — the post stays done as it was re-fetched"
@@ -1867,11 +1876,12 @@ class _Drain:
         # report claiming a new enrichment file while listing the same
         # item under Needs writing up, with nothing on disk to write up.
         if count:
-            outcome = self.outcomes.setdefault(owner, _ItemOutcome())
-            if existed:
-                outcome.changed += 1
-            else:
-                outcome.new += 1
+            for claimant in self.claimants(entry, owner):
+                outcome = self.outcomes.setdefault(claimant, _ItemOutcome())
+                if existed:
+                    outcome.changed += 1
+                else:
+                    outcome.new += 1
         return str(out.relative_to(self.ctx.instance.root)), True
 
     # -- extraction assets ----------------------------------------
