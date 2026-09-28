@@ -53,21 +53,28 @@ the engine stays unaware of which ones exist.
     touches state.
   - `directives/` — numbered directives: judgment work on an instance's
     own files that a migration may not do. Each is `directive_<n>.py`
-    (its intent, a check that names every unmet condition, and optional
+    (its intent, a check that names every unmet condition, optional
     materials: text rendered for the instance, which `dex-directive show`
     prints between marker lines, and `show <n> --materials` alone, byte
-    for byte) with its instructions beside it as `directive_<n>.md`. Sync
+    for byte, and optional `PERMITS`: the `dex-enrich` verbs its own work
+    runs) with its instructions beside it as `directive_<n>.md`. Sync
     lists the pending ones, the run session performs them after the pull,
     `dex-directive done` records each in `state/directives.jsonl` only
     once its check passes, and `dex-new` records every shipped one as
     done. While any is pending, `dex-inbox`, `dex-normalize`, `dex-enrich`
     and `dex-exclude` refuse through the package's one gate,
-    `refuse_while_pending`, called from each CLI's `main`. The procedure
+    `refuse_while_pending`, called from each CLI's `main`, save a
+    `dex-enrich` verb every pending directive permits. A directive never
+    asks a session to delete a tracked file: an unattended session's
+    permissions refuse it, and a directive that cannot complete is
+    retried every run while content waits. The procedure
     lives in the commands' output, never in the synced skills: `list`
     says how to perform the pending ones, and `done`, refusing an unmet
     check, says what the run does next, so a session holding instructions
     older than the engine it just synced still does it right. A directive
-    always completes unattended and never waits on the owner. Directive 1
+    always completes unattended and never waits on the owner, so one that
+    did not is filed as an engine defect whatever stopped it, a refused
+    permission included. Directive 1
     rehomes an owner-written CLAUDE.md, which its code finds in git
     history and prints in its materials beside the server and channel
     ids read from the head of each Discord export (scope into `lens.md`,
@@ -76,7 +83,18 @@ the engine stays unaware of which ones exist.
     instructions claim authority over config in their own text, because
     the first run after the release still holds the previous release's
     instructions, which forbid editing config unattended. Directive 2
-    rewrites the README from the template.
+    rewrites the README from the template. Directive 3 repairs what
+    0.2.2's heal re-reads and x-post transcripts left: its materials,
+    read from the ledger and git history at the commit before migration
+    15 was recorded, list each changed page with what it lost, each
+    transcript an unasking engine wrote, and each digest drawn while a
+    video was gone; the session keeps, restores from history or merges (a
+    merge leaves the copy now whole and adds the earlier copy's lost
+    passages word for word under one dated section, which the check holds
+    line by line), takes out what is not speech, and keeps or revises each
+    digest drawn
+    from what it replaced through `enrich item digest`, the one verb it
+    permits, carrying forward every fact still true.
   - `numbered_log.py` — the ONE `{number, engine, date}` log reader and
     appender, behind `state/migrations.jsonl` and `state/directives.jsonl`.
   - `corpus.py` — the ONE corpus-item frontmatter read/write point.
@@ -411,9 +429,10 @@ that as two executors. Neither weakens an ordinary run.
   damage a release really did, and from the instance's own git history (a
   restore, never a re-fetch): by a migration only where it can prove
   exactly what was damaged, otherwise by a directive, which hands the
-  judgment to the instance's own session. A problem found in the owner's
-  own instances can be fixed by hand there. A default, not a hard rule —
-  but the burden of proof is on touching stored content.
+  judgment to the instance's own session. The owner's own instances heal
+  through the same mechanism, never by hand first, so every instance gets
+  the repair that was tested. A default, not a hard rule — but the burden
+  of proof is on touching stored content.
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in

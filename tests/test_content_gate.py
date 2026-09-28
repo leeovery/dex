@@ -162,6 +162,31 @@ class TestGatedCommands:
         assert "directives.jsonl:1" in exited
 
 
+DIGEST_ARGV = ["item", "digest", "--file", "cache/digest.json"]
+DIGESTS = [make_directive(1, permits=frozenset({"item digest"}))]
+
+
+class TestPermittedVerbs:
+    """A verb every pending directive permits is that directive's own work, and runs."""
+
+    def test_the_permitted_verb_reaches_its_own_work(self, instance, monkeypatch):
+        def reached(*_args: object, **_kwargs: object) -> None:
+            raise OSError(REACHED)
+
+        furnish(instance)
+        use(monkeypatch, instance, DIGESTS)
+        monkeypatch.setattr("dex_engine.enrich._dispatch", reached)
+        assert outcome(enrich.main, DIGEST_ARGV) == f"dex-enrich: {REACHED}"
+
+    @pytest.mark.parametrize("argv", [argv for argv in ENRICH_ARGVS if argv != DIGEST_ARGV])
+    def test_every_other_verb_still_refuses_and_writes_nothing(self, argv, instance, monkeypatch):
+        furnish(instance)
+        use(monkeypatch, instance, DIGESTS)
+        before = tree(instance.root)
+        assert outcome(enrich.main, argv) == f"dex-enrich: {gate_line(instance.root)}"
+        assert tree(instance.root) == before
+
+
 class TestUngatedCommands:
     """Every other command runs as usual while a directive is pending."""
 

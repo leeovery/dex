@@ -53,6 +53,7 @@ __all__ = [
     "hand_over_descriptions",
     "holds_transcript",
     "mask_fetched",
+    "parse_enrichment",
     "podcast_body",
     "post_body",
     "pre_transcript",
@@ -162,7 +163,14 @@ def read_enrichment(path: Path) -> tuple[dict[str, str], str]:
     Returns:
         The fields (JSON-quoted values unquoted) and the stripped body.
     """
-    text = path.read_text(encoding="utf-8")
+    return parse_enrichment(path.read_text(encoding="utf-8"))
+
+
+def parse_enrichment(text: str) -> tuple[dict[str, str], str]:
+    """:func:`read_enrichment`'s parse, of an enrichment file's text already in hand.
+
+    A copy read back from git history has no file on disk to open.
+    """
     if not text.startswith("---\n"):
         return {}, text.strip()
     head, sep, body = text[4:].partition("\n---\n")

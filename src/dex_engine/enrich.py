@@ -269,7 +269,8 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     instance = Instance(root=Path.cwd())
     try:
-        refuse_while_pending(instance.root)
+        verb = f"item {args.item_command}" if args.command == "item" else args.command
+        refuse_while_pending(instance.root, verb=verb)
         # Inside the wrapper: an unreadable .env is instance state like any
         # other, and it must fail as a stated line, not a traceback.
         _load_env(instance.root)

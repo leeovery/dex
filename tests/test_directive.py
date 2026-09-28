@@ -86,6 +86,11 @@ class TestList:
     def test_the_next_step_performs_each_through_show(self):
         assert "`bin/dex directive show <n>`" in LIST_NEXT
 
+    def test_the_next_step_keeps_saved_output_inside_the_instance(self):
+        # Sessions of two instances once saved `show` to one /tmp file at
+        # the same time, each reading the other's materials.
+        assert "under `cache/`, never in a shared directory such as `/tmp`" in LIST_NEXT
+
     def test_one_pending_directive_is_counted_in_the_singular(self, instance):
         assert list_pending(instance, [make_directive(1)]).startswith("1 directive pending")
 
@@ -214,6 +219,14 @@ class TestDone:
         assert lead.startswith("The next run performs directive 4 again")
         assert "nothing needed from the owner" in lead
         assert "never ask them to change a permission or run anything by hand" in lead
+
+    def test_a_refused_permission_is_still_filed(self):
+        # A session stopped by its own permissions once held back the issue,
+        # reading the refusal as the environment's fault and no engine defect;
+        # the directive then never completes and its maintainer never hears.
+        steps = REFUSED_NEXT.format(number=4)
+        assert "a command this session's permissions refused included" in steps
+        assert "one that did not is the engine's to fix" in steps
 
     def test_one_unmet_condition_is_counted_in_the_singular(self, instance):
         with pytest.raises(ValueError, match="found 1 unmet condition,"):

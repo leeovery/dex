@@ -349,7 +349,8 @@ ones an instance has not completed, and
 the run performs them after its pull and before the inbox, unattended and in
 order, one commit each. Until they are done, the content commands
 (`dex-inbox`, `dex-normalize`, `dex-enrich`, `dex-exclude`) refuse and point
-at `dex-directive list`, and each directive command's output names the step
+at `dex-directive list`, save a `dex-enrich` verb the pending directive names
+for its own work, and each directive command's output names the step
 after it, so a session holding instructions older than the engine it just
 synced still performs the directives before it touches any content. A sync
 that changes the instructions a run began with (CLAUDE.md, the contract or a
@@ -368,7 +369,12 @@ history and moves what it said the instance reads for into `lens.md`, and its
 Discord facts into config (when it said nothing, no `lens.md` is written and
 the instance reads as a general knowledge dex), and directive 2 rewrites the
 README from the template, whose lens line links `lens.md` or, with none,
-names a general knowledge dex.
+names a general knowledge dex. Directive 3 repairs what engine 0.2.2's
+re-reads and x-post transcripts left in stored content: the engine lists,
+from the instance's ledger and git history, each page a re-read changed
+beside its earlier copy and each transcript written without asking whether
+the video held speech, and the session keeps, restores from history or
+merges each, changing only what it can show 0.2.2 made worse.
 
 Capture inbox: every capture is one `.md` in `inbox/`, written via the GitHub
 contents API (the phone shortcut) or committed directly by the dex-capture

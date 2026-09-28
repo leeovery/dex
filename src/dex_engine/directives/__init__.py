@@ -24,6 +24,10 @@ module and discovery reads it through importlib.resources. A module defines:
   lines the instructions can name. A directive whose check compares a file
   with its materials renders both through one function, so the text the
   session is given is the text the check accepts.
+- ``PERMITS``, optionally: the ``dex-enrich`` verbs its own work runs, such
+  as ``"item digest"``, which run while it is pending. A verb runs only
+  while every pending directive permits it, so one directive's allowance
+  never opens the door ahead of another's work.
 
 The completed log is ``state/directives.jsonl``, one ``{number, engine,
 date}`` record per directive: appended by ``directive done`` only after the
@@ -42,7 +46,11 @@ whatever code can do safely is a migration. It is always completable from
 the instance's own files, state and git history without the owner, and an
 instance with nothing to do for it completes it by finding nothing to do.
 Content is moved, never silently lost: text removed without a new home is
-named in the directive's commit message, and git history keeps it.
+named in the directive's commit message, and git history keeps it. It never
+asks the session to delete a tracked file: an unattended session's
+permissions refuse that as irreversible, and a directive that cannot
+complete is performed again every run while content work waits. A state
+file's own verb, permitted through ``PERMITS``, rewrites it instead.
 """
 
 import datetime
@@ -90,13 +98,14 @@ class DirectivesPendingError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Directive:
-    """One shipped directive: its number, intent, instructions, check and any materials."""
+    """One shipped directive: its number, intent, instructions, check, materials and verbs."""
 
     number: int
     intent: str
     instructions: str
     check: Callable[[Path], list[str]]
     materials: Callable[[Path], str] | None = None
+    permits: frozenset[str] = frozenset()
 
 
 _MODULE_RE = re.compile(r"^directive_([1-9][0-9]*)$")
@@ -159,6 +168,13 @@ def _load(package: str, name: str, number: int) -> Directive:
         raise DirectiveError(
             f"{module.__name__} defines materials, but not as materials(root) -> str"
         )
+    permits = getattr(module, "PERMITS", frozenset())
+    if not isinstance(permits, frozenset) or not all(
+        isinstance(verb, str) and verb.strip() for verb in permits
+    ):
+        raise DirectiveError(
+            f"{module.__name__} defines PERMITS, but not as a frozenset of dex-enrich verbs"
+        )
     source = resources.files(package) / f"{name}.md"
     instructions = source.read_text(encoding="utf-8") if source.is_file() else ""
     if not instructions.strip():
@@ -171,6 +187,7 @@ def _load(package: str, name: str, number: int) -> Directive:
         instructions=instructions,
         check=check,
         materials=materials,
+        permits=permits,
     )
 
 
@@ -218,16 +235,23 @@ def pending(root: Path, shipped: Sequence[Directive] | None = None) -> list[Dire
     )
 
 
-def refuse_while_pending(root: Path, shipped: Sequence[Directive] | None = None) -> None:
+def refuse_while_pending(
+    root: Path, shipped: Sequence[Directive] | None = None, *, verb: str | None = None
+) -> None:
     """Refuse content work on the instance at ``root`` while any directive is pending.
 
     Every content command calls this before it touches anything. It is the
     engine's own word, so a session holding instructions older than the
     engine it just synced still meets the directives before any content.
+    A ``dex-enrich`` verb every pending directive permits is the directive's
+    own work, and runs.
 
     Args:
         root: The instance root.
         shipped: Override for tests; ``None`` discovers the engine's own set.
+        verb: The ``dex-enrich`` verb asking, such as ``"item digest"``;
+            ``None`` for the other content commands, which no directive
+            permits.
 
     Raises:
         DirectivesPendingError: A directive is pending; the message is
@@ -235,7 +259,7 @@ def refuse_while_pending(root: Path, shipped: Sequence[Directive] | None = None)
         DirectiveError: The log is corrupt, or discovery met a packaging bug.
     """
     waiting = pending(root, shipped)
-    if waiting:
+    if waiting and not (verb is not None and all(verb in d.permits for d in waiting)):
         raise DirectivesPendingError(
             PENDING_REFUSAL.format(count=plural(len(waiting), "directive"))
         )

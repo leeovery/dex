@@ -75,6 +75,12 @@ class TestReadEnrichment:
         assert fields == {}
         assert "transcript" in body
 
+    def test_a_rule_in_the_body_closes_no_frontmatter(self, tmp_path):
+        # A stored page's own horizontal rule is a `---` line too.
+        record = tmp_path / "web-abc123.md"
+        record.write_text("---\nurl: https://x.test\n---\n\nabove\n\n---\n\nbelow\n")
+        assert read_enrichment(record) == ({"url": "https://x.test"}, "above\n\n---\n\nbelow")
+
 
 class TestReadEnrichmentFields:
     """The frontmatter-only read: same parse, none of the body."""
