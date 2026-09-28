@@ -470,16 +470,129 @@ class TestCheck:
         field.write(DIGEST, "---\nid: x\n---\n- corrected\n")
         assert check(field.root) == []
 
-    def test_a_merge_must_differ_from_both_copies(self, field):
-        field.healed(self.LOST)
+    SECTION = f"## From the copy saved on {LANDED}"
+    NOW = "Intro line.\n\nA line only the re-read found."
+
+    def merged(self, field: Field, *lines: str) -> None:
+        field.write(PAGE, page(self.NOW + "\n\n" + "\n\n".join(lines), fetched=HEALED))
+
+    def test_a_merge_is_the_copy_now_with_the_earlier_copys_lines_under_one_heading(self, field):
+        field.healed(self.NOW)
+        record(field, f"- {PAGE}: merged — the code and the closing thought", f"- {DIGEST}: kept")
+        assert any(f"holds no one `{self.SECTION}` section" in u for u in check(field.root))
+        self.merged(field, self.SECTION, "```python\nprint('kept')\n```", TABLE, CLOSING)
+        assert check(field.root) == []
+
+    def test_the_materials_give_each_page_its_merge_heading(self, field):
+        field.healed(self.NOW)
+        assert f"- Merge heading: `{self.SECTION}`" in materials(field.root)
+
+    def test_a_merged_line_must_be_the_earlier_copys_word_for_word(self, field):
+        field.healed(self.NOW)
+        record(field, f"- {PAGE}: merged", f"- {DIGEST}: kept")
+        self.merged(field, self.SECTION, "A closing thought about ledgers, paraphrased.")
+        assert any(
+            "holds a line the earlier copy does not, word for word: "
+            "`A closing thought about ledgers, paraphrased.`" in u
+            for u in check(field.root)
+        )
+
+    def test_a_stray_line_is_quoted_whatever_it_holds(self, field):
+        field.healed(self.NOW)
+        record(field, f"- {PAGE}: merged", f"- {DIGEST}: kept")
+        self.merged(field, self.SECTION, "def f(): return {'a': 1}")
+        assert any("`def f(): return {'a': 1}`" in u for u in check(field.root))
+
+    def test_a_merge_leaves_the_copy_now_as_it_stands(self, field):
+        field.healed(self.NOW)
+        record(field, f"- {PAGE}: merged", f"- {DIGEST}: kept")
+        field.write(PAGE, page(f"Intro line.\n\n{self.SECTION}\n\n{CLOSING}", fetched=HEALED))
+        assert any("its copy now has changed" in u for u in check(field.root))
+
+    def test_a_merge_that_adds_nothing_is_named(self, field):
+        field.healed(self.NOW)
+        record(field, f"- {PAGE}: merged", f"- {DIGEST}: kept")
+        self.merged(field, self.SECTION, "")
+        assert any("section adds nothing" in u for u in check(field.root))
+
+    def test_a_post_kept_whose_transcript_came_out_is_judged_on_its_page_alone(self, field):
+        # A post listed as a page and as a transcript: taking the transcript
+        # out rewrites the file, and its model and via lines, but not its page.
+        self.lost_post(field)
         record(
             field,
-            f"- {PAGE}: merged — the intro from the re-read, the rest from before",
-            f"- {DIGEST}: kept",
+            f"- {POST}: kept — only a counter",
+            f"- {POST}: not speech — a line of emoji",
+            f"- {POST_DIGEST}: kept — it never used the words",
         )
-        assert any("is recorded merged but holds one copy whole" in u for u in check(field.root))
-        field.write(PAGE, page(EARLIER + "\n\nOne more line only the re-read held."))
+        field.write(
+            POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, "@a — a clip")
+        )
         assert check(field.root) == []
+
+    def test_a_post_merged_whose_transcript_came_out_keeps_its_page(self, field):
+        self.lost_post(field)
+        record(
+            field,
+            f"- {POST}: merged — the second line",
+            f"- {POST}: not speech — a line of emoji",
+            f"- {POST_DIGEST}: kept — it never used the words",
+        )
+        body = f"@a — a clip\n\n## From the copy saved on {LANDED}\n\nand a second line"
+        field.write(POST, render_enrichment(POST_URL, HEALED, {"enclosure": VIDEO_URL}, body))
+        assert check(field.root) == []
+
+    def test_a_merged_post_keeps_its_transcript_below_the_section(self, field):
+        self.lost_post(field)
+        record(
+            field,
+            f"- {POST}: merged — the second line",
+            f"- {POST}: speech",
+            f"- {POST_DIGEST}: kept — it never used the words",
+        )
+        section = f"## From the copy saved on {LANDED}\n\nand a second line"
+        fields: dict[str, str | int | None] = {
+            "via": "whisper-api",
+            "model": "whisper-1",
+            "enclosure": VIDEO_URL,
+        }
+        body = post_body(f"@a — a clip\n\n{section}", "🍢🍢🍢")
+        field.write(POST, render_enrichment(POST_URL, HEALED, fields, body))
+        assert check(field.root) == []
+        body = post_body(f"@a — a clip\n\n{section}", "🍢🍢")
+        field.write(POST, render_enrichment(POST_URL, HEALED, fields, body))
+        assert any("its copy now has changed" in u for u in check(field.root))
+
+    def lost_post(self, field: Field) -> None:
+        """A post a heal re-read shortened and gave a transcript an unasking engine wrote."""
+        field.landed()
+        before = "@a — a clip\n\nand a second line"
+        field.write(POST, render_enrichment(POST_URL, LANDED, {"via": "fxtwitter"}, before))
+        field.append(entry(POST_URL, Status.DONE, path=POST))
+        field.commit("run: the post lands")
+        field.synced()
+        field.reread(EARLIER, redigest=False)
+        fields: dict[str, str | int | None] = {
+            "via": "whisper-api",
+            "model": "whisper-1",
+            "enclosure": VIDEO_URL,
+        }
+        field.write(
+            POST, render_enrichment(POST_URL, HEALED, fields, post_body("@a — a clip", "🍢🍢🍢"))
+        )
+        field.append(
+            entry(
+                POST_URL,
+                Status.DONE,
+                engine="0.2.2",
+                date=HEALED,
+                rerun=True,
+                via="migration-17",
+                path=POST,
+            )
+        )
+        field.write(POST_DIGEST, "---\nid: p\n---\n- after\n")
+        field.commit("run: the post re-read")
 
     def test_two_outcomes_for_one_page_are_named(self, field):
         field.healed(self.LOST)

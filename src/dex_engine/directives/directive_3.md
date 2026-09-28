@@ -100,23 +100,32 @@ the file itself is the other. Then decide one of three:
   earlier copy held. Write the earlier copy back byte for byte with
   `git show <earlier commit>:<earlier path> > <path now>`, and change
   nothing in it.
-- **Merged**, when each copy holds knowledge the other lacks. Start from
-  the copy that holds more, keep its frontmatter, and add each passage of
-  knowledge only the other copy holds, word for word, in the place it held
-  there, or where it reads right when the page around it has changed. A
-  passage brings what it needs to read as it did there: the heading it
-  stood under, and a table's header row with the rows it adds. Make the
-  merge on the page file itself. When you start from the earlier copy,
-  first write it back as a restore does. Then add each passage with an
-  edit of its own. Never assemble a page from numbered line ranges or with
-  a script: a line number one off drops or doubles a line without a trace,
-  and an edit shows exactly what it adds.
+- **Merged**, when each copy holds knowledge the other lacks. The copy now
+  stays as it stands, frontmatter and all. Add a section after its last
+  line, or before its `## Transcript` heading when it has one, headed as
+  the entry's **Merge heading** gives it: `## From the copy saved on`
+  and the date the earlier copy's `fetched:` line gives. Under that
+  heading, put each passage of knowledge only the earlier copy holds,
+  word for word, in the order it had there. A passage brings what it
+  needs to read as it did: the heading it stood under, and a table's
+  header row with the rows it adds. A passage the copy now holds in an
+  updated form was not lost, whether a row or sentence with a number, a
+  name or a version changed, or the same facts in other words: leave it
+  out. The heading keeps what the site has since dropped from reading as
+  the page's current state, and a copy that was read short from the same
+  page loses nothing by it.
+
+Make a merge with one edit to the page file, adding the whole section.
+Never assemble a page from numbered line ranges or with a script: a line
+number one off drops or doubles a line without a trace, and an edit shows
+exactly what it adds.
 
 What a site has changed or dropped since the page was saved counts the
 same as what an extractor lost: the owner saved the page as it was. A
 github entry whose earlier copy is a repository's README, for a link that
 names something inside the repository, was a misread the re-read
-corrected: keep it.
+corrected: keep it. When that README held knowledge the item now holds
+nowhere else, its digest included, step 3 settles the item's digest.
 
 ## 2. Judge each transcript
 
@@ -144,26 +153,29 @@ one written while a video was gone describes the item without it. Settle
 the digest, `state/digests/<id>.md`, of:
 
 - each item where you restored or merged a page, or took out a transcript;
-- each item under **Digests written while a video was gone**; and
+- each item under **Digests written while a video was gone**;
+- each item whose misread README you kept out, when the README held
+  knowledge the item now holds nowhere else; and
 - each item under **Files a re-read removed** whose removed file held
   knowledge the item now holds nowhere else.
 
 Read the digest beside the item as it now stands, then do one of two:
 
-- **Keep** it when it states nothing that is no longer so and misses
-  nothing of substance the item now holds. A fact is no longer so when
-  the repair changed what it describes: a transcript you took out, a
-  video it says is gone that is back, a passage it says a page lacks that
-  you put back. A digest whose media list lacks a file the item now holds
-  misses that file.
+- **Keep** it when the repair left it true and whole: it states nothing
+  the repair made untrue, and it lacks nothing the repair brought back.
+  A fact is untrue once the repair changed what it describes: a
+  transcript you took out, a video it says is gone that is back, a
+  passage it says a page lacks that you put back. A digest whose media
+  list lacks a file the item now holds lacks that file. This is no fresh
+  reading of the item: judge only what the repair changed.
 - **Revise** it otherwise. Write its payload with every fact the digest
   states that is still true, corrected where the repair changed it, and
-  what the item now holds that the digest lacks: the knowledge of a page
-  you restored, a video that came back, a removed file's knowledge that
-  lives nowhere else. Keep its signal, topics and entities unless the
-  repair makes one wrong. Write the payload to `cache/digest.json` in the
-  shape the run's ingest procedure uses (`{"id", "signal", "topics",
-  "facts"}`, `entities` optional), and run
+  what the repair brought back that the digest lacks: the knowledge of a
+  page you restored or merged, a video that came back, a misread README's
+  or a removed file's knowledge that lives nowhere else. Keep its signal,
+  topics and entities unless the repair makes one wrong. Write the payload
+  to `cache/digest.json` in the shape the run's ingest procedure uses
+  (`{"id", "signal", "topics", "facts"}`, `entities` optional), and run
   `bin/dex enrich item digest --file cache/digest.json`. The verb writes
   the file, derives its date and its media list from what the item holds
   on disk, and records the digest pass. A fact left out of the payload is
@@ -173,7 +185,9 @@ Read the digest beside the item as it now stands, then do one of two:
 
 Never delete a digest, and never edit one by hand: the verb is its writer.
 Leave every file under **Files a re-read removed** gone, whether or not
-its knowledge went into a digest; git history keeps each of them.
+its knowledge went into a digest; git history keeps each of them. A page
+under `wiki/` changes only where it states something a repair made
+untrue.
 
 ## 4. Record each outcome
 
@@ -200,7 +214,8 @@ Run `bin/dex directive done 3`. It confirms that the record has a line for
 every entry and every digest step 3 names, that each kept page, each post
 whose transcript is speech and each kept digest is unchanged, that each
 restored page is its earlier copy byte for byte, that each merged page
-differs from both copies, that each post whose transcript is not speech
+is its copy now with one section added whose every line the earlier copy
+holds word for word, that each post whose transcript is not speech
 holds none, that each revised digest was written again, that no file is
 deleted, and that nothing outside the files this directive names has
 changed. It records the directive only when every condition holds. Run it

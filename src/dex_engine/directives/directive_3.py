@@ -94,6 +94,15 @@ _RETIRED = "superseded — the transcript of its post stands for this video"
 _FIRST_TRANSCRIBING = (0, 2, 2)
 _FIRST_ASKING = (0, 2, 6)
 
+# What a merge adds goes under this heading, dated by the earlier copy's
+# fetch, so nothing the site has since dropped reads as the page's current
+# state.
+_MERGE_HEADING = "## From the copy saved on "
+_UNDATED_MERGE_HEADING = "## From the earlier copy"
+
+# Taking a transcript out rewrites these, and step 2 owns that rewrite.
+_TRANSCRIPT_FIELDS = frozenset({"model", "via"})
+
 _WORD_RE = re.compile(r"\w+")
 _RECORD_RE = re.compile(
     r"^- `?(?P<path>[^`\s]+?)`?: (?P<outcome>kept|restored|merged|speech|not speech|revised)\b"
@@ -344,6 +353,12 @@ def _readable(text: str) -> str:
     return pre_transcript(fields, body)
 
 
+def _merge_heading(earlier: bytes) -> str:
+    fields, _ = parse_enrichment(earlier.decode("utf-8", "replace"))
+    fetched = fields.get("fetched")
+    return f"{_MERGE_HEADING}{fetched}" if fetched else _UNDATED_MERGE_HEADING
+
+
 def _lines_only_in(body: str, other: str) -> list[str]:
     """Each distinct non-blank line of ``body`` that ``other`` holds nowhere, in order."""
     held = {line.strip() for line in other.split("\n")}
@@ -540,6 +555,7 @@ def _page_block(page: Page) -> list[str]:
             f"table rows {page.rows[0]} → {page.rows[1]}"
         ),
         f"- Digest: {digest}",
+        f"- Merge heading: `{_merge_heading(page.earlier)}`",
     ]
     if page.lost:
         common = page.lost.most_common(_LOST_WORDS)
@@ -592,7 +608,8 @@ def _unmet(root: Path, found: Survey) -> list[str]:
     owed: set[str] = set(found.gone_digests)
     for page in found.pages:
         outcome = record.get((page.path, "page"))
-        unmet += _page_unmet(root, found.earlier, page, outcome)
+        taken_out = record.get((page.path, "transcript")) == "not speech"
+        unmet += _page_unmet(root, found.earlier, page, outcome, transcript_out=taken_out)
         if outcome in _PAGE_OUTCOMES:
             touched.add(page.path)
             owed.add(page.item)
@@ -645,29 +662,92 @@ def _list_of(path: str, outcome: str) -> str:
     return "page"
 
 
-def _page_unmet(root: Path, earlier: str, page: Page, outcome: str | None) -> list[str]:
-    held = _working(root, page.path)
+def _page_unmet(
+    root: Path, earlier: str, page: Page, outcome: str | None, *, transcript_out: bool
+) -> list[str]:
+    """Hold a page to its outcome, judging only the page: a post's transcript is step 2's."""
     if outcome not in {"kept", "restored", "merged"}:
         return [f"`{RECORD}` has no kept, restored or merged line for `{page.path}` (step 4)"]
-    if outcome == "kept" and held != page.now:
+    held = _working(root, page.path)
+    if outcome == "restored":
+        why = (
+            None
+            if held == page.earlier
+            else (
+                f"`{page.path}` is recorded restored but is not its earlier copy byte for byte: "
+                f"write it with `git show {earlier}:{page.earlier_path} > {page.path}` and "
+                "change nothing in it"
+            )
+        )
+        return [] if why is None else [why]
+    text = _decoded(held or b"")
+    again = ", then take its transcript out again as step 2 says" if transcript_out else ""
+    if outcome == "merged":
+        why = _merge_unmet(page, text, transcript_out=transcript_out, again=again)
+    elif _page_part(text, transcript_out=transcript_out) == _page_part(
+        _decoded(page.now), transcript_out=transcript_out
+    ):
+        why = None
+    else:
         why = (
             f"`{page.path}` is recorded kept but has changed: put it back with "
-            f"`git checkout HEAD -- {page.path}`"
+            f"`git checkout HEAD -- {page.path}`{again}"
         )
-    elif outcome == "restored" and held != page.earlier:
-        why = (
-            f"`{page.path}` is recorded restored but is not its earlier copy byte for byte: "
-            f"write it with `git show {earlier}:{page.earlier_path} > {page.path}` and change "
-            "nothing in it"
+    return [] if why is None else [why]
+
+
+def _page_part(text: str, *, transcript_out: bool) -> tuple[dict[str, str], str]:
+    """A page's frontmatter and its body above any transcript."""
+    fields, body = parse_enrichment(text)
+    notes = pre_transcript(fields, body).rstrip()
+    if transcript_out:
+        fields = {key: value for key, value in fields.items() if key not in _TRANSCRIPT_FIELDS}
+    return fields, notes
+
+
+def _merge_unmet(page: Page, text: str, *, transcript_out: bool, again: str) -> str | None:
+    """Why a merged page is not its copy now plus one section of the earlier copy's lines."""
+    heading = _merge_heading(page.earlier)
+    fields, body = parse_enrichment(text)
+    split = split_transcript(fields, body)
+    notes, transcript = split if split is not None else (body, None)
+    marker = f"\n{heading}\n"
+    padded = f"\n{notes}\n"
+    if padded.count(marker) != 1:
+        return (
+            f"`{page.path}` is recorded merged but holds no one `{heading}` section: add it as "
+            "step 1 says, before any `## Transcript` heading, or record what the page holds"
         )
-    elif outcome == "merged" and held in (page.now, page.earlier, None):
-        why = (
-            f"`{page.path}` is recorded merged but holds one copy whole, or nothing: record "
-            "what it holds"
+    above, _, section = padded.partition(marker)
+    now_fields, now_body = parse_enrichment(_decoded(page.now))
+    now_split = split_transcript(now_fields, now_body)
+    ignored = _TRANSCRIPT_FIELDS if transcript_out else frozenset()
+    kept_fields = {key: value for key, value in fields.items() if key not in ignored}
+    now_part = _page_part(_decoded(page.now), transcript_out=transcript_out)
+    if (kept_fields, above.strip()) != now_part or (
+        transcript is not None and (now_split is None or transcript != now_split[1])
+    ):
+        return (
+            f"`{page.path}` is recorded merged but its copy now has changed: put it back with "
+            f"`git checkout HEAD -- {page.path}` and add the section again{again}"
         )
-    else:
-        return []
-    return [why]
+    added = [line.strip() for line in section.split("\n") if line.strip()]
+    held_before = {line.strip() for line in _readable(_decoded(page.earlier)).split("\n")}
+    stray = next((line for line in added if line not in held_before), None)
+    if not added or stray is not None:
+        shown = f": `{stray[:_LINE_CHARS]}`" if stray else ""
+        return (
+            f"`{page.path}` is recorded merged but its `{heading}` section holds a line the "
+            f"earlier copy does not, word for word{shown}; put in each passage exactly as the "
+            "earlier copy holds it"
+            if added
+            else f"`{page.path}` is recorded merged but its `{heading}` section adds nothing"
+        )
+    return None
+
+
+def _decoded(content: bytes) -> str:
+    return content.decode("utf-8", "replace")
 
 
 def _transcript_unmet(root: Path, transcript: Transcript, outcome: str | None) -> list[str]:
