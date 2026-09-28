@@ -160,6 +160,23 @@ class TestHistory:
         assert survey(field.root) == "0.2.2's migrations never ran here"
         assert check(field.root) == []
 
+    def test_the_materials_head_each_list_as_the_instructions_name_it(self, field):
+        field.landed()
+        field.synced()
+        text = materials(field.root)
+        (shipped,) = [d for d in discover() if d.number == 3]
+        lists = (
+            "Pages a re-read replaced",
+            "Re-reads that lost nothing",
+            "Transcripts on x posts",
+            "Digests written while a video was gone",
+            "Files a re-read removed",
+            "Videos no history holds",
+        )
+        at = [text.index(f"## {name} (0)\n\nNothing.\n") for name in lists]
+        assert at == sorted(at)
+        assert all(f"**{name}**" in shipped.instructions for name in lists)
+
     def test_re_reads_cancelled_before_any_landed_leave_nothing_asking_for_work(self, field):
         # An instance that went from 0.2.1 straight to a release that ran the
         # heal migrations and cancelled their re-reads in one sync.
@@ -197,9 +214,22 @@ class TestPages:
         assert page_.digest_since
         text = materials(field.root)
         assert "## Pages a re-read replaced (1)" in text
+        assert f"- Re-read by migration 18: {URL}" in text
+        assert f"- Earlier path: `{PAGE}`" in text
         assert "code fences 2 → 0; table rows 2 → 1" in text
+        assert "- Digest: written after the earlier commit" in text
         assert "`ledgers`" in text
         assert "  > A closing thought about ledgers." in text
+
+    def test_the_lost_words_are_capped_with_a_count_of_the_rest(self, field):
+        words = " ".join(f"word{n}" for n in range(30))
+        field.landed(body=f"{words}\n\nIntro line.")
+        field.synced()
+        field.reread("Intro line.")
+        text = materials(field.root)
+        assert "`word0`" in text
+        assert ", and 6 more" in text
+        assert text.count("`word") == 24  # noqa: PLR2004 — the cap
 
     def test_a_reread_that_only_gained_is_listed_as_losing_nothing(self, field):
         field.healed(EARLIER + "\n\nA new section the site added.")
