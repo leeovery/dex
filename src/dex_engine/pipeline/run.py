@@ -308,6 +308,9 @@ _STORED_WITH_THE_VIDEO = {Kind.INSTAGRAM: "the caption", Kind.X: "the post"}
 # What a post's park says when voice detection found no speech in its video.
 NO_SPEECH_DETECTED = "voice detection found no speech in the video"
 
+# The work list's reason for an item a rerun took a page from.
+_PAGE_LOST = "a page it held is gone since its digest — awaiting a digest without it"
+
 
 def _provider_input_reason(entry: LedgerEntry, error: ProviderInputError) -> str:
     """The manual-park reason for input a provider could not use.
@@ -572,6 +575,10 @@ class _Drain:
     # items, owed description + digest from the owner's note, and derived
     # on demand for the report.
     closed_unenriched_items: list[str] = field(default_factory=list)
+    # Live items a rerun took a page from since their digest pass that still
+    # hold other content, so the listing above does not name them: their
+    # digest states what is gone. Derived on demand like it.
+    page_lost_items: list[str] = field(default_factory=list)
     # Items carrying media no session has described — derived on demand
     # like the two listings above, and owed by any item however finished
     # its units are (:func:`undescribed_media`).
@@ -2588,6 +2595,20 @@ class _Drain:
             for item_id in _terminal_no_content_items(self.entries, self.owners, live)
             if item_id not in digested or item_id in page_lost
         ]
+        # An item that lost a page and still holds another is owed the same
+        # new digest, which only the backstop named: the report named a
+        # co-owner the shared page closed out and never the item it left.
+        # One still owing a unit is raw, which the ingest procedure forbids
+        # digesting, so like the backstop it waits for that unit.
+        owed = self.owed()
+        owing = {
+            item_id
+            for entry in self.entries.values()
+            if entry.hash in owed
+            for item_id in self.owners.get(entry.hash, (entry.item,))
+        }
+        closed = set(self.closed_unenriched_items)
+        self.page_lost_items = sorted((page_lost & live) - closed - owing)
 
     def derive_undescribed_items(self) -> None:
         """List the items carrying media no session has described.
@@ -2607,11 +2628,14 @@ class _Drain:
                 self.undescribed_items.append(row)
 
     def report_payload(self) -> dict[str, object]:
-        items = [
-            {"id": item_id, "reason": outcome.reason()}
-            for item_id, outcome in sorted(self.outcomes.items())
+        reasons = {
+            item_id: outcome.reason()
+            for item_id, outcome in self.outcomes.items()
             if outcome.reason()
-        ]
+        }
+        for item_id in self.page_lost_items:
+            reasons[item_id] = "; ".join(filter(None, (reasons.get(item_id), _PAGE_LOST)))
+        items = [{"id": item_id, "reason": reason} for item_id, reason in sorted(reasons.items())]
         items += [
             {"id": item_id, "reason": "no-source item — awaiting description + digest"}
             for item_id in self.no_source_items

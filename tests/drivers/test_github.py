@@ -522,6 +522,14 @@ class TestBlob:
         body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
         assert body == f"```\n{source}\n```"
 
+    def test_a_file_holding_fences_of_its_own_is_wrapped_in_a_longer_one(self):
+        # A markdown file with a code block: a bare wrapper closed at its
+        # first fence line, and the rest of the file read as prose.
+        source = "# Setup\n\n```bash\nuv sync\n```\n\nThen run it.\n"
+        driver = driver_for({self.CONTENTS: gh_contents(source.encode())})
+        body = body_of(driver.fetch(make_unit(self.URL, Kind.GITHUB)))
+        assert body == f"````\n{source}\n````"
+
     def test_a_line_longer_than_the_cap_is_cut_inside_itself(self):
         # Minified source: no line end to cut at, and nothing kept is worse.
         source = "x" * 50_000

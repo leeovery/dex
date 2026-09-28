@@ -5219,14 +5219,90 @@ class TestARerunThatTookAPageAway:
         assert self.ALL_DEAD_REASON in report
         assert run_mod.digest_orphans(instance) == [ITEM]
 
-    def test_an_item_with_a_page_still_standing_is_named_by_the_backstop(self, instance):
+    PAGE_LOST_REASON = "a page it held is gone since its digest — awaiting a digest without it"
+
+    def test_an_item_with_a_page_still_standing_is_named_on_both_surfaces(self, instance):
         self.landed(instance, urls=["https://example.test/kept", URL])
         self.digest_without_a_pass(instance)
-        report = self.lose_the_page(instance)
+        report = " ".join(self.lose_the_page(instance).split())
         assert self.ALL_DEAD_REASON not in report  # one unit still holds its page
+        assert f"**{ITEM}** ↳ {self.PAGE_LOST_REASON}" in report
         assert run_mod.digest_orphans(instance) == [ITEM]
         digest_item(on_day(instance, FakeDriver(), LATER))
+        report = run_mod.run(on_day(instance, FakeDriver(), LATER))
+        assert self.PAGE_LOST_REASON not in " ".join(report.split())
+
+    def test_a_shared_page_lost_names_the_item_it_left_and_its_co_owner(self, instance):
+        # The field report: the owner holds a second unit, still done; the
+        # co-owner's only unit was the shared page. Both are owed a digest.
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance, other)
+        self.landed(instance, urls=["https://example.test/kept", URL])
+        self.digest_without_a_pass(instance)
+        self.digest_without_a_pass(instance, other)
+        report = " ".join(self.lose_the_page(instance).split())
+        assert f"**{other}** ↳ {self.ALL_DEAD_REASON}" in report
+        assert f"**{other}** ↳ {self.PAGE_LOST_REASON}" not in report  # one row, not two
+        assert f"**{ITEM}** ↳ {self.PAGE_LOST_REASON}" in report
+
+    def test_an_item_that_also_gained_material_carries_both_in_one_row(self, instance):
+        kept = "https://example.test/kept"
+        self.landed(instance, urls=[kept, URL])
+        self.digest_without_a_pass(instance)
+        ctx = on_day(instance, FakeDriver(), LATER)
+        for url in (kept, URL):
+            done = entry_for(ctx, url)
+            if url == URL:
+                (instance.root / str(done.path)).unlink()
+            ledger.append(
+                instance.ledger_path,
+                dataclasses.replace(done, status=Status.QUEUED, path=None, title=None, rerun=True),
+            )
+
+        def fetch(unit):
+            if unit.url == URL:
+                return Missing(evidence="HTTP 404")
+            return Content(meta={}, body="a different body " * 40)
+
+        report = " ".join(run_mod.run(on_day(instance, FakeDriver(fetch_fn=fetch), LATER)).split())
+        assert f"**{ITEM}** ↳ 1 rewritten; {self.PAGE_LOST_REASON}" in report
+
+    def test_an_item_still_owing_a_unit_waits_for_it_as_the_backstop_does(self, instance):
+        # Raw, which the ingest procedure forbids digesting: named once the
+        # parked unit is settled, never before.
+        parked = "https://example.test/a-js-shell"
+        write_item(instance, urls=["https://example.test/kept", URL, parked])
+
+        def fetch(unit):
+            if unit.url == parked:
+                return Unusable(evidence="a JS shell with no readable body")
+            return Content(meta={}, body="stable prose " * 20)
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        self.digest_without_a_pass(instance)
+        report = " ".join(self.lose_the_page(instance).split())
+        assert self.PAGE_LOST_REASON not in report
+        assert "Not finished — 1 item stays raw" in report
         assert run_mod.digest_orphans(instance) == []
+        ctx = on_day(instance, FakeDriver(), LATER)
+        run_mod.mark(ctx, parked, Status.SKIPPED, reason="a JS shell nothing reads")
+        report = " ".join(run_mod.run(ctx).split())
+        assert f"**{ITEM}** ↳ {self.PAGE_LOST_REASON}" in report
+
+    def test_a_ghost_items_lost_page_is_never_named_on_the_report(self, instance):
+        self.landed(instance, urls=["https://example.test/kept", URL])
+        self.digest_without_a_pass(instance)
+        gone = FakeDriver(fetch_fn=lambda _unit: Missing(evidence="HTTP 404"))
+        ctx = on_day(instance, gone, LATER)
+        done = entry_for(ctx, URL)
+        (instance.root / str(done.path)).unlink()
+        ledger.append(
+            instance.ledger_path,
+            dataclasses.replace(done, status=Status.QUEUED, path=None, title=None, rerun=True),
+        )
+        (instance.corpus_dir / "2026" / f"{ITEM}.md").unlink()
+        report = run_mod.run(ctx)
+        assert self.PAGE_LOST_REASON not in " ".join(report.split())
 
     def test_an_item_left_only_a_shared_page_parked_mid_rerun_is_named(self, instance):
         # The second field item: its own units closed, its one live unit a

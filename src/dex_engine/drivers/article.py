@@ -93,6 +93,7 @@ from dex_engine.pipeline.detect import (
     sniff_format,
     sniff_media_ext,
 )
+from dex_engine.pipeline.enrichment import fenced
 from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redetected, Unusable
 
 from .audio import audio_enclosure
@@ -184,8 +185,6 @@ _FENCED_BLOCK_RE = re.compile(
 )
 # The record type Pinecone's CMS writes a notebook as, the one rendered.
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
-# A run of backticks opening a line, which a fence around it must outrun.
-_BACKTICK_RUN_RE = re.compile(r"^[ \t]*(`+)", re.MULTILINE)
 
 _CODE_LINE_CLASS = "line"
 
@@ -941,23 +940,13 @@ def _notebook_cells(text: str) -> list[str] | None:
         if cell.get("cell_type") != "code":
             rendered += [source.strip()] if source.strip() else []
             continue
-        rendered += [_fenced(source.rstrip())] if source.strip() else []
+        # A cell or an output can hold fence lines of its own, a printed
+        # prompt template or a model's answer with a code block in it.
+        rendered += [fenced(source.rstrip())] if source.strip() else []
         for output in cell.get("outputs") or []:
             text = _output_text(output)
-            rendered += [_fenced(text.rstrip())] if text.strip() else []
+            rendered += [fenced(text.rstrip())] if text.strip() else []
     return rendered or None
-
-
-def _fenced(text: str) -> str:
-    """``text`` in a code fence longer than any backtick run opening one of its lines.
-
-    A cell or an output can hold fence lines of its own — a printed prompt
-    template, a model's answer with a code block in it — and a bare fence
-    around it would close there and read the rest inside out.
-    """
-    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
-    fence = "`" * max(3, longest + 1)
-    return f"{fence}\n{text}\n{fence}"
 
 
 def _output_text(output: object) -> str:

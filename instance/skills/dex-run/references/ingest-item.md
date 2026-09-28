@@ -306,9 +306,9 @@ A rerun that closes dead or skipped with its page gone from disk has
 taken that page from the item — a healing migration deleted an output
 it proved wrong, and the source was gone when re-fetched. A digest
 written before that day states what is gone, so the backstop names the
-item, and the run report too when every unit is closed, until a digest
-pass is recorded on or after that day, whatever else the item holds. A
-digest from before pass records were kept does not clear it.
+item, and the run report too once the item owes no other unit, until a
+digest pass is recorded on or after that day, whatever else the item
+holds. A digest from before pass records were kept does not clear it.
 
 ## 7. Place (judgment — the values ARE the judgment; the verb writes it)
 
