@@ -23,7 +23,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import assert_never
@@ -723,6 +723,26 @@ class _Drain:
         """
         return self.owners.get(entry.hash) or (entry.item,)
 
+    def claimants(self, entry: LedgerEntry, holder: str) -> tuple[str, ...]:
+        """Who owes writing up a unit's new material: the item holding its file, then the rest.
+
+        A URL two items list is one unit, whose file stands under one of
+        them, but its new material is new to both: naming the holder alone
+        left the other to surface later on the digest backstop.
+        """
+        return (holder, *(owner for owner in self.owners_of(entry) if owner != holder))
+
+    def _owed(self, entry: LedgerEntry, holder: str) -> Iterator[_ItemOutcome]:
+        """Each claimant's outcome to credit new material to, each marked touched.
+
+        Touched, because the report holds back an item still owing a unit:
+        a co-owner credited without it went on the writing-up list while it
+        was still ``raw``.
+        """
+        for claimant in self.claimants(entry, holder):
+            self.touched.add(claimant)
+            yield self.outcomes.setdefault(claimant, _ItemOutcome())
+
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
 
@@ -1362,11 +1382,11 @@ class _Drain:
             audio = cached_audio(self.ctx.instance.cache_dir / "audio", entry.hash)
             if audio is not None:
                 audio.unlink()
-            outcome = self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome())
             if changed:
-                outcome.changed += 1
+                for outcome in self._owed(entry, self.owner_of(entry)):
+                    outcome.changed += 1
             else:
-                outcome.unchanged += 1
+                self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
             self.notes.append(
                 f"item {self.owner_of(entry)}: the rerun of {entry.url} ended without a "
                 f"transcript ({cause or reason}) — the post stays done as it was re-fetched"
@@ -1882,11 +1902,11 @@ class _Drain:
         # report claiming a new enrichment file while listing the same
         # item under Needs writing up, with nothing on disk to write up.
         if count:
-            outcome = self.outcomes.setdefault(owner, _ItemOutcome())
-            if existed:
-                outcome.changed += 1
-            else:
-                outcome.new += 1
+            for outcome in self._owed(entry, owner):
+                if existed:
+                    outcome.changed += 1
+                else:
+                    outcome.new += 1
         return str(out.relative_to(self.ctx.instance.root)), True
 
     # -- extraction assets ----------------------------------------
@@ -2115,7 +2135,8 @@ class _Drain:
         # page write, and its earlier view — a page enrichment, or a hand
         # heal of the URL under its old kind — leaves on the same rule.
         _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-        self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
+        for outcome in self._owed(entry, owner):
+            outcome.media += 1
         self.record_outcome(entry, status=Status.DONE, path=path)
 
     def _held_by_a_sibling(
