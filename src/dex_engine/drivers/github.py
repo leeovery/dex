@@ -28,6 +28,7 @@ from collections.abc import Callable
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.detect import format_of_name, sniff_format
+from dex_engine.pipeline.enrichment import fenced
 from dex_engine.pipeline.types import (
     Content,
     Job,
@@ -192,7 +193,7 @@ class GitHubDriver:
         files = payload.get("files") or {}
         body = "\n\n".join(
             f"### {name}\n"
-            + _capped((file or {}).get("content", ""), _MAX_GIST_FILE_CHARS, url=url, wrap=_fence)
+            + _capped((file or {}).get("content", ""), _MAX_GIST_FILE_CHARS, url=url, wrap=fenced)
             for name, file in files.items()
         )
         if not body:
@@ -304,7 +305,7 @@ def _file_outcome(blob: Blob, url: str) -> Outcome:
             evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
         )
     return Content(
-        meta={"file": blob.path}, body=_capped(text, _MAX_BLOB_CHARS, url=url, wrap=_fence)
+        meta={"file": blob.path}, body=_capped(text, _MAX_BLOB_CHARS, url=url, wrap=fenced)
     )
 
 
@@ -365,10 +366,6 @@ def _capped(text: str, cap: int, *, url: str, wrap: Callable[[str], str]) -> str
     end = text.rfind("\n", 0, cap + 1)
     kept = text[:end] if end >= cap // 2 else text[:cap]
     return f"{wrap(kept)}\n\n{_TRUNCATED.format(kept=len(kept), whole=len(text), url=url)}"
-
-
-def _fence(text: str) -> str:
-    return f"```\n{text}\n```"
 
 
 def _gist_id(segments: list[str]) -> str | None:
