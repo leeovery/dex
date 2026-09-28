@@ -49,6 +49,7 @@ __all__ = [
     "description_section",
     "description_text",
     "descriptions_of",
+    "fenced",
     "hand_over_descriptions",
     "holds_transcript",
     "mask_fetched",
@@ -246,6 +247,22 @@ CAPTIONS_VIA = "captions"
 # — fxtwitter, wayback, an extractor's name — and a fetched post whose text
 # carries a "## Transcript" heading must never read as transcribed.
 TRANSCRIPT_SOURCES = frozenset({CAPTIONS_VIA, "whisper-local", "whisper-api"})
+
+
+# A run of backticks opening a line, which a fence around the text must outrun.
+_BACKTICK_RUN_RE = re.compile(r"^[ \t]*(`+)", re.MULTILINE)
+
+
+def fenced(text: str) -> str:
+    """``text`` in a code fence longer than any backtick run opening one of its lines.
+
+    Stored text can hold fence lines of its own, such as a markdown file's
+    code blocks or a notebook cell's printed prompt, and a bare three-backtick
+    fence around it closes at the first of them and reads the rest inside out.
+    """
+    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
 
 
 def description_text(body: str) -> str:

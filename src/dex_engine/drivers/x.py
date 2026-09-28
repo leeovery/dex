@@ -55,6 +55,7 @@ import urllib.parse
 from collections.abc import Callable, Iterator
 
 from dex_engine.pipeline.classify import Classification
+from dex_engine.pipeline.enrichment import fenced
 from dex_engine.pipeline.types import (
     Content,
     Kind,
@@ -441,7 +442,7 @@ def _block_markdown(
             return _atomic_markdown(_atomic_entity(block, entities), images)
         case "code-block":
             # Verbatim, never stripped: a listing's indentation is its meaning.
-            return f"```\n{block['text']}\n```" if block["text"].strip() else ""
+            return fenced(block["text"]) if block["text"].strip() else ""
         case _:
             return _linked_text(block, entities).strip()
 

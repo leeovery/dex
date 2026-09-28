@@ -14,6 +14,7 @@ from dex_engine.pipeline.enrichment import (
     description_section,
     description_text,
     descriptions_of,
+    fenced,
     hand_over_descriptions,
     holds_transcript,
     pre_transcript,
@@ -23,6 +24,24 @@ from dex_engine.pipeline.enrichment import (
     transcript_provenance,
 )
 from dex_engine.pipeline.types import Config
+
+
+class TestFenced:
+    def test_plain_text_takes_three_backticks(self):
+        assert fenced("a = 1") == "```\na = 1\n```"
+
+    def test_a_fence_line_inside_is_outrun(self):
+        assert fenced("```py\nx = 1\n```") == "````\n```py\nx = 1\n```\n````"
+
+    def test_an_indented_fence_line_counts(self):
+        assert fenced("text\n  `````\nmore").startswith("``````\n")
+
+    def test_backticks_inside_a_line_do_not(self):
+        # Only a line that opens with a run can close the wrapper.
+        assert fenced("use ````this```` inline").startswith("```\n")
+
+    def test_a_run_shorter_than_three_leaves_three(self):
+        assert fenced("``\nx").startswith("```\n")
 
 
 class TestReadEnrichment:
