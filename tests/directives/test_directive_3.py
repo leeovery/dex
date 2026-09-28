@@ -887,13 +887,15 @@ class TestCheck:
         ):
             assert any(named in u for u in unmet), named
 
-    def test_a_new_wiki_page_is_named_even_staged(self, field):
+    def test_a_new_wiki_page_is_named_new_even_staged_and_edited(self, field):
         # A page under wiki/ may change; the directive adds none.
         field.healed(self.LOST)
         record(field, f"- {PAGE}: kept")
         field.write("wiki/new.md", "a page")
         field.git(field.root, "add", "wiki/new.md")
-        assert any("`wiki/new.md` changed" in u for u in check(field.root))
+        assert any("`wiki/new.md` is new" in u for u in check(field.root))
+        field.write("wiki/new.md", "a page, edited after staging")
+        assert any("`wiki/new.md` is new" in u for u in check(field.root))
 
     def test_a_renamed_file_is_named_once_by_its_new_path(self, field):
         field.healed(self.LOST)

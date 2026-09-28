@@ -834,7 +834,11 @@ def _outside(root: Path, touched: set[str], revised: set[str]) -> list[str]:
 
 
 def _changes(status: str) -> Iterator[tuple[str, str]]:
-    """(path, state) per entry of ``git status --porcelain=v1 -z``: M, D, ?, or its letter."""
+    """(path, state) per entry of ``git status --porcelain=v1 -z``: M, D, ?, or its letter.
+
+    A file new to the tree is ``?`` whether or not it was staged, and
+    edited after staging (``AM``) too: it is new either way.
+    """
     records = iter(status.split("\0"))
     for record in records:
         if len(record) < 4:  # noqa: PLR2004 — "XY path" at its shortest
@@ -842,7 +846,7 @@ def _changes(status: str) -> Iterator[tuple[str, str]]:
         code, path = record[:2], record[3:]
         if code[0] in "RC":
             next(records, None)  # a rename or copy names its source next
-        if code == "??":
+        if code == "??" or "A" in code:
             yield path, "?"
         elif "D" in code:
             yield path, "D"
