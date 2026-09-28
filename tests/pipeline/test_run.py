@@ -5267,6 +5267,28 @@ class TestARerunThatTookAPageAway:
         report = " ".join(run_mod.run(on_day(instance, FakeDriver(fetch_fn=fetch), LATER)).split())
         assert f"**{ITEM}** ↳ 1 rewritten; {self.PAGE_LOST_REASON}" in report
 
+    def test_an_item_still_owing_a_unit_waits_for_it_as_the_backstop_does(self, instance):
+        # Raw, which the ingest procedure forbids digesting: named once the
+        # parked unit is settled, never before.
+        parked = "https://example.test/a-js-shell"
+        write_item(instance, urls=["https://example.test/kept", URL, parked])
+
+        def fetch(unit):
+            if unit.url == parked:
+                return Unusable(evidence="a JS shell with no readable body")
+            return Content(meta={}, body="stable prose " * 20)
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        self.digest_without_a_pass(instance)
+        report = " ".join(self.lose_the_page(instance).split())
+        assert self.PAGE_LOST_REASON not in report
+        assert "Not finished — 1 item stays raw" in report
+        assert run_mod.digest_orphans(instance) == []
+        ctx = on_day(instance, FakeDriver(), LATER)
+        run_mod.mark(ctx, parked, Status.SKIPPED, reason="a JS shell nothing reads")
+        report = " ".join(run_mod.run(ctx).split())
+        assert f"**{ITEM}** ↳ {self.PAGE_LOST_REASON}" in report
+
     def test_a_ghost_items_lost_page_is_never_named_on_the_report(self, instance):
         self.landed(instance, urls=["https://example.test/kept", URL])
         self.digest_without_a_pass(instance)

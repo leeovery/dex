@@ -593,6 +593,14 @@ class TestArticleEntities:
             "After the listing."
         ) in body
 
+    def test_a_listing_holding_a_fence_of_its_own_is_wrapped_in_a_longer_one(self):
+        # A bare wrapper closed at the listing's own fence line, and the
+        # rest of the article read inside out.
+        lines = ["Reply with:", "```json", '{"ok": true}', "```"]
+        blocks = [{"type": "code-block", "text": line, "entityRanges": []} for line in lines]
+        body = self.body(self.with_blocks(blocks))
+        assert '````\nReply with:\n```json\n{"ok": true}\n```\n````' in body
+
     def test_a_blank_code_block_run_renders_nothing(self):
         blocks = [
             {"type": "ordered-list-item", "text": "first", "entityRanges": []},

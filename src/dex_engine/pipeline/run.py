@@ -2598,7 +2598,17 @@ class _Drain:
         # An item that lost a page and still holds another is owed the same
         # new digest, which only the backstop named: the report named a
         # co-owner the shared page closed out and never the item it left.
-        self.page_lost_items = sorted((page_lost & live) - set(self.closed_unenriched_items))
+        # One still owing a unit is raw, which the ingest procedure forbids
+        # digesting, so like the backstop it waits for that unit.
+        owed = self.owed()
+        owing = {
+            item_id
+            for entry in self.entries.values()
+            if entry.hash in owed
+            for item_id in self.owners.get(entry.hash, (entry.item,))
+        }
+        closed = set(self.closed_unenriched_items)
+        self.page_lost_items = sorted((page_lost & live) - closed - owing)
 
     def derive_undescribed_items(self) -> None:
         """List the items carrying media no session has described.
