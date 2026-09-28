@@ -874,9 +874,12 @@ class TestCheck:
         )
         field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, ""))
         assert any("more than its transcript changed" in u for u in check(field.root))
-        left = {**self.TAKEN_OUT, "model": "whisper-1"}
-        field.write(POST, render_enrichment(POST_URL, HEALED, left, "@a — a clip"))
-        assert any("still names its transcriber" in u for u in check(field.root))
+        for left in (
+            {**self.TAKEN_OUT, "model": "whisper-1"},
+            {**self.TAKEN_OUT, "via": "whisper-api"},
+        ):
+            field.write(POST, render_enrichment(POST_URL, HEALED, left, "@a — a clip"))
+            assert any("still names its transcriber" in u for u in check(field.root)), left
         field.write(POST, render_enrichment(POST_URL, HEALED, self.TAKEN_OUT, "@a — a clip"))
         assert check(field.root) == []
 
