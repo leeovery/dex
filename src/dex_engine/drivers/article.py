@@ -28,17 +28,19 @@ because the two settings answer different questions: an article's comment
 section is chrome, and a discussion page's comments are the entire
 artifact. The same preparation repairs markup trafilatura throws away
 with content inside it: scroll-area wrappers its navigation filter
-misreads, MathML, and the LaTeXML shapes of an arXiv rendering. The
-arXiv full text in the paper driver runs through it too.
+misreads, code blocks whose line breaks live in the stylesheet, MathML,
+and the LaTeXML shapes of an arXiv rendering. The arXiv full text in the
+paper driver runs through it too.
 
 A page can make extraction unnecessary: docs sites declare the markdown
 a page was rendered from (``<link rel="alternate" type="text/markdown">``),
 and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
-and stores it whenever it answers as markdown or plain text and carries
-at least what extraction found. The title, description and og:image
-still come from the HTML.
+and stores it whenever it answers as markdown or plain text and is at
+least as long as what extraction found, with any notebook it holds as a
+CMS record rendered as the page shows it. The title, description and
+og:image still come from the HTML.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -68,10 +70,12 @@ media sample, and the article wins.
 """
 
 import html as html_lib
+import itertools
 import json
 import re
 import urllib.parse
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -170,6 +174,47 @@ _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
 _FEED_LEADS = (b"<rss", b"<feed")
+# A fenced block in a declared source holding a JSON object, its info
+# string ignored. The body must open the object: a block that cannot is
+# never scanned for its closer, which a source whose closers do not match
+# (CRLF lines, indented fences) made a scan to the document's end for each.
+_FENCED_BLOCK_RE = re.compile(
+    r"^(?P<fence>`{3,}|~{3,})[^\n]*\n(?P<body>\{.*?)\n(?P=fence)[ \t\r]*$",
+    re.MULTILINE | re.DOTALL,
+)
+# The record type Pinecone's CMS writes a notebook as, the one rendered.
+_NOTEBOOK_RECORD_TYPE = "colabBlock"
+# A run of backticks opening a line, which a fence around it must outrun.
+_BACKTICK_RUN_RE = re.compile(r"^[ \t]*(`+)", re.MULTILINE)
+
+_CODE_LINE_CLASS = "line"
+
+# HTML's phrasing content: what a run of text beside a code block is made of.
+_PHRASING_TAGS = frozenset(
+    {
+        "a", "abbr", "audio", "b", "bdi", "bdo", "br", "button", "canvas", "cite", "code",
+        "data", "del", "dfn", "em", "embed", "i", "iframe", "img", "input", "ins", "kbd",
+        "label", "mark", "math", "meter", "object", "output", "picture", "progress", "q",
+        "ruby", "s", "samp", "select", "small", "span", "strong", "sub", "sup", "svg",
+        "textarea", "time", "u", "var", "video", "wbr",
+    }
+)  # fmt: skip
+# What ends a run of text though it sits inside phrasing: a link wrapping a
+# card's <div> is a block, and made part of a paragraph it and the text
+# after it were dropped.
+_BLOCK_TAGS = frozenset(
+    {
+        "address", "article", "aside", "blockquote", "details", "dialog", "div", "dl",
+        "fieldset", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+        "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "ul",
+    }
+)  # fmt: skip
+_LIST_ITEM_TAGS = ("li", "dt", "dd")
+# The text length below which trafilatura deletes a div holding a link that
+# has three children or more (its link-density backtracking, precision off).
+_SHORT_WITH_A_LINK = 100
+# A word, as the check that the code-block repair lost nothing counts them.
+_WORD_RE = re.compile(r"\w+")
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -184,13 +229,43 @@ def trafilatura_extract(html: str) -> str | None:
     hyperlinks. It is also, unaccompanied, destructive — see
     :func:`_prepare_page`, which is why the page is prepared first and
     never handed to the extractor raw.
+
+    The code-block repair (:func:`_set_code_blocks_apart`) changes the
+    structure trafilatura judges a page by, and trafilatura's own rules
+    can then drop text — a Blogger post lost nineteen paragraphs once
+    paragraphs set around its code carried it past a threshold trafilatura
+    measures on its own cleaned tree. So where the repair changed the page,
+    the page is extracted without it too, and the repaired extraction is
+    kept only when it holds every word the other does: the repair only
+    ever adds.
     """
-    prepared = _prepare_page(html)
+    repaired = _prepare_page(html)
+    extracted = _extract_prepared(repaired)
+    plain = _prepare_page(html, set_code_apart=False)
+    if plain == repaired:
+        return extracted
+    unrepaired = _extract_prepared(plain)
+    return unrepaired if _drops_words(extracted, unrepaired) else extracted
+
+
+def _extract_prepared(prepared: str) -> str | None:
     body = _extract_markdown(prepared, comments=False)
     discussion = _extract_markdown(prepared, comments=True)
     if discussion is not None and len(discussion) > len(body or "") * _DISCUSSION_RATIO:
         return discussion
     return body
+
+
+def _drops_words(extracted: str | None, unrepaired: str | None) -> bool:
+    """Whether ``extracted`` lacks any word, counted with repeats, that ``unrepaired`` holds.
+
+    A word the unrepaired run holds only because it glued two together —
+    ``Dockerdocker``, ``withgit`` — is held where the repair set the two
+    apart: un-gluing them is what the repair is for.
+    """
+    words = _WORD_RE.findall(extracted or "")
+    lacking = Counter(_WORD_RE.findall(unrepaired or "")) - Counter(words)
+    return bool(lacking - Counter(a + b for a, b in itertools.pairwise(words)))
 
 
 def _extract_markdown(html: str, *, comments: bool) -> str | None:
@@ -201,15 +276,16 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
     )
 
 
-def _prepare_page(html: str) -> str:
+def _prepare_page(html: str, *, set_code_apart: bool = True) -> str:
     """Repair the page shapes that break extraction, before trafilatura sees it.
 
     Every repair runs over one parse, and each function below carries the
     field case that earned it. They come in two families: what
     ``include_links`` costs — empty anchors, and permalink glyphs and
     line breaks in headings — and markup trafilatura throws away with
-    content inside it — scroll areas its navigation filter misreads,
-    MathML, and LaTeXML's tabulars and equation tables.
+    content inside it — scroll areas its navigation filter misreads, code
+    lines whose breaks live in the stylesheet, MathML, and LaTeXML's
+    tabulars and equation tables.
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -222,6 +298,7 @@ def _prepare_page(html: str) -> str:
     except (LxmlError, ValueError):
         return html
     _unmask_scroll_areas(tree)
+    _break_code_lines(tree)
     _tabulate_latexml_spans(tree)
     # Before the rest of the math: an equation row's formulas are one
     # display block, and rendered one element at a time they would come
@@ -233,6 +310,10 @@ def _prepare_page(html: str) -> str:
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
             _flatten_heading(heading)
+    # Last: it sorts a container's children into text and blocks, so it must
+    # read the markup every repair above leaves, the math already text.
+    if set_code_apart:
+        _set_code_blocks_apart(tree)
     return tostring(tree, encoding="unicode")
 
 
@@ -340,6 +421,209 @@ def _unmask_scroll_areas(tree: "HtmlElement") -> None:
         if isinstance(element, HtmlElement) and "scrollbar" in _class_attribute(element).lower():
             kept = [token for token in _classes(element) if "scrollbar" not in token.lower()]
             element.set("class", " ".join(kept))
+
+
+def _break_code_lines(tree: "HtmlElement") -> None:
+    """Put a newline between the lines of a code block typeset one element per line.
+
+    Shiki wraps each line of a block in ``<span class="line">``, and a page
+    that renders those spans as components, rather than as Shiki's own
+    string, leaves nothing between them: the breaks live in the stylesheet,
+    which draws each span as a block. trafilatura reads text, so the block
+    came out as one line, and one line of code is inline code — every block
+    of a towardsdatascience.com post was stored as a single backticked line,
+    its statements run together (``from PyPDF2 import PdfReaderimport
+    nltk``). vercel.com's blog draws its lines as ``<div class="line">``
+    the same way.
+
+    A line that already ends in a newline keeps what it has: Shiki's string
+    output puts one between its spans, and Hugo's Chroma ends each span
+    with one. A block's last line keeps what it has too: a break after it
+    adds no line, and it would turn a one-line block into a fenced one.
+    """
+    for line in _code_lines(tree):
+        if line.getnext() is not None and not _ends_its_line(line):
+            line.tail = f"\n{line.tail or ''}"
+
+
+def _code_lines(tree: "HtmlElement") -> "Iterator[HtmlElement]":
+    """Every line element of a code block: a ``line``-classed child of its ``<code>``.
+
+    A child and never a deeper descendant, because deeper in, the class
+    names a token rather than a line: Prism's diff highlighting calls the
+    changed text inside each line element ``line``.
+    """
+    for pre in tree.iter("pre"):
+        for code in pre.iterchildren("code"):
+            yield from (line for line in code if _CODE_LINE_CLASS in _classes(line))
+
+
+def _ends_its_line(line: "HtmlElement") -> bool:
+    return line.text_content().endswith("\n") or (line.tail or "").startswith("\n")
+
+
+def _set_code_blocks_apart(tree: "HtmlElement") -> None:
+    """Give every code block a line of its own, and keep the text around it.
+
+    trafilatura starts a paragraph or a heading on a new line, but not a
+    code block, and it drops text left loose after one. So a block written
+    among loose text came out glued. MkDocs keeps a ``<details>`` section's
+    prose as bare text around each highlighted block, and
+    llama-cpp-python's install page was stored with thirteen fences opening
+    at the end of the sentence before them (``saved to a `requirements.txt`
+    file:`` then the fence), every one read inside out by a renderer, and
+    the prose between the blocks gone. The loose text beside a code block
+    becomes paragraphs, which trafilatura sets apart from the block and
+    keeps.
+
+    A list item needs one more repair: trafilatura writes an item's
+    paragraphs on a single line, the fence with them, so a line break goes
+    in front of the block. It carries a space after it, because trafilatura
+    drops a break with nothing after it, and the fence line opens with that
+    space, which markdown allows. A definition list's terms and
+    descriptions are list items to trafilatura too.
+
+    The structure this changes is what trafilatura judges a page by, so the
+    extraction is also run without it and the repair kept only where it
+    loses no word (:func:`trafilatura_extract`).
+    """
+    for pre in list(tree.iter("pre")):
+        for block, container in _code_block_levels(pre):
+            _paragraph_loose_text(container)
+            if next(block.iterancestors(*_LIST_ITEM_TAGS), None) is not None:
+                _break_line_before(block)
+
+
+def _code_block_levels(pre: "HtmlElement") -> "Iterator[tuple[HtmlElement, HtmlElement]]":
+    """Each level from the pre out, as the block and its container, up to where its text is.
+
+    Highlighters wrap a block in divs, with copy buttons and a filename
+    beside it, so the text it sits among may be several divs out: the walk
+    ends at the first container that holds loose text or is not a div.
+    """
+    block = pre
+    while (container := block.getparent()) is not None:
+        last = container.tag != "div" or _holds_loose_text(container)
+        yield block, container
+        if last:
+            return
+        block = container
+
+
+def _paragraph_loose_text(container: "HtmlElement | None") -> None:
+    """Wrap each run of loose text in the container, with the phrasing inside it, in a ``<p>``.
+
+    A run holding no loose text of its own stays as it is: a link alone on
+    its line survives extraction, and the same link made a paragraph is
+    dropped as boilerplate.
+    """
+    if container is None or not _holds_loose_text(container) or _short_with_a_link(container):
+        return
+    previous: HtmlElement | None = None
+    lead = container.text
+    container.text = None
+    run: list[HtmlElement] = []
+    for child in list(container):
+        if _is_phrasing(child):
+            run.append(child)
+            continue
+        _close_run(container, previous, lead, run, before=child)
+        previous, lead, run = child, child.tail, []
+        child.tail = None
+    _close_run(container, previous, lead, run, before=None)
+
+
+def _close_run(
+    container: "HtmlElement",
+    previous: "HtmlElement | None",
+    lead: str | None,
+    run: list["HtmlElement"],
+    *,
+    before: "HtmlElement | None",
+) -> None:
+    """Wrap one run in a ``<p>`` where ``before`` stands, or put its lead text back."""
+    from lxml.html import Element  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    if not _worth_a_paragraph(lead, run):
+        if previous is None:
+            container.text = lead
+        else:
+            previous.tail = lead
+        return
+    paragraph = Element("p")
+    paragraph.text = lead
+    paragraph.extend(run)
+    if before is None:
+        container.append(paragraph)
+    else:
+        before.addprevious(paragraph)
+
+
+def _worth_a_paragraph(lead: str | None, run: list["HtmlElement"]) -> bool:
+    """Whether a run's own text outweighs its links, so that made a paragraph it is kept.
+
+    trafilatura drops a paragraph made mostly of links as boilerplate, and
+    a footnote's marker and URL after a code block are one — a Hacker News
+    comment's ``[1] https://arxiv.org/pdf/...`` was lost that way. Left loose
+    it is kept, as a link alone on its line is.
+    """
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    loose = sum(len((text or "").strip()) for text in (lead, *(node.tail for node in run)))
+    linked = sum(
+        len(link.text_content().strip())
+        for node in run
+        if isinstance(node, HtmlElement)
+        for link in node.iter("a")
+    )
+    return loose > linked
+
+
+def _short_with_a_link(container: "HtmlElement") -> bool:
+    """Whether trafilatura would delete the container whole once it had three children.
+
+    It deletes a short div holding a link that has three children or more,
+    and the paragraphs set around a code block give it them: a lead, a link,
+    a block and the text after it were lost together where, left as they
+    were, the block and the link were kept.
+    """
+    if next(container.iter("a"), None) is None:
+        return False
+    return len(" ".join(container.text_content().split())) < _SHORT_WITH_A_LINK
+
+
+def _holds_loose_text(container: "HtmlElement") -> bool:
+    return _any_text(container.text, *(child.tail for child in container))
+
+
+def _any_text(*texts: str | None) -> bool:
+    return any((text or "").strip() for text in texts)
+
+
+def _is_phrasing(node: "HtmlElement") -> bool:
+    """Whether a node belongs to a run of text: a comment, or phrasing holding no block."""
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    if not isinstance(node, HtmlElement):
+        return True
+    return node.tag in _PHRASING_TAGS and next(node.iter(*_BLOCK_TAGS), None) is None
+
+
+def _break_line_before(block: "HtmlElement") -> None:
+    from lxml.html import Element, HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    # The break is a third child for the container, which trafilatura then
+    # deletes whole where it is a short one holding a link.
+    parent = block.getparent()
+    if parent is not None and _short_with_a_link(parent):
+        return
+    siblings = block.itersiblings(preceding=True)
+    previous = next((node for node in siblings if isinstance(node, HtmlElement)), None)
+    if previous is None or not previous.text_content().strip():
+        return
+    line_break = Element("br")
+    line_break.tail = " "
+    block.addprevious(line_break)
 
 
 def _tabulate_latexml_spans(tree: "HtmlElement") -> None:
@@ -609,10 +893,87 @@ def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
     the page has — a stub, an error body served with a 200 — and where the
     two come close the page lost nothing to extraction, so keeping the
     extraction costs nothing.
+
+    A source kept has its notebook records rendered
+    (:func:`_render_notebook_records`).
     """
     if alternate is not None and len(alternate) >= len(extracted or ""):
-        return alternate
+        return _render_notebook_records(alternate)
     return extracted
+
+
+def _render_notebook_records(markdown: str) -> str:
+    """The source with each fenced notebook record written as the cells the page shows.
+
+    Pinecone's learn pages declare a source that writes each embedded
+    notebook as the CMS's own JSON record — ``{"_type": "colabBlock",
+    "jsonContent": "<the notebook>"}`` in a fenced block — where the page
+    renders its code and output. Choosing the page's extraction over such a
+    source cost its tables a column and its links; rendered in place, the
+    record reads as the page does and the source keeps everything else. A
+    fenced block that is not such a record is left as it stands.
+    """
+    return _FENCED_BLOCK_RE.sub(_rendered_cells, markdown)
+
+
+def _rendered_cells(block: "re.Match[str]") -> str:
+    cells = _notebook_cells(block.group("body"))
+    return block.group(0) if cells is None else "\n\n".join(cells)
+
+
+def _notebook_cells(text: str) -> list[str] | None:
+    """A notebook record's cells as markdown, code and output fenced; None for anything else."""
+    try:
+        record = json.loads(text)
+        if record["_type"] != _NOTEBOOK_RECORD_TYPE:
+            return None
+        notebook = json.loads(record["jsonContent"])
+        cells = notebook["cells"]
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(cells, list):
+        return None
+    rendered: list[str] = []
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        source = _cell_text(cell.get("source"))
+        if cell.get("cell_type") != "code":
+            rendered += [source.strip()] if source.strip() else []
+            continue
+        rendered += [_fenced(source.rstrip())] if source.strip() else []
+        for output in cell.get("outputs") or []:
+            text = _output_text(output)
+            rendered += [_fenced(text.rstrip())] if text.strip() else []
+    return rendered or None
+
+
+def _fenced(text: str) -> str:
+    """``text`` in a code fence longer than any backtick run opening one of its lines.
+
+    A cell or an output can hold fence lines of its own — a printed prompt
+    template, a model's answer with a code block in it — and a bare fence
+    around it would close there and read the rest inside out.
+    """
+    longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
+def _output_text(output: object) -> str:
+    """A cell output's text: a stream's, or a result's plain-text rendering."""
+    if not isinstance(output, dict):
+        return ""
+    data = output.get("data")
+    plain = data.get("text/plain") if isinstance(data, dict) else None
+    return _cell_text(output.get("text")) or _cell_text(plain)
+
+
+def _cell_text(value: object) -> str:
+    """A notebook field's text: written as one string, or as its lines in a list."""
+    if isinstance(value, list):
+        return "".join(line for line in value if isinstance(line, str))
+    return value if isinstance(value, str) else ""
 
 
 def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
