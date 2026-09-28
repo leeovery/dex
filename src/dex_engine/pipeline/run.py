@@ -23,7 +23,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import assert_never
@@ -724,6 +724,17 @@ class _Drain:
         """
         return (holder, *(owner for owner in self.owners_of(entry) if owner != holder))
 
+    def _owed(self, entry: LedgerEntry, holder: str) -> Iterator[_ItemOutcome]:
+        """Each claimant's outcome to credit new material to, each marked touched.
+
+        Touched, because the report holds back an item still owing a unit:
+        a co-owner credited without it went on the writing-up list while it
+        was still ``raw``.
+        """
+        for claimant in self.claimants(entry, holder):
+            self.touched.add(claimant)
+            yield self.outcomes.setdefault(claimant, _ItemOutcome())
+
     def _seed_media_file(self, item_id: str, repo_path: str) -> None:
         """Materialized files feed the pipeline: format detect → extract queue.
 
@@ -1357,8 +1368,8 @@ class _Drain:
             if audio is not None:
                 audio.unlink()
             if changed:
-                for claimant in self.claimants(entry, self.owner_of(entry)):
-                    self.outcomes.setdefault(claimant, _ItemOutcome()).changed += 1
+                for outcome in self._owed(entry, self.owner_of(entry)):
+                    outcome.changed += 1
             else:
                 self.outcomes.setdefault(self.owner_of(entry), _ItemOutcome()).unchanged += 1
             self.notes.append(
@@ -1876,8 +1887,7 @@ class _Drain:
         # report claiming a new enrichment file while listing the same
         # item under Needs writing up, with nothing on disk to write up.
         if count:
-            for claimant in self.claimants(entry, owner):
-                outcome = self.outcomes.setdefault(claimant, _ItemOutcome())
+            for outcome in self._owed(entry, owner):
                 if existed:
                     outcome.changed += 1
                 else:
@@ -2110,7 +2120,8 @@ class _Drain:
         # page write, and its earlier view — a page enrichment, or a hand
         # heal of the URL under its old kind — leaves on the same rule.
         _drop_superseded_outputs(self.ctx.instance, entry, path, drivers=self.ctx.drivers)
-        self.outcomes.setdefault(owner, _ItemOutcome()).media += 1
+        for outcome in self._owed(entry, owner):
+            outcome.media += 1
         self.record_outcome(entry, status=Status.DONE, path=path)
 
     def _held_by_a_sibling(

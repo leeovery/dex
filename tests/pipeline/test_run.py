@@ -1301,6 +1301,44 @@ class TestRerun:
         assert f"**{ITEM}** ↳ 1 rewritten" in report
         assert f"**{other}** ↳ 1 rewritten" in report
 
+    def test_a_co_owner_still_owing_a_unit_is_named_as_not_finished_too(self, instance):
+        # The session writes up what Needs writing up names, and Not finished
+        # holds a raw item back: a co-owner must reach both, like a holder.
+        # The file stands under the first claimant, which sorts first; the
+        # co-owner's other unit parked for judgment in an earlier run, which
+        # no later run drains, so nothing but the credit touches it.
+        holder = "2026-08-19-another-share-9f8e7d"
+        parked = "https://example.test/a-js-shell"
+        write_item(instance, holder)
+        write_item(instance, urls=[URL, parked])
+
+        def fetch(unit):
+            if unit.url == parked:
+                return Unusable(evidence="a JS shell with no readable body")
+            return Content(meta={}, body="stable prose " * 20)
+
+        run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=fetch)))
+        richer = FakeDriver(fetch_fn=lambda _unit: Content(meta={}, body="a different body " * 40))
+        ctx = make_ctx(instance, richer)
+        self.seed_rerun(ctx)
+        report = " ".join(run_mod.run(ctx).split())
+        assert entry_for(ctx).item == holder
+        assert f"**{ITEM}** ↳ 1 rewritten" in report
+        assert "### Not finished — 1 item stays raw until every unit lands" in report
+        assert f"**{ITEM}** ↳ 1 of 2 units landed" in report
+
+    def test_a_shared_picture_is_new_material_to_every_item_sharing_it(self, instance):
+        # A page URL whose body is a picture lands through the media stage.
+        other = "2026-08-19-another-share-9f8e7d"
+        write_item(instance)
+        write_item(instance, other)
+        driver = FakeDriver(fetch_fn=lambda _unit: Redetected(kind=Kind.WEB, job=Job.MEDIA))
+        picture = HttpResponse(status=200, content_type="image/png", body=b"png")
+        ctx = make_ctx(instance, driver, transport=FakeTransport({URL: picture}))
+        report = " ".join(run_mod.run(ctx).split())
+        assert f"**{ITEM}** ↳ 1 media file" in report
+        assert f"**{other}** ↳ 1 media file" in report
+
     def test_an_unchanged_shared_unit_is_accounted_for_once(self, instance):
         # One unit re-fetched to what was stored is one unit on the books.
         other = "2026-08-19-another-share-9f8e7d"
