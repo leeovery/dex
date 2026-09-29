@@ -32,6 +32,13 @@ misreads, code blocks whose line breaks live in the stylesheet, MathML,
 and the LaTeXML shapes of an arXiv rendering. The arXiv full text in the
 paper driver runs through it too.
 
+A page whose article trafilatura cannot find — nothing its body search
+names, or a newsletter box it names first — falls to its recovery of
+"wild" text, which keeps paragraphs and drops every heading and list.
+Where that recovery ran, the page is read again with its whole body
+marked as the article, and the second reading is kept only where it
+loses nothing the first one held.
+
 A page can make extraction unnecessary: docs sites declare the markdown
 a page was rendered from (``<link rel="alternate" type="text/markdown">``),
 and that source keeps the tables and code blocks extraction loses. The
@@ -72,12 +79,13 @@ media sample, and the article wins.
 import html as html_lib
 import itertools
 import json
+import logging
 import re
 import urllib.parse
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from lxml.html import HtmlElement
@@ -212,8 +220,21 @@ _LIST_ITEM_TAGS = ("li", "dt", "dd")
 # The text length below which trafilatura deletes a div holding a link that
 # has three children or more (its link-density backtracking, precision off).
 _SHORT_WITH_A_LINK = 100
-# A word, as the check that the code-block repair lost nothing counts them.
+# A word, as the checks that a second reading lost nothing count them.
 _WORD_RE = re.compile(r"\w+")
+# What else a second reading must keep of the first, each counted with
+# repeats by what it says: a link by its target, a code fence line by its
+# fence, a table row by its cells.
+_KEPT_MARKS = (
+    re.compile(r"\]\((\S+?)\)"),
+    re.compile(r"^[ \t]*(`{3,}|~{3,})", re.MULTILINE),
+    re.compile(r"^[ \t]*(\|.*\|)[ \t]*$", re.MULTILINE),
+)
+
+# trafilatura says it fell back to recovering "wild" text in this debug
+# record alone.
+_EXTRACTOR_LOGGER = "trafilatura.main_extractor"
+_WILD_TEXT_RECOVERY = "Recovering wild text elements"
 
 _LATEXML_TABLE_SECTIONS = {"ltx_thead": "thead", "ltx_tbody": "tbody", "ltx_tfoot": "tfoot"}
 
@@ -229,6 +250,28 @@ def trafilatura_extract(html: str) -> str | None:
     :func:`_prepare_page`, which is why the page is prepared first and
     never handed to the extractor raw.
 
+    Where trafilatura found no article body it could use and recovered
+    wild text instead (:class:`_WildTextWatch`), the page is read a second
+    time with its body marked (:func:`_mark_article_body`), and that
+    reading stands only where it loses nothing the first held
+    (:func:`_holds_everything`). Anywhere else the page is read once, as
+    it always was.
+    """
+    with _WildTextWatch() as watch:
+        extracted = _extract_page(html)
+    # A page that reads thin is parked for a session to judge, and it stays
+    # parked: the second reading of one cleared the bar with nothing but its
+    # title and the headings of a promo and a newsletter signup, which would
+    # have been stored as its article.
+    if not watch.fell_back or extracted is None or len(extracted) < MIN_SUBSTANTIAL_CHARS:
+        return extracted
+    marked = _extract_page(html, mark_body=True)
+    return marked if _holds_everything(marked, extracted) else extracted
+
+
+def _extract_page(html: str, *, mark_body: bool = False) -> str | None:
+    """The page's markdown, from the repaired page or the plain one.
+
     The code-block repair (:func:`_set_code_blocks_apart`) changes the
     structure trafilatura judges a page by, and trafilatura's own rules
     can then drop text — a Blogger post lost nineteen paragraphs once
@@ -238,13 +281,75 @@ def trafilatura_extract(html: str) -> str | None:
     kept only when it holds every word the other does: the repair only
     ever adds.
     """
-    repaired = _prepare_page(html)
+    repaired = _prepare_page(html, mark_body=mark_body)
     extracted = _extract_prepared(repaired)
-    plain = _prepare_page(html, set_code_apart=False)
+    plain = _prepare_page(html, set_code_apart=False, mark_body=mark_body)
     if plain == repaired:
         return extracted
     unrepaired = _extract_prepared(plain)
     return unrepaired if _drops_words(extracted, unrepaired) else extracted
+
+
+class _WildTextWatch(logging.Filter):
+    """Whether trafilatura recovered wild text while the watch was on.
+
+    Where its body search finds no article, or stops on an element holding
+    too little of one, trafilatura collects paragraphs, quotes, code and
+    tables from the whole page, and every heading and list is lost. It
+    says so only in a debug record, so for the watch's span its
+    extractor's logger is lowered to DEBUG, and the watch reads each
+    record as a filter on that logger.
+
+    A filter, not a handler, because a filter rules on a record before
+    any handler sees it: the debug records the watch lets the logger make
+    go nowhere, while every record the logger made before the watch — at
+    or above its own effective level — goes on to the same handlers as
+    ever.
+    """
+
+    _level: int
+    _passing: int
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fell_back = False
+        self._logger = logging.getLogger(_EXTRACTOR_LOGGER)
+
+    def __enter__(self) -> Self:
+        self._level = self._logger.level
+        self._passing = self._logger.getEffectiveLevel()
+        self._logger.addFilter(self)
+        self._logger.setLevel(logging.DEBUG)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._logger.setLevel(self._level)
+        self._logger.removeFilter(self)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Note a wild-text recovery; pass on only what would have passed without the watch."""
+        if record.getMessage().startswith(_WILD_TEXT_RECOVERY):
+            self.fell_back = True
+        return record.levelno >= self._passing
+
+
+def _holds_everything(extracted: str | None, baseline: str) -> bool:
+    """Whether ``extracted`` holds every word, link, code fence and table row ``baseline`` does.
+
+    Words alone are not enough: a table inside a list item kept every
+    word of its cells in a second reading and lost three of its rows.
+    """
+    return (
+        extracted is not None
+        and not _drops_words(extracted, baseline)
+        and not _loses_marks(extracted, baseline)
+    )
+
+
+def _loses_marks(extracted: str, baseline: str) -> bool:
+    return any(
+        Counter(mark.findall(baseline)) - Counter(mark.findall(extracted)) for mark in _KEPT_MARKS
+    )
 
 
 def _extract_prepared(prepared: str) -> str | None:
@@ -255,15 +360,15 @@ def _extract_prepared(prepared: str) -> str | None:
     return body
 
 
-def _drops_words(extracted: str | None, unrepaired: str | None) -> bool:
-    """Whether ``extracted`` lacks any word, counted with repeats, that ``unrepaired`` holds.
+def _drops_words(extracted: str | None, baseline: str | None) -> bool:
+    """Whether ``extracted`` lacks any word, counted with repeats, that ``baseline`` holds.
 
-    A word the unrepaired run holds only because it glued two together —
-    ``Dockerdocker``, ``withgit`` — is held where the repair set the two
-    apart: un-gluing them is what the repair is for.
+    A word the baseline holds only because it glued two together —
+    ``Dockerdocker``, ``withgit`` — is held where ``extracted`` sets the
+    two apart: un-gluing them is what the code-block repair is for.
     """
     words = _WORD_RE.findall(extracted or "")
-    lacking = Counter(_WORD_RE.findall(unrepaired or "")) - Counter(words)
+    lacking = Counter(_WORD_RE.findall(baseline or "")) - Counter(words)
     return bool(lacking - Counter(a + b for a, b in itertools.pairwise(words)))
 
 
@@ -275,7 +380,7 @@ def _extract_markdown(html: str, *, comments: bool) -> str | None:
     )
 
 
-def _prepare_page(html: str, *, set_code_apart: bool = True) -> str:
+def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = False) -> str:
     """Repair the page shapes that break extraction, before trafilatura sees it.
 
     Every repair runs over one parse, and each function below carries the
@@ -284,7 +389,9 @@ def _prepare_page(html: str, *, set_code_apart: bool = True) -> str:
     line breaks in headings — and markup trafilatura throws away with
     content inside it — scroll areas its navigation filter misreads, code
     lines whose breaks live in the stylesheet, MathML, and LaTeXML's
-    tabulars and equation tables.
+    tabulars and equation tables. ``mark_body`` is the second reading of
+    a page whose article trafilatura could not find
+    (:func:`_mark_article_body`).
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -313,7 +420,34 @@ def _prepare_page(html: str, *, set_code_apart: bool = True) -> str:
     # read the markup every repair above leaves, the math already text.
     if set_code_apart:
         _set_code_blocks_apart(tree)
+    if mark_body:
+        _mark_article_body(tree)
     return tostring(tree, encoding="unicode")
+
+
+def _mark_article_body(tree: "HtmlElement") -> None:
+    """Wrap everything the page's ``<body>`` holds in one ``<div itemprop="articleBody">``.
+
+    trafilatura looks for an article with a list of expressions tried in
+    order, and takes the first element in document order that the first
+    matching expression finds. ``itemprop="articleBody"`` is named by the
+    first expression, and a wrapper around the whole body comes before
+    every element inside it, so the wrapper is what trafilatura takes:
+    where nothing matched, and where what it took held too little of the
+    page — a newsletter box whose class names ``text-content``, a hero
+    banner, an ``<article>`` drawn as a card. Retagging the wrapper
+    ``<article>`` instead measured worse: that is the second expression,
+    and a wrong match to the first still wins.
+    """
+    from lxml.html import Element  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    body = tree.find("body")
+    if body is None:
+        return
+    wrapper = Element("div", itemprop="articleBody")
+    wrapper.text, body.text = body.text, None
+    wrapper.extend(list(body))
+    body.append(wrapper)
 
 
 def _drop_empty_anchors(tree: "HtmlElement") -> None:

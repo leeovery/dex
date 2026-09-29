@@ -6,17 +6,19 @@ and this file pins it through the driver that reads every page that way.
 """
 
 import json
+import logging
 import re
 import socket
 import urllib.parse
 
 import pytest
+from lxml.html import fromstring
 
 from dex_engine.drivers import article as article_mod
 from dex_engine.drivers.article import trafilatura_extract
 from dex_engine.drivers.transport import HttpResponse
 from dex_engine.drivers.web import WebDriver
-from dex_engine.pipeline.classify import PAYWALL_REASON
+from dex_engine.pipeline.classify import MIN_SUBSTANTIAL_CHARS, PAYWALL_REASON
 from dex_engine.pipeline.types import (
     Content,
     Format,
@@ -58,6 +60,29 @@ RESCUED = (
 OWN_LINE_FENCE_THEN_TEXT = re.compile(
     r"^ ?```\nline_one = 1\nline_two = 2\n```\nText after\.$", re.MULTILINE
 )
+# An article in a div trafilatura's body search does not name, with no <main>
+# or <article>: it falls to trafilatura's recovery of wild text.
+BODYLESS = fixture_text("web", "bodyless-prose.html")
+BODYLESS_HEADINGS = [
+    "# Shipping a Ledger Rewrite Without a Freeze",
+    "## Why the old ledger had to go",
+    "### What we measured first",
+    "## The migration, step by step",
+    "### What we would do again",
+]
+# The seams below the extractor its second reading is built from.
+read_page = article_mod._extract_page  # noqa: SLF001
+prepare_page = article_mod._prepare_page  # noqa: SLF001
+WildTextWatch = article_mod._WildTextWatch  # noqa: SLF001
+EXTRACTOR_LOG = logging.getLogger("trafilatura.main_extractor")
+TRAFILATURA_LOG = logging.getLogger("trafilatura")
+WILD_TEXT_RECOVERY = "Recovering wild text elements"
+# A first reading long enough to store, holding a link, a fence and a table.
+FIRST_READING = (
+    "The first reading kept every paragraph of the page and nothing else. " * 4
+    + "\n\nSee [the spec](https://example.test/spec) for the exact rules."
+    + "\n\n```\nledger.load()\n```\n\n| Step | Owner |\n| --- | --- |\n| Fetch | Driver |"
+)
 
 
 def wayback_lookup_url(url: str) -> str:
@@ -79,6 +104,52 @@ def markdown_response(text: str, *, status: int = 200) -> HttpResponse:
 def declaring(link: str) -> str:
     """The article fixture with ``link`` in its head."""
     return ARTICLE.replace("</head>", f"{link}</head>")
+
+
+def headings(body: str | None) -> list[str]:
+    return [line for line in (body or "").split("\n") if line.startswith("#")]
+
+
+def two_readings(first: str | None, second: str | None, marks: list[bool]):
+    """An ``_extract_page`` whose first reading falls to wild-text recovery, noting each mark."""
+
+    def extract_page(_html, *, mark_body=False):
+        marks.append(mark_body)
+        if mark_body:
+            return second
+        EXTRACTOR_LOG.debug(WILD_TEXT_RECOVERY)
+        return first
+
+    return extract_page
+
+
+class RecordList(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+@pytest.fixture
+def passed_on():
+    """The records trafilatura's loggers pass on, as a handler on the root sees them.
+
+    The handler takes every level, as a CLI's or an owner's logging setup
+    may; trafilatura's own logger stands at WARNING, as an unconfigured one
+    inherits from the root. Whatever a test does to either logger is undone.
+    """
+    root, handler = logging.getLogger(), RecordList()
+    package_level, extractor_level = TRAFILATURA_LOG.level, EXTRACTOR_LOG.level
+    filters = list(EXTRACTOR_LOG.filters)
+    root.addHandler(handler)
+    TRAFILATURA_LOG.setLevel(logging.WARNING)
+    yield handler.records
+    root.removeHandler(handler)
+    TRAFILATURA_LOG.setLevel(package_level)
+    EXTRACTOR_LOG.setLevel(extractor_level)
+    EXTRACTOR_LOG.filters[:] = filters
 
 
 class TestIdentity:
@@ -1281,7 +1352,9 @@ class TestExtractionFidelity:
         monkeypatch.setattr(
             article_mod,
             "_prepare_page",
-            lambda _html, *, set_code_apart=True: "repaired" if set_code_apart else "plain",
+            lambda _html, *, set_code_apart=True, **_options: (
+                "repaired" if set_code_apart else "plain"
+            ),
         )
         outputs = {"repaired": repaired, "plain": plain}
         monkeypatch.setattr(article_mod, "_extract_prepared", outputs.get)
@@ -1497,3 +1570,216 @@ class TestExtractionFidelity:
         )
         body = trafilatura_extract(page) or ""
         assert "Cell oneCell two stay inline text." in body
+
+
+class TestBodylessPages:
+    """A page whose article trafilatura cannot find, read again with its body marked.
+
+    trafilatura's fallback for such a page — recovering wild text from the
+    whole of it — keeps the paragraphs and drops every heading and list.
+    The second reading stands only where it loses nothing the first held,
+    and a page trafilatura finds a body in is read once, as it always was.
+    """
+
+    def test_a_page_with_no_body_container_keeps_its_headings_and_lists(self):
+        # The reported shape: sections of h2/h3, lists and figures in
+        # <div id="body" class="prose">, the standfirst in the header, no
+        # <main> or <article>. Only the paragraphs landed.
+        assert headings(read_page(BODYLESS)) == []
+        body = trafilatura_extract(BODYLESS) or ""
+        assert headings(body) == BODYLESS_HEADINGS
+        assert "- A crash mid-append left a torn line the next reader choked on." in body
+        assert "2. Dual-write for a full compaction cycle." in body
+        assert "How a small team replaced the storage layer under a live queue" in body
+
+    def test_a_small_box_matched_before_the_article_does_not_hide_it(self):
+        # A newsletter signup whose class names `text-content` is the first
+        # element trafilatura's body search takes, ahead of the article's
+        # own container; holding too little, it sends the page to the same
+        # fallback, and the article lost its structure.
+        known = BODYLESS.replace('<div id="body" class="prose">', '<div class="post-content">')
+        page = known.replace(
+            '<div class="post-content">',
+            '<div class="signup text-content"><h4>Get new posts by email</h4>'
+            '<p>One short email a week.</p></div><div class="post-content">',
+        )
+        assert "## Why the old ledger had to go" in headings(read_page(known))
+        assert "## Why the old ledger had to go" not in headings(read_page(page))
+        body = trafilatura_extract(page) or ""
+        assert set(BODYLESS_HEADINGS) <= set(headings(body))
+        assert "- Writers waited on the lock longer than they spent writing." in body
+
+    def test_a_page_with_a_body_is_read_once_as_always(self, monkeypatch):
+        once = read_page(ARTICLE)
+        marks = []
+
+        def noting(html, **options):
+            marks.append(options["mark_body"])
+            return prepare_page(html, **options)
+
+        monkeypatch.setattr(article_mod, "_prepare_page", noting)
+        assert trafilatura_extract(ARTICLE) == once
+        assert marks
+        assert not any(marks)
+
+    def test_the_second_reading_keeps_the_code_repairs_own_net(self, monkeypatch):
+        # The marked page is read as every page is: repaired and plain, the
+        # repair kept only where it costs no word. Here it costs the code.
+        def costly(tree):
+            for pre in list(tree.iter("pre")):
+                pre.getparent().remove(pre)
+
+        monkeypatch.setattr(article_mod, "_set_code_blocks_apart", costly)
+        page = BODYLESS.replace(
+            "<h3>What we would do again</h3>",
+            "<pre><code>ledger.migrate(dual_write=True)</code></pre>"
+            "<h3>What we would do again</h3>",
+        )
+        body = trafilatura_extract(page) or ""
+        assert headings(body) == BODYLESS_HEADINGS
+        assert "ledger.migrate(dual_write=True)" in body
+
+    def test_the_second_reading_keeps_the_code_repair(self):
+        # The marked page is repaired as every page is: the words after a
+        # code block, which only the repair keeps, stay.
+        page = BODYLESS.replace(
+            "<h3>What we would do again</h3>", f"{RESCUED}<h3>What we would do again</h3>"
+        )
+        body = trafilatura_extract(page) or ""
+        assert headings(body) == BODYLESS_HEADINGS
+        assert RESCUED_TEXT in body
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            (FIRST_READING, "# A heading the second reading found\n\n" + FIRST_READING),
+            (
+                FIRST_READING,
+                FIRST_READING.replace(
+                    "```\nledger.load()\n```", "- Run:\n\n  ```\n  ledger.load()\n  ```"
+                ),
+            ),
+            (
+                "w" * MIN_SUBSTANTIAL_CHARS,
+                "# A heading the second reading found\n\n" + "w" * MIN_SUBSTANTIAL_CHARS,
+            ),
+        ],
+        ids=["gains-a-heading", "nests-the-fence-in-a-list", "first-just-long-enough"],
+    )
+    def test_a_second_reading_that_loses_nothing_stands(self, monkeypatch, first, second):
+        marks = []
+        monkeypatch.setattr(article_mod, "_extract_page", two_readings(first, second, marks))
+        assert trafilatura_extract("<html></html>") == second
+        assert marks == [False, True]
+
+    @pytest.mark.parametrize(
+        "second",
+        [
+            FIRST_READING.replace(" exact", ""),
+            FIRST_READING.replace(
+                "[the spec](https://example.test/spec)", "the spec (https://example.test/spec)"
+            ),
+            FIRST_READING.replace("```\nledger.load()\n```", "`ledger.load()`"),
+            FIRST_READING.replace("| Fetch | Driver |", "Fetch, Driver"),
+            None,
+        ],
+        ids=["a-word", "a-link", "a-fence", "a-table-row", "nothing-at-all"],
+    )
+    def test_a_second_reading_that_loses_anything_is_not_kept(self, monkeypatch, second):
+        # Each gained a heading and lost something the first reading held.
+        # The link, the fence and the row go with every word they carried
+        # still there, as a table set inside a list item did in the field:
+        # its cells' words kept, three of its rows lost.
+        found = None if second is None else f"# A heading the second reading found\n\n{second}"
+        monkeypatch.setattr(article_mod, "_extract_page", two_readings(FIRST_READING, found, []))
+        assert trafilatura_extract("<html></html>") == FIRST_READING
+
+    @pytest.mark.parametrize(
+        "first", [None, "w" * (MIN_SUBSTANTIAL_CHARS - 1)], ids=["nothing", "just-thin"]
+    )
+    def test_a_thin_first_reading_is_left_parked_as_thin(self, monkeypatch, first):
+        marks = []
+        second = f"# A heading the second reading found\n\n{first or ''}"
+        monkeypatch.setattr(article_mod, "_extract_page", two_readings(first, second, marks))
+        assert trafilatura_extract("<html></html>") == first
+        assert marks == [False]
+
+    def test_the_mark_wraps_the_whole_body_in_one_article_body(self):
+        page = "<html><body>Loose lead text<p>First.</p><div>Second.</div>Tail text</body></html>"
+        assert "articleBody" not in prepare_page(page)
+        body = fromstring(prepare_page(page, mark_body=True)).find("body")
+        assert body is not None
+        assert body.text is None
+        [wrapper] = body
+        assert (wrapper.tag, wrapper.get("itemprop")) == ("div", "articleBody")
+        assert wrapper.text == "Loose lead text"
+        assert [(child.tag, child.text, child.tail) for child in wrapper] == [
+            ("p", "First.", None),
+            ("div", "Second.", "Tail text"),
+        ]
+
+    def test_a_fragment_with_no_body_is_left_unmarked(self):
+        fragment = "<p>A fragment an endpoint served with no document around it.</p>"
+        assert prepare_page(fragment, mark_body=True) == prepare_page(fragment, mark_body=False)
+
+
+@pytest.mark.usefixtures("passed_on")
+class TestWildTextWatch:
+    """How the extractor is heard saying it fell back, and nothing else changes."""
+
+    def test_trafilatura_still_announces_its_wild_text_recovery(self):
+        # The second reading keys on the wording of one debug record. A
+        # trafilatura release that rewords it would switch the second
+        # reading off without a sound; this fails instead.
+        with WildTextWatch() as watch:
+            read_page(BODYLESS)
+        assert watch.fell_back
+
+    @pytest.mark.parametrize(
+        ("message", "fell_back"),
+        [
+            (WILD_TEXT_RECOVERY, True),
+            (f"{WILD_TEXT_RECOVERY}: 12 found", True),
+            ("Taking the article element as the body", False),
+        ],
+        ids=["the-record", "the-record-extended", "another-record"],
+    )
+    def test_the_watch_hears_the_recovery_record_alone(self, message, fell_back):
+        with WildTextWatch() as watch:
+            EXTRACTOR_LOG.debug(message)
+        assert watch.fell_back is fell_back
+
+    def test_the_debug_records_it_enables_reach_no_handler(self, passed_on):
+        trafilatura_extract(BODYLESS)
+        assert [record for record in passed_on if record.levelno < logging.WARNING] == []
+
+    @pytest.mark.parametrize("configured", [logging.DEBUG, logging.WARNING, logging.ERROR])
+    def test_it_passes_on_exactly_what_the_logger_passed_without_it(self, passed_on, configured):
+        # An owner's own logging setup decides what trafilatura reports,
+        # watched or not: its warnings still arrive, and debug records it
+        # asked for still arrive too.
+        TRAFILATURA_LOG.setLevel(configured)
+        levels = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR)
+        for level in levels:
+            EXTRACTOR_LOG.log(level, "unwatched")
+        with WildTextWatch():
+            for level in levels:
+                EXTRACTOR_LOG.log(level, "watched")
+        unwatched = [r.levelno for r in passed_on if r.getMessage() == "unwatched"]
+        watched = [r.levelno for r in passed_on if r.getMessage() == "watched"]
+        assert watched == unwatched
+        assert watched == [level for level in levels if level >= configured]
+
+    @pytest.mark.parametrize("level", [logging.NOTSET, logging.ERROR])
+    def test_it_leaves_the_logger_as_it_found_it_when_extraction_raises(self, monkeypatch, level):
+        EXTRACTOR_LOG.setLevel(level)
+        filters = list(EXTRACTOR_LOG.filters)
+
+        def crashing(_html, **_options):
+            raise RuntimeError("the extractor crashed")
+
+        monkeypatch.setattr(article_mod, "_extract_markdown", crashing)
+        with pytest.raises(RuntimeError, match="the extractor crashed"):
+            trafilatura_extract(BODYLESS)
+        assert EXTRACTOR_LOG.level == level
+        assert EXTRACTOR_LOG.filters == filters

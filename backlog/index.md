@@ -40,6 +40,8 @@ The convention:
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
 - [Sibling sessions feeding dex](sibling-session-capture.md) — an official mechanism for other projects' sessions to consult dex and suggest captures; the early global-CLAUDE.md paragraph was removed as hasty
 - [Extraction loses tail text after inline links in list items](tail-text-after-inline-links.md) — real content loss on one live docs page; the glyph-anchor repair does not cover it and the trigger is unisolated
+- [Figure captions are dropped from every article](figure-captions-dropped.md) — trafilatura deletes every `<figure>` with images off, so a caption stating a post's result never lands
+- [Source indentation stored as indented code](source-indentation-as-code.md) — prose keeps the HTML source's indentation, and 2,767 lines on 247 of 1,136 real pages render as code blocks
 - [The mutation audit cannot see run.py's methods](mutation-audit-misses-run-methods.md) — mutmut instruments the module's functions but none of its classes' methods, so the drain audit claims less than it appears to
 - [PDF figures are never extracted](pdf-figures-never-extracted.md) — anydoc converts PDF straight to markdown, so every embedded figure is lost before any cap applies
 - [Format-aware asset cap](format-aware-asset-cap.md) — PPTX slides are the artefact and deserve the pooled bound; DOCX decoration keeps the tight one
