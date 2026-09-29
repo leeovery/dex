@@ -24,11 +24,10 @@ though they were the document they point at.
 
 import re
 import urllib.parse
-from collections.abc import Callable
 
 from dex_engine.pipeline.classify import Classification
 from dex_engine.pipeline.detect import format_of_name, sniff_format
-from dex_engine.pipeline.enrichment import fenced
+from dex_engine.pipeline.enrichment import capped, fenced
 from dex_engine.pipeline.types import (
     Content,
     Job,
@@ -127,7 +126,6 @@ _GIST_ID_RE = re.compile(r"[0-9a-f]{32}|[0-9a-f]{20}|\d{1,8}")
 _MAX_GIST_FILE_CHARS = 20_000
 _MAX_BLOB_CHARS = 40_000
 _MAX_README_CHARS = 60_000
-_TRUNCATED = "**Truncated:** cut at {kept:,} of {whole:,} characters; the rest is at {url}"
 _TOP_REPOS = 15
 _TOPIC_LIMIT = 8
 
@@ -193,7 +191,7 @@ class GitHubDriver:
         files = payload.get("files") or {}
         body = "\n\n".join(
             f"### {name}\n"
-            + _capped((file or {}).get("content", ""), _MAX_GIST_FILE_CHARS, url=url, wrap=fenced)
+            + capped((file or {}).get("content", ""), _MAX_GIST_FILE_CHARS, url=url, wrap=fenced)
             for name, file in files.items()
         )
         if not body:
@@ -305,7 +303,7 @@ def _file_outcome(blob: Blob, url: str) -> Outcome:
             evidence=f"{blob.path} is binary, not UTF-8 text — there is nothing to fence"
         )
     return Content(
-        meta={"file": blob.path}, body=_capped(text, _MAX_BLOB_CHARS, url=url, wrap=fenced)
+        meta={"file": blob.path}, body=capped(text, _MAX_BLOB_CHARS, url=url, wrap=fenced)
     )
 
 
@@ -346,26 +344,7 @@ def _unrouted(shape: str) -> Unusable:
 
 
 def _readme_body(readme: str | None, url: str) -> str:
-    return _capped(readme or "", _MAX_README_CHARS, url=url, wrap=str.rstrip) or "(no README)"
-
-
-def _capped(text: str, cap: int, *, url: str, wrap: Callable[[str], str]) -> str:
-    """``text`` wrapped whole when it fits, else its lines up to ``cap`` and a line saying so.
-
-    A silent prefix is read as the whole file: the digest written from it
-    cannot know the rest exists. So a cut is followed, outside whatever
-    ``wrap`` puts round the text, by one line naming how much of how much
-    was kept and where the rest is. The cut falls at the last line end the
-    cap allows, where that keeps at least half of it; text whose last line
-    end inside the cap falls earlier — a minified file under a one-line
-    header, a README with one huge line of HTML — is cut mid-line at the
-    cap, rather than kept to a few characters.
-    """
-    if len(text) <= cap:
-        return wrap(text)
-    end = text.rfind("\n", 0, cap + 1)
-    kept = text[:end] if end >= cap // 2 else text[:cap]
-    return f"{wrap(kept)}\n\n{_TRUNCATED.format(kept=len(kept), whole=len(text), url=url)}"
+    return capped(readme or "", _MAX_README_CHARS, url=url, wrap=str.rstrip) or "(no README)"
 
 
 def _gist_id(segments: list[str]) -> str | None:

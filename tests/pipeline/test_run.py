@@ -1289,6 +1289,17 @@ class TestRerun:
         assert "1 rewritten" in report
         assert "Already stored" not in report
 
+    def test_a_rerun_over_a_deleted_file_lands_a_new_one(self, instance):
+        # Deleting the stored file first is how a session asks for a fresh
+        # re-fetch; nothing stands to be rewritten.
+        write_item(instance)
+        ctx = make_ctx(instance, FakeDriver())
+        run_mod.run(ctx)
+        (instance.root / str(entry_for(ctx).path)).unlink()
+        self.seed_rerun(ctx)
+        report = run_mod.run(ctx)
+        assert f"**{ITEM}**\n  ↳ 1 new enrichment file\n" in report
+
     def test_a_rewrite_of_a_shared_unit_is_owed_by_every_item_sharing_it(self, instance):
         # One URL in two captures is one unit, its file under the first; the
         # rewrite is new material to both, so both are on the work list.

@@ -881,6 +881,136 @@ class TestMarkdownAlternate:
         ]
 
 
+SERVED_URL = "https://docs.example.test/components.md"
+# A docs page as its site serves it: no tag of its own, a JSX example in a
+# fence, and generic types in a table — each of which an HTML parser eats.
+SERVED_PAGE = (
+    "# Components\n\n"
+    "Render a button inside a card; the card accepts any children.\n\n"
+    '```tsx\n<Button variant="primary">Save</Button>\n```\n\n'
+    "| Prop | Type |\n| --- | --- |\n| items | Array<Item> |\n| onSelect | Callback<T> |\n\n"
+    + "A line of prose between the examples.\n"
+    * 8
+)
+
+
+def never_extract(html: str) -> str | None:
+    raise AssertionError(f"a page served as markdown was extracted: {html[:40]!r}")
+
+
+class TestServedMarkdown:
+    """A page served as markdown or plain text is stored as served, never parsed as HTML.
+
+    The field case: six markdown docs pages from one site, served as
+    text/markdown. The four with no tags parked thin, and the two with JSX
+    lost their blank lines, their fenced example and every ``<T>``.
+    """
+
+    def fetch(
+        self, body: str | bytes, content_type: str = "text/markdown", *, extract=never_extract
+    ):
+        raw = body.encode() if isinstance(body, str) else body
+        answer = HttpResponse(status=200, content_type=content_type, body=raw)
+        driver = driver_for({SERVED_URL: answer}, extract=extract)
+        return driver.fetch(make_unit(SERVED_URL, Kind.WEB))
+
+    @pytest.mark.parametrize("content_type", ["text/markdown", "text/x-markdown", "text/plain"])
+    def test_the_page_is_its_own_body(self, content_type):
+        result = content_of(self.fetch(SERVED_PAGE, content_type))
+        assert result.body == SERVED_PAGE.strip()
+        assert result.meta == {"title": "Components"}
+        assert result.media == []
+
+    @pytest.mark.parametrize(
+        ("opening", "title"),
+        [
+            ("# Components ##", "Components"),
+            ("# C#", "C#"),
+            ("#   Spaced    out  ", "Spaced out"),
+            ("# " + "t" * 250, "t" * 200),
+            ("## A section", None),
+            ("#NoSpace", None),
+            ("An opening paragraph.\n\n# Components", None),
+            ("---\ntitle: Components\n---\n\n# Components", None),
+        ],
+        ids=[
+            "closing-hashes",
+            "hash-in-title",
+            "spaced",
+            "long",
+            "h2",
+            "no-space",
+            "h1-later",
+            "frontmatter",
+        ],
+    )
+    def test_the_title_is_the_heading_it_opens_with(self, opening, title):
+        # Only the opening line: a `#` line further down may be a shell comment in a fence.
+        result = content_of(self.fetch(f"{opening}\n\n" + "A line of prose.\n" * 30))
+        assert result.meta == ({} if title is None else {"title": title})
+
+    @pytest.mark.parametrize(("chars", "stored"), [(299, False), (300, True)])
+    def test_a_page_below_the_substantial_bar_parks_thin_unextracted(self, chars, stored):
+        result = self.fetch("s" * chars)
+        assert result == (
+            Content(meta={}, body="s" * chars) if stored else Unusable(evidence="thin-extraction")
+        )
+
+    @pytest.mark.parametrize(("tail", "cut"), [("y", False), ("yy", True)])
+    def test_a_page_past_the_ceiling_is_cut_saying_where_the_rest_is(self, tail, cut):
+        # A site's llms-full.txt runs to tens of millions of characters.
+        page = "\n".join(["x" * 99] * 10_000) + tail
+        assert len(page) == 1_000_000 + len(tail) - 1
+        body = body_of(self.fetch(page))
+        kept = page.rsplit("\n", 1)[0]
+        assert body == (
+            f"{kept}\n\n**Truncated:** cut at {len(kept):,} of {len(page):,} characters; "
+            f"the rest is at {SERVED_URL}"
+            if cut
+            else page
+        )
+
+    def test_a_byte_order_mark_is_not_part_of_the_page(self):
+        result = content_of(self.fetch(b"\xef\xbb\xbf" + SERVED_PAGE.encode()))
+        assert result.body == SERVED_PAGE.strip()
+        assert result.meta == {"title": "Components"}
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            ARTICLE.encode(),
+            ('{"message": "Not Found", "detail": "' + "x" * 700 + '"}').encode(),
+            "café au lait. ".encode("latin-1") * 40,
+        ],
+        ids=["html", "json", "not-utf8"],
+    )
+    def test_a_text_label_over_bytes_that_are_not_markdown_is_extracted(self, body):
+        # The bytes decide, as they do for a declared source.
+        result = content_of(self.fetch(body, "text/plain", extract=substantial_extract))
+        assert result.body == substantial_extract("")
+
+    def test_tags_quoted_in_the_page_are_prose(self):
+        # A page documenting HTML heads: its examples declare a markdown
+        # source and an episode's audio, and neither is this page's.
+        page = (
+            "# Head tags\n\n```html\n"
+            '<link rel="alternate" type="text/markdown" href="/other.md">\n'
+            '<meta property="og:audio" content="https://example.test/episode.mp3">\n'
+            "```\n\n" + "A line of prose.\n" * 20
+        )
+        answer = HttpResponse(status=200, content_type="text/markdown", body=page.encode())
+        transport = FakeTransport({SERVED_URL: answer})
+        driver = WebDriver(transport=transport, extract=never_extract)
+        result = content_of(driver.fetch(make_unit(SERVED_URL, Kind.WEB)))
+        assert result.body == page.strip()
+        assert transport.calls == [("GET", SERVED_URL)]
+
+    def test_its_notebook_records_read_as_their_code_and_output(self):
+        body = body_of(self.fetch(fixture_text("web", "pinecone-notebooks.md")))
+        assert "colabBlock" not in body
+        assert '```\nres = await rails.generate_async(prompt="Hey there!")\nprint(res)\n```' in body
+
+
 class TestClassifiedFailures:
     def test_403_is_blocked_with_the_wayback_miss_noted(self):
         responses = {
@@ -963,6 +1093,44 @@ class TestWaybackFallback:
         result = driver_for(responses, extract=lambda _html: None).fetch(make_unit(URL, Kind.WEB))
         assert isinstance(result, Missing)
         assert "wayback snapshot extraction was thin" in result.evidence
+
+    @pytest.mark.parametrize(("chars", "rescued"), [(None, True), (299, False)])
+    def test_a_markdown_snapshot_is_rescued_as_served(self, chars, rescued):
+        # web.archive.org serves a text page's snapshot as the text it
+        # archived, labelled text/plain.
+        page = SERVED_PAGE if chars is None else "s" * chars
+        responses = {
+            URL: html_response("gone", status=404),
+            wayback_lookup_url(URL): json_response(
+                {"archived_snapshots": {"closest": {"available": True, "url": self.SNAPSHOT}}}
+            ),
+            self.SNAPSHOT: HttpResponse(status=200, content_type="text/plain", body=page.encode()),
+        }
+        result = driver_for(responses, extract=never_extract).fetch(make_unit(URL, Kind.WEB))
+        if rescued:
+            assert content_of(result).body == SERVED_PAGE.strip()
+            assert content_of(result).meta == {
+                "title": "Components",
+                "via": "wayback",
+                "snapshot": self.SNAPSHOT,
+            }
+        else:
+            assert isinstance(result, Missing)
+            assert "wayback snapshot extraction was thin" in result.evidence
+
+    def test_a_markdown_snapshot_past_the_ceiling_points_at_the_snapshot(self):
+        # The live page is gone; the rest is only in the archive.
+        responses = {
+            URL: html_response("gone", status=404),
+            wayback_lookup_url(URL): json_response(
+                {"archived_snapshots": {"closest": {"available": True, "url": self.SNAPSHOT}}}
+            ),
+            self.SNAPSHOT: HttpResponse(
+                status=200, content_type="text/plain", body=("x" * 99 + "\n").encode() * 10_001
+            ),
+        }
+        result = driver_for(responses, extract=never_extract).fetch(make_unit(URL, Kind.WEB))
+        assert body_of(result).endswith(f"; the rest is at {self.SNAPSHOT}")
 
     def test_unparseable_lookup_json_is_noted(self):
         responses = {
