@@ -21,7 +21,7 @@ their ``parent`` chain — which is :func:`unit_owners`' job, the one
 resolution every ledger reader routes ownership through.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 from dex_engine import corpus
@@ -30,7 +30,7 @@ from .detect import canonical_url
 from .types import LedgerEntry, SourceDriver
 from .urls import work_hash
 
-__all__ = ["corpus_claims", "corpus_owners", "unit_owners", "work_identity"]
+__all__ = ["corpus_claims", "corpus_owners", "renamed_to", "unit_owners", "work_identity"]
 
 
 def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
@@ -56,6 +56,19 @@ def work_identity(url: str, drivers: Sequence[SourceDriver]) -> str:
         # bad-seed park key the unit identically.
         return work_hash(url)
     return work_hash(canonical)
+
+
+def renamed_to(item_id: str, candidates: Iterable[str]) -> str | None:
+    """The one candidate ``item_id`` became by a rename, else None.
+
+    A rename keeps the trailing shortid and rewrites the slug, so the
+    candidate carrying the same shortid is the renamed item. Six hex digits
+    can collide: two candidates carrying it resolve nothing, and neither is
+    guessed at.
+    """
+    shortid = item_id.rsplit("-", 1)[-1]
+    matches = [candidate for candidate in candidates if candidate.rsplit("-", 1)[-1] == shortid]
+    return matches[0] if len(matches) == 1 else None
 
 
 def corpus_claims(root: Path, drivers: Sequence[SourceDriver]) -> dict[str, tuple[str, ...]]:
