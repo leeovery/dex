@@ -38,7 +38,6 @@ The convention:
 - [HTML entities survive into enrichment text](entity-decode-fetched-text.md) — `&nbsp;` in stored transcripts silently breaks phrase search
 - [A note-only capture opening with --- parses as frontmatter](capture-note-frontmatter-collision.md) — the owner's words silently vanish; a fix is a capture-format decision
 - [Paid media/object storage](paid-media-storage.md) — S3 or R2 instead of LFS for media at scale
-- [Pre-rewrite dead ledger entries need healing](dead-entry-healing.md) — early engines' dead verdicts on live content, and a dead owner refusing a second item's fetch (#192)
 - [Sibling sessions feeding dex](sibling-session-capture.md) — an official mechanism for other projects' sessions to consult dex and suggest captures; the early global-CLAUDE.md paragraph was removed as hasty
 - [Extraction loses tail text after inline links in list items](tail-text-after-inline-links.md) — real content loss on one live docs page; the glyph-anchor repair does not cover it and the trigger is unisolated
 - [Figure captions are dropped from every article](figure-captions-dropped.md) — trafilatura deletes every `<figure>` with images off, so a caption stating a post's result never lands
