@@ -1787,6 +1787,42 @@ class TestRerun:
         assert (instance.root / own).read_text(encoding="utf-8") == "the page, read by hand\n"
         assert not healed.exists()
 
+    def test_a_renamed_holder_keeps_its_shared_unit_over_a_co_owner(self, instance):
+        # The co-owner sorts first, so falling back on the first claimant
+        # moved the unit to it and wrote a second copy there.
+        write_item(instance, OLD_ITEM)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        co_owner = "2026-08-19-aa-co-owner-9f8e7d"
+        write_item(instance, co_owner)
+        (instance.corpus_dir / "2026" / f"{OLD_ITEM}.md").unlink()
+        write_item(instance, NEW_ITEM)
+        (instance.enrichment_dir / OLD_ITEM).rename(instance.enrichment_dir / NEW_ITEM)
+        changed = Content(meta={}, body="changed " * 40)
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: changed))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        name = f"web-{work_hash(URL)[:6]}.md"
+        assert (entry.item, entry.path) == (NEW_ITEM, f"enrichment/{NEW_ITEM}/{name}")
+        assert "changed" in (instance.enrichment_dir / NEW_ITEM / name).read_text()
+        assert not (instance.enrichment_dir / co_owner).exists()
+
+    def test_a_removed_holders_shared_unit_passes_to_the_co_owner(self, instance):
+        # No live claimant carries the holder's shortid, so the unit is the
+        # co-owner's now.
+        write_item(instance, OLD_ITEM)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        co_owner = "2026-08-19-aa-co-owner-9f8e7d"
+        write_item(instance, co_owner)
+        (instance.corpus_dir / "2026" / f"{OLD_ITEM}.md").unlink()
+        changed = Content(meta={}, body="changed " * 40)
+        ctx = make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: changed))
+        self.seed_rerun(ctx)
+        run_mod.run(ctx)
+        entry = entry_for(ctx)
+        name = f"web-{work_hash(URL)[:6]}.md"
+        assert (entry.item, entry.path) == (co_owner, f"enrichment/{co_owner}/{name}")
+
     def test_a_recorded_path_naming_nothing_falls_back_on_the_engines_name(self, instance):
         # Proved by the URL inside; with that gone too, the failure lands
         # (the deletion test above).

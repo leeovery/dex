@@ -1144,6 +1144,18 @@ class TestReferentialIntegrity:
             outcome.report
         )
 
+    def test_a_renamed_holder_answers_for_its_unit_before_a_co_owner(self, instance):
+        # The co-owner sorts first; handing it the unit reported the renamed
+        # holder's own file as misfiled and named the co-owner as the rename.
+        renamed, _name = self._renamed(instance, move_output=True)
+        co_owner = "2026-08-19-aa-co-owner-9f8e7d"
+        write_corpus_item(instance, co_owner, urls=["https://example.test/moved"])
+        outcome = lint(instance)
+        assert f"**{ITEM}** — 1 entry (renamed — {renamed} lists this work)" in outcome.report
+        assert "done entries whose output sits under another item's directory — none" in (
+            outcome.report
+        )
+
     def test_a_rename_interrupted_before_the_directory_is_flagged_misfiled(self, instance):
         # The other half: the file stayed behind, so the live item's own
         # directory is empty and the row names the live item, which is the

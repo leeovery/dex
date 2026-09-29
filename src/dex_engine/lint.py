@@ -92,7 +92,7 @@ from .pipeline import ledger
 from .pipeline.classify import ITEM_ID_PATTERN
 from .pipeline.digest import item_media
 from .pipeline.enrichment import read_enrichment_fields
-from .pipeline.ownership import unit_owners
+from .pipeline.ownership import renamed_to, unit_owners
 from .pipeline.registry import default_drivers
 from .pipeline.run import (
     CAP_BOUNDS,
@@ -961,14 +961,19 @@ def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids
 def _live_claimant(
     entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]], corpus_ids: set[str]
 ) -> str | None:
-    """The first LIVE item the resolution hands this unit to, or None.
+    """The LIVE item the resolution hands this unit to, or None.
+
+    The item the line's id was renamed to, where one claims the unit, else
+    the first live claimant — the write path's rule (``run._owner``), so a
+    renamed holder's file is never reported under its co-owner.
 
     The resolution always answers — its last fallback is the stored string
     — so a claim reading has to filter to the ids a corpus file actually
     answers for: a dead fallback id proves no claim, and treating it as one
     would erase the unclaimed finding entirely.
     """
-    return next((item for item in owners.get(entry.hash, ()) if item in corpus_ids), None)
+    live = [item for item in owners.get(entry.hash, ()) if item in corpus_ids]
+    return renamed_to(entry.item, live) or next(iter(live), None)
 
 
 def _excluded_items(instance: Instance) -> set[str]:
