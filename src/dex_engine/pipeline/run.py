@@ -3357,28 +3357,53 @@ def _admit_fetch(
         drain.park_bad_seed(item_id, url, e, what="fetch URL")
         return None
     if admission.held is not None:
-        # Whose unit the held line is is the corpus's answer
-        # (:meth:`_Drain.owner_of`), never the stored string: a renamed
-        # item's own pre-rename unit spells the dead id, and comparing the
-        # string refused it as another item's — naming an id no corpus file
-        # answers to — leaving the requeue-in-place route unreachable.
-        owner = drain.owner_of(admission.held)
-        if owner != item_id:
-            # One URL enriches under one item — but refusing the BATCH would
-            # abort the URLs already ledgered ahead of this one and swallow
-            # the report with them. The refusal is reported; the rest fetch.
-            drain.notes.append(
-                f"{admission.url} already enriches under item {owner} — one URL "
-                f"enriches under one item; not fetched into {item_id}"
-            )
-            return None
-        return _requeue_in_place(drain, admission.held)
+        return _admit_held(drain, item_id, admission.url, admission.held)
     if admission.entry is None:
         # An owner-requested refusal IS surfaced: the owner asked, and a
         # bare "skipped 1" leaves the stated route unreachable.
         drain.notes.append(f"not fetched — {admission.url}: {admission.reason}")
         return None
     return admission.hash
+
+
+def _admit_held(drain: _Drain, item_id: str, url: str, held: LedgerEntry) -> str | None:
+    """Answer an ``enrich fetch`` of a URL whose unit the ledger already holds.
+
+    One URL is one unit under one owner, and whose unit it is is the
+    corpus's answer (:meth:`_Drain.owner_of`), never the stored string: a
+    renamed item's own pre-rename unit spells the dead id, and comparing the
+    string refused it as another item's — naming an id no corpus file
+    answers to — leaving the requeue-in-place route unreachable.
+
+    The owner's own fetch requeues the unit in place whatever its status.
+    Another item's fetch never takes the unit over. A unit that landed, or
+    is still owed, is refused, and the note says which. One that closed with
+    nothing landed — dead, skipped, or done without an output — is requeued
+    in place under its owner, exactly as the owner's own fetch would: a
+    refusal there named an enrichment that does not exist, and kept a page
+    an early engine condemned out of reach of every other item.
+    """
+    owner = drain.owner_of(held)
+    if owner == item_id:
+        return _requeue_in_place(drain, held)
+    if held.status in OUTSTANDING:
+        drain.notes.append(
+            f"{url} is already owed under item {owner} ({held.status.value}) — one URL "
+            f"enriches under one item; not fetched into {item_id}"
+        )
+        return None
+    if held.path is not None:
+        drain.notes.append(
+            f"{url} already enriches under item {owner} — one URL "
+            f"enriches under one item; not fetched into {item_id}"
+        )
+        return None
+    drain.notes.append(
+        f"{url} fetched again under item {owner}, where it closed {held.status.value} with "
+        f"nothing landed — one URL enriches under one item; its enrichment lands under "
+        f"{owner}, not {item_id}"
+    )
+    return _requeue_in_place(drain, held)
 
 
 def status_report(ctx: RunContext, *, item_id: str | None = None) -> str:
