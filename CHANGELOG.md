@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.10] - 2026-09-29
+
+✨ Added
+- Pages served as markdown or plain text (a docs site's `.md` pages, its `llms.txt`) are stored exactly as served, titled by their opening heading — JSX examples, generic types like `Callback<T>` and blank lines survive instead of being parsed as HTML.
+- Oversized served text is cut at one million characters with a line saying where the rest is — a site's `llms-full.txt` no longer lands as a multi-megabyte enrichment file.
+
+🔧 Changed
+- Wayback rescues of a markdown page keep the archived text as served rather than running it through HTML extraction.
+
+🐛 Fixed
+- A video post parked and transcribed in the same run is counted once in the run report, not twice as done and waiting.
+- A post's first enrichment file, landed after its park, is reported as new rather than as a rewrite.
+- A post parked twice in one run shows a single row in the waiting section, in the state the run left it.
+- Markdown docs pages with no tags no longer park as thin extractions.
+
 ## [0.2.9] - 2026-09-29
 
 🔧 Changed
