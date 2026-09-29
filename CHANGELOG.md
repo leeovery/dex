@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-09-29
+
+🔧 Changed
+- Fetching a URL that another item already holds now says why it was refused — a unit still owed is reported as owed, and a landed one as already enriching.
+
+🐛 Fixed
+- Articles with no findable body container (where trafilatura fell back to plain paragraphs) now keep their headings and lists.
+- Another item's fetch of a URL whose unit closed dead, skipped, or done with nothing landed now requeues it under its owner, instead of refusing it.
+- A renamed item keeps its shared fetch unit on rerun instead of it moving to a co-owner and being written twice.
+- Lint no longer reports a renamed holder's file as misfiled under its co-owner.
+- The park note for an unfetchable fetch URL now includes the cause.
+
 ## [0.2.8] - 2026-09-28
 
 ✨ Added
