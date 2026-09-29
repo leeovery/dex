@@ -4226,6 +4226,141 @@ class TestIsDrainable:
         assert is_drainable(relic, self.ctx(instance)) is True
 
 
+class TestFetchingAnotherItemsUnit:
+    """``enrich fetch`` of a URL whose unit another item holds.
+
+    One URL is one unit under one owner, and the item asking never becomes
+    one. A unit that landed, or is still owed, is refused, the note saying
+    which; one that closed with nothing landed is requeued in place under
+    its owner, the route the owner's own fetch takes.
+    """
+
+    OWNER = "2026-08-19-first-aaaaaa"
+    ASKER = "2026-08-19-second-bbbbbb"
+
+    def _held(self, instance, **line) -> None:
+        """The owner's only unit, standing as ``line`` says; the asker lists another URL."""
+        write_item(instance, self.OWNER, urls=[URL])
+        write_item(instance, self.ASKER, urls=["https://example.test/other"])
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=self.OWNER,
+                kind=Kind.WEB,
+                engine="0.0.1",
+                date=datetime.date(2026, 8, 1),
+                **line,
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        "closed",
+        [
+            {"status": Status.DEAD},
+            {"status": Status.SKIPPED, "reason": "unstated (pre-migration)"},
+            {"status": Status.DONE},
+        ],
+        ids=["dead", "skipped", "done-without-an-output"],
+    )
+    def test_a_unit_closed_with_nothing_landed_is_fetched_again_under_its_owner(
+        self, instance, closed
+    ):
+        # Refused as "already enriches", a page an early engine condemned
+        # stayed out of reach of every item that wanted it, though nothing of
+        # it was ever on disk and the page answers today.
+        self._held(instance, **closed)
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.fetch_urls(ctx, self.ASKER, [URL])
+        entry = entry_for(ctx)
+        assert (entry.item, entry.status) == (self.OWNER, Status.DONE)
+        assert entry.path == f"enrichment/{self.OWNER}/web-{entry.hash[:6]}.md"
+        assert (instance.root / entry.path).is_file()
+        # In place: never admitted as the asker's harvest.
+        assert (entry.via, entry.parent, entry.depth) == (None, None, None)
+        assert not (instance.enrichment_dir / self.ASKER).exists()
+        owner = corpus.read_item(instance.corpus_dir / "2026" / f"{self.OWNER}.md")
+        assert owner.enrichment == [f"web-{entry.hash[:6]}.md"]
+        assert (
+            f"{URL} fetched again under item {self.OWNER}, where it closed "
+            f"{closed['status'].value} with nothing landed — one URL enriches under one "
+            f"item; its enrichment lands under {self.OWNER}, not {self.ASKER}"
+        ) in " ".join(report.split())
+
+    def test_a_dead_harvested_child_is_fetched_again_under_its_owner(self, instance):
+        # A promoted URL sits in no frontmatter, so only its parent chain
+        # says whose it is.
+        primary = f"enrichment/{self.OWNER}/web-{work_hash(URL)[:6]}.md"
+        self._held(instance, status=Status.DONE, path=primary)
+        (instance.root / primary).parent.mkdir(parents=True)
+        (instance.root / primary).write_text(f"---\nurl: {URL}\n---\n\nthe primary page\n")
+        child = "https://example.test/harvested"
+        held = LedgerEntry(
+            hash=work_hash(child),
+            url=child,
+            item=self.OWNER,
+            kind=Kind.WEB,
+            status=Status.DEAD,
+            engine="0.0.1",
+            date=datetime.date(2026, 8, 1),
+            via="harvest",
+            parent=work_hash(URL),
+            depth=1,
+        )
+        ledger.append(instance.ledger_path, held)
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.fetch_urls(ctx, self.ASKER, [child])
+        entry = entry_for(ctx, child)
+        assert (entry.item, entry.status) == (self.OWNER, Status.DONE)
+        assert entry.path == f"enrichment/{self.OWNER}/web-{entry.hash[:6]}.md"
+        assert (instance.root / entry.path).is_file()
+        assert (entry.via, entry.parent, entry.depth) == (held.via, held.parent, held.depth)
+        assert not (instance.enrichment_dir / self.ASKER).exists()
+        assert f"{child} fetched again under item {self.OWNER}," in " ".join(report.split())
+
+    def test_a_landed_unit_is_still_refused_and_nothing_changes(self, instance):
+        write_item(instance, self.OWNER, urls=[URL])
+        write_item(instance, self.ASKER, urls=["https://example.test/other"])
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        ledger_before = instance.ledger_path.read_bytes()
+        stored_before = sorted(instance.enrichment_dir.rglob("*"))
+        driver = FakeDriver()
+        report = run_mod.fetch_urls(make_ctx(instance, driver), self.ASKER, [URL])
+        assert driver.fetched == []
+        assert instance.ledger_path.read_bytes() == ledger_before
+        assert sorted(instance.enrichment_dir.rglob("*")) == stored_before
+        assert (
+            f"{URL} already enriches under item {self.OWNER} — one URL enriches under one "
+            f"item; not fetched into {self.ASKER}"
+        ) in " ".join(report.split())
+
+    @pytest.mark.parametrize(
+        "owed",
+        [
+            {"status": Status.QUEUED},
+            {"status": Status.BLOCKED, "attempts": 2, "reason": "HTTP 429"},
+        ],
+        ids=["queued", "blocked"],
+    )
+    def test_a_unit_still_owed_is_answered_as_owed_and_gains_no_line(self, instance, owed):
+        # "Already enriches" named an enrichment that does not exist yet.
+        self._held(instance, **owed)
+        driver = FakeDriver()
+        report = run_mod.fetch_urls(make_ctx(instance, driver), self.ASKER, [URL])
+        assert driver.fetched == []
+        lines = [json.loads(line) for line in instance.ledger_path.read_text().splitlines()]
+        assert [line["status"] for line in lines if line["hash"] == work_hash(URL)] == [
+            owed["status"].value
+        ]
+        flat = " ".join(report.split())
+        assert (
+            f"{URL} is already owed under item {self.OWNER} ({owed['status'].value}) — one "
+            f"URL enriches under one item; not fetched into {self.ASKER}"
+        ) in flat
+        assert "already enriches" not in flat
+
+
 class TestVerbs:
     def test_fetch_urls_ledgers_children_and_drains_them(self, instance):
         write_item(instance)
@@ -4317,7 +4452,8 @@ class TestVerbs:
         entries = ledger.load(instance.ledger_path)
         parked = entries[work_hash(bad)]
         assert parked.status is Status.MANUAL
-        assert "unfetchable fetch URL" in (parked.reason or "")
+        # The cause is the park's only pointer to what is wrong with the URL.
+        assert "unfetchable fetch URL: transport fetches http(s) URLs only" in (parked.reason or "")
         assert entries[work_hash(good)].status is Status.DONE  # the batch continued
         assert "unfetchable fetch URL" in report  # parked rows are printed
 
@@ -5876,6 +6012,34 @@ class TestOwnershipIsTheCorpusAnswer:
             if line.strip() and json.loads(line).get("status") == "queued"
         ]
         assert [line["item"] for line in queued] == [NEW_ITEM]
+
+    def test_another_items_fetch_of_a_dead_pre_rename_unit_lands_under_the_live_id(self, instance):
+        # Taken from the stored string, the owner is an id no corpus file
+        # answers to: the page would land in `enrichment/<dead-id>/`, where
+        # the renamed item cannot see it, and the note would name that id.
+        write_item(instance, NEW_ITEM)
+        write_item(instance, BRAVO, urls=["https://example.test/bravo"])
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=OLD_ITEM,
+                kind=Kind.WEB,
+                status=Status.DEAD,
+                engine="0.0.1",
+                date=datetime.date(2026, 8, 1),
+            ),
+        )
+        ctx = make_ctx(instance, FakeDriver())
+        report = run_mod.fetch_urls(ctx, BRAVO, [URL])
+        entry = entry_for(ctx)
+        assert (entry.item, entry.status) == (NEW_ITEM, Status.DONE)
+        assert entry.path == f"enrichment/{NEW_ITEM}/web-{entry.hash[:6]}.md"
+        assert not (instance.enrichment_dir / OLD_ITEM).exists()
+        flat = " ".join(report.split())
+        assert f"fetched again under item {NEW_ITEM}," in flat
+        assert OLD_ITEM not in flat
 
     def _spent_budget(self, instance) -> RunContext:
         """The item's 12-URL budget, spent entirely under the old id."""
