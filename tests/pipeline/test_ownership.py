@@ -2,7 +2,7 @@
 
 import datetime
 
-from dex_engine.pipeline.ownership import corpus_owners, unit_owners, work_identity
+from dex_engine.pipeline.ownership import corpus_owners, renamed_to, unit_owners, work_identity
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import Job, Kind, LedgerEntry, Status
 from dex_engine.pipeline.urls import work_hash
@@ -148,3 +148,17 @@ class TestUnitOwners:
         owners = unit_owners(tmp_path, entries, DRIVERS)
         assert owners["a" * 10] == (DEAD,)
         assert owners["b" * 10] == (DEAD,)
+
+
+class TestRenamedTo:
+    def test_the_one_candidate_carrying_the_shortid_is_the_rename(self):
+        candidates = ["2026-08-19-aa-co-owner-9f8e7d", "2026-08-19-new-slug-55ad7b"]
+        assert renamed_to("2026-08-19-old-slug-55ad7b", candidates) == "2026-08-19-new-slug-55ad7b"
+
+    def test_no_candidate_carrying_it_resolves_nothing(self):
+        assert renamed_to("2026-08-19-old-slug-55ad7b", ["2026-08-19-aa-co-owner-9f8e7d"]) is None
+
+    def test_a_colliding_shortid_resolves_nothing(self):
+        # Six hex digits collide; neither match is guessed at.
+        candidates = ["2026-08-19-one-55ad7b", "2026-08-20-two-55ad7b"]
+        assert renamed_to("2026-08-19-old-slug-55ad7b", candidates) is None

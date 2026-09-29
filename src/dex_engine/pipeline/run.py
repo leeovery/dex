@@ -65,7 +65,7 @@ from .enrichment import (
     transcript_provenance,
     youtube_body,
 )
-from .ownership import unit_owners, work_identity
+from .ownership import renamed_to, unit_owners, work_identity
 from .registry import default_drivers, driver_for
 from .transcribe import (
     TRANSCRIBE_RUN_CAP,
@@ -3032,9 +3032,17 @@ def _landings_or_none(instance: Instance) -> dict[str, LedgerEntry] | None:
 
 
 def _owner(entry: LedgerEntry, owners: Mapping[str, tuple[str, ...]]) -> str:
-    """The one live item a unit's work is written under (:meth:`_Drain.owner_of`)."""
+    """The one live item a unit's work is written under (:meth:`_Drain.owner_of`).
+
+    A line naming no live claimant was written before its item's rename,
+    and the claimant that item became comes before any co-owner: first in
+    id order, a co-owner took the unit and wrote a second copy under
+    itself, stranding the renamed holder's file where no line named it.
+    """
     claimants = owners.get(entry.hash) or (entry.item,)
-    return entry.item if entry.item in claimants else claimants[0]
+    if entry.item in claimants:
+        return entry.item
+    return renamed_to(entry.item, claimants) or claimants[0]
 
 
 def _landed_file(instance: Instance, owner: str, recorded: str) -> Path | None:
@@ -3625,9 +3633,7 @@ def _dir_owner(name: str, live: set[str]) -> str:
     """
     if name in live:
         return name
-    shortid = name.rsplit("-", 1)[-1]
-    matches = [item_id for item_id in live if item_id.rsplit("-", 1)[-1] == shortid]
-    return matches[0] if len(matches) == 1 else name
+    return renamed_to(name, live) or name
 
 
 def digested_items(instance: Instance, live: set[str]) -> set[str]:
