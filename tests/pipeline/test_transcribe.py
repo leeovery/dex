@@ -1252,6 +1252,39 @@ class TestXDrain:
         assert [entry for entry in entries.values() if entry.job is Job.MEDIA] == []
         assert audio_files(instance) == []  # the transcript superseded the video
 
+    def one_run(self, instance, transcriber: FakeTranscriber) -> str:
+        """Fetch a fresh video post and drain its park in one run."""
+        write_item(instance, urls=[self.POST_URL])
+        transport = FakeTransport({**self.responses(), self.ENCLOSURE: self.video()})
+        caps = Capabilities(transcribers=(transcriber,), extractors=())
+        ctx = self.ctx(instance, transport, capabilities=caps, provider_available=caps.available)
+        return run_mod.run(ctx)
+
+    def test_one_run_reports_a_fresh_video_post_as_one_new_unit(self, instance):
+        # The field report: parked for its video and transcribed in the same
+        # run, the post was tallied twice — done, and a waiting nothing was
+        # left in — and its first enrichment file was called a rewrite.
+        report = self.one_run(instance, FakeTranscriber(text="Clip words."))
+        assert report.startswith("## Enrich run — 1 unit processed\n\n**done** 1\n")
+        assert f"**{ITEM}**\n  ↳ 1 new enrichment file\n" in report
+
+    def test_a_post_parked_twice_in_its_run_is_one_waiting_unit(self, instance):
+        # Drained past its park, then parked again by a provider that failed
+        # when called: one unit, one row, in the state the run left it.
+        busy = FakeTranscriber(raise_=ProviderUnavailableError("the provider is busy"))
+        report = self.one_run(instance, busy)
+        assert report.startswith("## Enrich run — 1 unit processed\n\n**waiting** 1\n")
+        assert report.count(self.POST_URL) == 1
+        assert "the provider is busy" in report
+
+    def test_a_post_transcribed_a_run_after_its_park_lands_its_first_file(self, instance):
+        # The file on disk is the park's, and nothing ever landed for the post.
+        self.park_via_driver(instance)
+        ctx = transcribe_ctx(instance, transport=FakeTransport({self.ENCLOSURE: self.video()}))
+        report = run_mod.run_transcribe(ctx)
+        assert entry_for(ctx, self.POST_URL).status is Status.DONE
+        assert f"**{ITEM}**\n  ↳ 1 new enrichment file\n" in report
+
     def test_a_rerun_keeps_the_transcript_it_landed(self, instance):
         # The real driver re-parks the post for its video; the stored
         # transcript stands rather than being parked over.

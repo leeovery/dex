@@ -22,7 +22,7 @@ import json
 import re
 import time
 import urllib.parse
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -602,7 +602,12 @@ class _Drain:
     # was stored — how a rerun that keeps its post counts the item.
     park_writes: dict[str, bool] = field(default_factory=dict)
     queue: deque[str] = field(default_factory=deque)
-    counts: dict[Status, int] = field(default_factory=dict)
+    # The status each unit's last counted write left it in. A unit parked
+    # and then drained past the park in the same run (a post's video
+    # transcribed under an active provider) is one unit, counted as it
+    # ended the run: tallying every write had the header count it twice,
+    # once as the waiting nothing was left in.
+    counted: dict[str, Status] = field(default_factory=dict)
     parked: list[dict[str, object]] = field(default_factory=list)
     outcomes: dict[str, _ItemOutcome] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
@@ -1909,8 +1914,13 @@ class _Drain:
         # report claiming a new enrichment file while listing the same
         # item under Needs writing up, with nothing on disk to write up.
         if count:
+            # Rewritten only over an output the unit landed: the file a
+            # park wrote holds the notes a transcript was still owed, so a
+            # post parked for its video and transcribed — in this run or a
+            # later one — lands its first enrichment file, not a rewrite.
+            rewrote = existed and self._recorded_output(entry.hash) is not None
             for outcome in self._owed(entry, owner):
-                if existed:
+                if rewrote:
                     outcome.changed += 1
                 else:
                     outcome.new += 1
@@ -2432,8 +2442,14 @@ class _Drain:
         if stamped.path is not None and self._outputs is not None:
             self._outputs[stamped.hash] = stamped
         if count:
-            self.counts[stamped.status] = self.counts.get(stamped.status, 0) + 1
+            self.counted[stamped.hash] = stamped.status
             self.touched.add(stamped.item)
+            # The parked section claims what survives the session: a unit
+            # parked earlier in THIS run and then drained past it (a
+            # transcribe park re-queued under an active provider) must
+            # leave the section with the state it no longer has, and one
+            # parked again takes a single row, the latest.
+            self.parked = [row for row in self.parked if row["url"] != stamped.url]
         if count and stamped.status in PARKED:
             self.parked.append(
                 _parked_row(
@@ -2444,12 +2460,6 @@ class _Drain:
                     cognitive=is_cognitive_park(stamped, self.ctx),
                 )
             )
-        elif count:
-            # The parked section claims what survives the session: a unit
-            # parked earlier in THIS run and then drained past it (a
-            # transcribe park re-queued under an active provider) must
-            # leave the section with the state it no longer has.
-            self.parked = [row for row in self.parked if row["url"] != stamped.url]
         return stamped
 
     def _count_write(self, stamped: LedgerEntry) -> None:
@@ -2650,7 +2660,7 @@ class _Drain:
             for item_id in self.closed_unenriched_items
         ]
         payload: dict[str, object] = {
-            "counts": {status.value: n for status, n in self.counts.items()},
+            "counts": dict(Counter(status.value for status in self.counted.values())),
             "items": items,
             "parked": self.parked,
         }

@@ -49,6 +49,13 @@ least as long as what extraction found, with any notebook it holds as a
 CMS record rendered as the page shows it. The title, description and
 og:image still come from the HTML.
 
+A page served AS markdown or plain text — a docs site's ``.md`` pages, its
+``llms.txt`` — needs no extraction either, and must never get one: an HTML
+parser reads a page with no tags as thin, and strips ``<Button />`` out of
+a fenced example and the ``<T>`` out of ``Callback<T>`` as markup. Its body
+is stored as served, titled by the heading it opens with, on the same
+substantial bar every page meets.
+
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
 ``Unusable`` (evidence ``thin-extraction``), never ``Missing`` — our
@@ -106,7 +113,7 @@ from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redet
 
 from .audio import audio_enclosure
 from .fetch import FetchFailure, fetch_classified
-from .transport import HttpResponse, Transport
+from .transport import Transport
 
 __all__ = ["HtmlExtract", "fetch_article", "trafilatura_extract"]
 
@@ -182,6 +189,10 @@ _LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
 _ATTRIBUTE_RE = re.compile(r"""([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))""")
 _MARKDOWN_TYPE = "text/markdown"
 _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/plain"})
+# A markdown document's title: the H1 it opens with, any closing hashes
+# dropped. Only the opening line counts — a `#` line further down may sit
+# in a fenced shell example.
+_MARKDOWN_TITLE_RE = re.compile(r"\A#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
 _FEED_LEADS = (b"<rss", b"<feed")
 # A fenced block in a declared source holding a JSON object, its info
 # string ignored. The body must open the object: a block that cannot is
@@ -936,29 +947,39 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
         rescue's fate noted on its evidence.
     """
     page = _fetch_page(transport, url)
-    if isinstance(page, _Page):
-        redetection = _body_redetection(page)
-        if redetection is not None:
-            return redetection
-        enclosure = audio_enclosure(page.html, url)
-        if enclosure is not None and enclosure.declared:
-            return Redetected(kind=Kind.PODCAST)
-        extracted = _extracted(
-            extract,
-            page.html,
-            base_url=page.url,
-            allow_media=True,
-            alternate=_markdown_alternate(transport, page),
-        )
-        if extracted is not None:
-            return extracted
-        if enclosure is not None:
-            # A player and nothing worth extracting: the audio is what
-            # the page is. Ordering is the whole rule — an article's
-            # read-aloud widget was reached above, by its own body.
-            return Redetected(kind=Kind.PODCAST)
-        return Unusable(evidence=THIN_EXTRACTION_REASON)
-    return _wayback_fallback(transport, extract, url, page)
+    if not isinstance(page, _Page):
+        return _wayback_fallback(transport, extract, url, page)
+    redetection = _body_redetection(page)
+    if redetection is not None:
+        return redetection
+    served = _served_markdown(page)
+    if served is not None:
+        # Before the enclosure check too: an og:audio tag quoted in a
+        # markdown example is not an episode's player.
+        return _markdown_content(served) or Unusable(evidence=THIN_EXTRACTION_REASON)
+    return _html_outcome(transport, extract, page, url)
+
+
+def _html_outcome(transport: Transport, extract: HtmlExtract, page: _Page, url: str) -> Outcome:
+    """What an HTML page is: an episode's player, an article, or thin."""
+    enclosure = audio_enclosure(page.html, url)
+    if enclosure is not None and enclosure.declared:
+        return Redetected(kind=Kind.PODCAST)
+    extracted = _extracted(
+        extract,
+        page.html,
+        base_url=page.url,
+        allow_media=True,
+        alternate=_markdown_alternate(transport, page),
+    )
+    if extracted is not None:
+        return extracted
+    if enclosure is not None:
+        # A player and nothing worth extracting: the audio is what
+        # the page is. Ordering is the whole rule — an article's
+        # read-aloud widget was reached above, by its own body.
+        return Redetected(kind=Kind.PODCAST)
+    return Unusable(evidence=THIN_EXTRACTION_REASON)
 
 
 def _body_redetection(page: _Page) -> Redetected | None:
@@ -1116,12 +1137,27 @@ def _markdown_alternate(transport: Transport, page: _Page) -> str | None:
         return None
     if isinstance(outcome, FetchFailure):
         return None
-    text = _markdown_text(outcome)
+    text = _markdown_text(outcome.content_type, outcome.body)
     return None if text is None else text.strip()
 
 
-def _markdown_text(response: HttpResponse) -> str | None:
-    """A 2xx answer as the markdown asked for, or None when it cannot be that.
+def _served_markdown(page: _Page) -> str | None:
+    """The page's own body when it was served as markdown or plain text, else None."""
+    text = _markdown_text(page.content_type, page.body)
+    return None if text is None else text.strip()
+
+
+def _markdown_content(markdown: str) -> Content | None:
+    """A served markdown body as Content when it is substantial, else None."""
+    if len(markdown) < MIN_SUBSTANTIAL_CHARS:
+        return None
+    match = _MARKDOWN_TITLE_RE.match(markdown)
+    title = " ".join(match.group(1).split())[:_MAX_TITLE_CHARS] if match else ""
+    return Content(meta={"title": title} if title else {}, body=_render_notebook_records(markdown))
+
+
+def _markdown_text(content_type: str, body: bytes) -> str | None:
+    """A 2xx body as markdown, or None when it cannot be that.
 
     Only a markdown or plain-text answer can be: a JSON error body served
     with a 200 (GitHub Docs' source is an API path) or a feed would
@@ -1131,14 +1167,14 @@ def _markdown_text(response: HttpResponse) -> str | None:
     is a file whatever type it claims, and one that is not UTF-8 text is no
     markdown at all.
     """
-    if response.content_type not in _MARKDOWN_ANSWER_TYPES:
+    if content_type not in _MARKDOWN_ANSWER_TYPES:
         return None
-    if _is_another_document(response.body) or sniff_format(response.body) is not None:
+    if _is_another_document(body) or sniff_format(body) is not None:
         return None
-    if sniff_media_ext(response.body, signatures_only=True) is not None:
+    if sniff_media_ext(body, signatures_only=True) is not None:
         return None
     try:
-        return response.body.decode("utf-8")
+        return body.decode("utf-8")
     except UnicodeDecodeError:
         return None
 
@@ -1193,8 +1229,14 @@ def _wayback_fallback(
         if isinstance(page, _Page):
             # Snapshot og:images point at web.archive.org — skip media. The
             # rescue reads the snapshot alone, so a markdown source the
-            # page declares is not chased into the archive either.
-            rescued = _extracted(extract, page.html, base_url=snapshot_url, allow_media=False)
+            # page declares is not chased into the archive either. A
+            # markdown page's snapshot is served as the text it archived.
+            served = _served_markdown(page)
+            rescued = (
+                _extracted(extract, page.html, base_url=snapshot_url, allow_media=False)
+                if served is None
+                else _markdown_content(served)
+            )
             if rescued is not None:
                 meta = dict(rescued.meta)
                 meta["via"] = "wayback"
