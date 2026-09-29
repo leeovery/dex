@@ -54,7 +54,8 @@ A page served AS markdown or plain text — a docs site's ``.md`` pages, its
 parser reads a page with no tags as thin, and strips ``<Button />`` out of
 a fenced example and the ``<T>`` out of ``Callback<T>`` as markup. Its body
 is stored as served, titled by the heading it opens with, on the same
-substantial bar every page meets.
+substantial bar every page meets, and cut at a ceiling with a line saying
+where the rest is.
 
 Wayback fallback stays for failed fetches, and its failures are classified
 like any fetch, never swallowed. A 200 whose extraction comes back thin is
@@ -108,7 +109,7 @@ from dex_engine.pipeline.detect import (
     sniff_format,
     sniff_media_ext,
 )
-from dex_engine.pipeline.enrichment import fenced
+from dex_engine.pipeline.enrichment import capped, fenced
 from dex_engine.pipeline.types import Content, Format, Job, Kind, Outcome, Redetected, Unusable
 
 from .audio import audio_enclosure
@@ -193,6 +194,12 @@ _MARKDOWN_ANSWER_TYPES = frozenset({_MARKDOWN_TYPE, "text/x-markdown", "text/pla
 # dropped. Only the opening line counts — a `#` line further down may sit
 # in a fenced shell example.
 _MARKDOWN_TITLE_RE = re.compile(r"\A#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", re.MULTILINE)
+# A served text body's ceiling. Single docs pages ran to half a million
+# characters at most (RFC 9110, 503K); a site's llms-full.txt, every page
+# it has in one file, ran 4 to 61 million. Stored whole, one of those is
+# an enrichment file in every clone's git history for good, past GitHub's
+# push limits at the top, and more than a session reads before digesting.
+_MAX_SERVED_CHARS = 1_000_000
 _FEED_LEADS = (b"<rss", b"<feed")
 # A fenced block in a declared source holding a JSON object, its info
 # string ignored. The body must open the object: a block that cannot is
@@ -956,7 +963,7 @@ def fetch_article(transport: Transport, extract: HtmlExtract, url: str) -> Outco
     if served is not None:
         # Before the enclosure check too: an og:audio tag quoted in a
         # markdown example is not an episode's player.
-        return _markdown_content(served) or Unusable(evidence=THIN_EXTRACTION_REASON)
+        return _markdown_content(served, page.url) or Unusable(evidence=THIN_EXTRACTION_REASON)
     return _html_outcome(transport, extract, page, url)
 
 
@@ -1147,13 +1154,14 @@ def _served_markdown(page: _Page) -> str | None:
     return None if text is None else text.strip()
 
 
-def _markdown_content(markdown: str) -> Content | None:
+def _markdown_content(markdown: str, url: str) -> Content | None:
     """A served markdown body as Content when it is substantial, else None."""
     if len(markdown) < MIN_SUBSTANTIAL_CHARS:
         return None
     match = _MARKDOWN_TITLE_RE.match(markdown)
     title = " ".join(match.group(1).split())[:_MAX_TITLE_CHARS] if match else ""
-    return Content(meta={"title": title} if title else {}, body=_render_notebook_records(markdown))
+    body = capped(_render_notebook_records(markdown), _MAX_SERVED_CHARS, url=url, wrap=str.rstrip)
+    return Content(meta={"title": title} if title else {}, body=body)
 
 
 def _markdown_text(content_type: str, body: bytes) -> str | None:
@@ -1174,7 +1182,8 @@ def _markdown_text(content_type: str, body: bytes) -> str | None:
     if sniff_media_ext(body, signatures_only=True) is not None:
         return None
     try:
-        return body.decode("utf-8")
+        # A byte-order mark decoded as text would stand in front of the H1.
+        return body.decode("utf-8-sig")
     except UnicodeDecodeError:
         return None
 
@@ -1235,7 +1244,7 @@ def _wayback_fallback(
             rescued = (
                 _extracted(extract, page.html, base_url=snapshot_url, allow_media=False)
                 if served is None
-                else _markdown_content(served)
+                else _markdown_content(served, snapshot_url)
             )
             if rescued is not None:
                 meta = dict(rescued.meta)

@@ -11,10 +11,11 @@ live here. The transcript-bearing kinds' body sections belong to the same
 contract — whether a body holds a transcript is said by the ``via`` field,
 so the section headings and the frontmatter cannot be read apart — and
 their composition and split live here too, shared by the youtube driver
-and the transcribe drain. So does the one line a media description opens
-with, naming the file it covers: the describe verb writes it and reads it
-back, and the hand-over that moves a reading off a byte-identical copy
-re-spells it.
+and the transcribe drain. So does the line a body cut to a ceiling ends
+with, shared by the drivers that cut one, and the one line a media
+description opens with, naming the file it covers: the describe verb
+writes it and reads it back, and the hand-over that moves a reading off a
+byte-identical copy re-spells it.
 
 Two readers over one field parser, and their unterminated-fence contracts
 differ deliberately:
@@ -32,6 +33,7 @@ differ deliberately:
 import datetime
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -44,6 +46,7 @@ __all__ = [
     "TRANSCRIPT_PROVENANCE",
     "TRANSCRIPT_SOURCES",
     "Handover",
+    "capped",
     "described_file",
     "description_header",
     "description_section",
@@ -271,6 +274,28 @@ def fenced(text: str) -> str:
     longest = max((len(run) for run in _BACKTICK_RUN_RE.findall(text)), default=0)
     fence = "`" * max(3, longest + 1)
     return f"{fence}\n{text}\n{fence}"
+
+
+_TRUNCATED = "**Truncated:** cut at {kept:,} of {whole:,} characters; the rest is at {url}"
+
+
+def capped(text: str, cap: int, *, url: str, wrap: Callable[[str], str]) -> str:
+    """``text`` wrapped whole when it fits, else its lines up to ``cap`` and a line saying so.
+
+    A silent prefix is read as the whole file: the digest written from it
+    cannot know the rest exists. So a cut is followed, outside whatever
+    ``wrap`` puts round the text, by one line naming how much of how much
+    was kept and where the rest is. The cut falls at the last line end the
+    cap allows, where that keeps at least half of it; text whose last line
+    end inside the cap falls earlier — a minified file under a one-line
+    header, a README with one huge line of HTML — is cut mid-line at the
+    cap, rather than kept to a few characters.
+    """
+    if len(text) <= cap:
+        return wrap(text)
+    end = text.rfind("\n", 0, cap + 1)
+    kept = text[:end] if end >= cap // 2 else text[:cap]
+    return f"{wrap(kept)}\n\n{_TRUNCATED.format(kept=len(kept), whole=len(text), url=url)}"
 
 
 def description_text(body: str) -> str:

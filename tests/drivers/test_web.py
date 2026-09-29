@@ -956,6 +956,25 @@ class TestServedMarkdown:
             Content(meta={}, body="s" * chars) if stored else Unusable(evidence="thin-extraction")
         )
 
+    @pytest.mark.parametrize(("tail", "cut"), [("y", False), ("yy", True)])
+    def test_a_page_past_the_ceiling_is_cut_saying_where_the_rest_is(self, tail, cut):
+        # A site's llms-full.txt runs to tens of millions of characters.
+        page = "\n".join(["x" * 99] * 10_000) + tail
+        assert len(page) == 1_000_000 + len(tail) - 1
+        body = body_of(self.fetch(page))
+        kept = page.rsplit("\n", 1)[0]
+        assert body == (
+            f"{kept}\n\n**Truncated:** cut at {len(kept):,} of {len(page):,} characters; "
+            f"the rest is at {SERVED_URL}"
+            if cut
+            else page
+        )
+
+    def test_a_byte_order_mark_is_not_part_of_the_page(self):
+        result = content_of(self.fetch(b"\xef\xbb\xbf" + SERVED_PAGE.encode()))
+        assert result.body == SERVED_PAGE.strip()
+        assert result.meta == {"title": "Components"}
+
     @pytest.mark.parametrize(
         "body",
         [
@@ -1098,6 +1117,20 @@ class TestWaybackFallback:
         else:
             assert isinstance(result, Missing)
             assert "wayback snapshot extraction was thin" in result.evidence
+
+    def test_a_markdown_snapshot_past_the_ceiling_points_at_the_snapshot(self):
+        # The live page is gone; the rest is only in the archive.
+        responses = {
+            URL: html_response("gone", status=404),
+            wayback_lookup_url(URL): json_response(
+                {"archived_snapshots": {"closest": {"available": True, "url": self.SNAPSHOT}}}
+            ),
+            self.SNAPSHOT: HttpResponse(
+                status=200, content_type="text/plain", body=("x" * 99 + "\n").encode() * 10_001
+            ),
+        }
+        result = driver_for(responses, extract=never_extract).fetch(make_unit(URL, Kind.WEB))
+        assert body_of(result).endswith(f"; the rest is at {self.SNAPSHOT}")
 
     def test_unparseable_lookup_json_is_noted(self):
         responses = {
