@@ -255,10 +255,11 @@ Three things sit on top of that, and they are where the real work happens:
 ## It looks after itself
 
 - **Failed work retries on its own.** Blocked fetches retry on a backoff,
-  waiting an hour after the first failure and doubling up to a day, so a rate
-  limit has time to lift; the eighth failure, about three days in, parks the
-  fetch for judgment. Engine bugs retry once the engine is newer, since there
-  is no point running a deterministic bug against the same code twice.
+  waiting about an hour after the first failure and doubling up to about a
+  day, so a rate limit has time to lift; the eighth failure, about three days
+  in, parks the fetch for judgment. Engine bugs retry once the engine is newer,
+  since there is no point running a deterministic bug against the same code
+  twice.
 - **It reports its own bugs.** An engine exception files an issue at this repo,
   deduplicated by fingerprint. Issue bodies carry no free text at all: version,
   command, error class, an engine-frames-only traceback, and a hash of the URL.

@@ -385,7 +385,7 @@ a malformed record impossible:
   and retry once per newer engine; `blocked` entries count their failed
   `attempts` and retry once a wait from the line's `at` has passed — an
   hour after the first failure, doubling up to a day, each cut short by a
-  tenth (at least 15 minutes) so a scheduled run is not missed by minutes —
+  tenth (at least 30 minutes) so a scheduled run is not missed by minutes —
   the eighth failure escalating to `manual`; `cap` marks a skip that records
   cap-refused work, not an admitted unit, and names the bound that refused
   it (`depth`, or `url-requested` — the per-item URL budget an `enrich

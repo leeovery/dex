@@ -520,7 +520,7 @@ class TestYoutubeDrain:
         run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
         early = FIRST_DUE - datetime.timedelta(seconds=1)
         report = run_mod.run_transcribe(transcribe_ctx(instance, now=lambda: early))
-        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:16 UTC" in report
+        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:01 UTC" in report
 
     def test_blocked_retry_routes_by_the_typed_field_not_the_reason_wording(self, instance):
         write_item(instance, urls=[VIDEO_URL])
