@@ -73,6 +73,7 @@ from tests.drivers.test_instagram import (
     walk,
 )
 from tests.pipeline.test_run import (
+    FIRST_DUE,
     ITEM,
     LATER,
     NOW,
@@ -485,7 +486,7 @@ class TestYoutubeDrain:
         failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
         run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
         recovered = FakeDownload()
-        early = NOW + run_mod.BLOCKED_BACKOFF[0] - datetime.timedelta(seconds=1)
+        early = FIRST_DUE - datetime.timedelta(seconds=1)
         held = transcribe_ctx(instance, download=recovered, now=lambda: early)
         run_mod.run_transcribe(held)
         assert recovered.calls == []
@@ -517,9 +518,9 @@ class TestYoutubeDrain:
         )
         failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
         run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
-        early = NOW + run_mod.BLOCKED_BACKOFF[0] - datetime.timedelta(seconds=1)
+        early = FIRST_DUE - datetime.timedelta(seconds=1)
         report = run_mod.run_transcribe(transcribe_ctx(instance, now=lambda: early))
-        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:30 UTC" in report
+        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:16 UTC" in report
 
     def test_blocked_retry_routes_by_the_typed_field_not_the_reason_wording(self, instance):
         write_item(instance, urls=[VIDEO_URL])

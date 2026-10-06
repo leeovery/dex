@@ -156,7 +156,7 @@ CAP_BOUNDS: dict[Cap, str] = {
 # A blocked unit gets this many attempts, the last failure escalating to
 # manual, and waits out a backoff after each failure before it is tried
 # again: an hour, doubling, capped at a day (1, 2, 4, 8, 16, 24, 24 hours),
-# so the last try lands about 79 hours after the first failure. Scheduled
+# so the last try lands about three days after the first failure. Scheduled
 # runs can be hourly: without the wait, a rate limit met again mid-throttle
 # spends every attempt within hours of the first refusal.
 MAX_BLOCKED_ATTEMPTS = 8
@@ -164,22 +164,36 @@ BLOCKED_BACKOFF: tuple[datetime.timedelta, ...] = tuple(
     datetime.timedelta(hours=min(2**failed, 24)) for failed in range(MAX_BLOCKED_ATTEMPTS - 1)
 )
 
+# `at` is stamped as a failure is recorded, partway through the run that
+# failed, so a wait run out to the instant would end just after the
+# scheduled run it was sized for, and the unit would slip a whole interval:
+# an hourly schedule's hour becoming two, a daily schedule's day becoming
+# two. Each wait falls due early by a grace: a tenth of it, never less than
+# this floor.
+_BLOCKED_GRACE_FLOOR = datetime.timedelta(minutes=15)
+
+
+def _blocked_grace(wait: datetime.timedelta) -> datetime.timedelta:
+    """How long before ``wait`` has run out a blocked unit falls due."""
+    return max(_BLOCKED_GRACE_FLOOR, wait / 10)
+
 
 def _blocked_next_try(entry: LedgerEntry, now: datetime.datetime) -> datetime.datetime | None:
     """When a ``blocked`` entry's next try falls due, or None when it is due at ``now``.
 
-    The wait runs from the line's ``at``, the instant its last attempt
-    failed. A line without one (written before ``at`` existed) has nothing
-    to wait from, and neither has one stamped further ahead of ``now`` than
-    the ledger's future-skew allowance: it came from a clock set forward,
-    and waiting on it would hold the unit for as far as that clock ran
-    ahead.
+    The wait, less its grace, runs from the line's ``at``, the instant its
+    last attempt failed. A line without one (written before ``at``
+    existed) has nothing to wait from, and neither has one stamped further
+    ahead of ``now`` than the ledger's future-skew allowance: it came from
+    a clock set forward, and waiting on it would hold the unit for as far
+    as that clock ran ahead.
     """
     at = entry.at
     if at is None or at > now + ledger.FUTURE_SKEW_ALLOWANCE:
         return None
     failed = min(entry.attempts or 1, len(BLOCKED_BACKOFF))
-    due = at + BLOCKED_BACKOFF[failed - 1]
+    wait = BLOCKED_BACKOFF[failed - 1]
+    due = at + wait - _blocked_grace(wait)
     return due if due > now else None
 
 
@@ -449,18 +463,25 @@ def _sniff_bytes(path: Path) -> bytes:
     return prefix
 
 
-def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
+def is_drainable(
+    entry: LedgerEntry, ctx: RunContext, *, now: datetime.datetime | None = None
+) -> bool:
     """Whether a run picks ``entry`` up — the drain predicate, total.
 
     queued always; blocked while attempts remain, once its backoff has run
     out; waiting when a mechanical provider is available; error once per
     newer engine; every terminal status never.
+
+    ``now`` is the instant a blocked entry's backoff is judged at, for a
+    caller deciding many entries on one reading of the clock; unset, the
+    context's clock is read.
     """
     match entry.status:
         case Status.QUEUED:
             return True
         case Status.BLOCKED:
-            return _attempts_left(entry) and _blocked_next_try(entry, ctx.now()) is None
+            instant = ctx.now() if now is None else now
+            return _attempts_left(entry) and _blocked_next_try(entry, instant) is None
         case Status.WAITING:
             return entry.needs is not None and ctx.provider_available(entry.needs, entry.format).ok
         case Status.ERROR:
@@ -1076,10 +1097,10 @@ class _Drain:
         scope = [
             entry for unit_hash, entry in self.entries.items() if only is None or unit_hash in only
         ]
-        note = _backoff_note(scope, self.ctx.now())
+        drainable, held = _triage(scope, self.ctx, self.ctx.now())
+        note = _backoff_note(held)
         if note is not None:
             self.notes.append(note)
-        drainable = [entry for entry in scope if is_drainable(entry, self.ctx)]
         if only is None:
             fresh = [entry.hash for entry in drainable if not entry.rerun]
             reruns = [entry.hash for entry in drainable if entry.rerun]
@@ -2783,30 +2804,73 @@ class _Drain:
 
 
 def _utc_minute(instant: datetime.datetime) -> str:
-    """``instant`` as a report names it: UTC, to the minute."""
-    return f"{instant.astimezone(datetime.UTC):%Y-%m-%d %H:%M} UTC"
+    """``instant`` as a report names it: UTC, rounded up to the minute.
+
+    Up, because the reports name the instant something happens after: a
+    unit due at 04:34:50 is still refused at 04:34:20.
+    """
+    utc = instant.astimezone(datetime.UTC)
+    minute = utc.replace(second=0, microsecond=0)
+    if minute < utc:
+        minute += datetime.timedelta(minutes=1)
+    return f"{minute:%Y-%m-%d %H:%M} UTC"
 
 
-def _backoff_note(scope: Iterable[LedgerEntry], now: datetime.datetime) -> str | None:
-    """The note naming the blocked units a drain passes over while their backoff holds them.
+def _resting(entry: LedgerEntry, config: Config) -> bool:
+    """Whether ``media_fetch: none`` holds ``entry`` where it is, whatever its retries say."""
+    return (
+        entry.job is Job.MEDIA
+        and config.media_fetch is MediaFetch.NONE
+        and entry.status is not Status.MANUAL
+    )
+
+
+def _held_until(
+    entry: LedgerEntry, config: Config, now: datetime.datetime
+) -> datetime.datetime | None:
+    """When a blocked unit its backoff holds at ``now`` falls due, or None when none holds it.
+
+    A unit out of attempts is held by nothing the engine will lift, and a
+    resting one by the owner's config: neither falls due when its wait runs
+    out.
+    """
+    if entry.status is not Status.BLOCKED or not _attempts_left(entry) or _resting(entry, config):
+        return None
+    return _blocked_next_try(entry, now)
+
+
+def _triage(
+    scope: Iterable[LedgerEntry], ctx: RunContext, now: datetime.datetime
+) -> tuple[list[LedgerEntry], list[datetime.datetime]]:
+    """What a drain takes from ``scope`` at ``now``, and when each unit its backoff holds falls due.
+
+    One reading of the clock decides both: read twice, a unit falling due
+    between the readings was named as held and queued as well.
+    """
+    drainable: list[LedgerEntry] = []
+    held: list[datetime.datetime] = []
+    for entry in scope:
+        next_try = _held_until(entry, ctx.config, now)
+        if next_try is not None:
+            held.append(next_try)
+        elif is_drainable(entry, ctx, now=now):
+            drainable.append(entry)
+    return drainable, held
+
+
+def _backoff_note(held: Sequence[datetime.datetime]) -> str | None:
+    """The note naming the blocked units a drain passes over, by when each falls due.
 
     No run touches a held unit until it falls due, so neither the report's
     counts nor its parked rows name it, and a run that processed nothing
     would otherwise say nothing about work it is still owed.
     """
-    due = [
-        next_try
-        for entry in scope
-        if entry.status is Status.BLOCKED
-        and _attempts_left(entry)
-        and (next_try := _blocked_next_try(entry, now)) is not None
-    ]
-    if not due:
+    if not held:
         return None
-    earliest = _utc_minute(min(due))
-    if len(due) == 1:
+    earliest = _utc_minute(min(held))
+    if len(held) == 1:
         return f"1 blocked unit waits out its backoff — it falls due {earliest}"
-    return f"{len(due)} blocked units wait out their backoff — the next falls due {earliest}"
+    return f"{len(held)} blocked units wait out their backoff — the next falls due {earliest}"
 
 
 def _parked_row(entry: LedgerEntry, item_id: str, ctx: RunContext) -> dict[str, object]:
@@ -2843,15 +2907,12 @@ def _parked_row(entry: LedgerEntry, item_id: str, ctx: RunContext) -> dict[str, 
     back on resumes nothing for them.
 
     A blocked row its backoff still holds carries ``next_try``, when its
-    next try falls due, in UTC to the minute — which the renderer cannot
-    work out either: "attempt 4 of 8" alone, under the engine's retries,
-    said the next run takes it while every run until then passes it by.
+    next try falls due, in UTC rounded up to the minute — which the
+    renderer cannot work out either: "attempt 4 of 8" alone, under the
+    engine's retries, said the next run takes it while every run until
+    then passes it by.
     """
-    if (
-        entry.job is Job.MEDIA
-        and ctx.config.media_fetch is MediaFetch.NONE
-        and entry.status is not Status.MANUAL
-    ):
+    if _resting(entry, ctx.config):
         return {
             "item": item_id,
             "url": entry.url,
@@ -2873,7 +2934,7 @@ def _parked_row(entry: LedgerEntry, item_id: str, ctx: RunContext) -> dict[str, 
         # times" — which only the cap makes readable.
         row["attempts"] = entry.attempts
         row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
-        next_try = _blocked_next_try(entry, ctx.now())
+        next_try = _held_until(entry, ctx.config, ctx.now())
         if next_try is not None:
             row["next_try"] = _utc_minute(next_try)
     if entry.status is Status.WAITING:
