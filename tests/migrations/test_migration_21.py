@@ -2,6 +2,7 @@
 
 import dataclasses
 import datetime
+import json
 
 import pytest
 
@@ -10,7 +11,7 @@ from dex_engine.migrations import run_pending
 from dex_engine.migrations.migration_21 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.run import BLOCKED_BACKOFF, MAX_BLOCKED_ATTEMPTS
+from dex_engine.pipeline.run import MAX_BLOCKED_ATTEMPTS
 from dex_engine.pipeline.types import (
     Format,
     Instance,
@@ -25,8 +26,8 @@ from dex_engine.pipeline.types import (
 from dex_engine.pipeline.urls import work_hash
 from tests.conftest import FakeDriver
 from tests.pipeline.test_run import (
+    FIRST_DUE,
     ITEM,
-    NOW,
     TODAY,
     URL,
     entry_for,
@@ -43,6 +44,9 @@ GIVEN_UP_AT = datetime.datetime(2026, 8, 18, 11, tzinfo=datetime.UTC)
 APPLIED = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 
 OLD_CAP = 5
+# The cap migration 21 shipped with: a unit given up at it is never a member,
+# whatever cap a later engine runs.
+CAP = 8
 OLD_ENGINE = "0.2.10"
 ENGINE = "0.2.11"
 REFUSAL = "HTTP 429"
@@ -51,6 +55,7 @@ AUDIO_REFUSAL = "audio acquisition failed: HTTP Error 429: Too Many Requests"
 RENAMED = "2026-08-19-renamed-55ad7b"
 POST_URL = "https://x.com/i/status/2059522098754629738"
 PICTURE_URL = "https://pbs.example.test/media/chart.png"
+CAPTIONED_URL = "https://youtube.com/watch?v=def456"
 
 
 @pytest.fixture
@@ -138,10 +143,9 @@ class TestMembers:
             engine=ENGINE,
             date=TODAY,
             at=APPLIED,
-            via="migration-21",
         )
 
-    @pytest.mark.parametrize("attempts", [1, OLD_CAP, MAX_BLOCKED_ATTEMPTS - 1])
+    @pytest.mark.parametrize("attempts", [1, OLD_CAP, CAP - 1])
     def test_every_escalation_short_of_the_cap_is_a_member(self, instance, migration, attempts):
         born = given_up_page(instance, attempts=attempts)
         migration.apply(instance.root)
@@ -164,7 +168,7 @@ class TestMembers:
         fresh = live(instance)[born.hash]
         assert (fresh.kind, fresh.format) == (Kind.FILE, Format.PDF)
         assert (fresh.parent, fresh.depth, fresh.http_shared) == (parent, 1, True)
-        assert (fresh.via, fresh.rerun) == ("migration-21", False)
+        assert (fresh.via, fresh.rerun) == ("harvest", False)
 
     def test_a_media_download_keeps_its_job(self, instance, migration):
         write_item(instance, urls=[POST_URL])
@@ -184,7 +188,7 @@ class TestMembers:
         migration.apply(instance.root)
         fresh = live(instance)[born.hash]
         assert (fresh.status, fresh.needs) == (Status.WAITING, Need.TRANSCRIBE)
-        assert (fresh.attempts, fresh.reason, fresh.via) == (None, None, "migration-21")
+        assert (fresh.attempts, fresh.reason, fresh.via) == (None, None, None)
 
     def test_a_compacted_ledger_still_tells_a_transcribe_job_by_its_reason(
         self, instance, migration
@@ -209,8 +213,8 @@ class TestNonMembers:
         "fields",
         [
             # Given up under the cap as it stands: every attempt was spent.
-            {"attempts": MAX_BLOCKED_ATTEMPTS},
-            {"attempts": MAX_BLOCKED_ATTEMPTS + 1},
+            {"attempts": CAP},
+            {"attempts": CAP + 1},
             {"reason": "thin-extraction"},
             {"reason": "HTTP 403"},
             {"reason": f"requeue by hand: still blocked after {OLD_CAP} attempts — {REFUSAL}"},
@@ -263,8 +267,10 @@ class TestOwner:
         assert report.skipped == []
 
     def test_the_stored_item_answers_while_its_file_exists(self, instance, migration):
+        # Ahead of another live item that lists the link, though the corpus
+        # names that one first.
         write_item(instance)
-        write_item(instance, item_id=RENAMED)
+        write_item(instance, item_id="2026-08-19-another-55ad7b")
         born = unit()
         write_ledger(instance, *history(born))
         migration.apply(instance.root)
@@ -369,7 +375,52 @@ class TestTolerantRead:
         tries = [dataclasses.replace(line, at=None) for line in history(born)]
         write_ledger(instance, *tries)
         migration.apply(instance.root)
-        assert live(instance)[born.hash].status is Status.QUEUED
+        fresh = live(instance)[born.hash]
+        # Nothing to outrank but by position: stamped at the apply.
+        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
+
+
+class TestOutranksTheLineItReplaces:
+    """The re-queue wins its hash at every instant, whatever clock stamped the line it replaces."""
+
+    def resolved(self, instance: Instance, at: datetime.datetime) -> LedgerEntry:
+        """The unit's live line as ``ledger.load`` resolves it at ``at``."""
+        return ledger.load(instance.ledger_path, now=lambda: at)[work_hash(URL)]
+
+    def test_a_line_stamped_ahead_inside_the_allowance_is_outranked(self, instance, migration):
+        ahead = APPLIED + ledger.FUTURE_SKEW_ALLOWANCE - datetime.timedelta(minutes=1)
+        given_up_page(instance, at=ahead)
+        migration.apply(instance.root)
+        fresh = self.resolved(instance, APPLIED)
+        assert (fresh.status, fresh.at) == (
+            Status.QUEUED,
+            ahead + datetime.timedelta(microseconds=1),
+        )
+        assert self.resolved(instance, APPLIED + datetime.timedelta(days=30)) == fresh
+
+    def test_a_line_stamped_past_the_allowance_is_outranked_then_and_after(
+        self, instance, migration
+    ):
+        # Compacted to its live line, which reads as unstamped at the apply
+        # and so is still live; the re-queue wins on position until both
+        # stamps are trusted, and on its stamp from then on.
+        write_item(instance)
+        ahead = APPLIED + datetime.timedelta(hours=1)
+        write_ledger(instance, given_up(unit(), at=ahead))
+        migration.apply(instance.root)
+        assert self.resolved(instance, APPLIED).status is Status.QUEUED
+        later = self.resolved(instance, APPLIED + datetime.timedelta(days=30))
+        assert (later.status, later.at) == (
+            Status.QUEUED,
+            ahead + datetime.timedelta(microseconds=1),
+        )
+
+    def test_the_stamp_is_written_in_utc(self, instance, migration):
+        east = datetime.timezone(datetime.timedelta(hours=2))
+        given_up_page(instance, at=(APPLIED + datetime.timedelta(minutes=1)).astimezone(east))
+        migration.apply(instance.root)
+        written = json.loads(instance.ledger_path.read_text().splitlines()[-1])
+        assert written["at"] == "2026-08-20T08:01:00.500001+00:00"
 
 
 class TestReport:
@@ -380,6 +431,7 @@ class TestReport:
         for page in pages:
             lines += history(unit(page))
         lines += history(unit(VIDEO_URL, kind=Kind.YOUTUBE), refusal=AUDIO_REFUSAL)
+        lines += history(unit(CAPTIONED_URL, kind=Kind.YOUTUBE))
         lines += history(
             unit(PICTURE_URL, kind=Kind.X, job=Job.MEDIA, parent=work_hash(POST_URL), depth=1)
         )
@@ -388,10 +440,10 @@ class TestReport:
         assert report == MigrationReport(
             actions=[
                 (
-                    "re-queued 4 unit(s) an earlier engine gave up on as still blocked, none of "
-                    "which ever landed (1 media, 2 web, 1 youtube): the next run that can take "
-                    "each tries it again, and a refusal now waits out a backoff before the next "
-                    f"of its {MAX_BLOCKED_ATTEMPTS} attempts"
+                    "re-queued 5 unit(s) an earlier engine gave up on as still blocked, none of "
+                    "which ever landed (1 media, 2 web, 1 youtube, 1 youtube transcription): the "
+                    "next run that can take each tries it again, and the backoff spaces out the "
+                    "attempts of any refused again"
                 )
             ]
         )
@@ -423,7 +475,7 @@ class TestShipped:
         )
         numbers = [migration.number for migration in applied]
         assert numbers.index(21) == numbers.index(20) + 1
-        assert live(instance)[born.hash].via == "migration-21"
+        assert live(instance)[born.hash].status is Status.QUEUED
 
 
 class TestTheNextRun:
@@ -445,9 +497,9 @@ class TestTheNextRun:
         report = run_mod.run(make_ctx(instance, driver))
         assert (
             f"- **{ITEM}** · `blocked` · attempt 1 of {MAX_BLOCKED_ATTEMPTS} · "
-            "next try after 2026-08-20 10:30 UTC"
+            "next try after 2026-08-20 10:16 UTC"
         ) in report
-        early = NOW + BLOCKED_BACKOFF[0] - datetime.timedelta(seconds=1)
+        early = FIRST_DUE - datetime.timedelta(seconds=1)
         run_mod.run(make_ctx(instance, driver, now=lambda: early))
         assert len(driver.fetched) == 1
 

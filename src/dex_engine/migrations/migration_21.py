@@ -22,10 +22,13 @@ transcribe drain gave up on, so its retry goes back through that drain and
 never the driver. The escalation dropped the ``needs`` that routed it, and
 a compact drops the blocked lines that still carried it, so the
 escalation's own reason tells the two apart: the transcribe drain opened
-every refusal of a unit's audio with "audio acquisition failed: ". Kind,
-format, job, lineage and the http-shared license are kept; attempts,
-reason, path and title are cleared; it is not a rerun, since nothing
-landed; ``via: migration-21``, dated and attributed to this apply.
+every refusal of a unit's audio with "audio acquisition failed: ". Its
+kind, format, job, lineage, ``via`` and http-shared license are kept, as
+the owner's own requeue keeps them: ``via`` is the provenance of a child
+or a rerun, never a migration's mark, and the migrations log records that
+this one ran. Attempts, reason, path and title are cleared; it is not a
+rerun, since nothing landed. It is dated and attributed to this apply, and
+stamped to outrank the line it replaces.
 
 Every member is tried again on the next run that can take it, so an
 instance holding many sends a burst to the sources behind them. A source
@@ -46,15 +49,10 @@ import datetime
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
-from dex_engine.pipeline.ledger import (
-    LedgerSchemaError,
-    append,
-    from_line,
-    resolution_key,
-    stamp,
-)
+from dex_engine.pipeline.ledger import append, from_line, resolution_key, stamp
 from dex_engine.pipeline.ownership import unit_owners
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import LedgerEntry, MigrationReport, Need, Skipped, Status
@@ -68,8 +66,6 @@ INTENT = (
     "its transcription, it takes the blocked lifecycle afresh with a wait after each failure"
 )
 
-_VIA = "migration-21"
-
 # What every engine before the backoff wrote when it gave a blocked unit
 # up: the attempts it took, then the refusal its last one met, which the
 # transcribe drain opened with the second string when the refusal was of
@@ -81,6 +77,20 @@ _AUDIO_REFUSED = "audio acquisition failed: "
 # later cap gives up on its own units, and whether those deserve another
 # start is a later migration's question, not a re-apply of this one.
 _CAP = 8
+
+# The least a write instant can move on, to stamp a line just after another.
+_TICK = datetime.timedelta(microseconds=1)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Member:
+    """A unit an earlier cap gave up on, read once for all that is asked of it."""
+
+    entry: LedgerEntry
+    # the transcribe drain gave it up: the last refusal it met was of its audio
+    transcribe: bool
+    # its stored item's corpus file still exists
+    stored: bool
 
 
 def build(
@@ -127,71 +137,85 @@ class GivenUpBlockedRequeue:
             return MigrationReport()
         skipped: list[Skipped] = []
         records = list(_records(path, skipped))
-        latest = _latest(records, now=self._now())
+        moment = self._now()
+        latest = _latest(records, now=moment)
         landed = {entry.hash for _, entry in records if entry.path is not None}
-        members = [
-            entry for entry in latest.values() if _given_up(entry) and entry.hash not in landed
-        ]
+        candidates = (_member(entry, root) for entry in latest.values() if entry.hash not in landed)
+        members = [member for member in candidates if member is not None]
         if not members:
             return MigrationReport(skipped=skipped)
         # The corpus resolution answers one question — which live item owns
         # a unit whose stored item is gone — and only such a unit asks it.
         owners = (
             unit_owners(root, latest, default_drivers())
-            if any(not _item_file(root, entry.item).exists() for entry in members)
+            if not all(member.stored for member in members)
             else {}
         )
         exclusions = _exclusions(root)
-        requeued: list[LedgerEntry] = []
-        for entry in members:
-            item = _live_item(entry, root=root, owners=owners)
+        requeued: list[_Member] = []
+        for member in members:
+            item = _live_item(member, root=root, owners=owners)
             if item is None:
-                skipped.append(_unclaimed(entry, exclusions))
+                skipped.append(_unclaimed(member.entry, exclusions))
                 continue
-            append(path, self._stamped(_fresh(entry, item)))
-            requeued.append(entry)
+            at = _outranking(member.entry, moment)
+            append(path, self._stamped(_fresh(member, item), at))
+            requeued.append(member)
         if not requeued:
             return MigrationReport(skipped=skipped)
         return MigrationReport(actions=[_summary(requeued)], skipped=skipped)
 
-    def _stamped(self, entry: LedgerEntry) -> LedgerEntry:
-        return stamp(entry, today=self._today, now=self._now, engine_version=self._engine_version)
+    def _stamped(self, entry: LedgerEntry, at: datetime.datetime) -> LedgerEntry:
+        return stamp(entry, today=self._today, now=lambda: at, engine_version=self._engine_version)
 
 
-def _given_up(entry: LedgerEntry) -> bool:
-    """Whether the live line is an earlier cap's escalation of a fresh unit, not a rerun."""
-    match = _GIVEN_UP_RE.match(entry.reason or "")
-    return (
-        entry.status is Status.MANUAL
-        and not entry.rerun
-        and match is not None
-        and int(match.group(1)) < _CAP
+def _member(entry: LedgerEntry, root: Path) -> _Member | None:
+    """The unit as a member where its live line is an earlier cap's escalation of it, else None."""
+    if entry.status is not Status.MANUAL or entry.rerun:
+        return None
+    reason = entry.reason or ""
+    match = _GIVEN_UP_RE.match(reason)
+    if match is None or int(match.group(1)) >= _CAP:
+        return None
+    return _Member(
+        entry=entry,
+        transcribe=reason[match.end() :].startswith(_AUDIO_REFUSED),
+        stored=_item_file(root, entry.item).exists(),
     )
 
 
-def _audio_refused(entry: LedgerEntry) -> bool:
-    """Whether the transcribe drain gave the unit up: its last refusal was of the audio."""
-    reason = entry.reason or ""
-    match = _GIVEN_UP_RE.match(reason)
-    return match is not None and reason[match.end() :].startswith(_AUDIO_REFUSED)
+def _outranking(given_up: LedgerEntry, moment: datetime.datetime) -> datetime.datetime:
+    """The write instant for the line replacing ``given_up``: this apply's, or just after its own.
+
+    A line stamped by a clock running ahead, inside the ledger's future-skew
+    allowance, outranks one stamped at this apply's instant: the re-queue
+    would lose to the line it replaces, the migration be logged applied,
+    and the unit stay manual for good. Stamped just after it, the new line
+    outranks it while both stamps are trusted; past the allowance the two
+    read as unstamped together, and the new line wins on position, appended
+    last.
+    """
+    if given_up.at is None:
+        return moment
+    return max(moment, given_up.at.astimezone(datetime.UTC) + _TICK)
 
 
-def _fresh(entry: LedgerEntry, item: str) -> LedgerEntry:
-    """The unit back where its tries began, for the live item, by this migration."""
-    transcribe = _audio_refused(entry)
+def _fresh(member: _Member, item: str) -> LedgerEntry:
+    """The unit back where its tries began, for the live item."""
+    entry = member.entry
     return LedgerEntry(
         hash=entry.hash,
         url=entry.url,
         item=item,
         kind=entry.kind,
         format=entry.format,
-        status=Status.WAITING if transcribe else Status.QUEUED,
-        needs=Need.TRANSCRIBE if transcribe else None,
+        status=Status.WAITING if member.transcribe else Status.QUEUED,
+        needs=Need.TRANSCRIBE if member.transcribe else None,
         http_shared=entry.http_shared,
         engine="seed",  # stamped in apply
         date=datetime.date.min,
         job=entry.job,
-        via=_VIA,
+        via=entry.via,
         # A harvested link or a media download carries lineage of its own —
         # parent and depth travel together, so both ride the line.
         parent=entry.parent,
@@ -199,14 +223,21 @@ def _fresh(entry: LedgerEntry, item: str) -> LedgerEntry:
     )
 
 
-def _summary(requeued: list[LedgerEntry]) -> str:
-    counts = Counter(entry.job.value if entry.job else entry.kind.value for entry in requeued)
+def _label(member: _Member) -> str:
+    """What the report counts a unit as: its job, else its kind, a transcription apart."""
+    entry = member.entry
+    if entry.job is not None:
+        return entry.job.value
+    return f"{entry.kind.value} transcription" if member.transcribe else entry.kind.value
+
+
+def _summary(requeued: list[_Member]) -> str:
+    counts = Counter(_label(member) for member in requeued)
     per = ", ".join(f"{counts[label]} {label}" for label in sorted(counts))
     return (
         f"re-queued {len(requeued)} unit(s) an earlier engine gave up on as still blocked, "
         f"none of which ever landed ({per}): the next run that can take each tries it again, "
-        f"and a refusal now waits out a backoff before the next of its {_CAP} "
-        "attempts"
+        "and the backoff spaces out the attempts of any refused again"
     )
 
 
@@ -222,7 +253,7 @@ def _records(path: Path, skipped: list[Skipped]) -> Iterator[tuple[int, LedgerEn
             continue
         try:
             entry = from_line(line)
-        except (LedgerSchemaError, ValueError):
+        except ValueError:  # LedgerSchemaError is one
             skipped.append(
                 Skipped(
                     what=f"ledger line {position + 1}",
@@ -252,13 +283,11 @@ def _item_file(root: Path, item: str) -> Path:
     return root / "corpus" / item[:4] / f"{item}.md"
 
 
-def _live_item(
-    entry: LedgerEntry, *, root: Path, owners: Mapping[str, tuple[str, ...]]
-) -> str | None:
+def _live_item(member: _Member, *, root: Path, owners: Mapping[str, tuple[str, ...]]) -> str | None:
     """The live corpus item that owns the unit, or None where nothing live claims it."""
-    if _item_file(root, entry.item).exists():
-        return entry.item
-    for owner in owners.get(entry.hash, ()):
+    if member.stored:
+        return member.entry.item
+    for owner in owners.get(member.entry.hash, ()):
         if _item_file(root, owner).exists():
             return owner
     return None
