@@ -22,20 +22,28 @@ transcribe drain gave up on, so its retry goes back through that drain and
 never the driver. The escalation dropped the ``needs`` that routed it, and
 a compact drops the blocked lines that still carried it, so the
 escalation's own reason tells the two apart: the transcribe drain opened
-every refusal of a unit's audio with "audio acquisition failed: ". Its
+every refusal of a unit's audio with "audio acquisition failed: ". A
+transcribe job whose live item is no longer the one it was parked for is
+``queued`` instead: the park the drain reads stands under the directory of
+the item it was parked for, so the driver writes a fresh one. The unit's
 kind, format, job, lineage, ``via`` and http-shared license are kept, as
-the owner's own requeue keeps them: ``via`` is the provenance of a child
-or a rerun, never a migration's mark, and the migrations log records that
-this one ran. Attempts, reason, path and title are cleared; it is not a
-rerun, since nothing landed. It is dated, stamped and attributed to this
-apply, as every line the engine writes is.
+the owner's own requeue keeps them: ``via`` is the provenance of a child or a rerun, never
+a migration's mark, and the migrations log records that this one ran.
+Attempts, reason, path and title are cleared; it is not a rerun, since
+nothing landed. It is dated and attributed to this apply.
 
-A given-up line a faster clock stamped ahead of this apply's instant,
-inside the ledger's future-skew allowance, outranks the line written for
-it, so the apply reads the ledger back and names each unit whose re-queue
-did not take as skipped, with its route, rather than counting it. One
-stamped past the allowance loses to the re-queue until the clock reaches
-its stamp, the ledger's own exposure to a fast clock.
+Its stamp is placed just after the give-up's, since the re-queue takes
+effect as of the give-up: it outranks that line and nothing written since.
+Sync runs before the pull, so a second machine applies this to a ledger
+that has not seen the first machine's runs; placed at its own apply's
+instant, its re-queue would outrank the landing or the refusal those runs
+recorded, and a landed page would be fetched again. A give-up written
+before ``at`` existed has no instant to follow, and its re-queue is stamped
+at the apply's. One stamped later than the apply's instant came from a
+clock running ahead of this machine's, and no line is written for it: one
+placed after it would outrank this machine's next writes, and one stamped
+now would lose to it. The unit stays manual and is named skipped, with the
+instant from which the owner's ``enrich fetch`` gives it a fresh start.
 
 Every member is tried again on the next run that can take it, so an
 instance holding many sends a burst to the sources behind them. A source
@@ -79,6 +87,9 @@ INTENT = (
 # the unit's audio. Frozen: what matters is what those engines wrote.
 _GIVEN_UP_RE = re.compile(r"^still blocked after (\d+) attempts — ")
 _AUDIO_REFUSED = "audio acquisition failed: "
+
+# The least a write instant can move on, to place a line just after another.
+_TICK = datetime.timedelta(microseconds=1)
 
 # The cap this migration's engine shipped. Frozen with the strings: a
 # later cap gives up on its own units, and whether those deserve another
@@ -133,8 +144,9 @@ class GivenUpBlockedRequeue:
 
         Returns:
             The report: one summary action counting the units re-queued,
-            a skip for every member no live item claims or whose re-queue
-            did not take, and one for every ledger line that does not parse.
+            a skip for every member no live item claims or whose give-up a
+            faster clock stamped, and one for every ledger line that does not
+            parse.
         """
         path = root / "state" / "enrichment-ledger.jsonl"
         if not path.exists():
@@ -156,24 +168,25 @@ class GivenUpBlockedRequeue:
             else {}
         )
         exclusions = _exclusions(root)
-        written: list[tuple[_Member, LedgerEntry]] = []
+        requeued: list[LedgerEntry] = []
         for member in members:
             item = _live_item(member, root=root, owners=owners)
             if item is None:
                 skipped.append(_unclaimed(member.entry, exclusions))
                 continue
-            line = self._stamped(_fresh(member, item), moment)
+            given_up_at = member.entry.at
+            if given_up_at is not None and given_up_at > moment:
+                skipped.append(_outranked(member.entry, item, given_up_at))
+                continue
+            line = self._stamped(_fresh(member, item), _placed(given_up_at, moment))
             append(path, line)
-            written.append((member, line))
-        requeued = _taken(path, written, now=moment, skipped=skipped)
+            requeued.append(line)
         if not requeued:
             return MigrationReport(skipped=skipped)
         return MigrationReport(actions=[_summary(requeued)], skipped=skipped)
 
-    def _stamped(self, entry: LedgerEntry, moment: datetime.datetime) -> LedgerEntry:
-        return stamp(
-            entry, today=self._today, now=lambda: moment, engine_version=self._engine_version
-        )
+    def _stamped(self, entry: LedgerEntry, at: datetime.datetime) -> LedgerEntry:
+        return stamp(entry, today=self._today, now=lambda: at, engine_version=self._engine_version)
 
 
 def _member(entry: LedgerEntry, root: Path) -> _Member | None:
@@ -191,37 +204,25 @@ def _member(entry: LedgerEntry, root: Path) -> _Member | None:
     )
 
 
-def _taken(
-    path: Path,
-    written: list[tuple[_Member, LedgerEntry]],
-    *,
-    now: datetime.datetime,
-    skipped: list[Skipped],
-) -> list[_Member]:
-    """The members whose line is live, read back at ``now``; the rest named in ``skipped``."""
-    live = _latest(_records(path, []), now=now)  # its unreadable lines are named already
-    taken: list[_Member] = []
-    for member, line in written:
-        winner = live[line.hash]
-        if winner == line:
-            taken.append(member)
-        else:
-            # Only a line stamped later than ``now`` outranks one appended last at ``now``.
-            skipped.append(_outranked(member.entry, line.item, winner.at or now))
-    return taken
+def _placed(given_up_at: datetime.datetime | None, moment: datetime.datetime) -> datetime.datetime:
+    """The re-queue's stamp: just after the give-up's, or ``moment`` for an unstamped give-up."""
+    if given_up_at is None:
+        return moment
+    return given_up_at.astimezone(datetime.UTC) + _TICK
 
 
 def _fresh(member: _Member, item: str) -> LedgerEntry:
     """The unit back where its tries began, for the live item."""
     entry = member.entry
+    transcribe = member.transcribe and item == entry.item
     return LedgerEntry(
         hash=entry.hash,
         url=entry.url,
         item=item,
         kind=entry.kind,
         format=entry.format,
-        status=Status.WAITING if member.transcribe else Status.QUEUED,
-        needs=Need.TRANSCRIBE if member.transcribe else None,
+        status=Status.WAITING if transcribe else Status.QUEUED,
+        needs=Need.TRANSCRIBE if transcribe else None,
         http_shared=entry.http_shared,
         engine="seed",  # stamped in apply
         date=datetime.date.min,
@@ -234,16 +235,15 @@ def _fresh(member: _Member, item: str) -> LedgerEntry:
     )
 
 
-def _label(member: _Member) -> str:
-    """What the report counts a unit as: its job, else its kind, a transcription apart."""
-    entry = member.entry
-    if entry.job is not None:
-        return entry.job.value
-    return f"{entry.kind.value} transcription" if member.transcribe else entry.kind.value
+def _label(line: LedgerEntry) -> str:
+    """What the report counts a re-queue as: its job, else its kind, a transcription apart."""
+    if line.job is not None:
+        return line.job.value
+    return f"{line.kind.value} transcription" if line.needs is Need.TRANSCRIBE else line.kind.value
 
 
-def _summary(requeued: list[_Member]) -> str:
-    counts = Counter(_label(member) for member in requeued)
+def _summary(requeued: list[LedgerEntry]) -> str:
+    counts = Counter(_label(line) for line in requeued)
     per = ", ".join(f"{counts[label]} {label}" for label in sorted(counts))
     return (
         f"re-queued {len(requeued)} unit(s) an earlier engine gave up on as still blocked, "
@@ -336,12 +336,18 @@ def _unclaimed(entry: LedgerEntry, exclusions: Mapping[str, str]) -> Skipped:
 
 
 def _outranked(given_up: LedgerEntry, item: str, stamped: datetime.datetime) -> Skipped:
+    # Up to the next whole second: a fetch stamped within the second the
+    # line was would still lose to it.
+    utc = stamped.astimezone(datetime.UTC)
+    passes = utc.replace(microsecond=0)
+    if passes < utc:
+        passes += datetime.timedelta(seconds=1)
     return Skipped(
         what=f"given-up unit {given_up.url} of {item}",
         why=(
-            "the line that gave it up was stamped by a clock running ahead of this machine's "
-            "and outranks the re-queue, so the unit stays manual; once this machine's clock "
-            f"passes {stamped.astimezone(datetime.UTC):%Y-%m-%d %H:%M:%S} UTC, "
+            "the line that gave it up was stamped by a clock running ahead of this machine's, "
+            "so no re-queue was written and the unit stays manual; once this machine's clock "
+            f"passes {passes:%Y-%m-%d %H:%M:%S} UTC, "
             f"`bin/dex enrich fetch {item} {given_up.url}` requeues it in place and tries it again"
         ),
     )

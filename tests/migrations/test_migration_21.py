@@ -2,6 +2,7 @@
 
 import dataclasses
 import datetime
+import json
 
 import pytest
 
@@ -28,6 +29,7 @@ from tests.conftest import FakeDriver
 from tests.pipeline.test_run import (
     FIRST_DUE,
     ITEM,
+    NOW,
     TODAY,
     URL,
     entry_for,
@@ -42,6 +44,7 @@ from tests.pipeline.test_transcribe import VIDEO_URL, FakeDownload, transcribe_c
 BORN_AT = datetime.datetime(2026, 8, 18, 6, tzinfo=datetime.UTC)
 GIVEN_UP_AT = datetime.datetime(2026, 8, 18, 11, tzinfo=datetime.UTC)
 APPLIED = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
+TICK = datetime.timedelta(microseconds=1)
 
 OLD_CAP = 5
 # The cap migration 21 shipped with: a unit given up at it is never a member,
@@ -142,7 +145,7 @@ class TestMembers:
             status=Status.QUEUED,
             engine=ENGINE,
             date=TODAY,
-            at=APPLIED,
+            at=GIVEN_UP_AT + TICK,
         )
 
     @pytest.mark.parametrize("attempts", [1, OLD_CAP, CAP - 1])
@@ -200,6 +203,20 @@ class TestMembers:
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         migration.apply(instance.root)
         assert live(instance)[born.hash].needs is Need.TRANSCRIBE
+
+    def test_a_transcribe_job_owned_by_another_item_now_goes_back_to_the_driver(
+        self, instance, migration
+    ):
+        # Its park, which the transcribe drain reads, stands under the item
+        # it was parked for.
+        write_item(instance, item_id=RENAMED, urls=[VIDEO_URL])
+        born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
+        write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
+        report = migration.apply(instance.root)
+        fresh = live(instance)[born.hash]
+        assert (fresh.item, fresh.status, fresh.needs) == (RENAMED, Status.QUEUED, None)
+        (action,) = report.actions
+        assert "(1 youtube)" in action
 
     def test_a_refusal_naming_the_audio_further_in_is_a_fetch(self, instance, migration):
         born = given_up_page(instance, refusal=f"HTTP 403 ({AUDIO_REFUSAL})")
@@ -380,26 +397,79 @@ class TestTolerantRead:
         assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
 
 
+class TestPlacedJustAfterTheGiveUp:
+    """The re-queue takes effect as of the give-up, and outranks nothing written since."""
+
+    def test_a_second_machine_applying_to_a_stale_ledger_never_unseats_a_landing(
+        self, instance, migration, tmp_path_factory
+    ):
+        given_up_page(instance)
+        stale = instance.ledger_path.read_text()
+        # Machine A applies it, and its next run lands the page.
+        migration.apply(instance.root)
+        run_mod.run(make_ctx(instance, FakeDriver()))
+        # Machine B syncs the engine before it pulls, so it applies the
+        # migration to the ledger as it stood, an hour on by its own clock.
+        other = Instance(root=tmp_path_factory.mktemp("other"))
+        for directory in (other.corpus_dir, other.state_dir, other.enrichment_dir):
+            directory.mkdir()
+        write_item(other)
+        other.ledger_path.write_text(stale)
+        later = NOW + datetime.timedelta(hours=1)
+        build(today=lambda: TODAY, now=lambda: later, engine_version=ENGINE).apply(other.root)
+        # The pull's union merge brings B's line onto A's ledger.
+        written = other.ledger_path.read_text()[len(stale) :]
+        instance.ledger_path.write_text(instance.ledger_path.read_text() + written)
+        assert entry_for(make_ctx(instance, FakeDriver())).status is Status.DONE
+
+    def test_a_give_up_stamped_at_the_apply_instant_is_followed(self, instance, migration):
+        born = given_up_page(instance, at=APPLIED)
+        migration.apply(instance.root)
+        fresh = live(instance)[born.hash]
+        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED + TICK)
+
+    def test_a_give_up_in_another_offset_is_followed_in_utc(self, instance, migration):
+        east = datetime.timezone(datetime.timedelta(hours=2))
+        given_up_page(instance, at=GIVEN_UP_AT.astimezone(east))
+        migration.apply(instance.root)
+        written = json.loads(instance.ledger_path.read_text().splitlines()[-1])
+        assert written["at"] == "2026-08-18T11:00:00.000001+00:00"
+
+
 class TestAFasterClock:
-    """A given-up line a faster clock stamped ahead of the apply."""
+    """A give-up stamped later than the apply's instant, by a clock running ahead of this one."""
 
-    def resolved(self, instance: Instance, at: datetime.datetime) -> LedgerEntry:
-        """The unit's live line as ``ledger.load`` resolves it at ``at``."""
-        return ledger.load(instance.ledger_path, now=lambda: at)[work_hash(URL)]
-
-    def test_inside_the_allowance_it_outranks_the_requeue_which_is_named(self, instance, migration):
-        ahead = APPLIED + ledger.FUTURE_SKEW_ALLOWANCE - datetime.timedelta(minutes=1)
-        given_up_page(instance, at=ahead)
+    @pytest.mark.parametrize(
+        ("ahead", "passes"),
+        [
+            (
+                APPLIED + ledger.FUTURE_SKEW_ALLOWANCE - datetime.timedelta(minutes=1),
+                "2026-08-20 08:04:01",
+            ),
+            (
+                APPLIED.replace(microsecond=0) + datetime.timedelta(minutes=2),
+                "2026-08-20 08:02:00",
+            ),
+            # Past the allowance, the line reads as unstamped: compacted to
+            # it alone, the apply still finds it live.
+            (APPLIED + datetime.timedelta(hours=1), "2026-08-20 09:00:01"),
+        ],
+    )
+    def test_no_line_is_written_and_the_unit_is_named_with_its_route(
+        self, instance, migration, ahead, passes
+    ):
+        write_item(instance)
+        write_ledger(instance, given_up(unit(), at=ahead))
         report = migration.apply(instance.root)
-        assert self.resolved(instance, APPLIED).status is Status.MANUAL
+        assert line_count(instance) == 1
         assert report == MigrationReport(
             skipped=[
                 Skipped(
                     what=f"given-up unit {URL} of {ITEM}",
                     why=(
                         "the line that gave it up was stamped by a clock running ahead of this "
-                        "machine's and outranks the re-queue, so the unit stays manual; once this "
-                        f"machine's clock passes {ahead:%Y-%m-%d %H:%M:%S} UTC, "
+                        "machine's, so no re-queue was written and the unit stays manual; once "
+                        f"this machine's clock passes {passes} UTC, "
                         f"`bin/dex enrich fetch {ITEM} {URL}` requeues it in place and tries it "
                         "again"
                     ),
@@ -416,26 +486,16 @@ class TestAFasterClock:
         run_mod.fetch_urls(ctx, ITEM, [URL])
         assert entry_for(ctx).status is Status.DONE
 
-    def test_only_the_units_whose_requeue_took_are_counted(self, instance, migration):
+    def test_only_the_units_requeued_are_counted(self, instance, migration):
         late = "https://example.test/late"
         write_item(instance, urls=[URL, late])
         ahead = given_up(unit(late), at=APPLIED + datetime.timedelta(minutes=1))
-        write_ledger(instance, *history(unit()), ahead)
+        # Named first, ahead of a unit that is re-queued after it.
+        write_ledger(instance, ahead, *history(unit()))
         report = migration.apply(instance.root)
         (action,) = report.actions
         assert action.startswith("re-queued 1 unit(s)")
         assert [skip.what for skip in report.skipped] == [f"given-up unit {late} of {ITEM}"]
-
-    def test_past_the_allowance_it_reads_as_unstamped_and_the_requeue_takes(
-        self, instance, migration
-    ):
-        # Compacted to its live line, which the apply still finds live.
-        write_item(instance)
-        write_ledger(instance, given_up(unit(), at=APPLIED + datetime.timedelta(hours=1)))
-        report = migration.apply(instance.root)
-        fresh = self.resolved(instance, APPLIED)
-        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
-        assert len(report.actions) == 1
 
 
 class TestReport:
@@ -506,8 +566,8 @@ class TestTheNextRun:
         assert entry_for(ctx).status is Status.DONE
 
     def test_a_drain_right_after_the_apply_writes_the_live_line(self, instance, migration):
-        # The re-queue is stamped at the apply's own instant, so no line the
-        # next run writes on this machine's clock loses to it.
+        # The re-queue is placed before the apply's own instant, so no line
+        # the next run writes on this machine's clock loses to it.
         given_up_page(instance)
         migration.apply(instance.root)
         just_after = APPLIED + datetime.timedelta(microseconds=1)
