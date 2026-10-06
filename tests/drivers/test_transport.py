@@ -235,8 +235,8 @@ class TestNonAsciiUrls:
         # http.client rejects [\x00-\x20\x7f] in the request line, not
         # merely non-ASCII: an unencoded space in an href — everyday in a
         # corpus — raised InvalidURL and parked the item blocked, spending
-        # five attempts and five wayback lookups on a condition no retry
-        # can change. The URL was fetchable all along.
+        # every attempt, and a wayback lookup with each, on a condition no
+        # retry can change. The URL was fetchable all along.
         with recording_server() as (base, seen):
             response = urllib_transport(base + "/reports/annual report.pdf")
         assert response.status == 200

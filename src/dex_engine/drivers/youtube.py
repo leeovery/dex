@@ -207,7 +207,7 @@ class YouTubeDriver:
     ) -> Outcome:
         # A failing caption track says nothing about the VIDEO: yt-dlp track
         # URLs are signed and short-lived, so even a 404 here is a transient
-        # refusal (a re-probe next run mints fresh URLs), never Missing. The
+        # refusal (a later re-probe mints fresh URLs), never Missing. The
         # wire fact rides the evidence; the classified framing never does.
         outcome = fetch_classified(self._transport, track_url)
         if isinstance(outcome, FetchFailure):

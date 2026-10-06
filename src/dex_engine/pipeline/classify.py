@@ -138,7 +138,7 @@ class Classification:
 def classify_http(status_code: int) -> Classification:
     """Classify a non-success HTTP status code — total over non-2xx.
 
-    403/429/5xx → ``blocked`` (the world misbehaved; retried every run),
+    403/429/5xx → ``blocked`` (the world misbehaved; retried on a backoff),
     404/410 → ``dead`` (confirmed gone), 401/402 → ``manual`` with
     ``payment/login required`` (x.com answers 402; retrying never resolves
     it). Any other failing code is ``blocked``, and so is a surfaced
@@ -169,7 +169,7 @@ def classify_http(status_code: int) -> Classification:
         return Classification(status=Status.DEAD, reason=f"HTTP {status_code}")
     # 403/429/5xx and every unlisted failure: blocked, never dead — a
     # transient challenge heals on retry; a persistent one escalates to
-    # manual after 5 attempts with the truth recorded.
+    # manual once its attempts run out, with the truth recorded.
     return Classification(status=Status.BLOCKED, reason=f"HTTP {status_code}")
 
 

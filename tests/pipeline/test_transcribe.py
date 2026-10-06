@@ -1,6 +1,7 @@
 """Transcribe-drain tests: acquisition, priming, lifecycle, caps."""
 
 import dataclasses
+import datetime
 import json
 import os
 import re
@@ -74,10 +75,12 @@ from tests.drivers.test_instagram import (
 from tests.pipeline.test_run import (
     ITEM,
     LATER,
+    NOW,
     TODAY,
     digest_item,
     entry_for,
     make_ctx,
+    retry_clock,
     write_item,
 )
 
@@ -132,7 +135,9 @@ def seed_waiting(
     return entry
 
 
-def transcribe_ctx(instance, *, transcriber=None, download=None, transport=None, hears=None):
+def transcribe_ctx(  # noqa: PLR0913 — the transcribe drain's seams, and its clock
+    instance, *, transcriber=None, download=None, transport=None, hears=None, now=None
+):
     caps = Capabilities(
         transcribers=(transcriber if transcriber is not None else FakeTranscriber(),),
         extractors=(),
@@ -145,6 +150,7 @@ def transcribe_ctx(instance, *, transcriber=None, download=None, transport=None,
         download_audio=download if download is not None else FakeDownload(),
         transport=transport if transport is not None else FakeTransport({}),
         hears_speech=hears if hears is not None else cannot_tell,
+        now=now,
     )
 
 
@@ -418,16 +424,20 @@ class TestYoutubeDrain:
         assert entry.needs is Need.TRANSCRIBE  # the typed routing signal
         assert (entry.reason or "").startswith("audio acquisition failed")
 
-    def test_acquisition_failures_escalate_manual_at_five(self, instance):
+    def test_acquisition_failures_escalate_manual_at_the_last_attempt(self, instance):
         write_item(instance, urls=[VIDEO_URL])
         seed_waiting(instance)
         failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
         for expected_attempts in range(1, run_mod.MAX_BLOCKED_ATTEMPTS):
-            run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+            now = retry_clock(expected_attempts - 1)
+            run_mod.run_transcribe(transcribe_ctx(instance, download=failing, now=now))
             entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
             assert entry.status is Status.BLOCKED
             assert entry.attempts == expected_attempts
-        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        last = transcribe_ctx(
+            instance, download=failing, now=retry_clock(run_mod.MAX_BLOCKED_ATTEMPTS - 1)
+        )
+        run_mod.run_transcribe(last)
         entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
         assert entry.status is Status.MANUAL
         assert f"still blocked after {run_mod.MAX_BLOCKED_ATTEMPTS} attempts" in (
@@ -435,7 +445,7 @@ class TestYoutubeDrain:
         )
         assert "audio acquisition failed" in (entry.reason or "")
         # Manual is terminal for the mechanical drain — no further attempts.
-        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        run_mod.run_transcribe(last)
         assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.MANUAL
 
     def test_a_rerun_acquisition_giving_up_parks_manual_over_its_park_file(self, instance):
@@ -450,8 +460,9 @@ class TestYoutubeDrain:
             ),
         )
         failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
-        for _ in range(run_mod.MAX_BLOCKED_ATTEMPTS):
-            run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        for failed in range(run_mod.MAX_BLOCKED_ATTEMPTS):
+            now = retry_clock(failed)
+            run_mod.run_transcribe(transcribe_ctx(instance, download=failing, now=now))
         entry = ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)]
         assert (entry.status, entry.rerun) == (Status.MANUAL, True)
         assert park.is_file()
@@ -464,9 +475,51 @@ class TestYoutubeDrain:
         assert ledger.load(instance.ledger_path)[work_hash(VIDEO_URL)].status is Status.BLOCKED
         # The world recovers: the blocked retry goes straight back through
         # the transcribe path (never the driver) and completes.
-        ctx = transcribe_ctx(instance)
+        ctx = transcribe_ctx(instance, now=retry_clock(1))
         run_mod.run_transcribe(ctx)
         assert entry_for(ctx, VIDEO_URL).status is Status.DONE
+
+    def test_a_blocked_acquisition_waits_out_its_backoff(self, instance):
+        write_item(instance, urls=[VIDEO_URL])
+        seed_waiting(instance)
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        recovered = FakeDownload()
+        early = NOW + run_mod.BLOCKED_BACKOFF[0] - datetime.timedelta(seconds=1)
+        held = transcribe_ctx(instance, download=recovered, now=lambda: early)
+        run_mod.run_transcribe(held)
+        assert recovered.calls == []
+        assert entry_for(held, VIDEO_URL).status is Status.BLOCKED
+        due = transcribe_ctx(instance, download=recovered, now=retry_clock(1))
+        run_mod.run_transcribe(due)
+        assert len(recovered.calls) == 1
+        assert entry_for(due, VIDEO_URL).status is Status.DONE
+
+    def test_the_transcribe_drain_names_the_jobs_its_backoff_holds(self, instance):
+        # A held page is outside the verb's scope: it names transcribe jobs only.
+        page = "https://example.test/an-article"
+        write_item(instance, urls=[VIDEO_URL, page])
+        seed_waiting(instance)
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(page),
+                url=page,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.BLOCKED,
+                attempts=1,
+                engine="0.2.0",
+                date=TODAY,
+                at=NOW,
+                reason="HTTP 429",
+            ),
+        )
+        failing = FakeDownload(raise_=ProbeError("HTTP Error 429: Too Many Requests"))
+        run_mod.run_transcribe(transcribe_ctx(instance, download=failing))
+        early = NOW + run_mod.BLOCKED_BACKOFF[0] - datetime.timedelta(seconds=1)
+        report = run_mod.run_transcribe(transcribe_ctx(instance, now=lambda: early))
+        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:30 UTC" in report
 
     def test_blocked_retry_routes_by_the_typed_field_not_the_reason_wording(self, instance):
         write_item(instance, urls=[VIDEO_URL])
@@ -480,7 +533,7 @@ class TestYoutubeDrain:
             instance.ledger_path,
             dataclasses.replace(blocked, reason="the tube said no; try again later"),
         )
-        ctx = transcribe_ctx(instance)
+        ctx = transcribe_ctx(instance, now=retry_clock(1))
         run_mod.run_transcribe(ctx)
         assert entry_for(ctx, VIDEO_URL).status is Status.DONE
 
@@ -929,12 +982,14 @@ class TestInstagramDrain:
         return instance.enrichment_dir / ITEM / f"instagram-{entry.hash[:6]}.md"
 
     def drain(
-        self, instance, *, transcriber=None, transport=None, hears=None
+        self, instance, *, transcriber=None, transport=None, hears=None, now=None
     ) -> run_mod.RunContext:
         """One transcribe drain against a canned proxy download."""
         if transport is None:
             transport = FakeTransport({self.ENCLOSURE: self.video()})
-        ctx = transcribe_ctx(instance, transcriber=transcriber, transport=transport, hears=hears)
+        ctx = transcribe_ctx(
+            instance, transcriber=transcriber, transport=transport, hears=hears, now=now
+        )
         run_mod.run_transcribe(ctx)
         return ctx
 
@@ -1669,10 +1724,14 @@ class TestTranscriptLandsBesideTheVideo:
         _report, entries = self.rerun(instance, video=page)
         blocked = entries[self.post_hash()]
         assert (blocked.status, blocked.attempts) == (Status.BLOCKED, 1)
-        ledger.append(instance.ledger_path, dataclasses.replace(blocked, attempts=4))
-        report, entries = self.drain_waiting(instance, page)
+        last = run_mod.MAX_BLOCKED_ATTEMPTS - 1
+        ledger.append(instance.ledger_path, dataclasses.replace(blocked, attempts=last))
+        report, entries = self.drain_waiting(instance, page, now=retry_clock(last))
         assert entries[self.post_hash()].status is Status.DONE
-        assert "ended without a transcript (still blocked after 5 attempts" in report
+        assert (
+            "ended without a transcript "
+            f"(still blocked after {run_mod.MAX_BLOCKED_ATTEMPTS} attempts"
+        ) in report
         assert "1 rewritten" in report
 
     def test_a_rerun_past_the_ceiling_keeps_its_post(self, instance, monkeypatch):
@@ -1823,10 +1882,10 @@ class TestTranscriptLandsBesideTheVideo:
         ledger.append(instance.ledger_path, line)
         return item_dir
 
-    def drain_waiting(self, instance, video: HttpResponse) -> tuple[str, dict]:
+    def drain_waiting(self, instance, video: HttpResponse, *, now=None) -> tuple[str, dict]:
         transcriber = FakeTranscriber("whisper-local", text="Clip words.", model="medium")
         ctx = transcribe_ctx(
-            instance, transcriber=transcriber, transport=FakeTransport({self.VIDEO: video})
+            instance, transcriber=transcriber, transport=FakeTransport({self.VIDEO: video}), now=now
         )
         report = " ".join(run_mod.run_transcribe(ctx).split())
         return report, ledger.load(instance.ledger_path)
@@ -1862,16 +1921,21 @@ class TestBlockedEscalation:
 
     PAGE = html_response("<!DOCTYPE html>\n<html><body>Rate limited</body></html>")
 
+    LAST = run_mod.MAX_BLOCKED_ATTEMPTS - 1
+    GAVE_UP = f"still blocked after {run_mod.MAX_BLOCKED_ATTEMPTS} attempts"
+
     def test_a_page_fetch_rerun_keeps_its_landing(self, instance):
-        # Blocked five times on the post itself: a page outcome, kept as a
-        # page's landing is, and never reported as a transcript's end.
+        # Blocked to the last attempt on the post itself: a page outcome,
+        # kept as a page's landing is, and never reported as a transcript's end.
         rerun = TestTranscriptLandsBesideTheVideo()
         rerun.landed_before_the_fix(instance)
         landed = f"enrichment/{ITEM}/x-{rerun.post_hash()[:6]}.md"
         post = ledger.load(instance.ledger_path)[rerun.post_hash()]
         ledger.append(
             instance.ledger_path,
-            dataclasses.replace(post, status=Status.BLOCKED, attempts=4, reason="rate limited"),
+            dataclasses.replace(
+                post, status=Status.BLOCKED, attempts=self.LAST, reason="rate limited"
+            ),
         )
         refused = HttpResponse(status=429, content_type="text/html", body=b"")
         transport = FakeTransport({"https://api.fxtwitter.com/status/800": refused})
@@ -1883,20 +1947,20 @@ class TestBlockedEscalation:
 
     def test_an_x_transcribe_rerun_keeps_its_post(self, instance):
         rerun = TestTranscriptLandsBesideTheVideo()
-        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=4)
+        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=self.LAST)
         report, entries = rerun.drain_waiting(instance, self.PAGE)
         assert entries[rerun.post_hash()].status is Status.DONE
-        assert "ended without a transcript (still blocked after 5 attempts" in report
+        assert f"ended without a transcript ({self.GAVE_UP}" in report
 
     def test_a_fresh_x_transcribe_escalates_to_manual(self, instance):
         rerun = TestTranscriptLandsBesideTheVideo()
-        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=4)
+        rerun.waiting_rerun(instance, park=rerun.PARK, status=Status.BLOCKED, attempts=self.LAST)
         fresh = ledger.load(instance.ledger_path)[rerun.post_hash()]
         ledger.append(instance.ledger_path, dataclasses.replace(fresh, rerun=False))
         _report, entries = rerun.drain_waiting(instance, self.PAGE)
         post = entries[rerun.post_hash()]
         assert post.status is Status.MANUAL
-        assert (post.reason or "").startswith("still blocked after 5 attempts")
+        assert (post.reason or "").startswith(self.GAVE_UP)
 
     def test_a_reel_transcribe_rerun_escalates_to_manual(self, instance):
         drain = TestInstagramDrain()
@@ -1904,14 +1968,14 @@ class TestBlockedEscalation:
         parked = entry_for(ctx, drain.POST_URL)
         ledger.append(
             instance.ledger_path,
-            dataclasses.replace(parked, status=Status.BLOCKED, attempts=4, rerun=True),
+            dataclasses.replace(parked, status=Status.BLOCKED, attempts=self.LAST, rerun=True),
         )
+        refused = FakeTransport({drain.ENCLOSURE: self.PAGE})
         entry = entry_for(
-            drain.drain(instance, transport=FakeTransport({drain.ENCLOSURE: self.PAGE})),
-            drain.POST_URL,
+            drain.drain(instance, transport=refused, now=retry_clock(self.LAST)), drain.POST_URL
         )
         assert entry.status is Status.MANUAL
-        assert (entry.reason or "").startswith("still blocked after 5 attempts")
+        assert (entry.reason or "").startswith(self.GAVE_UP)
 
     def test_an_x_media_rerun_escalates_to_manual(self, instance):
         # A post's own media download: no transcript's end, and no landing
@@ -1924,7 +1988,12 @@ class TestBlockedEscalation:
         ledger.append(
             instance.ledger_path,
             dataclasses.replace(
-                photo, status=Status.BLOCKED, attempts=4, reason="HTTP 503", path=None, rerun=True
+                photo,
+                status=Status.BLOCKED,
+                attempts=self.LAST,
+                reason="HTTP 503",
+                path=None,
+                rerun=True,
             ),
         )
         unavailable = HttpResponse(status=503, content_type="text/html", body=b"")
@@ -1937,7 +2006,7 @@ class TestBlockedEscalation:
         report = " ".join(run_mod.run(TestXDrain().ctx(instance, transport)).split())
         entry = ledger.load(instance.ledger_path)[work_hash(rerun.PHOTO)]
         assert entry.status is Status.MANUAL
-        assert (entry.reason or "").startswith("still blocked after 5 attempts")
+        assert (entry.reason or "").startswith(self.GAVE_UP)
         assert "ended without a transcript" not in report
 
 

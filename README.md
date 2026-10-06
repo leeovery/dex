@@ -208,7 +208,7 @@ parks somewhere with a reason attached and comes back round.
    │     returns when a provider appears
    │                                  │
    ├── blocked ◀──────────────────────┤  403 · 429 · 5xx
-   │     retried every run; parked for judgment at 5
+   │     retried on a backoff; parked for judgment at 8
    │                                  │
    └── error ◀────────────────────────┤  an engine bug, files an issue
          retried once the engine is newer
@@ -254,9 +254,11 @@ Three things sit on top of that, and they are where the real work happens:
 
 ## It looks after itself
 
-- **Failed work retries on its own.** Blocked fetches retry every run. Engine
-  bugs retry once the engine is newer, since there is no point running a
-  deterministic bug against the same code twice.
+- **Failed work retries on its own.** Blocked fetches retry on a backoff,
+  waiting an hour after the first failure and doubling up to a day, so a rate
+  limit has time to lift; the eighth failure, about three days in, parks the
+  fetch for judgment. Engine bugs retry once the engine is newer, since there
+  is no point running a deterministic bug against the same code twice.
 - **It reports its own bugs.** An engine exception files an issue at this repo,
   deduplicated by fingerprint. Issue bodies carry no free text at all: version,
   command, error class, an engine-frames-only traceback, and a hash of the URL.
