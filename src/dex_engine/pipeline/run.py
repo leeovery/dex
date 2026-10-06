@@ -2938,7 +2938,7 @@ def _parked_row(entry: LedgerEntry, item_id: str, ctx: RunContext) -> dict[str, 
         # times" — which only the cap makes readable.
         row["attempts"] = entry.attempts
         row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
-        next_try = _blocked_next_try(entry, ctx.now())
+        next_try = _held_until(entry, ctx.config, ctx.now())
         if next_try is not None:
             row["next_try"] = _utc_minute(next_try)
     if entry.status is Status.WAITING:

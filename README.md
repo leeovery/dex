@@ -254,10 +254,11 @@ Three things sit on top of that, and they are where the real work happens:
 
 ## It looks after itself
 
-- **Failed work retries on its own.** Blocked fetches retry on a backoff,
-  waiting about an hour after the first failure and doubling up to about a
-  day, so a rate limit has time to lift; the eighth failure, about three days
-  in, parks the fetch for judgment. Engine bugs retry once the engine is newer,
+- **Failed work retries on its own.** Blocked fetches retry on a backoff: the
+  first retry waits for a run at least half an hour after the failure, and
+  each wait after it roughly doubles, up to about a day, so a rate limit has
+  time to lift; the eighth failure, about three days in, parks the fetch for
+  judgment. Engine bugs retry once the engine is newer,
   since there is no point running a deterministic bug against the same code
   twice.
 - **It reports its own bugs.** An engine exception files an issue at this repo,

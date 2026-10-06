@@ -2,7 +2,6 @@
 
 import dataclasses
 import datetime
-import json
 
 import pytest
 
@@ -11,7 +10,7 @@ from dex_engine.migrations import run_pending
 from dex_engine.migrations.migration_21 import build
 from dex_engine.pipeline import ledger
 from dex_engine.pipeline import run as run_mod
-from dex_engine.pipeline.run import MAX_BLOCKED_ATTEMPTS
+from dex_engine.pipeline.run import MAX_BLOCKED_ATTEMPTS, _utc_minute
 from dex_engine.pipeline.types import (
     Format,
     Instance,
@@ -21,6 +20,7 @@ from dex_engine.pipeline.types import (
     MigrationReport,
     Need,
     Refused,
+    Skipped,
     Status,
 )
 from dex_engine.pipeline.urls import work_hash
@@ -380,47 +380,62 @@ class TestTolerantRead:
         assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
 
 
-class TestOutranksTheLineItReplaces:
-    """The re-queue wins its hash at every instant, whatever clock stamped the line it replaces."""
+class TestAFasterClock:
+    """A given-up line a faster clock stamped ahead of the apply."""
 
     def resolved(self, instance: Instance, at: datetime.datetime) -> LedgerEntry:
         """The unit's live line as ``ledger.load`` resolves it at ``at``."""
         return ledger.load(instance.ledger_path, now=lambda: at)[work_hash(URL)]
 
-    def test_a_line_stamped_ahead_inside_the_allowance_is_outranked(self, instance, migration):
+    def test_inside_the_allowance_it_outranks_the_requeue_which_is_named(self, instance, migration):
         ahead = APPLIED + ledger.FUTURE_SKEW_ALLOWANCE - datetime.timedelta(minutes=1)
         given_up_page(instance, at=ahead)
-        migration.apply(instance.root)
-        fresh = self.resolved(instance, APPLIED)
-        assert (fresh.status, fresh.at) == (
-            Status.QUEUED,
-            ahead + datetime.timedelta(microseconds=1),
+        report = migration.apply(instance.root)
+        assert self.resolved(instance, APPLIED).status is Status.MANUAL
+        assert report == MigrationReport(
+            skipped=[
+                Skipped(
+                    what=f"given-up unit {URL} of {ITEM}",
+                    why=(
+                        "the line that gave it up was stamped by a clock running ahead of this "
+                        "machine's and outranks the re-queue, so the unit stays manual; once this "
+                        f"machine's clock passes {ahead:%Y-%m-%d %H:%M:%S} UTC, "
+                        f"`bin/dex enrich fetch {ITEM} {URL}` requeues it in place and tries it "
+                        "again"
+                    ),
+                )
+            ]
         )
-        assert self.resolved(instance, APPLIED + datetime.timedelta(days=30)) == fresh
 
-    def test_a_line_stamped_past_the_allowance_is_outranked_then_and_after(
+    def test_the_route_it_names_gives_the_unit_a_fresh_start(self, instance, migration):
+        ahead = APPLIED + datetime.timedelta(minutes=4)
+        given_up_page(instance, at=ahead)
+        migration.apply(instance.root)
+        passed = ahead + datetime.timedelta(seconds=1)
+        ctx = make_ctx(instance, FakeDriver(), now=lambda: passed)
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        assert entry_for(ctx).status is Status.DONE
+
+    def test_only_the_units_whose_requeue_took_are_counted(self, instance, migration):
+        late = "https://example.test/late"
+        write_item(instance, urls=[URL, late])
+        ahead = given_up(unit(late), at=APPLIED + datetime.timedelta(minutes=1))
+        write_ledger(instance, *history(unit()), ahead)
+        report = migration.apply(instance.root)
+        (action,) = report.actions
+        assert action.startswith("re-queued 1 unit(s)")
+        assert [skip.what for skip in report.skipped] == [f"given-up unit {late} of {ITEM}"]
+
+    def test_past_the_allowance_it_reads_as_unstamped_and_the_requeue_takes(
         self, instance, migration
     ):
-        # Compacted to its live line, which reads as unstamped at the apply
-        # and so is still live; the re-queue wins on position until both
-        # stamps are trusted, and on its stamp from then on.
+        # Compacted to its live line, which the apply still finds live.
         write_item(instance)
-        ahead = APPLIED + datetime.timedelta(hours=1)
-        write_ledger(instance, given_up(unit(), at=ahead))
-        migration.apply(instance.root)
-        assert self.resolved(instance, APPLIED).status is Status.QUEUED
-        later = self.resolved(instance, APPLIED + datetime.timedelta(days=30))
-        assert (later.status, later.at) == (
-            Status.QUEUED,
-            ahead + datetime.timedelta(microseconds=1),
-        )
-
-    def test_the_stamp_is_written_in_utc(self, instance, migration):
-        east = datetime.timezone(datetime.timedelta(hours=2))
-        given_up_page(instance, at=(APPLIED + datetime.timedelta(minutes=1)).astimezone(east))
-        migration.apply(instance.root)
-        written = json.loads(instance.ledger_path.read_text().splitlines()[-1])
-        assert written["at"] == "2026-08-20T08:01:00.500001+00:00"
+        write_ledger(instance, given_up(unit(), at=APPLIED + datetime.timedelta(hours=1)))
+        report = migration.apply(instance.root)
+        fresh = self.resolved(instance, APPLIED)
+        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
+        assert len(report.actions) == 1
 
 
 class TestReport:
@@ -490,6 +505,17 @@ class TestTheNextRun:
         assert [fetched.url for fetched in driver.fetched] == [URL]
         assert entry_for(ctx).status is Status.DONE
 
+    def test_a_drain_right_after_the_apply_writes_the_live_line(self, instance, migration):
+        # The re-queue is stamped at the apply's own instant, so no line the
+        # next run writes on this machine's clock loses to it.
+        given_up_page(instance)
+        migration.apply(instance.root)
+        just_after = APPLIED + datetime.timedelta(microseconds=1)
+        ctx = make_ctx(instance, FakeDriver(), now=lambda: just_after)
+        run_mod.run(ctx)
+        landed = entry_for(ctx)
+        assert (landed.status, landed.at) == (Status.DONE, just_after)
+
     def test_a_refusal_starts_the_attempts_and_the_backoff_afresh(self, instance, migration):
         given_up_page(instance)
         migration.apply(instance.root)
@@ -497,7 +523,7 @@ class TestTheNextRun:
         report = run_mod.run(make_ctx(instance, driver))
         assert (
             f"- **{ITEM}** · `blocked` · attempt 1 of {MAX_BLOCKED_ATTEMPTS} · "
-            "next try after 2026-08-20 10:16 UTC"
+            f"next try after {_utc_minute(FIRST_DUE)}"
         ) in report
         early = FIRST_DUE - datetime.timedelta(seconds=1)
         run_mod.run(make_ctx(instance, driver, now=lambda: early))
