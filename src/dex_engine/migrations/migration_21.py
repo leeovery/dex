@@ -22,28 +22,37 @@ transcribe drain gave up on, so its retry goes back through that drain and
 never the driver. The escalation dropped the ``needs`` that routed it, and
 a compact drops the blocked lines that still carried it, so the
 escalation's own reason tells the two apart: the transcribe drain opened
-every refusal of a unit's audio with "audio acquisition failed: ". A
-transcribe job whose live item is no longer the one it was parked for is
-``queued`` instead: the park the drain reads stands under the directory of
-the item it was parked for, so the driver writes a fresh one. The unit's
-kind, format, job, lineage, ``via`` and http-shared license are kept, as
-the owner's own requeue keeps them: ``via`` is the provenance of a child or a rerun, never
-a migration's mark, and the migrations log records that this one ran.
-Attempts, reason, path and title are cleared; it is not a rerun, since
-nothing landed. It is dated and attributed to this apply.
+every refusal of a unit's audio with "audio acquisition failed: ". The
+drain reads the park the fetch wrote, ``<kind>-<hash6>.md`` under the item
+that owns the unit, so a transcribe job whose park does not stand under
+its live item, as when that item is no longer the one it was parked for,
+is ``queued`` instead, and the driver writes a fresh one. The unit's kind,
+format, job, lineage, ``via`` and http-shared license are kept, as the
+owner's own requeue keeps them: ``via`` is the provenance of a child or a
+rerun, never a migration's mark, and the migrations log records that this
+one ran. Attempts, reason, path and title are cleared; it is not a rerun,
+since nothing landed. It is dated and attributed to this apply.
 
-Its stamp is placed just after the give-up's, since the re-queue takes
-effect as of the give-up: it outranks that line and nothing written since.
-Sync runs before the pull, so a second machine applies this to a ledger
-that has not seen the first machine's runs; placed at its own apply's
-instant, its re-queue would outrank the landing or the refusal those runs
-recorded, and a landed page would be fetched again. A give-up written
-before ``at`` existed has no instant to follow, and its re-queue is stamped
-at the apply's. One stamped later than the apply's instant came from a
-clock running ahead of this machine's, and no line is written for it: one
-placed after it would outrank this machine's next writes, and one stamped
-now would lose to it. The unit stays manual and is named skipped, with the
-instant from which the owner's ``enrich fetch`` gives it a fresh start.
+Its stamp places it in time. Sync runs before the pull, so a second
+machine applies this to a ledger that has not seen the first machine's
+runs, and a re-queue stamped at its own apply's instant would outrank the
+landing or the refusal those runs recorded since: a landed page would be
+fetched again. So a give-up stamped at or before this apply's instant is
+followed by a microsecond, and the re-queue takes effect as of the
+give-up, outranking that line and nothing written since. A give-up written
+before ``at`` existed leaves every line of its unit unstamped, since any
+stamped line would outrank it, so any stamp beats them all, and the
+re-queue takes the earliest honest one: midnight UTC of the give-up's own
+date, or this apply's instant should that date lie ahead of it. A give-up
+stamped later than this apply's instant, inside the ledger's future-skew
+allowance, came from a clock running ahead of this machine's: no line is
+written for it, since one placed after it would outrank this machine's
+next writes and one stamped now would lose to it. The unit stays manual
+and is named skipped, with the instant, minutes away at most, from which
+the owner's ``enrich fetch`` gives it a fresh start. Past the allowance,
+the ledger already reads the give-up as unstamped, so the re-queue is
+stamped at this apply's instant and wins now, until the clock reaches the
+give-up's stamp: the ledger's own exposure to a fast clock.
 
 Every member is tried again on the next run that can take it, so an
 instance holding many sends a burst to the sources behind them. A source
@@ -67,7 +76,13 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from dex_engine.pipeline.ledger import append, from_line, resolution_key, stamp
+from dex_engine.pipeline.ledger import (
+    FUTURE_SKEW_ALLOWANCE,
+    append,
+    from_line,
+    resolution_key,
+    stamp,
+)
 from dex_engine.pipeline.ownership import unit_owners
 from dex_engine.pipeline.registry import default_drivers
 from dex_engine.pipeline.types import LedgerEntry, MigrationReport, Need, Skipped, Status
@@ -174,11 +189,12 @@ class GivenUpBlockedRequeue:
             if item is None:
                 skipped.append(_unclaimed(member.entry, exclusions))
                 continue
-            given_up_at = member.entry.at
-            if given_up_at is not None and given_up_at > moment:
-                skipped.append(_outranked(member.entry, item, given_up_at))
+            ahead = _ahead(member.entry, moment)
+            if ahead is not None:
+                skipped.append(_outranked(member.entry, item, ahead))
                 continue
-            line = self._stamped(_fresh(member, item), _placed(given_up_at, moment))
+            fresh = _fresh(member.entry, item, transcribe=_resumable(member, item, root))
+            line = self._stamped(fresh, _placed(member.entry, moment))
             append(path, line)
             requeued.append(line)
         if not requeued:
@@ -204,17 +220,34 @@ def _member(entry: LedgerEntry, root: Path) -> _Member | None:
     )
 
 
-def _placed(given_up_at: datetime.datetime | None, moment: datetime.datetime) -> datetime.datetime:
-    """The re-queue's stamp: just after the give-up's, or ``moment`` for an unstamped give-up."""
-    if given_up_at is None:
-        return moment
-    return given_up_at.astimezone(datetime.UTC) + _TICK
+def _ahead(given_up: LedgerEntry, moment: datetime.datetime) -> datetime.datetime | None:
+    """The give-up's stamp where a clock ahead of ``moment`` wrote it inside the allowance."""
+    at = given_up.at
+    if at is not None and moment < at <= moment + FUTURE_SKEW_ALLOWANCE:
+        return at
+    return None
 
 
-def _fresh(member: _Member, item: str) -> LedgerEntry:
-    """The unit back where its tries began, for the live item."""
+def _placed(given_up: LedgerEntry, moment: datetime.datetime) -> datetime.datetime:
+    """The re-queue's stamp, for a give-up :func:`_ahead` does not hold back."""
+    at = given_up.at
+    if at is None:
+        midnight = datetime.datetime.combine(given_up.date, datetime.time(), tzinfo=datetime.UTC)
+        return min(midnight, moment)
+    if at <= moment:
+        return at.astimezone(datetime.UTC) + _TICK
+    return moment  # past the allowance, where the ledger reads the give-up as unstamped
+
+
+def _resumable(member: _Member, item: str, root: Path) -> bool:
+    """Whether the transcribe drain can take the job back: its park stands under the live item."""
     entry = member.entry
-    transcribe = member.transcribe and item == entry.item
+    park = root / "enrichment" / item / f"{entry.kind.value}-{entry.hash[:6]}.md"
+    return member.transcribe and park.is_file()
+
+
+def _fresh(entry: LedgerEntry, item: str, *, transcribe: bool) -> LedgerEntry:
+    """The unit back where its tries began, for the live item."""
     return LedgerEntry(
         hash=entry.hash,
         url=entry.url,
@@ -336,8 +369,8 @@ def _unclaimed(entry: LedgerEntry, exclusions: Mapping[str, str]) -> Skipped:
 
 
 def _outranked(given_up: LedgerEntry, item: str, stamped: datetime.datetime) -> Skipped:
-    # Up to the next whole second: a fetch stamped within the second the
-    # line was would still lose to it.
+    # Up to the next whole second, so the message names a readable time
+    # that is never before the stamp.
     utc = stamped.astimezone(datetime.UTC)
     passes = utc.replace(microsecond=0)
     if passes < utc:

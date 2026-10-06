@@ -3,6 +3,7 @@
 import dataclasses
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 
@@ -45,6 +46,7 @@ BORN_AT = datetime.datetime(2026, 8, 18, 6, tzinfo=datetime.UTC)
 GIVEN_UP_AT = datetime.datetime(2026, 8, 18, 11, tzinfo=datetime.UTC)
 APPLIED = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 TICK = datetime.timedelta(microseconds=1)
+GIVEN_UP_MIDNIGHT = datetime.datetime(2026, 8, 18, tzinfo=datetime.UTC)
 
 OLD_CAP = 5
 # The cap migration 21 shipped with: a unit given up at it is never a member,
@@ -111,6 +113,11 @@ def history(of: LedgerEntry, *, refusal=REFUSAL, needs=None) -> list[LedgerEntry
     return [of, *tries, given_up(of, refusal=refusal)]
 
 
+def unstamped(lines: list[LedgerEntry]) -> list[LedgerEntry]:
+    """The same life, as an engine wrote it before ``at`` existed."""
+    return [dataclasses.replace(line, at=None) for line in lines]
+
+
 def write_ledger(instance: Instance, *entries: LedgerEntry) -> None:
     instance.ledger_path.write_text("".join(ledger.to_line(e) + "\n" for e in entries))
 
@@ -123,6 +130,17 @@ def live(instance: Instance) -> dict[str, LedgerEntry]:
 
 def line_count(instance: Instance) -> int:
     return len(instance.ledger_path.read_text().splitlines())
+
+
+def park(instance: Instance, item: str = ITEM, url: str = VIDEO_URL) -> Path:
+    """The park a YouTube fetch wrote for transcription, under ``item``."""
+    file = instance.enrichment_dir / item / f"youtube-{work_hash(url)[:6]}.md"
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(
+        f"---\nurl: {url}\nfetched: '2026-08-18'\n---\n\n## Description\n\nA talk.\n",
+        encoding="utf-8",
+    )
+    return file
 
 
 def given_up_page(instance: Instance, **fields) -> LedgerEntry:
@@ -183,6 +201,7 @@ class TestMembers:
 
     def test_a_unit_the_transcribe_drain_gave_up_on_waits_for_it_again(self, instance, migration):
         write_item(instance, urls=[VIDEO_URL])
+        park(instance)
         born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
         parked = dataclasses.replace(
             born, status=Status.WAITING, needs=Need.TRANSCRIBE, reason="no captions available"
@@ -199,17 +218,32 @@ class TestMembers:
         # A compact keeps the live line alone: every blocked line that
         # carried `needs` is gone.
         write_item(instance, urls=[VIDEO_URL])
+        park(instance)
         born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         migration.apply(instance.root)
         assert live(instance)[born.hash].needs is Need.TRANSCRIBE
 
-    def test_a_transcribe_job_owned_by_another_item_now_goes_back_to_the_driver(
+    def test_a_renamed_items_transcribe_job_waits_where_the_rename_moved_its_park(
         self, instance, migration
     ):
-        # Its park, which the transcribe drain reads, stands under the item
-        # it was parked for.
         write_item(instance, item_id=RENAMED, urls=[VIDEO_URL])
+        park(instance, item=RENAMED)
+        born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
+        write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
+        migration.apply(instance.root)
+        fresh = live(instance)[born.hash]
+        assert (fresh.item, fresh.status, fresh.needs) == (RENAMED, Status.WAITING, Need.TRANSCRIBE)
+
+    @pytest.mark.parametrize("parked_under", [ITEM, None])
+    def test_a_transcribe_job_with_no_park_under_its_live_item_goes_to_the_driver(
+        self, instance, migration, parked_under
+    ):
+        # Re-owned, its park stands under the item it was parked for; or
+        # it was never written.
+        write_item(instance, item_id=RENAMED, urls=[VIDEO_URL])
+        if parked_under is not None:
+            park(instance, item=parked_under)
         born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         report = migration.apply(instance.root)
@@ -388,22 +422,23 @@ class TestTolerantRead:
 
     def test_unstamped_lines_resolve_by_position(self, instance, migration):
         write_item(instance)
-        born = unit(at=None)
-        tries = [dataclasses.replace(line, at=None) for line in history(born)]
-        write_ledger(instance, *tries)
+        born = unit()
+        write_ledger(instance, *unstamped(history(born)))
         migration.apply(instance.root)
         fresh = live(instance)[born.hash]
-        # Nothing to outrank but by position: stamped at the apply.
-        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
+        assert (fresh.status, fresh.at) == (Status.QUEUED, GIVEN_UP_MIDNIGHT)
 
 
 class TestPlacedJustAfterTheGiveUp:
     """The re-queue takes effect as of the give-up, and outranks nothing written since."""
 
+    @pytest.mark.parametrize("stamped", [True, False])
     def test_a_second_machine_applying_to_a_stale_ledger_never_unseats_a_landing(
-        self, instance, migration, tmp_path_factory
+        self, instance, migration, tmp_path_factory, stamped
     ):
-        given_up_page(instance)
+        write_item(instance)
+        lines = history(unit())
+        write_ledger(instance, *(lines if stamped else unstamped(lines)))
         stale = instance.ledger_path.read_text()
         # Machine A applies it, and its next run lands the page.
         migration.apply(instance.root)
@@ -421,6 +456,21 @@ class TestPlacedJustAfterTheGiveUp:
         written = other.ledger_path.read_text()[len(stale) :]
         instance.ledger_path.write_text(instance.ledger_path.read_text() + written)
         assert entry_for(make_ctx(instance, FakeDriver())).status is Status.DONE
+
+    def test_an_unstamped_give_up_takes_effect_from_midnight_of_its_date(self, instance, migration):
+        write_item(instance)
+        write_ledger(instance, *unstamped(history(unit())))
+        migration.apply(instance.root)
+        assert live(instance)[work_hash(URL)].at == GIVEN_UP_MIDNIGHT
+
+    def test_an_unstamped_give_up_dated_ahead_of_the_apply_takes_effect_from_it(
+        self, instance, migration
+    ):
+        write_item(instance)
+        ahead = given_up(unit(), at=None, date=datetime.date(2026, 8, 21))
+        write_ledger(instance, ahead)
+        migration.apply(instance.root)
+        assert live(instance)[work_hash(URL)].at == APPLIED
 
     def test_a_give_up_stamped_at_the_apply_instant_is_followed(self, instance, migration):
         born = given_up_page(instance, at=APPLIED)
@@ -450,9 +500,9 @@ class TestAFasterClock:
                 APPLIED.replace(microsecond=0) + datetime.timedelta(minutes=2),
                 "2026-08-20 08:02:00",
             ),
-            # Past the allowance, the line reads as unstamped: compacted to
-            # it alone, the apply still finds it live.
-            (APPLIED + datetime.timedelta(hours=1), "2026-08-20 09:00:01"),
+            (APPLIED + TICK, "2026-08-20 08:00:01"),
+            (APPLIED.replace(microsecond=1) + datetime.timedelta(minutes=3), "2026-08-20 08:03:01"),
+            (APPLIED + ledger.FUTURE_SKEW_ALLOWANCE, "2026-08-20 08:05:01"),
         ],
     )
     def test_no_line_is_written_and_the_unit_is_named_with_its_route(
@@ -476,6 +526,25 @@ class TestAFasterClock:
                 )
             ]
         )
+
+    @pytest.mark.parametrize(
+        "ahead",
+        [
+            APPLIED + ledger.FUTURE_SKEW_ALLOWANCE + TICK,
+            APPLIED + datetime.timedelta(hours=1),
+        ],
+    )
+    def test_past_the_allowance_the_requeue_is_stamped_now_and_wins_now(
+        self, instance, migration, ahead
+    ):
+        # The ledger reads the give-up as unstamped: compacted to it alone,
+        # the apply still finds it live.
+        write_item(instance)
+        write_ledger(instance, given_up(unit(), at=ahead))
+        report = migration.apply(instance.root)
+        fresh = ledger.load(instance.ledger_path, now=lambda: APPLIED)[work_hash(URL)]
+        assert (fresh.status, fresh.at) == (Status.QUEUED, APPLIED)
+        assert len(report.actions) == 1
 
     def test_the_route_it_names_gives_the_unit_a_fresh_start(self, instance, migration):
         ahead = APPLIED + datetime.timedelta(minutes=4)
@@ -505,6 +574,7 @@ class TestReport:
         lines: list[LedgerEntry] = []
         for page in pages:
             lines += history(unit(page))
+        park(instance)
         lines += history(unit(VIDEO_URL, kind=Kind.YOUTUBE), refusal=AUDIO_REFUSAL)
         lines += history(unit(CAPTIONED_URL, kind=Kind.YOUTUBE))
         lines += history(
@@ -602,6 +672,7 @@ class TestTheNextRun:
 
     def test_a_transcribe_job_goes_back_through_the_transcribe_drain(self, instance, migration):
         write_item(instance, urls=[VIDEO_URL])
+        park(instance)
         born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         migration.apply(instance.root)
@@ -613,6 +684,7 @@ class TestTheNextRun:
 
     def test_a_transcribe_job_refused_again_backs_off_in_that_drain(self, instance, migration):
         write_item(instance, urls=[VIDEO_URL])
+        park(instance)
         born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         migration.apply(instance.root)
