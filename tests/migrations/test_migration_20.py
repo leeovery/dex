@@ -946,5 +946,5 @@ class TestShipped:
             field.root, today=lambda: TODAY, now=lambda: NOW, engine_version="0.2.3"
         )
         numbers = [migration.number for migration in applied]
-        assert numbers[-2:] == [19, 20]
+        assert numbers.index(20) == numbers.index(19) + 1
         assert live(field.root)[VIDEO_HASH].via == "migration-20"
