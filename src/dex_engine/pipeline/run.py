@@ -23,7 +23,7 @@ import re
 import time
 import urllib.parse
 from collections import Counter, deque
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import assert_never
@@ -103,6 +103,7 @@ from .types import (
 from .urls import ext_of, resolve_repo_path, work_hash
 
 __all__ = [
+    "BLOCKED_BACKOFF",
     "CAP_BOUNDS",
     "HARVEST_RULES_VERSION",
     "MAX_BLOCKED_ATTEMPTS",
@@ -152,8 +153,78 @@ CAP_BOUNDS: dict[Cap, str] = {
     Cap.URL_REQUESTED: f"url cap ({MAX_URLS_PER_ITEM} per item)",
 }
 
-# Blocked retries every run; the 5th failed attempt escalates to manual.
-MAX_BLOCKED_ATTEMPTS = 5
+# A blocked unit gets this many attempts, the last failure escalating to
+# manual, and waits out a backoff after each failure before it is tried
+# again: an hour, doubling, capped at a day (1, 2, 4, 8, 16, 24, 24 hours),
+# so the last try lands about three days after the first failure. Scheduled
+# runs can be hourly: without the wait, a rate limit met again mid-throttle
+# spends every attempt within hours of the first refusal.
+MAX_BLOCKED_ATTEMPTS = 8
+BLOCKED_BACKOFF: tuple[datetime.timedelta, ...] = tuple(
+    datetime.timedelta(hours=min(2**failed, 24)) for failed in range(MAX_BLOCKED_ATTEMPTS - 1)
+)
+
+# `at` is stamped as a failure is recorded, partway through the run that
+# failed — up to half an hour in, on a long run — so a wait run out to the
+# instant would end just after the scheduled run it was sized for, and the
+# unit would slip a whole interval: an hourly schedule's hour becoming two,
+# a daily schedule's day becoming two. Each wait falls due early by a
+# grace: a tenth of it, never less than this floor.
+_BLOCKED_GRACE_FLOOR = datetime.timedelta(minutes=30)
+
+
+def _blocked_grace(wait: datetime.timedelta) -> datetime.timedelta:
+    """How long before ``wait`` has run out a blocked unit falls due."""
+    return max(_BLOCKED_GRACE_FLOOR, wait / 10)
+
+
+def _attempts_left(entry: LedgerEntry) -> bool:
+    """Whether a ``blocked`` entry has a try left before the cap escalates it."""
+    return (entry.attempts or 0) < MAX_BLOCKED_ATTEMPTS
+
+
+def _blocked_next_try(entry: LedgerEntry, now: datetime.datetime) -> datetime.datetime | None:
+    """When a ``blocked`` entry's backoff lets it go, or None when none holds it at ``now``.
+
+    The wait, less its grace, runs from the line's ``at``, the instant its
+    last attempt failed. No backoff holds a unit whose wait has run out;
+    nor one out of tries, which the cap holds instead; nor a line without
+    ``at`` (written before ``at`` existed), which has nothing to wait
+    from; nor one stamped further ahead of ``now`` than the ledger's
+    future-skew allowance: it came from a clock set forward, and waiting
+    on it would hold the unit for as far as that clock ran ahead.
+    """
+    if entry.status is not Status.BLOCKED or not _attempts_left(entry):
+        return None
+    at = entry.at
+    if at is None or at > now + ledger.FUTURE_SKEW_ALLOWANCE:
+        return None
+    wait = BLOCKED_BACKOFF[(entry.attempts or 1) - 1]
+    due = at + wait - _blocked_grace(wait)
+    return due if due > now else None
+
+
+def _resting(entry: LedgerEntry, config: Config) -> bool:
+    """Whether ``media_fetch: none`` holds ``entry`` where it is, whatever its retries say."""
+    return (
+        entry.job is Job.MEDIA
+        and config.media_fetch is MediaFetch.NONE
+        and entry.status is not Status.MANUAL
+    )
+
+
+def _held_until(
+    entry: LedgerEntry, config: Config, now: datetime.datetime
+) -> datetime.datetime | None:
+    """When the drain next takes a unit its backoff holds at ``now``, or None when none does.
+
+    The one answer to "held or drainable" for a blocked unit with tries
+    left. A resting unit's backoff holds nothing: the engine fetches it
+    only once media is turned back on, and until then every run defers it
+    and says why, whatever its wait.
+    """
+    return None if _resting(entry, config) else _blocked_next_try(entry, now)
+
 
 # Rerun entries (migration reseeds and other rerun:true requeues) drain at
 # most this many per full run, AFTER all fresh work — automated pacing so a
@@ -416,18 +487,25 @@ def _sniff_bytes(path: Path) -> bytes:
     return prefix
 
 
-def is_drainable(entry: LedgerEntry, ctx: RunContext) -> bool:
+def is_drainable(
+    entry: LedgerEntry, ctx: RunContext, *, now: datetime.datetime | None = None
+) -> bool:
     """Whether a run picks ``entry`` up — the drain predicate, total.
 
-    queued always; blocked while attempts remain; waiting when a mechanical
-    provider is available; error once per newer engine; every terminal
-    status never.
+    queued always; blocked while attempts remain and no backoff holds it
+    (:func:`_held_until`); waiting when a mechanical provider is available;
+    error once per newer engine; every terminal status never.
+
+    ``now`` is the instant a blocked entry's backoff is judged at, for a
+    caller deciding many entries on one reading of the clock; unset, the
+    context's clock is read.
     """
     match entry.status:
         case Status.QUEUED:
             return True
         case Status.BLOCKED:
-            return (entry.attempts or 0) < MAX_BLOCKED_ATTEMPTS
+            instant = ctx.now() if now is None else now
+            return _attempts_left(entry) and _held_until(entry, ctx.config, instant) is None
         case Status.WAITING:
             return entry.needs is not None and ctx.provider_available(entry.needs, entry.format).ok
         case Status.ERROR:
@@ -1037,22 +1115,29 @@ class _Drain:
         run and the report names the cohort position. An explicit ``limit``
         binds the whole run; the rerun cap binds the rerun slice within it.
         Targeted drains (``only``) are owner-directed — no rerun pacing.
+        Blocked units in scope that a backoff still holds are passed over,
+        and named in a note (:func:`_backoff_note`).
         """
-        drainable = [
-            (unit_hash, entry)
-            for unit_hash, entry in self.entries.items()
-            if (only is None or unit_hash in only) and is_drainable(entry, self.ctx)
+        scope = [
+            entry for unit_hash, entry in self.entries.items() if only is None or unit_hash in only
         ]
+        drainable, held = _triage(scope, self.ctx, self.ctx.now())
+        note = _backoff_note(held)
+        if note is not None:
+            self.notes.append(note)
         if only is None:
-            fresh = [unit_hash for unit_hash, entry in drainable if not entry.rerun]
-            reruns = [unit_hash for unit_hash, entry in drainable if entry.rerun]
+            fresh = [entry.hash for entry in drainable if not entry.rerun]
+            reruns = [entry.hash for entry in drainable if entry.rerun]
             self.rerun_total = len(reruns)
             self.queue = deque(fresh + reruns[:RERUN_DRAIN_CAP])
         else:
-            self.queue = deque(unit_hash for unit_hash, _ in drainable)
+            self.queue = deque(entry.hash for entry in drainable)
         processed = 0
         while self.queue and (limit is None or processed < limit):
             entry = self.entries[self.queue.popleft()]
+            # The live clock, not the triage's reading: a unit blocked again
+            # earlier in this run is stamped after that reading, and judged
+            # at it, its `at` would look set forward and the unit due.
             if not is_drainable(entry, self.ctx):
                 continue  # superseded while queued
             if not self._process(entry):
@@ -1200,7 +1285,7 @@ class _Drain:
 
         Call-time capability failures keep the entry ``waiting`` with the
         stated reason (retried next run — no clock); acquisition failures
-        take the blocked lifecycle (attempts, manual at 5);
+        take the blocked lifecycle (backoff and attempts, manual at the last);
         confirmed-gone sources and judgment cases park honestly;
         ``ProviderInputError`` propagates for the manual mapping.
         """
@@ -1290,9 +1375,10 @@ class _Drain:
         match failure.status:
             case Status.BLOCKED:
                 # Acquisition failures are not provider failures — the
-                # normal blocked lifecycle applies, attempts and all,
-                # escalating manual at 5. `needs` keeps the retry routed
-                # back through the transcribe drain, never the driver.
+                # normal blocked lifecycle applies, backoff and attempts
+                # and all, escalating to manual at the last. `needs` keeps
+                # the retry routed back through the transcribe drain, never
+                # the driver.
                 self._apply_blocked(
                     entry,
                     f"audio acquisition failed: {failure.reason}",
@@ -2127,7 +2213,7 @@ class _Drain:
                 # A page under a media URL is a 200 that answered the wrong
                 # question — a site's catch-all route serving its own shell,
                 # or an API error body. Blocked, not manual: a bot wall
-                # clears on a later run, and a permanent catch-all escalates
+                # clears by a later try, and a permanent catch-all escalates
                 # to manual after the attempts run out.
                 self._media_failure(
                     entry, Status.BLOCKED, f"media URL answered with {document}, not media bytes"
@@ -2451,15 +2537,7 @@ class _Drain:
             # parked again takes a single row, the latest.
             self.parked = [row for row in self.parked if row["url"] != stamped.url]
         if count and stamped.status in PARKED:
-            self.parked.append(
-                _parked_row(
-                    stamped,
-                    stamped.item,
-                    media_fetch=self.ctx.config.media_fetch,
-                    drainable=is_drainable(stamped, self.ctx),
-                    cognitive=is_cognitive_park(stamped, self.ctx),
-                )
-            )
+            self.parked.append(_parked_row(stamped, stamped.item, self.ctx))
         return stamped
 
     def _count_write(self, stamped: LedgerEntry) -> None:
@@ -2752,14 +2830,54 @@ class _Drain:
         ]
 
 
-def _parked_row(
-    entry: LedgerEntry,
-    item_id: str,
-    *,
-    media_fetch: MediaFetch,
-    drainable: bool,
-    cognitive: bool,
-) -> dict[str, object]:
+def _utc_minute(instant: datetime.datetime) -> str:
+    """``instant`` as a report names it: UTC, rounded up to the minute.
+
+    Up, because the reports name the instant something happens after: a
+    unit due at 04:34:50 is still refused at 04:34:20.
+    """
+    utc = instant.astimezone(datetime.UTC)
+    minute = utc.replace(second=0, microsecond=0)
+    if minute < utc:
+        minute += datetime.timedelta(minutes=1)
+    return f"{minute:%Y-%m-%d %H:%M} UTC"
+
+
+def _triage(
+    scope: Iterable[LedgerEntry], ctx: RunContext, now: datetime.datetime
+) -> tuple[list[LedgerEntry], list[datetime.datetime]]:
+    """What a drain takes from ``scope`` at ``now``, and when each unit its backoff holds falls due.
+
+    One reading of the clock decides both: read twice, a unit falling due
+    between the readings was named as held and queued as well.
+    """
+    drainable: list[LedgerEntry] = []
+    held: list[datetime.datetime] = []
+    for entry in scope:
+        next_try = _held_until(entry, ctx.config, now)
+        if next_try is not None:
+            held.append(next_try)
+        elif is_drainable(entry, ctx, now=now):
+            drainable.append(entry)
+    return drainable, held
+
+
+def _backoff_note(held: Sequence[datetime.datetime]) -> str | None:
+    """The note naming the blocked units a drain passes over, by when each falls due.
+
+    No run touches a held unit until it falls due, so neither the report's
+    counts nor its parked rows name it, and a run that processed nothing
+    would otherwise say nothing about work it is still owed.
+    """
+    if not held:
+        return None
+    earliest = _utc_minute(min(held))
+    if len(held) == 1:
+        return f"1 blocked unit waits out its backoff — it falls due {earliest}"
+    return f"{len(held)} blocked units wait out their backoff — the next falls due {earliest}"
+
+
+def _parked_row(entry: LedgerEntry, item_id: str, ctx: RunContext) -> dict[str, object]:
     """One parked entry as both report surfaces read it.
 
     The run report says what THIS run parked and the standing view says
@@ -2791,12 +2909,14 @@ def _parked_row(
     retries that are switched off. ``manual`` media rows keep their own
     stated reason: they wait on the owner either way, and turning media
     back on resumes nothing for them.
+
+    A blocked row its backoff still holds carries ``next_try``, when its
+    next try falls due, in UTC rounded up to the minute — which the
+    renderer cannot work out either: "attempt 4 of 8" alone, under the
+    engine's retries, said the next run takes it while every run until
+    then passes it by.
     """
-    if (
-        entry.job is Job.MEDIA
-        and media_fetch is MediaFetch.NONE
-        and entry.status is not Status.MANUAL
-    ):
+    if _resting(entry, ctx.config):
         return {
             "item": item_id,
             "url": entry.url,
@@ -2818,10 +2938,13 @@ def _parked_row(
         # times" — which only the cap makes readable.
         row["attempts"] = entry.attempts
         row["attempt_cap"] = MAX_BLOCKED_ATTEMPTS
+        next_try = _held_until(entry, ctx.config, ctx.now())
+        if next_try is not None:
+            row["next_try"] = _utc_minute(next_try)
     if entry.status is Status.WAITING:
-        if drainable:
+        if is_drainable(entry, ctx):
             row["drainable"] = True
-        elif cognitive:
+        elif is_cognitive_park(entry, ctx):
             row["cognitive"] = True
     return row
 
@@ -3476,13 +3599,7 @@ def _parked_units(ctx: RunContext, entries: dict[str, LedgerEntry]) -> list[dict
     """
     owners = _unit_owners(ctx.instance, entries, ctx.drivers)
     rows = [
-        _parked_row(
-            entry,
-            owners.get(entry.hash, (entry.item,))[0],
-            media_fetch=ctx.config.media_fetch,
-            drainable=is_drainable(entry, ctx),
-            cognitive=is_cognitive_park(entry, ctx),
-        )
+        _parked_row(entry, owners.get(entry.hash, (entry.item,))[0], ctx)
         for entry in entries.values()
         if entry.status in PARKED
     ]

@@ -31,8 +31,8 @@ class PayloadError(ValueError):
 
 # The split that decides which section a parked entry lands in: `manual` is
 # the engine saying it has given up, and only a person moves it. Everything
-# else re-enters the queue unasked — blocked next run, waiting when a
-# provider appears, error when a newer engine ships.
+# else re-enters the queue unasked — blocked once its backoff runs out,
+# waiting when a provider appears, error when a newer engine ships.
 _OWNER_IS_YOU = frozenset({Status.MANUAL})
 _PROVIDER_STATES = frozenset({"active", "available", "unavailable"})
 
@@ -243,7 +243,9 @@ def _parked_rows(
             surface,
             entry,
             required=frozenset({"item", "url", "status", "reason"}),
-            optional=frozenset({"attempts", "attempt_cap", "resting", "drainable", "cognitive"}),
+            optional=frozenset(
+                {"attempts", "attempt_cap", "next_try", "resting", "drainable", "cognitive"}
+            ),
             where=where,
         )
         status = _status_at(surface, entry, "status", where)
@@ -261,10 +263,11 @@ def _parked_rows(
         }
         if "attempts" in entry:
             row["attempts"] = _int_at(surface, entry, "attempts", where)
-        if "attempt_cap" in entry:
-            if "attempts" not in entry:
-                _fail(surface, f"{where}attempt_cap without attempts says nothing")
-            row["attempt_cap"] = _int_at(surface, entry, "attempt_cap", where)
+        for key, read in (("attempt_cap", _int_at), ("next_try", _str_at)):
+            if key in entry:
+                if "attempts" not in entry:
+                    _fail(surface, f"{where}{key} without attempts says nothing")
+                row[key] = read(surface, entry, key, where)
         for key in _PARKED_MARKERS:
             if _marker_at(surface, entry, key, where):
                 row[key] = True
@@ -297,13 +300,14 @@ def _marker_at(surface: str, entry: Mapping[str, object], key: str, where: str) 
 
 
 # What the engine will do about a parked entry unasked. `blocked` is absent
-# because its entries carry the concrete attempt count instead, and `manual`
-# because it is the one status where the answer is "nothing". Both waiting
-# marks override this note, in opposite directions: `drainable` because the
-# provider it waits on is active, and `cognitive` because no provider will
-# ever appear. Unmarked, the note is left saying what is true of the one
-# waiting row that neither describes — a transcribe park, which has no
-# cognitive floor and does wait for a mechanical provider.
+# because its entries carry their retry state instead — the concrete attempt
+# count, and when the next try falls due — and `manual` because it is the
+# one status where the answer is "nothing". Both waiting marks override this
+# note, in opposite directions: `drainable` because the provider it waits on
+# is active, and `cognitive` because no provider will ever appear. Unmarked,
+# the note is left saying what is true of the one waiting row that neither
+# describes — a transcribe park, which has no cognitive floor and does wait
+# for a mechanical provider.
 _RETRY_NOTE = {
     Status.WAITING: "retries when a provider appears",
     Status.ERROR: "retries on the next engine release",
@@ -369,14 +373,21 @@ def _parked_tags(row: dict[str, object]) -> list[str]:
         return tags
     attempts = row.get("attempts")
     if isinstance(attempts, int):
-        cap = row.get("attempt_cap")
-        tags.append(
-            f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"
-        )
+        tags += _retry_tags(attempts, row)
     elif row.get("drainable"):
         tags.append(_DRAINABLE_NOTE)
     elif status in _RETRY_NOTE:
         tags.append(_RETRY_NOTE[status])
+    return tags
+
+
+def _retry_tags(attempts: int, row: dict[str, object]) -> list[str]:
+    """A blocked row's retry state: the attempt it is on, and when the next falls due."""
+    cap = row.get("attempt_cap")
+    tags = [f"attempt {attempts} of {cap}" if isinstance(cap, int) else f"attempt {attempts}"]
+    next_try = row.get("next_try")
+    if isinstance(next_try, str):
+        tags.append(f"next try after {next_try}")
     return tags
 
 
@@ -445,6 +456,9 @@ def _render_enrich_report(payload: Mapping[str, object]) -> str:
                       "status": str, "reason": str,
                       "attempts": int,               # optional: retry state
                       "attempt_cap": int,            #   (blocked entries)
+                      "next_try": str,               # optional, beside attempts:
+                                                     #   "YYYY-MM-DD HH:MM UTC",
+                                                     #   while the backoff holds it
                       "drainable": true,             # optional: waiting on an
                                                      #   active provider
                       "cognitive": true,             # optional: waiting on the
@@ -719,6 +733,9 @@ def _render_status(payload: Mapping[str, object]) -> str:
                       "status": str, "reason": str,   # now, whichever run
                       "attempts": int,               #   parked it
                       "attempt_cap": int,
+                      "next_try": str,          # optional, beside attempts:
+                                                #   "YYYY-MM-DD HH:MM UTC",
+                                                #   while the backoff holds it
                       "drainable": true,        # optional: waiting on an active
                                                 #   provider
                       "cognitive": true,        # optional: waiting on the

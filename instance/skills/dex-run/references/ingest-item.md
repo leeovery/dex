@@ -394,12 +394,12 @@ shape.
 ## Healing (manual entries — judgment, closed through the verb)
 
 A `manual` entry parks for a stated reason (a paywall, a thin extraction,
-a 402, five failed attempts). Where judgment can rescue it — you can fetch
-the page with your own tools, read the content, transcribe the source —
-write the enrichment file beside the mechanical outputs — as
-`enrichment/<id>/<kind>-<hash6>.md`, the name `mark` moves it to whatever
-you call it — and **always end by writing the ledger through the
-sanctioned verb**:
+a 402, eight failed attempts over about three days). Where judgment can
+rescue it — you can fetch the page with your own tools, read the content,
+transcribe the source — write the enrichment file beside the mechanical
+outputs — as `enrichment/<id>/<kind>-<hash6>.md`, the name `mark` moves it
+to whatever you call it — and **always end by writing the ledger through
+the sanctioned verb**:
 
 ```
 bin/dex enrich mark <url> done --path enrichment/<id>/<file>

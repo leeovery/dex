@@ -9,6 +9,7 @@ import shutil
 import ssl
 import urllib.parse
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -44,13 +45,18 @@ from dex_engine.pipeline.ownership import unit_owners, work_identity
 from dex_engine.pipeline.run import (
     _SHOWN_ID_MAX,
     _SNIFF_PREFIX_BYTES,
+    BLOCKED_BACKOFF,
     MAX_BLOCKED_ATTEMPTS,
     MAX_DEPTH,
     MAX_URLS_PER_ITEM,
     MEDIA_MAX_FILES,
     MEDIA_MAX_FILES_POOLED,
     RunContext,
+    _backoff_note,
+    _blocked_next_try,
     _sniff_bytes,
+    _triage,
+    _utc_minute,
     is_drainable,
     is_media_file,
     no_providers,
@@ -185,6 +191,22 @@ def on_day(instance: Instance, driver: FakeDriver, day: datetime.date) -> RunCon
     """A context whose clocks both read ``day``."""
     at = datetime.datetime.combine(day, datetime.time(8), tzinfo=datetime.UTC)
     return make_ctx(instance, driver, today=lambda: day, now=lambda: at)
+
+
+def retry_clock(failed: int) -> Callable[[], datetime.datetime]:
+    """A clock a blocked unit's next try is due by, ``failed`` failures in.
+
+    The first failure lands at NOW, and every retry runs once the whole wait
+    before it has run out, grace and all — so the last try is days past NOW,
+    and still behind the wall clock the ledger resolves its lines against.
+    """
+    due = NOW + sum(BLOCKED_BACKOFF[:failed], datetime.timedelta())
+    return lambda: due
+
+
+# A unit blocked at NOW falls due once its first wait, an hour less its
+# half-hour grace, has run out.
+FIRST_DUE = NOW + datetime.timedelta(minutes=30)
 
 
 def digest_item(ctx: RunContext, item_id: str = ITEM) -> None:
@@ -891,20 +913,21 @@ class TestParking:
         run_mod.run(ctx)
         assert entry_for(ctx).status is Status.DONE
 
-    def test_blocked_retries_then_escalates_to_manual_at_five_attempts(self, instance):
+    def test_blocked_retries_then_escalates_to_manual_at_the_last_attempt(self, instance):
         write_item(instance)
         fetch = lambda _unit: Refused(evidence="HTTP 403")  # noqa: E731
         ctx = make_ctx(instance, FakeDriver(fetch_fn=fetch))
         for expected_attempts in range(1, MAX_BLOCKED_ATTEMPTS):
-            run_mod.run(ctx)
+            run_mod.run(dataclasses.replace(ctx, now=retry_clock(expected_attempts - 1)))
             entry = entry_for(ctx)
             assert entry.status is Status.BLOCKED
             assert entry.attempts == expected_attempts
-        run_mod.run(ctx)  # the 5th failure
+        last = dataclasses.replace(ctx, now=retry_clock(MAX_BLOCKED_ATTEMPTS - 1))
+        run_mod.run(last)  # the last failure
         entry = entry_for(ctx)
         assert entry.status is Status.MANUAL
-        assert entry.reason == "still blocked after 5 attempts — HTTP 403"
-        run_mod.run(ctx)  # manual is parked for judgment, never mechanical
+        assert entry.reason == f"still blocked after {MAX_BLOCKED_ATTEMPTS} attempts — HTTP 403"
+        run_mod.run(last)  # manual is parked for judgment, never mechanical
         assert entry_for(ctx).status is Status.MANUAL
 
     def test_provider_input_error_maps_to_manual(self, instance):
@@ -1212,7 +1235,7 @@ class TestHttpOnlySources:
         assert blocked.status is Status.BLOCKED
         assert blocked.http_shared is True
         healed["up"] = True
-        run_mod.run(make_ctx(instance, driver))  # a fresh run's redrain
+        run_mod.run(make_ctx(instance, driver, now=retry_clock(1)))  # a fresh run's redrain
         entry = entry_for(ctx, self.CANONICAL)
         assert entry.status is Status.DONE
         assert entry.http_shared is True
@@ -1610,11 +1633,11 @@ class TestRerun:
         ctx = self.failing(instance, Refused(evidence="HTTP 429"))
         self.seed_rerun(ctx)
         for expected_attempts in range(1, MAX_BLOCKED_ATTEMPTS):
-            run_mod.run(ctx)
+            run_mod.run(dataclasses.replace(ctx, now=retry_clock(expected_attempts - 1)))
             entry = entry_for(ctx)
             assert entry.status is Status.BLOCKED
             assert entry.attempts == expected_attempts
-        report = run_mod.run(ctx)
+        report = run_mod.run(dataclasses.replace(ctx, now=retry_clock(MAX_BLOCKED_ATTEMPTS - 1)))
         entry = entry_for(ctx)
         assert entry.status is Status.DONE
         assert (entry.path, entry.title, entry.attempts) == (done.path, done.title, None)
@@ -2893,8 +2916,9 @@ class TestMediaStage:
         healed = FakeTransport(
             {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
         )
+        none = Config(media_fetch=MediaFetch.NONE)
         report = run_mod.run(
-            make_ctx(instance, driver, config=Config(media_fetch=MediaFetch.NONE), transport=healed)
+            make_ctx(instance, driver, config=none, transport=healed, now=retry_clock(1))
         )
         resting = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert resting.status is Status.BLOCKED
@@ -2904,7 +2928,7 @@ class TestMediaStage:
         assert "media_fetch" in report
 
         # Turned back on, the unit resumes cleanly through the redrain.
-        run_mod.run(make_ctx(instance, driver, transport=healed))
+        run_mod.run(make_ctx(instance, driver, transport=healed, now=retry_clock(1)))
         assert ledger.load(instance.ledger_path)[work_hash(self.IMG1)].status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
 
@@ -2930,13 +2954,14 @@ class TestMediaStage:
         yours = report.split("### Needs you", 1)[1]
         assert self.IMG1 in yours
         assert "media_fetch is `none` — stays parked until it is turned back on" in yours
-        assert "attempt 1 of 5" not in report  # retry framing, and nothing retries
+        assert f"attempt 1 of {MAX_BLOCKED_ATTEMPTS}" not in report  # nothing retries
+        assert "next try" not in report
 
     def test_a_parked_media_unit_under_an_active_config_still_waits_on_the_engine(self, instance):
         driver = self._park_blocked_media(instance)
         report = run_mod.status_report(make_ctx(instance, driver))
         assert "### Waiting on the engine — 1 entry it retries by itself" in report
-        assert "attempt 1 of 5" in report
+        assert f"attempt 1 of {MAX_BLOCKED_ATTEMPTS}" in report
 
     def test_a_manual_media_unit_keeps_its_own_reason_under_none(self, instance):
         # `manual` media rows already wait on the owner, and flipping the
@@ -3011,7 +3036,7 @@ class TestMediaStage:
         healed = FakeTransport(
             {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
         )
-        ctx2 = make_ctx(instance, driver, transport=healed)
+        ctx2 = make_ctx(instance, driver, transport=healed, now=retry_clock(1))
         run_mod.run(ctx2)
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.DONE
@@ -3047,7 +3072,7 @@ class TestMediaStage:
         healed = FakeTransport(
             {self.IMG1: HttpResponse(status=200, content_type="image/png", body=b"png")}
         )
-        run_mod.run(make_ctx(instance, driver, transport=healed))
+        run_mod.run(make_ctx(instance, driver, transport=healed, now=retry_clock(1)))
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
@@ -3080,7 +3105,7 @@ class TestMediaStage:
         assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
 
     def test_a_permanent_document_body_escalates_to_manual(self, instance):
-        # A bot wall clears on a later run; a catch-all route never does.
+        # A bot wall clears by a later try; a catch-all route never does.
         # Blocked is what tells those two apart, and `enrich mark` heals
         # what lands in manual.
         write_item(instance)
@@ -3090,8 +3115,8 @@ class TestMediaStage:
             FakeDriver(fetch_fn=self.media_fetch([self.IMG1])),
             transport=FakeTransport({self.IMG1: page}),
         )
-        for _ in range(MAX_BLOCKED_ATTEMPTS):
-            run_mod.run(ctx)
+        for failed in range(MAX_BLOCKED_ATTEMPTS):
+            run_mod.run(dataclasses.replace(ctx, now=retry_clock(failed)))
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.MANUAL
         assert entry.reason == (
@@ -3555,9 +3580,9 @@ class TestMediaSlots:
         responses.update(served or {})
         return FakeTransport(responses)
 
-    def _ctx(self, instance, transport: FakeTransport) -> RunContext:
+    def _ctx(self, instance, transport: FakeTransport, *, now=None) -> RunContext:
         web = WebDriver(transport=transport, extract=lambda _html: "extracted body " * 40)
-        return make_ctx(instance, FakeDriver(), drivers=[web], transport=transport)
+        return make_ctx(instance, FakeDriver(), drivers=[web], transport=transport, now=now)
 
     def _landed(self, instance) -> dict[str, str | None]:
         entries = ledger.load(instance.ledger_path)
@@ -3591,7 +3616,7 @@ class TestMediaSlots:
         post = self._page(self.HERO)
         run_mod.run(self._ctx(instance, self._transport({URL: post, self.SHOT: self.BUSY})))
         assert ledger.load(instance.ledger_path)[work_hash(self.SHOT)].status is Status.BLOCKED
-        run_mod.run(self._ctx(instance, self._transport({URL: post})))
+        run_mod.run(self._ctx(instance, self._transport({URL: post}), now=retry_clock(1)))
 
     def test_a_unit_that_joins_the_media_stage_a_run_later_takes_a_free_slot(self, instance):
         self._shot_joins_a_run_later(instance)
@@ -3606,7 +3631,8 @@ class TestMediaSlots:
         # media unit, so a slot counted by position moved the hero to 1 —
         # over the image's file — the next time it was fetched.
         self._shot_joins_a_run_later(instance)
-        run_mod.fetch_urls(self._ctx(instance, self._transport()), ITEM, [self.HERO])
+        later = self._ctx(instance, self._transport(), now=retry_clock(1))
+        run_mod.fetch_urls(later, ITEM, [self.HERO])
         assert self._landed(instance) == {
             self.HERO: f"enrichment/{ITEM}/media-0.webp",
             self.SHOT: f"enrichment/{ITEM}/media-1.png",
@@ -3621,7 +3647,7 @@ class TestMediaSlots:
         busy = self._transport({self.HERO: self.BUSY})
         run_mod.fetch_urls(self._ctx(instance, busy), ITEM, [self.HERO])
         assert ledger.load(instance.ledger_path)[work_hash(self.HERO)].status is Status.BLOCKED
-        run_mod.run(self._ctx(instance, self._transport()))
+        run_mod.run(self._ctx(instance, self._transport(), now=retry_clock(1)))
         assert self._landed(instance) == {
             self.HERO: f"enrichment/{ITEM}/media-0.webp",
             self.SHOT: f"enrichment/{ITEM}/media-1.png",
@@ -4255,8 +4281,10 @@ class TestIsDrainable:
         assert is_drainable(self.base_entry(status=Status.DEAD), ctx) is False
         assert is_drainable(self.base_entry(status=Status.SKIPPED, reason="r"), ctx) is False
         assert is_drainable(self.base_entry(status=Status.MANUAL, reason="r"), ctx) is False
-        assert is_drainable(self.base_entry(status=Status.BLOCKED, attempts=4), ctx) is True
-        assert is_drainable(self.base_entry(status=Status.BLOCKED, attempts=5), ctx) is False
+        last = MAX_BLOCKED_ATTEMPTS - 1
+        assert is_drainable(self.base_entry(status=Status.BLOCKED, attempts=last), ctx) is True
+        spent = MAX_BLOCKED_ATTEMPTS
+        assert is_drainable(self.base_entry(status=Status.BLOCKED, attempts=spent), ctx) is False
         waiting = self.base_entry(status=Status.WAITING, needs=Need.TRANSCRIBE)
         assert is_drainable(waiting, ctx) is False
         flippable_provider.ok = True
@@ -4271,6 +4299,336 @@ class TestIsDrainable:
         # queue-building; the retry re-stamps a valid engine and heals it.
         relic = self.base_entry(status=Status.ERROR, error="boom", engine="hand-healed")
         assert is_drainable(relic, self.ctx(instance)) is True
+
+    def blocked(self, attempts: int, at: datetime.datetime | None) -> LedgerEntry:
+        return self.base_entry(status=Status.BLOCKED, attempts=attempts, at=at)
+
+    @pytest.mark.parametrize(
+        ("attempts", "wait", "grace"),
+        [
+            (1, datetime.timedelta(hours=1), datetime.timedelta(minutes=30)),
+            (2, datetime.timedelta(hours=2), datetime.timedelta(minutes=30)),
+            (3, datetime.timedelta(hours=4), datetime.timedelta(minutes=30)),
+            (4, datetime.timedelta(hours=8), datetime.timedelta(minutes=48)),
+            (5, datetime.timedelta(hours=16), datetime.timedelta(minutes=96)),
+            (6, datetime.timedelta(hours=24), datetime.timedelta(minutes=144)),
+            (7, datetime.timedelta(hours=24), datetime.timedelta(minutes=144)),
+        ],
+    )
+    def test_blocked_is_due_once_its_backoff_less_its_grace_has_run_out(
+        self, instance, attempts, wait, grace
+    ):
+        # The grace is a tenth of the wait, never under half an hour.
+        ctx = self.ctx(instance)
+        failed_at = NOW - (wait - grace)
+        assert is_drainable(self.blocked(attempts, failed_at), ctx) is True
+        a_moment_later = failed_at + datetime.timedelta(microseconds=1)
+        assert is_drainable(self.blocked(attempts, a_moment_later), ctx) is False
+
+    def test_a_precomputed_instant_judges_the_backoff_instead_of_the_clock(self, instance):
+        ctx = self.ctx(instance)
+        held = self.blocked(1, NOW)
+        assert is_drainable(held, ctx) is False
+        assert is_drainable(held, ctx, now=FIRST_DUE) is True
+
+    def test_a_blocked_line_written_before_at_existed_is_due_now(self, instance):
+        assert is_drainable(self.blocked(1, None), self.ctx(instance)) is True
+
+    def test_a_blocked_line_from_a_clock_set_forward_is_due_now(self, instance):
+        # Waiting on a clock that ran days ahead would hold the unit for days.
+        ctx = self.ctx(instance)
+        allowance = ledger.FUTURE_SKEW_ALLOWANCE
+        assert is_drainable(self.blocked(1, NOW + allowance), ctx) is False
+        skewed = NOW + allowance + datetime.timedelta(microseconds=1)
+        assert is_drainable(self.blocked(1, skewed), ctx) is True
+
+    def test_no_wait_outlasts_the_attempt_cap(self, instance):
+        ctx = self.ctx(instance)
+        long_ago = NOW - datetime.timedelta(days=30)
+        assert is_drainable(self.blocked(MAX_BLOCKED_ATTEMPTS - 1, long_ago), ctx) is True
+        assert is_drainable(self.blocked(MAX_BLOCKED_ATTEMPTS, long_ago), ctx) is False
+
+
+class TestBlockedBackoff:
+    """A blocked unit waits out a backoff after each failure before its next try.
+
+    Scheduled runs can be hourly: retried on every one, a rate-limited source
+    was met again mid-throttle and spent every attempt within a few hours.
+    """
+
+    REFUSED = Refused(evidence="HTTP 429")
+
+    def recovering(self) -> FakeDriver:
+        """Refused once, then served."""
+        outcomes = iter([self.REFUSED, Content(meta={"title": "t"}, body="body " * 60)])
+        return FakeDriver(fetch_fn=lambda _unit: next(outcomes))
+
+    def test_eight_attempts_waiting_an_hour_and_doubling_to_a_day(self):
+        assert MAX_BLOCKED_ATTEMPTS == 8
+        hours = (1, 2, 4, 8, 16, 24, 24)
+        assert tuple(datetime.timedelta(hours=h) for h in hours) == BLOCKED_BACKOFF
+
+    def test_the_cap_holds_a_unit_out_of_tries_not_its_backoff(self):
+        last = self.line(URL, status=Status.BLOCKED, attempts=MAX_BLOCKED_ATTEMPTS - 1, at=NOW)
+        assert _blocked_next_try(last, NOW) == NOW + datetime.timedelta(hours=21, minutes=36)
+        spent = dataclasses.replace(last, attempts=MAX_BLOCKED_ATTEMPTS)
+        assert _blocked_next_try(spent, NOW) is None
+
+    def test_a_run_passes_a_unit_its_backoff_holds_and_takes_it_once_due(self, instance):
+        write_item(instance)
+        driver = self.recovering()
+        run_mod.run(make_ctx(instance, driver))
+        early = FIRST_DUE - datetime.timedelta(seconds=1)
+        report = run_mod.run(make_ctx(instance, driver, now=lambda: early))
+        assert "Nothing to report from this run" in report
+        assert len(driver.fetched) == 1
+        held = entry_for(make_ctx(instance, driver))
+        assert (held.status, held.attempts) == (Status.BLOCKED, 1)
+        # Held back is still owed: the item stays out of digest.
+        assert corpus.read_item(instance.corpus_dir / "2026" / f"{ITEM}.md").status == "raw"
+
+        run_mod.run(make_ctx(instance, driver, now=retry_clock(1)))
+        assert len(driver.fetched) == 2
+        assert entry_for(make_ctx(instance, driver)).status is Status.DONE
+
+    def test_the_run_report_says_when_the_next_try_falls_due(self, instance):
+        write_item(instance)
+        report = run_mod.run(make_ctx(instance, FakeDriver(fetch_fn=lambda _unit: self.REFUSED)))
+        assert (
+            f"- **{ITEM}** · `blocked` · attempt 1 of {MAX_BLOCKED_ATTEMPTS} · "
+            "next try after 2026-08-20 10:01 UTC"
+        ) in report
+
+    def test_the_standing_view_drops_the_next_try_once_it_is_due(self, instance):
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=lambda _unit: self.REFUSED)
+        run_mod.run(make_ctx(instance, driver))
+        held = run_mod.status_report(make_ctx(instance, driver))
+        assert "next try after 2026-08-20 10:01 UTC" in held
+        due = run_mod.status_report(make_ctx(instance, driver, now=retry_clock(1)))
+        assert f"attempt 1 of {MAX_BLOCKED_ATTEMPTS}" in due
+        assert "next try" not in due
+
+    def test_the_next_try_is_named_in_utc_whatever_offset_the_line_carries(self, instance):
+        write_item(instance)
+        east = datetime.timezone(datetime.timedelta(hours=2))
+        ledger.append(
+            instance.ledger_path,
+            LedgerEntry(
+                hash=work_hash(URL),
+                url=URL,
+                item=ITEM,
+                kind=Kind.WEB,
+                status=Status.BLOCKED,
+                attempts=1,
+                engine="0.2.0",
+                date=TODAY,
+                at=NOW.astimezone(east),
+                reason="HTTP 429",
+            ),
+        )
+        report = run_mod.status_report(make_ctx(instance, FakeDriver()))
+        assert "next try after 2026-08-20 10:01 UTC" in report
+
+    def line(self, url: str, **fields) -> LedgerEntry:
+        return LedgerEntry(
+            hash=work_hash(url),
+            url=url,
+            item=ITEM,
+            kind=Kind.WEB,
+            engine="0.2.0",
+            date=TODAY,
+            **fields,
+        )
+
+    def test_triage_holds_only_blocked_units_a_backoff_holds(self, instance):
+        legacy = self.line("https://example.test/legacy", status=Status.BLOCKED, attempts=1)
+        due = self.line(
+            "https://example.test/due",
+            status=Status.BLOCKED,
+            attempts=1,
+            at=NOW - (FIRST_DUE - NOW),
+        )
+        queued = self.line("https://example.test/queued", status=Status.QUEUED, at=NOW)
+        spent = self.line(
+            "https://example.test/spent",
+            status=Status.BLOCKED,
+            attempts=MAX_BLOCKED_ATTEMPTS,
+            at=NOW,
+        )
+        held = self.line("https://example.test/held", status=Status.BLOCKED, attempts=1, at=NOW)
+        ctx = make_ctx(instance, FakeDriver())
+        drainable, waits = _triage([legacy, due, queued, spent, held], ctx, NOW)
+        assert drainable == [legacy, due, queued]
+        assert waits == [FIRST_DUE]
+
+    @pytest.mark.parametrize(
+        ("offset", "taken"),
+        [(-datetime.timedelta(microseconds=1), False), (datetime.timedelta(0), True)],
+    )
+    def test_triage_names_a_unit_held_or_takes_it_never_both(self, instance, offset, taken):
+        unit = self.line(URL, status=Status.BLOCKED, attempts=1, at=NOW)
+        ctx = make_ctx(instance, FakeDriver())
+        expected = ([unit], []) if taken else ([], [FIRST_DUE])
+        assert _triage([unit], ctx, FIRST_DUE + offset) == expected
+
+    def test_triage_judges_at_the_instant_it_is_handed(self, instance):
+        due = self.line(URL, status=Status.BLOCKED, attempts=1, at=NOW - (FIRST_DUE - NOW))
+        earlier = make_ctx(instance, FakeDriver(), now=lambda: NOW - datetime.timedelta(hours=1))
+        assert _triage([due], earlier, NOW) == ([due], [])
+
+    def blocked_media(self, at: datetime.datetime) -> LedgerEntry:
+        return self.line(
+            "https://cdn.example.test/a.png",
+            status=Status.BLOCKED,
+            attempts=1,
+            at=at,
+            job=Job.MEDIA,
+            parent=work_hash(URL),
+            depth=1,
+            reason="HTTP 503",
+        )
+
+    def test_a_resting_media_unit_is_never_held_by_its_backoff(self, instance):
+        # Nothing fetches it until media is turned back on: every run defers it
+        # and says why, so a wait holding it took it off the report until the
+        # wait lapsed, and naming when it fell due promised a fetch.
+        media = self.blocked_media(NOW)
+        none = Config(media_fetch=MediaFetch.NONE)
+        assert _triage([media], make_ctx(instance, FakeDriver(), config=none), NOW) == (
+            [media],
+            [],
+        )
+        assert _triage([media], make_ctx(instance, FakeDriver()), NOW) == ([], [FIRST_DUE])
+
+    def test_a_run_inside_a_resting_units_wait_still_says_media_is_off(self, instance):
+        write_item(instance)
+        ledger.append(instance.ledger_path, self.blocked_media(NOW))
+        inside_the_wait = FIRST_DUE - datetime.timedelta(minutes=10)
+        report = run_mod.run(
+            make_ctx(
+                instance,
+                FakeDriver(),
+                config=Config(media_fetch=MediaFetch.NONE),
+                now=lambda: inside_the_wait,
+            )
+        )
+        assert "media_fetch is `none`" in report
+        assert "backoff" not in report
+        resting = ledger.load(instance.ledger_path)[work_hash("https://cdn.example.test/a.png")]
+        assert (resting.status, resting.attempts) == (Status.BLOCKED, 1)
+
+    def test_no_note_when_nothing_is_held(self):
+        assert _backoff_note([]) is None
+
+    def test_one_held_unit_is_named_with_when_it_falls_due(self):
+        assert _backoff_note([FIRST_DUE]) == (
+            "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:01 UTC"
+        )
+
+    def test_held_units_are_counted_and_the_earliest_named(self):
+        later = datetime.timedelta(hours=3)
+        assert _backoff_note([FIRST_DUE + later, FIRST_DUE, FIRST_DUE + 2 * later]) == (
+            "3 blocked units wait out their backoff — the next falls due 2026-08-20 10:01 UTC"
+        )
+
+    def test_a_report_rounds_an_instant_up_to_the_minute(self):
+        # It names the instant a try happens after: a unit due at 10:15:15 is
+        # still refused at 10:15:30, so "after 10:15" would be false.
+        on_the_minute = datetime.datetime(2026, 8, 20, 10, 15, tzinfo=datetime.UTC)
+        assert _utc_minute(on_the_minute) == "2026-08-20 10:15 UTC"
+        just_past = on_the_minute + datetime.timedelta(microseconds=1)
+        assert _utc_minute(just_past) == "2026-08-20 10:16 UTC"
+        seconds_past = on_the_minute + datetime.timedelta(seconds=30)
+        assert _utc_minute(seconds_past) == "2026-08-20 10:16 UTC"
+
+    def test_a_failure_well_into_an_hourly_run_is_taken_by_the_next(self, instance):
+        # `at` is stamped as the failure is recorded, up to half an hour into
+        # a long run: a wait run out to the instant missed the next run.
+        write_item(instance)
+        driver = self.recovering()
+        failed_at = datetime.datetime(2026, 8, 20, 10, 25, tzinfo=datetime.UTC)
+        run_mod.run(make_ctx(instance, driver, now=lambda: failed_at))
+        next_run = datetime.datetime(2026, 8, 20, 11, 0, tzinfo=datetime.UTC)
+        run_mod.run(make_ctx(instance, driver, now=lambda: next_run))
+        assert len(driver.fetched) == 2
+        assert entry_for(make_ctx(instance, driver)).status is Status.DONE
+
+    def test_a_day_long_wait_is_taken_by_the_next_days_run(self, instance):
+        write_item(instance)
+        failed_at = datetime.datetime(2026, 8, 20, 6, 5, tzinfo=datetime.UTC)
+        ledger.append(
+            instance.ledger_path,
+            self.line(URL, status=Status.BLOCKED, attempts=6, at=failed_at, reason="HTTP 429"),
+        )
+        driver = FakeDriver()
+        next_day = datetime.datetime(2026, 8, 21, 6, 0, tzinfo=datetime.UTC)
+        run_mod.run(make_ctx(instance, driver, now=lambda: next_day))
+        assert len(driver.fetched) == 1
+        assert entry_for(make_ctx(instance, driver)).status is Status.DONE
+
+    def test_a_unit_falling_due_mid_drain_is_never_both_named_and_taken(
+        self, instance, monkeypatch
+    ):
+        # Read twice, the clock named the unit held and then queued it. Every
+        # reading up to and including the triage's is a moment before it falls
+        # due, every later one well past it, however many readings there are.
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=lambda _unit: self.REFUSED)
+        run_mod.run(make_ctx(instance, driver))
+        triaged: list[bool] = []
+
+        def triage(*args):
+            sorted_scope = _triage(*args)
+            triaged.append(True)
+            return sorted_scope
+
+        monkeypatch.setattr(run_mod, "_triage", triage)
+        early = FIRST_DUE - datetime.timedelta(microseconds=1)
+        late = FIRST_DUE + datetime.timedelta(hours=1)
+        report = run_mod.run(make_ctx(instance, driver, now=lambda: late if triaged else early))
+        assert triaged
+        assert "1 blocked unit waits out its backoff" in report
+        assert len(driver.fetched) == 1
+
+    def test_a_run_names_the_units_its_backoff_holds(self, instance):
+        # Retried on every run, a blocked unit was on every run report. Held
+        # back, it is touched by no run until it falls due, and a run that
+        # processed nothing said nothing about it.
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=lambda _unit: self.REFUSED)
+        blocked_now = run_mod.run(make_ctx(instance, driver))
+        assert "backoff" not in blocked_now  # its parked row says when instead
+        early = FIRST_DUE - datetime.timedelta(seconds=1)
+        held = run_mod.run(make_ctx(instance, driver, now=lambda: early))
+        assert "1 blocked unit waits out its backoff — it falls due 2026-08-20 10:01 UTC" in held
+        due = run_mod.run(make_ctx(instance, driver, now=retry_clock(1)))
+        assert "waits out its backoff" not in due
+
+    def test_the_owners_fetch_takes_a_held_unit_at_once(self, instance):
+        # `enrich fetch` requeues the unit with its attempts reset: the owner
+        # asking is the reason to try now, whatever the backoff says.
+        write_item(instance)
+        driver = self.recovering()
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        run_mod.fetch_urls(ctx, ITEM, [URL])
+        assert len(driver.fetched) == 2
+        assert entry_for(ctx).status is Status.DONE
+
+    def test_a_unit_marked_blocked_waits_like_one_the_engine_blocked(self, instance):
+        # The heal is stamped when it is written, so handing a manual unit
+        # back to the engine's retries starts its first wait there.
+        write_item(instance)
+        driver = FakeDriver(fetch_fn=lambda _unit: Unusable(evidence="thin-extraction"))
+        ctx = make_ctx(instance, driver)
+        run_mod.run(ctx)
+        assert entry_for(ctx).status is Status.MANUAL
+        run_mod.mark(ctx, URL, Status.BLOCKED, reason="a bot wall — try again later")
+        run_mod.run(ctx)
+        assert len(driver.fetched) == 1
+        run_mod.run(make_ctx(instance, driver, now=retry_clock(1)))
+        assert len(driver.fetched) == 2
 
 
 class TestFetchingAnotherItemsUnit:

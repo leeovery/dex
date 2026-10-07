@@ -254,6 +254,61 @@ class TestEnrichReport:
         with pytest.raises(PayloadError, match="attempt_cap"):
             render("enrich-report", {"counts": {}, "items": [], "parked": parked})
 
+    def held(self) -> dict[str, object]:
+        """A blocked row its backoff holds, with no cap."""
+        return {
+            "item": "a",
+            "url": "u",
+            "status": "blocked",
+            "reason": "HTTP 429",
+            "attempts": 4,
+            "next_try": "2026-10-07 04:34 UTC",
+        }
+
+    @pytest.mark.parametrize(
+        ("surface", "frame"), [("enrich-report", {"items": []}), ("status", {})]
+    )
+    def test_a_blocked_row_says_when_its_next_try_falls_due(self, surface, frame):
+        # "attempt 4 of 8" alone, under the engine's retries, read as the next
+        # run's work while every run until the backoff ran out passed it by.
+        parked = [{**self.held(), "attempt_cap": 8}]
+        out = render(surface, {"counts": {}, "parked": parked, **frame})
+        assert "- **a** · `blocked` · attempt 4 of 8 · next try after 2026-10-07 04:34 UTC" in out
+
+    def test_a_next_try_reads_beside_a_bare_attempt_count(self):
+        out = render("status", {"counts": {}, "parked": [self.held()]})
+        assert "- **a** · `blocked` · attempt 4 · next try after 2026-10-07 04:34 UTC" in out
+
+    def test_next_try_without_attempts_is_loud(self):
+        parked = [
+            {
+                "item": "a",
+                "url": "u",
+                "status": "blocked",
+                "reason": "r",
+                "next_try": "2026-10-07 04:34 UTC",
+            }
+        ]
+        with pytest.raises(
+            PayloadError, match=r"^enrich-report: parked\[0\]\.next_try without attempts"
+        ):
+            render("enrich-report", {"counts": {}, "items": [], "parked": parked})
+
+    @pytest.mark.parametrize("next_try", [7, "", "2026-10-07\n04:34 UTC"])
+    def test_a_next_try_that_is_not_one_line_of_text_is_loud(self, next_try):
+        parked = [
+            {
+                "item": "a",
+                "url": "u",
+                "status": "blocked",
+                "reason": "r",
+                "attempts": 4,
+                "next_try": next_try,
+            }
+        ]
+        with pytest.raises(PayloadError, match=r"^status: parked\[0\]\.next_try"):
+            render("status", {"counts": {}, "parked": parked})
+
     def test_empty_run_says_so_once_instead_of_a_list_of_nones(self):
         out = render("enrich-report", {"counts": {}, "items": [], "parked": []})
         assert "## Enrich run — 0 units processed" in out

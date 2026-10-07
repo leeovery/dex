@@ -33,7 +33,7 @@ Open questions, none of them settled:
 
 - **What triggers a re-read.** Every blocked media attempt is too eager —
   a bot wall clears on its own and a re-read would waste the parent's
-  fetch. The `manual` escalation at five attempts is the natural moment:
+  fetch. The `manual` escalation at the last attempt is the natural moment:
   the engine has already concluded the URL will not answer, and that is
   exactly when it currently gives up. Doing it there costs one page fetch
   per permanently-dead image, once.
