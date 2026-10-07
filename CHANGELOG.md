@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.12] - 2026-10-07
+
+🐛 Fixed
+- Transcription works again with PyAV 19 — its removal of `metadata_errors` made every clip's speech check fail with a TypeError, and the dependency is now capped below 19.
+- Scanned pages no longer reject a whole PDF — `firecrawl-anydoc` is capped below 0.2.4, which failed the entire document when any one page needed OCR.
+
+🔧 Changed
+- `trafilatura` is capped below 2.3 — its newer extraction mangles KaTeX math and drops text after code in loose lines, so stored pages stay stable until the bump is vetted.
+- A daily "fresh dependencies" check runs the test suite against the newest allowed dependency releases, mailing the maintainer when an upstream update would break instances.
+
 ## [0.2.11] - 2026-10-07
 
 🔧 Changed
