@@ -73,13 +73,15 @@ jobs:
 
   fresh-dependencies:
     name: fresh dependencies (notifies)
-    # Instances launch through uvx, which resolves every dependency afresh to
-    # the newest release pyproject allows and never reads uv.lock, so a
-    # dependency release that breaks the engine reaches every instance while
-    # the suite, run against the lock, stays green: PyAV 19 did exactly that.
-    # This runs the default suite against what an instance would install
-    # today. macOS, because the suite has only ever been run there, and a
-    # platform difference must not read as drift.
+    # Instances launch through uvx, which never reads uv.lock: whenever it
+    # builds an environment it resolves every dependency to the newest release
+    # pyproject allows, so a dependency release that breaks the engine reaches
+    # instances while the suite, run against the lock, stays green. PyAV 19
+    # did exactly that.
+    # This runs the default suite against what an instance building its
+    # environment today would install. macOS on 3.13, as the instances run,
+    # and the suite has only ever been run there: a platform difference must
+    # not read as drift.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -94,7 +96,7 @@ jobs:
       # to look when this job goes red.
       - run: uv lock --upgrade
 
-      - run: uv sync --locked
+      - run: uv sync
 
       - name: pytest -m "not live"
         run: uv run --no-sync pytest -m "not live"
