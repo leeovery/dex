@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.11] - 2026-10-07
+
+🔧 Changed
+- Blocked fetches now back off between tries instead of retrying every run — the first retry waits at least half an hour, waits grow to most of a day, so rate limits have time to lift.
+- Blocked units get eight attempts (up from five) over about three days before parking for judgment.
+- Run and status reports show when a blocked unit's next try falls due, and runs name the blocked units still waiting out their backoff.
+
+🐛 Fixed
+- Units an earlier engine gave up on after fewer than eight blocked attempts, and that never landed, get a fresh start via a new migration (21) — queued again, or waiting for transcription again.
+
 ## [0.2.10] - 2026-09-29
 
 ✨ Added
