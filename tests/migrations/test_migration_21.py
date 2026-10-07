@@ -46,7 +46,9 @@ BORN_AT = datetime.datetime(2026, 8, 18, 6, tzinfo=datetime.UTC)
 GIVEN_UP_AT = datetime.datetime(2026, 8, 18, 11, tzinfo=datetime.UTC)
 APPLIED = datetime.datetime(2026, 8, 20, 8, 0, 0, 500000, tzinfo=datetime.UTC)
 TICK = datetime.timedelta(microseconds=1)
-GIVEN_UP_MIDNIGHT = datetime.datetime(2026, 8, 18, tzinfo=datetime.UTC)
+# The first instant the give-ups' date, 2026-08-18, can name on any
+# machine's local day: its midnight UTC, less UTC+14's lead.
+GIVEN_UP_DAY_STARTS = datetime.datetime(2026, 8, 17, 10, tzinfo=datetime.UTC)
 
 OLD_CAP = 5
 # The cap migration 21 shipped with: a unit given up at it is never a member,
@@ -60,6 +62,7 @@ AUDIO_REFUSAL = "audio acquisition failed: HTTP Error 429: Too Many Requests"
 RENAMED = "2026-08-19-renamed-55ad7b"
 POST_URL = "https://x.com/i/status/2059522098754629738"
 PICTURE_URL = "https://pbs.example.test/media/chart.png"
+EPISODE_URL = "https://feeds.example.test/show/episode-1"
 CAPTIONED_URL = "https://youtube.com/watch?v=def456"
 
 
@@ -132,9 +135,11 @@ def line_count(instance: Instance) -> int:
     return len(instance.ledger_path.read_text().splitlines())
 
 
-def park(instance: Instance, item: str = ITEM, url: str = VIDEO_URL) -> Path:
-    """The park a YouTube fetch wrote for transcription, under ``item``."""
-    file = instance.enrichment_dir / item / f"youtube-{work_hash(url)[:6]}.md"
+def park(
+    instance: Instance, item: str = ITEM, url: str = VIDEO_URL, kind: Kind = Kind.YOUTUBE
+) -> Path:
+    """The park a fetch wrote for transcription, under ``item``."""
+    file = instance.enrichment_dir / item / f"{kind.value}-{work_hash(url)[:6]}.md"
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(
         f"---\nurl: {url}\nfetched: '2026-08-18'\n---\n\n## Description\n\nA talk.\n",
@@ -236,21 +241,30 @@ class TestMembers:
         assert (fresh.item, fresh.status, fresh.needs) == (RENAMED, Status.WAITING, Need.TRANSCRIBE)
 
     @pytest.mark.parametrize("parked_under", [ITEM, None])
-    def test_a_transcribe_job_with_no_park_under_its_live_item_goes_to_the_driver(
+    def test_a_podcast_job_with_no_park_under_its_live_item_goes_to_the_driver(
         self, instance, migration, parked_under
     ):
-        # Re-owned, its park stands under the item it was parked for; or
-        # it was never written.
-        write_item(instance, item_id=RENAMED, urls=[VIDEO_URL])
+        # Its audio comes from the pointer the park holds. Re-owned, the park
+        # stands under the item it was parked for; or it was never written.
+        write_item(instance, item_id=RENAMED, urls=[EPISODE_URL])
         if parked_under is not None:
-            park(instance, item=parked_under)
-        born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
+            park(instance, item=parked_under, url=EPISODE_URL, kind=Kind.PODCAST)
+        born = unit(EPISODE_URL, kind=Kind.PODCAST)
         write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
         report = migration.apply(instance.root)
         fresh = live(instance)[born.hash]
         assert (fresh.item, fresh.status, fresh.needs) == (RENAMED, Status.QUEUED, None)
         (action,) = report.actions
-        assert "(1 youtube)" in action
+        assert "(1 podcast)" in action
+
+    def test_a_youtube_job_waits_again_with_no_park(self, instance, migration):
+        # Its audio comes with a description of its own.
+        write_item(instance, urls=[VIDEO_URL])
+        born = unit(VIDEO_URL, kind=Kind.YOUTUBE)
+        write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
+        migration.apply(instance.root)
+        fresh = live(instance)[born.hash]
+        assert (fresh.status, fresh.needs) == (Status.WAITING, Need.TRANSCRIBE)
 
     def test_a_refusal_naming_the_audio_further_in_is_a_fetch(self, instance, migration):
         born = given_up_page(instance, refusal=f"HTTP 403 ({AUDIO_REFUSAL})")
@@ -326,6 +340,26 @@ class TestOwner:
         write_ledger(instance, *history(born))
         migration.apply(instance.root)
         assert live(instance)[born.hash].item == ITEM
+
+    def test_the_item_it_was_renamed_to_answers_before_a_co_owner(self, instance, migration):
+        # As the run resolves it: the rename moved the park, and the
+        # co-owner, first in id order, holds none.
+        write_item(instance, item_id="2026-08-19-another-000000", urls=[EPISODE_URL])
+        write_item(instance, item_id=RENAMED, urls=[EPISODE_URL])
+        park(instance, item=RENAMED, url=EPISODE_URL, kind=Kind.PODCAST)
+        born = unit(EPISODE_URL, kind=Kind.PODCAST)
+        write_ledger(instance, given_up(born, refusal=AUDIO_REFUSAL))
+        migration.apply(instance.root)
+        fresh = live(instance)[born.hash]
+        assert (fresh.item, fresh.status) == (RENAMED, Status.WAITING)
+
+    def test_with_no_rename_among_them_the_first_co_owner_answers(self, instance, migration):
+        write_item(instance, item_id="2026-08-19-other-111111")
+        write_item(instance, item_id="2026-08-19-another-000000")
+        born = unit()
+        write_ledger(instance, *history(born))
+        migration.apply(instance.root)
+        assert live(instance)[born.hash].item == "2026-08-19-another-000000"
 
     def test_a_download_follows_its_post_to_the_renamed_item(self, instance, migration):
         # Never listed in frontmatter, it is claimed through its parent.
@@ -426,11 +460,27 @@ class TestTolerantRead:
         write_ledger(instance, *unstamped(history(born)))
         migration.apply(instance.root)
         fresh = live(instance)[born.hash]
-        assert (fresh.status, fresh.at) == (Status.QUEUED, GIVEN_UP_MIDNIGHT)
+        assert (fresh.status, fresh.at) == (Status.QUEUED, GIVEN_UP_DAY_STARTS)
 
 
 class TestPlacedJustAfterTheGiveUp:
     """The re-queue takes effect as of the give-up, and outranks nothing written since."""
+
+    def second_machine_applies(self, instance: Instance, stale: str, tmp_path_factory) -> None:
+        """Machine B's apply, merged onto A's ledger.
+
+        B syncs the engine before it pulls, so it applies the migration to the ledger as
+        it stood, an hour on by its own clock; the pull's union merge brings its lines over.
+        """
+        other = Instance(root=tmp_path_factory.mktemp("other"))
+        for directory in (other.corpus_dir, other.state_dir, other.enrichment_dir):
+            directory.mkdir()
+        write_item(other)
+        other.ledger_path.write_text(stale)
+        later = NOW + datetime.timedelta(hours=1)
+        build(today=lambda: TODAY, now=lambda: later, engine_version=ENGINE).apply(other.root)
+        written = other.ledger_path.read_text()[len(stale) :]
+        instance.ledger_path.write_text(instance.ledger_path.read_text() + written)
 
     @pytest.mark.parametrize("stamped", [True, False])
     def test_a_second_machine_applying_to_a_stale_ledger_never_unseats_a_landing(
@@ -443,25 +493,33 @@ class TestPlacedJustAfterTheGiveUp:
         # Machine A applies it, and its next run lands the page.
         migration.apply(instance.root)
         run_mod.run(make_ctx(instance, FakeDriver()))
-        # Machine B syncs the engine before it pulls, so it applies the
-        # migration to the ledger as it stood, an hour on by its own clock.
-        other = Instance(root=tmp_path_factory.mktemp("other"))
-        for directory in (other.corpus_dir, other.state_dir, other.enrichment_dir):
-            directory.mkdir()
-        write_item(other)
-        other.ledger_path.write_text(stale)
-        later = NOW + datetime.timedelta(hours=1)
-        build(today=lambda: TODAY, now=lambda: later, engine_version=ENGINE).apply(other.root)
-        # The pull's union merge brings B's line onto A's ledger.
-        written = other.ledger_path.read_text()[len(stale) :]
-        instance.ledger_path.write_text(instance.ledger_path.read_text() + written)
+        self.second_machine_applies(instance, stale, tmp_path_factory)
         assert entry_for(make_ctx(instance, FakeDriver())).status is Status.DONE
 
-    def test_an_unstamped_give_up_takes_effect_from_midnight_of_its_date(self, instance, migration):
+    def test_a_landing_before_the_unstamped_give_ups_date_began_in_utc_stays_live(
+        self, instance, tmp_path_factory
+    ):
+        # Dated by a machine's local day, ahead of UTC: the give-up's date
+        # begins before its midnight UTC, and a landing an hour short of it
+        # can follow the give-up.
+        write_item(instance)
+        write_ledger(instance, *unstamped(history(unit())))
+        stale = instance.ledger_path.read_text()
+        landed_at = datetime.datetime(2026, 8, 17, 23, tzinfo=datetime.UTC)
+        applied = landed_at - datetime.timedelta(hours=1)
+        build(today=applied.date, now=lambda: applied, engine_version=ENGINE).apply(instance.root)
+        run_mod.run(make_ctx(instance, FakeDriver(), now=lambda: landed_at))
+        self.second_machine_applies(instance, stale, tmp_path_factory)
+        landed = entry_for(make_ctx(instance, FakeDriver()))
+        assert (landed.status, landed.at) == (Status.DONE, landed_at)
+
+    def test_an_unstamped_give_up_takes_effect_from_the_first_instant_its_date_names(
+        self, instance, migration
+    ):
         write_item(instance)
         write_ledger(instance, *unstamped(history(unit())))
         migration.apply(instance.root)
-        assert live(instance)[work_hash(URL)].at == GIVEN_UP_MIDNIGHT
+        assert live(instance)[work_hash(URL)].at == GIVEN_UP_DAY_STARTS
 
     def test_an_unstamped_give_up_dated_ahead_of_the_apply_takes_effect_from_it(
         self, instance, migration

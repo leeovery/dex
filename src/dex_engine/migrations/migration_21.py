@@ -22,16 +22,18 @@ transcribe drain gave up on, so its retry goes back through that drain and
 never the driver. The escalation dropped the ``needs`` that routed it, and
 a compact drops the blocked lines that still carried it, so the
 escalation's own reason tells the two apart: the transcribe drain opened
-every refusal of a unit's audio with "audio acquisition failed: ". The
-drain reads the park the fetch wrote, ``<kind>-<hash6>.md`` under the item
-that owns the unit, so a transcribe job whose park does not stand under
-its live item, as when that item is no longer the one it was parked for,
-is ``queued`` instead, and the driver writes a fresh one. The unit's kind,
-format, job, lineage, ``via`` and http-shared license are kept, as the
-owner's own requeue keeps them: ``via`` is the provenance of a child or a
-rerun, never a migration's mark, and the migrations log records that this
-one ran. Attempts, reason, path and title are cleared; it is not a rerun,
-since nothing landed. It is dated and attributed to this apply.
+every refusal of a unit's audio with "audio acquisition failed: ". A
+podcast, x or instagram job's audio is fetched from the pointer its park
+holds, ``<kind>-<hash6>.md`` under the item that owns the unit, so where
+that park does not stand under its live item, as when the item is no
+longer the one it was parked for, the job is ``queued`` instead, for the
+driver to park afresh; a YouTube job needs no park, its audio's own
+description standing in for one. The unit's kind, format, job, lineage,
+``via`` and http-shared license are kept, as the owner's own requeue keeps
+them: ``via`` is the provenance of a child or a rerun, never a migration's
+mark, and the migrations log records that this one ran. Attempts, reason,
+path and title are cleared; it is not a rerun, since nothing landed. It is
+dated and attributed to this apply.
 
 Its stamp places it in time. Sync runs before the pull, so a second
 machine applies this to a ledger that has not seen the first machine's
@@ -42,8 +44,10 @@ followed by a microsecond, and the re-queue takes effect as of the
 give-up, outranking that line and nothing written since. A give-up written
 before ``at`` existed leaves every line of its unit unstamped, since any
 stamped line would outrank it, so any stamp beats them all, and the
-re-queue takes the earliest honest one: midnight UTC of the give-up's own
-date, or this apply's instant should that date lie ahead of it. A give-up
+re-queue takes the earliest honest one: the first instant the give-up's
+own date can name, its midnight UTC less fourteen hours, since an engine
+dates a line by its machine's local day and no zone runs further ahead of
+UTC, or this apply's instant should that lie ahead of it. A give-up
 stamped later than this apply's instant, inside the ledger's future-skew
 allowance, came from a clock running ahead of this machine's: no line is
 written for it, since one placed after it would outrank this machine's
@@ -59,10 +63,12 @@ instance holding many sends a burst to the sources behind them. A source
 still refusing parks its unit blocked again, and the backoff spaces its
 tries from there.
 
-Which live item owns a unit: the stored ``item`` where its corpus file
-still exists, else the live item that claims the unit. A unit nothing live
-claims is skipped with why, naming the ``state/exclusions.tsv`` entry where
-one exists, and stays manual.
+Which live item owns a unit is the run's own answer: the stored ``item``
+where its corpus file still exists, else, among the live items that claim
+the unit, the one the stored item was renamed to, which a rename moved the
+unit's files under, else the first. A unit nothing live claims is skipped
+with why, naming the ``state/exclusions.tsv`` entry where one exists, and
+stays manual.
 
 Idempotent: a re-queued unit's live line is ``queued`` or ``waiting``,
 which no member is, and a unit given up from now on spent every attempt
@@ -83,9 +89,9 @@ from dex_engine.pipeline.ledger import (
     resolution_key,
     stamp,
 )
-from dex_engine.pipeline.ownership import unit_owners
+from dex_engine.pipeline.ownership import renamed_to, unit_owners
 from dex_engine.pipeline.registry import default_drivers
-from dex_engine.pipeline.types import LedgerEntry, MigrationReport, Need, Skipped, Status
+from dex_engine.pipeline.types import Kind, LedgerEntry, MigrationReport, Need, Skipped, Status
 
 __all__ = ["GivenUpBlockedRequeue", "build"]
 
@@ -105,6 +111,14 @@ _AUDIO_REFUSED = "audio acquisition failed: "
 
 # The least a write instant can move on, to place a line just after another.
 _TICK = datetime.timedelta(microseconds=1)
+
+# How far ahead of UTC a machine's local day can run: UTC+14, the furthest zone.
+_LOCAL_LEAD = datetime.timedelta(hours=14)
+
+# The kinds whose audio the transcribe drain fetches from the pointer their
+# park holds: without the park it closes the job manual. A YouTube job's
+# audio comes with a description of its own, so it needs none.
+_READS_PARK = frozenset({Kind.PODCAST, Kind.INSTAGRAM, Kind.X})
 
 # The cap this migration's engine shipped. Frozen with the strings: a
 # later cap gives up on its own units, and whether those deserve another
@@ -233,17 +247,17 @@ def _placed(given_up: LedgerEntry, moment: datetime.datetime) -> datetime.dateti
     at = given_up.at
     if at is None:
         midnight = datetime.datetime.combine(given_up.date, datetime.time(), tzinfo=datetime.UTC)
-        return min(midnight, moment)
+        return min(midnight - _LOCAL_LEAD, moment)
     if at <= moment:
         return at.astimezone(datetime.UTC) + _TICK
     return moment  # past the allowance, where the ledger reads the give-up as unstamped
 
 
 def _resumable(member: _Member, item: str, root: Path) -> bool:
-    """Whether the transcribe drain can take the job back: its park stands under the live item."""
+    """Whether the transcribe drain can take the job back: it needs no park, or one stands."""
     entry = member.entry
     park = root / "enrichment" / item / f"{entry.kind.value}-{entry.hash[:6]}.md"
-    return member.transcribe and park.is_file()
+    return member.transcribe and (entry.kind not in _READS_PARK or park.is_file())
 
 
 def _fresh(entry: LedgerEntry, item: str, *, transcribe: bool) -> LedgerEntry:
@@ -328,13 +342,15 @@ def _item_file(root: Path, item: str) -> Path:
 
 
 def _live_item(member: _Member, *, root: Path, owners: Mapping[str, tuple[str, ...]]) -> str | None:
-    """The live corpus item that owns the unit, or None where nothing live claims it."""
+    """The live corpus item that owns the unit, as the run resolves it, or None for none."""
     if member.stored:
         return member.entry.item
-    for owner in owners.get(member.entry.hash, ()):
-        if _item_file(root, owner).exists():
-            return owner
-    return None
+    live = [
+        owner for owner in owners.get(member.entry.hash, ()) if _item_file(root, owner).exists()
+    ]
+    if not live:
+        return None
+    return renamed_to(member.entry.item, live) or live[0]
 
 
 def _exclusions(root: Path) -> dict[str, str]:
