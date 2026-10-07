@@ -17,10 +17,6 @@ from dex_engine.pipeline.types import Asset, Availability, Extraction, Format
 
 __all__ = ["AnydocExtractor"]
 
-# anydoc's own marker for a PDF with no extractable text — the one
-# ConvertError that means "needs OCR", not "bad input".
-_SCANNED_MARKER = "OCR is required"
-
 _ASSET_EXTENSIONS = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -73,9 +69,10 @@ class AnydocExtractor:
 
         try:
             markdown = anydoc.to_markdown_bytes(data, format=fmt.value)
+        except anydoc.NeedsOcrError as e:
+            # A ConvertError, so caught first: it means "needs OCR", not "bad input".
+            raise ScannedDocumentError(scrub(str(e))) from e
         except anydoc.UnsupportedError as e:
-            if _SCANNED_MARKER in str(e):
-                raise ScannedDocumentError(scrub(str(e))) from e
             raise ProviderInputError(f"anydoc cannot extract this document: {scrub(str(e))}") from e
         except anydoc.ConvertError as e:
             raise ProviderInputError(f"anydoc could not parse the document: {scrub(str(e))}") from e

@@ -175,8 +175,8 @@ the engine stays unaware of which ones exist.
   Agent-facing, never owner-facing. Check it before building on any of
   those surfaces; append what you verify the hard way.
 - `.github/workflows/` — `live.yml` alone, the daily third-party drift
-  watch. The gates run on your machine and at the release tag, never in
-  Actions. See Development below.
+  watch, the engine's own dependencies included. The gates run on your
+  machine and at the release tag, never in Actions. See Development below.
 - `example/` — a toy instance showing the shapes.
 
 ## Design (current, in force)
@@ -281,7 +281,7 @@ fatal in an instance, and nothing downstream will catch one.
 **Live checks** (`.github/workflows/live.yml`, daily plus manual dispatch,
 never a gate). `pytest -m live` watches third parties for drift, which happens
 on their clock and has nothing to do with release timing. The workflow splits
-in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
+them in two: the checks a datacenter IP can be trusted with (arXiv, the iTunes
 lookup, the eight GitHub contents/matching-refs checks through an authenticated
 `gh`, the Wikipedia page-audio extraction) fail the run and mail the
 maintainer, which is
@@ -293,6 +293,17 @@ model, the ~2.4MB tokenizer) — runs in a `continue-on-error` job that never
 notifies, because those endpoints answer a runner differently from a laptop
 and a false alarm every morning trains you to ignore the real one. Read that
 job when a driver misbehaves in the field.
+
+The third job watches the engine's own dependencies drift. Instances launch
+through `uvx`, which resolves every dependency to the newest release
+`pyproject.toml` allows and never reads `uv.lock`, so the gates, run against
+the lock, can stay green while every instance runs something else: PyAV 19
+removed an argument faster-whisper passes, and each instance broke on it for a
+week while the suite ran 18. `fresh dependencies` runs `uv lock --upgrade`, its
+log naming each package that moved, then the default suite on macOS, and fails
+the run and mails the maintainer like the trusted checks. A red run there is
+a dependency release to pin out (a ceiling in `pyproject.toml`, never only in
+the lock) or to adapt to.
 
 `live.yml` pins `actions/checkout` to its major, which moves on its own.
 `astral-sh/setup-uv` cannot be: astral-sh publishes bare-major tags only up to
