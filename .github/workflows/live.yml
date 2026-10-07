@@ -70,3 +70,33 @@ jobs:
 
       - name: pytest -m "live and ci_hostile"
         run: uv run --no-sync pytest -m "live and ci_hostile" -v
+
+  fresh-dependencies:
+    name: fresh dependencies (notifies)
+    # Instances launch through uvx, which never reads uv.lock: whenever it
+    # builds an environment it resolves every dependency to the newest release
+    # pyproject allows, so a dependency release that breaks the engine reaches
+    # instances while the suite, run against the lock, stays green. PyAV 19
+    # did exactly that.
+    # This runs the default suite against what an instance building its
+    # environment today would install. macOS on 3.13, as the instances run,
+    # and the suite has only ever been run there: a platform difference must
+    # not read as drift.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to an exact release, not a major: astral-sh publishes moving
+      # major tags only up to v7, so `@v10` does not resolve. Bump by hand.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+
+      # The log names each package that moved past the lock, which is where
+      # to look when this job goes red.
+      - run: uv lock --upgrade
+
+      - run: uv sync
+
+      - name: pytest -m "not live"
+        run: uv run --no-sync pytest -m "not live"

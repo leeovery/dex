@@ -11,13 +11,20 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    "trafilatura>=1.12",
+    # Capped while 2.3 is unvetted: it escapes the brackets of KaTeX's TeX
+    # source and drops the text after code set among loose lines, and an
+    # extraction change reaches stored pages only after a comparison over
+    # real pages, which the bump has not had.
+    "trafilatura>=1.12,<2.3",
     # Direct: the article seam prepares a page's HTML before extraction
     # (drivers/article.py). trafilatura pulls lxml in anyway, but an
     # import we make ourselves is a dependency we declare ourselves.
     "lxml>=5.0",
     "yt-dlp>=2025.1.1",
-    "firecrawl-anydoc>=0.2.0",
+    # Capped below 0.2.4, which rejects a whole PDF when any one page needs
+    # OCR (its only alternative sends the document to a hosted service);
+    # 0.2.0 to 0.2.3 extract the text pages and leave the scanned ones out.
+    "firecrawl-anydoc>=0.2.0,<0.2.4",
     "faster-whisper>=1.2.1",
     # PyAV 19 removed `av.open(metadata_errors=...)`, which faster-whisper
     # 1.2.1's decode_audio passes, so every transcription on 19 is a

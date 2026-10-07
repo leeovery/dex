@@ -632,10 +632,10 @@ test = [
 requires-dist = [
     { name = "av", specifier = "<19" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
-    { name = "firecrawl-anydoc", specifier = ">=0.2.0" },
+    { name = "firecrawl-anydoc", specifier = ">=0.2.0,<0.2.4" },
     { name = "lxml", specifier = ">=5.0" },
     { name = "mcp", specifier = ">=2.1,<3" },
-    { name = "trafilatura", specifier = ">=1.12" },
+    { name = "trafilatura", specifier = ">=1.12,<2.3" },
     { name = "yt-dlp", specifier = ">=2025.1.1" },
 ]
 
