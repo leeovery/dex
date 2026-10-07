@@ -19,6 +19,13 @@ dependencies = [
     "yt-dlp>=2025.1.1",
     "firecrawl-anydoc>=0.2.0",
     "faster-whisper>=1.2.1",
+    # PyAV 19 removed `av.open(metadata_errors=...)`, which faster-whisper
+    # 1.2.1's decode_audio and our own speech check both pass, so every
+    # transcription on 19 is a TypeError. Instances resolve through uvx and
+    # never read uv.lock, so the ceiling has to live here. Lift it once a
+    # faster-whisper release passes the argument only below 19 (its master
+    # does) and capabilities/transcribe/speech.py does the same.
+    "av>=11,<19",
     # The MCP server (dex-serve). Core rather than an extra: the shim would
     # have to carry `dex-engine[serve]` through POSIX quoting for no gain
     # beyond a leaner resolve on the pipeline commands. Floored at 2.x

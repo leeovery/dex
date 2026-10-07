@@ -596,6 +596,7 @@ name = "dex-engine"
 version = "0.2.11"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "faster-whisper" },
     { name = "firecrawl-anydoc" },
     { name = "lxml" },
@@ -629,6 +630,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=11,<19" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "firecrawl-anydoc", specifier = ">=0.2.0" },
     { name = "lxml", specifier = ">=5.0" },
