@@ -28,6 +28,11 @@ DETECTION_MAX_SECONDS = 15 * 60
 
 _RATE = 16000
 
+# The PyAV major that reads tags that are not UTF-8 leniently and no longer
+# takes `metadata_errors`; below it, such a tag fails the open unless told
+# to ignore it.
+_LENIENT_TAGS_FROM = 19
+
 
 def hears_speech(audio: Path) -> bool | None:
     """Whether voice detection finds any speech in ``audio``, or None when it cannot tell.
@@ -48,8 +53,10 @@ def hears_speech(audio: Path) -> bool | None:
     from faster_whisper.audio import decode_audio  # noqa: PLC0415 — lazy: heavy dep
     from faster_whisper.vad import VadOptions, get_speech_timestamps  # noqa: PLC0415 — lazy
 
+    lenient = int(av.__version__.split(".")[0]) >= _LENIENT_TAGS_FROM
     try:
-        with av.open(str(audio), metadata_errors="ignore") as container:
+        opened = av.open(str(audio)) if lenient else av.open(str(audio), metadata_errors="ignore")
+        with opened as container:
             duration = container.duration
         if duration is None or duration > DETECTION_MAX_SECONDS * av.time_base:
             return None

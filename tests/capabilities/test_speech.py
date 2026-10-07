@@ -71,6 +71,28 @@ class TestHearsSpeech:
         # reach a transcriber unasked.
         assert hears_speech(silence_tagged_badly(tmp_path / "tagged.wav")) is False
 
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [("18.1.0", {"metadata_errors": "ignore"}), ("19.0.0", {}), ("20.0.0", {})],
+    )
+    def test_the_open_asks_for_lenient_tags_only_where_pyav_takes_it(
+        self, tmp_path, monkeypatch, version, expected
+    ):
+        # PyAV 19 reads a tag that is not UTF-8 leniently and refuses the
+        # argument outright, which failed every clip's open with a TypeError.
+        passed: list[dict[str, object]] = []
+        real_open = av.open
+
+        def spy(file: str, **kwargs: object):
+            passed.append(kwargs)
+            return real_open(file)
+
+        monkeypatch.setattr(av, "__version__", version)
+        monkeypatch.setattr(av, "open", spy)
+        assert hears_speech(silence(tmp_path / "quiet.wav", 1)) is False
+        # The first open is the duration check's; faster-whisper's own follows.
+        assert passed[0] == expected
+
     def test_the_clip_is_decoded_at_the_rate_the_detector_reads(self, tmp_path, monkeypatch):
         rates: list[object] = []
         decode = faster_whisper.audio.decode_audio
