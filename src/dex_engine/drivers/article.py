@@ -26,11 +26,12 @@ sits in, or leaking its glyph into the heading line. Extraction therefore
 runs twice over the prepared page, once without comments and once with,
 because the two settings answer different questions: an article's comment
 section is chrome, and a discussion page's comments are the entire
-artifact. The same preparation repairs markup trafilatura throws away
-with content inside it: scroll-area wrappers its navigation filter
-misreads, code blocks whose line breaks live in the stylesheet, MathML,
-and the LaTeXML shapes of an arXiv rendering. The arXiv full text in the
-paper driver runs through it too.
+artifact. The same preparation repairs markup trafilatura throws away or
+misreads with content inside it: scroll-area wrappers its navigation
+filter misreads, code blocks framed in figures or whose line breaks live
+in the stylesheet, paragraphs written as spans, headings inside a
+``<summary>``, MathML, and the LaTeXML shapes of an arXiv rendering. The
+arXiv full text in the paper driver runs through it too.
 
 A page whose article trafilatura cannot find — nothing its body search
 names, or a newsletter box it names first — falls to its recovery of

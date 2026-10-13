@@ -795,9 +795,14 @@ class TestMarkdownAlternate:
         )
         assert body_of(result) == {"source": source, "extraction": extraction}[stored]
 
-    def test_urls_case_and_markdown_syntax_are_not_held_against_a_source(self):
-        # A source writes its links relative and its underscores escaped, and
-        # a URL's words are not words the page says.
+    @pytest.mark.parametrize(
+        "docs",
+        ["[the ledger docs](ledger.md)", "the ledger docs"],
+        ids=["relative-link", "no-link"],
+    )
+    def test_urls_case_and_markdown_syntax_are_not_held_against_a_source(self, docs):
+        # A source writes its links relative and its underscores escaped, or
+        # leaves a link out, and a URL's words are not words the page says.
         extraction = (
             "See [the Ledger docs](https://docs.example.test/en/latest/reference/ledger.html) for"
             " the `snake_case` keys every unit carries, mirrored at"
@@ -806,8 +811,8 @@ class TestMarkdownAlternate:
             * 6
         )
         source = (
-            "See [the ledger docs](ledger.md) for the `snake\\_case` keys every unit carries,"
-            " mirrored at <mirror>. " + "Each key is written once, by the stage that owns it. " * 5
+            f"See {docs} for the `snake\\_case` keys every unit carries, mirrored at <mirror>. "
+            + "Each key is written once, by the stage that owns it. " * 5
         )
         assert len(source) < len(extraction)
         result = self.fetch(
@@ -1484,6 +1489,19 @@ class TestExtractionFidelity:
         assert ("swarms/slow-checkout/findings.md\n\n```\n- Database: queries are fast.") in body
         assert "The runtime agent cannot see why memory fills up" in body
 
+    def test_a_code_figure_among_loose_text_keeps_the_text_around_it(self):
+        # Read as a div, the figure is one more wrapper the code-block repair
+        # walks out through to the text the block sits among.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <div>Run the migration before the workers start, so the ledger sees one"
+            f" schema:<figure>{CODE_BLOCK}</figure>Then restart the workers, one queue at a"
+            " time.</div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "one schema:\n\n```\nline_one = 1\nline_two = 2\n```" in body
+        assert "```\nThen restart the workers, one queue at a time." in body
+
     def test_a_heading_in_a_summary_is_one_heading_its_parts_apart(self):
         # trafilatura reads a <summary> as a heading too: the post's
         # collapsible sections came back as `## ## FormatRepository layout,
@@ -1500,10 +1518,11 @@ class TestExtractionFidelity:
             "## Example: agent swarm uses message boards to solve performance issue",
         ]
 
-    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self):
+    @pytest.mark.parametrize("between", ["", "<!-- a note -->"], ids=["text", "comment"])
+    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self, between):
         page = ARTICLE.replace(
             "      <p>Politeness matters",
-            "      <details><summary><h3>Retries<!-- a note --><span>What the ledger"
+            f"      <details><summary><h3>Retries{between}<span>What the ledger"
             " replays</span></h3></summary><p>Each retry is a line in the ledger, written"
             " before the fetch it records.</p></details>\n      <p>Politeness matters",
         )
@@ -1511,8 +1530,14 @@ class TestExtractionFidelity:
         assert "### Retries What the ledger replays" in body
 
     def test_a_summary_holding_no_heading_is_left_as_it_was(self):
-        page = "<html><body><details><summary>Options</summary><p>Text.</p></details></body></html>"
-        assert "<summary>Options</summary>" in prepare_page(page)
+        # And it is passed over, not the end of the search.
+        page = (
+            "<html><body><details><summary>Options</summary><p>Text.</p></details>"
+            "<details><summary><h2>Format</h2></summary><p>More text.</p></details></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert "<summary>Options</summary>" in prepared
+        assert "<details><h2>Format</h2><p>More text.</p></details>" in prepared
 
     def test_expressive_code_blocks_keep_their_lines_and_captions(self):
         # Starlight's Expressive Code draws each block as a figure, a window
@@ -1565,6 +1590,21 @@ class TestExtractionFidelity:
             " [`CallTool`](/docs/actions/call-tool) sends a new tool call"
         ) in body
 
+    def test_text_bare_in_divs_beside_span_paragraphs_is_kept(self):
+        # trafilatura reads a div's own text only while a page's paragraphs
+        # hold little: once the spans were paragraphs, a docs site lost its
+        # callouts and its code blocks' file names.
+        body = trafilatura_extract(fixture_text("web", "mintlify-span-paragraphs.html")) or ""
+        assert "server.py\n\n```\nfrom fastmcp import FastMCP" in body
+        assert (
+            "\n\nHosts render the UI in a sandboxed iframe, so a component cannot reach the page"
+            " around it.\n\n"
+        ) in body
+
+    def test_a_page_without_span_paragraphs_keeps_its_divs(self):
+        page = "<html><body><div>A note held bare in a div.</div><p>A paragraph.</p></body></html>"
+        assert "<div>A note held bare in a div.</div>" in prepare_page(page)
+
     def test_a_span_declaring_anything_else_stays_inline(self):
         page = ARTICLE.replace(
             "      <p>Politeness matters",
@@ -1573,6 +1613,15 @@ class TestExtractionFidelity:
         )
         body = trafilatura_extract(page) or ""
         assert "The ledger holds every unit of work the pipeline still owes." in body
+
+    def test_only_a_span_is_taken_at_its_word(self):
+        # A span holds nothing but text, so it can always be a paragraph; an
+        # element holding blocks cannot.
+        page = (
+            '<html><body><span data-as="p">A paragraph.</span>'
+            '<div data-as="p"><ul><li>An item.</li></ul></div></body></html>'
+        )
+        assert '<div data-as="p"><ul>' in prepare_page(page)
 
     def test_inline_code_is_never_broken_whatever_it_holds(self):
         # Only a block's lines are repaired: a paragraph's code stays inline.
