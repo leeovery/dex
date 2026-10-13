@@ -12,7 +12,7 @@ import pytest
 
 from dex_engine import corpus
 from dex_engine.capabilities import Capabilities
-from dex_engine.capabilities.transcribe.speech import cannot_tell
+from dex_engine.capabilities.transcribe.speech import cannot_tell, hears_speech
 from dex_engine.drivers.instagram import InstagramDriver
 from dex_engine.drivers.podcast import PodcastDriver
 from dex_engine.drivers.transport import HttpResponse, urllib_transport
@@ -54,7 +54,7 @@ from dex_engine.pipeline.types import (
     Status,
 )
 from dex_engine.pipeline.urls import work_hash
-from tests.capabilities.conftest import FakeTranscriber, fixture_bytes
+from tests.capabilities.conftest import FakeTranscriber, fixture_bytes, video_only
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import (
     FakeTransport,
@@ -1513,6 +1513,23 @@ class TestVoiceDetection:
         # then leaves the cache: a retry would only hear the same silence.
         assert [clip.name for clip in detector.asked] == [f"{work_hash(self.X.POST_URL)}.mp4"]
         assert audio_files(instance) == []
+
+    def test_a_post_video_with_no_audio_stream_is_heard_as_silent(self, instance, tmp_path):
+        # The real detector on a muted clip: let through, whisper-api's
+        # segmenter failed on it and parked the raw ffmpeg error.
+        self.X.park_via_driver(instance)
+        muted = video_only(tmp_path / "muted.mp4").read_bytes()
+        transport = FakeTransport(
+            {self.X.ENCLOSURE: HttpResponse(status=200, content_type="video/mp4", body=muted)}
+        )
+        transcriber = FakeTranscriber("whisper-api", text="Invented words.")
+        ctx = self.X.drain(
+            instance, transcriber=transcriber, transport=transport, hears=hears_speech
+        )
+        entry = entry_for(ctx, self.X.POST_URL)
+        assert transcriber.calls == []
+        assert entry.status is Status.MANUAL
+        assert (entry.reason or "").startswith(f"{run_mod.NO_SPEECH_DETECTED} — the post")
 
     @pytest.mark.parametrize("answer", [True, None])
     def test_speech_or_no_answer_reaches_the_transcriber(self, instance, answer):

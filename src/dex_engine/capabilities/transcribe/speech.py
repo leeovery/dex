@@ -37,11 +37,11 @@ _LENIENT_TAGS_FROM = 19
 def hears_speech(audio: Path) -> bool | None:
     """Whether voice detection finds any speech in ``audio``, or None when it cannot tell.
 
-    It cannot tell when the container states no duration, or one past
-    :data:`DETECTION_MAX_SECONDS`, or when the audio does not decode: a
-    container with no audio stream at all is one, and the transcriber
-    reports that itself, as it always has. A failure of the detector itself
-    is not the clip's and propagates.
+    A container with no audio stream at all holds no speech, whatever its
+    length, and is never decoded. Otherwise it cannot tell when the
+    container states no duration, or one past :data:`DETECTION_MAX_SECONDS`,
+    or when the audio does not decode. A failure of the detector itself is
+    not the clip's and propagates.
 
     Args:
         audio: The downloaded video or audio.
@@ -57,13 +57,15 @@ def hears_speech(audio: Path) -> bool | None:
     try:
         opened = av.open(str(audio)) if lenient else av.open(str(audio), metadata_errors="ignore")
         with opened as container:
+            if not container.streams.audio:
+                return False
             duration = container.duration
         if duration is None or duration > DETECTION_MAX_SECONDS * av.time_base:
             return None
         samples = decode_audio(str(audio), sampling_rate=_RATE)
     except (av.error.FFmpegError, OSError, ValueError, RuntimeError, EOFError, IndexError):
-        # PyAV raises its decode failures as these; a container with no
-        # audio stream fails as a bare IndexError inside faster-whisper.
+        # PyAV raises its decode failures as these, and faster-whisper's
+        # decoder, which indexes the stream list unguarded, an IndexError.
         return None
     return bool(get_speech_timestamps(samples, VadOptions(), sampling_rate=_RATE))
 
