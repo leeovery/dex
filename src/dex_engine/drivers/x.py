@@ -42,12 +42,13 @@ media pool in reading order.
 A body that is nothing but a link is not content in any spelling: not
 x's own ``t.co``, and not the expanded ``x.com/i/article/<id>`` fxtwitter
 actually hands over. Such a post parks for judgment rather than ledgering
-done on a URL. Stored beside content, in a thread or with its own media,
-it keeps that link as its body, followed by the title and description of
-the ``card`` fxtwitter previews it with: harvest reads links out of stored
-bodies, and the link is the post's only pointer. A shared article URL
-parks too, and says why: an article id is not a status id, and fxtwitter
-will not resolve one to the post that announced it.
+done on a URL. Stored beside content, in a thread, with its own media or
+quoted by another post, it keeps that link as its body, followed by the
+title and description of the ``card`` fxtwitter previews it with: harvest
+reads links out of stored bodies, and the link is the post's only
+pointer. A shared article URL parks too, and says why: an article id is
+not a status id, and fxtwitter will not resolve one to the post that
+announced it.
 """
 
 import itertools
@@ -308,23 +309,15 @@ def _render(
 def _render_post(post: dict) -> str:
     author = post.get("author") or {}
     lines = [f"@{author.get('screen_name') or 'unknown'} — {post.get('created_at') or 'undated'}"]
-    text = _text_of(post)
-    if text:
-        lines.append("")
-        lines.append(text)
-    elif (link := _lone_link(post)) is not None:
-        lines.append("")
-        lines.append(link)
-        if preview := _card_preview(post):
+    note = None if _text_of(post) else _media_note(post)
+    for paragraph in (_own_body(post), note):
+        if paragraph:
             lines.append("")
-            lines.extend(_quoted(preview))
-    elif (note := _media_note(post)) is not None:
-        lines.append("")
-        lines.append(note)
+            lines.append(paragraph)
     quote = post.get("quote")
     if isinstance(quote, dict):
         quote_author = quote.get("author") or {}
-        quoted = f"Quoting @{quote_author.get('screen_name') or 'unknown'}: {_text_of(quote)}"
+        quoted = f"Quoting @{quote_author.get('screen_name') or 'unknown'}: {_own_body(quote)}"
         lines.append("")
         lines.extend(_quoted(quoted))
     return "\n".join(lines)
@@ -334,10 +327,15 @@ def _quoted(text: str) -> list[str]:
     return ["> " + line if line else ">" for line in text.split("\n")]
 
 
-def _lone_link(post: dict) -> str | None:
-    """The link a post's text is and nothing more, or None."""
-    text = _post_text(post)
-    return text.strip() if _LINK_ONLY_RE.fullmatch(text) else None
+def _own_body(post: dict) -> str:
+    """A post's own words: its prose, else the lone link it is with the preview x draws for it."""
+    prose, link = _prose_or_link(post)
+    if link is None:
+        return prose
+    preview = _card_preview(post)
+    if not preview:
+        return link
+    return "\n".join([link, "", *_quoted(preview)])
 
 
 def _card_preview(post: dict) -> str:
@@ -345,14 +343,22 @@ def _card_preview(post: dict) -> str:
     card = post.get("card")
     if not isinstance(card, dict):
         return ""
-    title = str(card.get("title") or "").strip()
-    description = str(card.get("description") or "").strip()
+    title, description = _stripped(card.get("title")), _stripped(card.get("description"))
     pieces = [f"Link preview: {title}" if title else "", description]
     return "\n".join(piece for piece in pieces if piece)
 
 
+def _stripped(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _text_of(post: dict) -> str:
-    """The post's prose, or "" when the payload holds no prose at all.
+    """The post's prose, or "" when the payload holds no prose at all."""
+    return _prose_or_link(post)[0]
+
+
+def _prose_or_link(post: dict) -> tuple[str, str | None]:
+    """The post's prose, or, where its text is nothing but a link, no prose and that link.
 
     Where a post carries an ``article``, the article IS the post: an
     announcement's own ``text`` is a link to it and nothing else worth
@@ -363,13 +369,11 @@ def _text_of(post: dict) -> str:
     """
     article = _article_text(post)
     if article:
-        return article
-    text = _post_text(post)
-    return "" if _LINK_ONLY_RE.fullmatch(text) else text
-
-
-def _post_text(post: dict) -> str:
-    return post.get("text") or _raw_text(post)
+        return article, None
+    text = post.get("text") or _raw_text(post)
+    if _LINK_ONLY_RE.fullmatch(text):
+        return "", text.strip()
+    return text, None
 
 
 def _article_text(post: dict) -> str:
