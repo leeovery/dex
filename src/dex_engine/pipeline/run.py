@@ -8,11 +8,13 @@ surface. Everything enters the queue through one door
 (:meth:`_Drain.admit`) — a capture at depth 0, or a promotion the session
 named with ``enrich fetch``, bounded there by the re-entry caps.
 
-TWO ``except Exception`` exist in the whole pipeline, and both are named
-where they sit: the per-unit loop here, and the canonicalization seam in
-``detect``, which types whatever a driver's ``canonical`` raises as the one
-refusal every caller already handles. Every ledger write goes through
-``ledger.stamp`` with the injected clocks and engine version.
+TWO ``except Exception`` handle failures in the whole pipeline, and both are
+named where they sit: the per-unit loop here, and the canonicalization seam
+in ``detect``, which types whatever a driver's ``canonical`` raises as the
+one refusal every caller already handles. A third, the transport's opener
+thread, handles nothing: it re-raises in the caller's thread. Every ledger
+write goes through ``ledger.stamp`` with the injected clocks and engine
+version.
 """
 
 import dataclasses

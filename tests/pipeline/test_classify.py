@@ -89,13 +89,22 @@ class TestClassifyConnection:
         wrapped = urllib.error.URLError(TimeoutError("timed out"))
         assert classify_connection(wrapped).status is Status.BLOCKED
 
-    def test_a_stalled_transfer_is_blocked_and_says_it_stalled(self):
-        # A server that kept the transfer open without delivering it is not
-        # one that went silent: the reason says which, the status is the
-        # same retryable blocked, and the TLS marker stays off.
-        classification = classify_connection(StalledTransferError("no response within 90s"))
+    @pytest.mark.parametrize(
+        "bound",
+        [
+            "no response within 90s",
+            "transfer stalled: body slower than 16384 bytes per 60s",
+            "transfer stalled: body unfinished after 1800s",
+        ],
+    )
+    def test_a_transfer_past_its_bound_is_blocked_and_states_that_bound(self, bound):
+        # Which bound it ran past is the reason, word for word and never
+        # prefixed: a response that never came may be four unreachable
+        # addresses tried in turn, which no reason may call a stall. The
+        # status is the same retryable blocked, and the TLS marker stays off.
+        classification = classify_connection(StalledTransferError(bound))
         assert classification.status is Status.BLOCKED
-        assert classification.reason == "transfer stalled: no response within 90s"
+        assert classification.reason == bound
         assert not classification.tls
 
     def test_a_plain_timeout_is_never_called_a_stall(self):

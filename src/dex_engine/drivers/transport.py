@@ -23,7 +23,7 @@ dripping a byte inside each socket timeout held a run on one open socket
 for most of an hour, and a name lookup has no timeout at all. Everything
 up to the response headers runs under one wall clock (:func:`_open`), and
 the body is read in whatever pieces arrive, failing once it slows below a
-floor (:func:`_read_body`). Either raises
+floor or outlasts a wall clock of its own (:func:`_read_body`). Each raises
 :class:`~dex_engine.pipeline.classify.StalledTransferError`, a
 ``TimeoutError``, so it classifies like every other connection failure.
 
@@ -49,6 +49,7 @@ from typing import Protocol
 from dex_engine.pipeline.classify import StalledTransferError
 
 __all__ = [
+    "BODY_DEADLINE",
     "BOT_UA",
     "BROWSER_UA",
     "DEFAULT_TIMEOUT",
@@ -83,6 +84,9 @@ HEADERS_DEADLINE = 90.0
 # hundreds of times over, and the byte-per-30s drip that held a run never can.
 STALL_WINDOW = 60.0
 STALL_MIN_BYTES = 16 * 1024
+# The whole body, however it trickles in: a 300MB enclosure at 200KB/s fits,
+# and a scheduled run always finishes.
+BODY_DEADLINE = 30 * 60
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -250,12 +254,20 @@ class _Opening:
         self._abandoned = False
 
     def run(self, request: urllib.request.Request) -> None:
-        """Open ``request`` — the worker's whole job — and hand over what came of it."""
-        outcome: http.client.HTTPResponse | Exception
+        """Open ``request`` — the worker's whole job — and hand over what came of it.
+
+        An exception is handed over inside its own ``except`` clause, which
+        unbinds it on the way out: its traceback holds this frame, so a name
+        still bound here would hold the exception in a cycle.
+        """
         try:
-            outcome = urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT)  # noqa: S310 — the caller checked the scheme
+            response = urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT)  # noqa: S310 — the caller checked the scheme
         except Exception as e:  # noqa: BLE001 — not handled here: carried over and raised in the caller's thread
-            outcome = e
+            self._hand_over(e)
+        else:
+            self._hand_over(response)
+
+    def _hand_over(self, outcome: http.client.HTTPResponse | Exception) -> None:
         with self._lock:
             if not self._abandoned:
                 self._outcome = outcome
@@ -266,17 +278,25 @@ class _Opening:
     def collect(self) -> http.client.HTTPResponse:
         """The response; the worker's exception, raised; or the call abandoned.
 
+        Nothing here keeps what it hands over: a raised exception's traceback
+        holds this frame and the opening, so either holding the exception
+        would keep it — and the connection behind an ``HTTPError`` — alive
+        in a cycle until the collector came round.
+
         Raises:
             StalledTransferError: The worker has not finished — it is
                 abandoned, and closes whatever it opens from here on.
         """
         with self._lock:
-            outcome = self._outcome
+            outcome, self._outcome = self._outcome, None
             self._abandoned = outcome is None
         if outcome is None:
             raise StalledTransferError(f"no response within {HEADERS_DEADLINE:g}s")
         if isinstance(outcome, Exception):
-            raise outcome
+            try:
+                raise outcome
+            finally:
+                del outcome
         return outcome
 
 
@@ -302,7 +322,7 @@ def _open(request: urllib.request.Request) -> http.client.HTTPResponse:
 
 
 class _Arrivals:
-    """A body's bytes in the trailing :data:`STALL_WINDOW` — the stall rule, applied."""
+    """A body's arrivals, held to the stall floor and the body deadline."""
 
     def __init__(self, started: float) -> None:
         self._started = started
@@ -314,15 +334,21 @@ class _Arrivals:
 
         Raises:
             StalledTransferError: The body has been read for a whole window
-                and fewer than :data:`STALL_MIN_BYTES` arrived in the last one.
+                and fewer than :data:`STALL_MIN_BYTES` arrived in the last
+                one, or it has been read for :data:`BODY_DEADLINE`.
         """
         self._recent.append((now, size))
         self._recent_bytes += size
         while self._recent[0][0] < now - STALL_WINDOW:
             self._recent_bytes -= self._recent.popleft()[1]
-        if now - self._started >= STALL_WINDOW and self._recent_bytes < STALL_MIN_BYTES:
+        reading = now - self._started
+        if reading >= STALL_WINDOW and self._recent_bytes < STALL_MIN_BYTES:
             raise StalledTransferError(
-                f"body slower than {STALL_MIN_BYTES} bytes per {STALL_WINDOW:g}s"
+                f"transfer stalled: body slower than {STALL_MIN_BYTES} bytes per {STALL_WINDOW:g}s"
+            )
+        if reading >= BODY_DEADLINE:
+            raise StalledTransferError(
+                f"transfer stalled: body unfinished after {BODY_DEADLINE:g}s"
             )
 
 
@@ -335,8 +361,8 @@ def _read_body(
     reads through to the same ``http.client`` response.
 
     ``read1`` answers with whatever has arrived, so the loop regains control
-    at least once per socket timeout and the stall rule (:class:`_Arrivals`)
-    is checked as the body comes in. ``read(n)`` sits inside the buffered
+    at least once per socket timeout and the body's bounds
+    (:class:`_Arrivals`) are checked as it comes in. ``read(n)`` sits inside the buffered
     reader until all ``n`` bytes are there, and a body dripping in a byte at
     a time never handed control back at all.
 
@@ -346,7 +372,7 @@ def _read_body(
     absent Content-Length costs ``limit + 1`` bytes of memory, not 2GB.
 
     Raises:
-        StalledTransferError: The body stalled.
+        StalledTransferError: The body stalled, or outlasted its deadline.
         http.client.IncompleteRead: The body ended short of its declared
             length — which ``read1`` itself reports as a quiet end of body.
     """
@@ -412,6 +438,7 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
             # a 404's `dead` into `blocked`.
             with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
                 body = _read_body(e, limit)
+            e.close()
             return HttpResponse(
                 status=e.code,
                 content_type=_media_type(e.headers.get("Content-Type") if e.headers else None),

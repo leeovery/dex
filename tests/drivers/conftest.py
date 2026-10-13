@@ -269,7 +269,7 @@ class PacedServer:
     """A running :func:`paced_server`."""
 
     base: str  # http://127.0.0.1:<port>
-    hung_up: threading.Event  # a client closed its end while the server held the socket
+    hung_up: threading.Event  # a client closed its end of a connection
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -283,11 +283,16 @@ class _Pacing:
     def answer(self, conn: socket.socket) -> None:
         with conn, contextlib.suppress(OSError):
             _drain_request(conn)
-            for pause, data in self.steps:
-                if self.stop.wait(pause):
-                    return
-                conn.sendall(data)
-            self.hold(conn)
+            # A client closing with bytes still unread resets the
+            # connection rather than ending it, mid-send or mid-hold.
+            try:
+                for pause, data in self.steps:
+                    if self.stop.wait(pause):
+                        return
+                    conn.sendall(data)
+                self.hold(conn)
+            except (ConnectionResetError, BrokenPipeError):
+                self.hung_up.set()
 
     def hold(self, conn: socket.socket) -> None:
         # Bounded, so a client that regressed into waiting forever fails

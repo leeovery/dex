@@ -9,10 +9,12 @@ can be caught in.
 """
 
 import contextlib
+import gc
 import http.client
 import socket
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import (
     _OPENER_THREAD,
     _REQUEST_LINE_FORBIDDEN,
+    BODY_DEADLINE,
     BOT_UA,
     BROWSER_UA,
     STALL_MIN_BYTES,
@@ -460,7 +463,7 @@ class TestHeadersDeadline:
 
 @pytest.mark.usefixtures("tight_bounds")
 class TestBodyStall:
-    """A body slower than the floor fails; one above it never does."""
+    """A body slower than the floor, or past its deadline, fails; one within both never does."""
 
     @pytest.mark.parametrize("limit", [None, 10_000_000])
     def test_a_dripping_body_stalls(self, limit):
@@ -470,7 +473,8 @@ class TestBodyStall:
         with paced_server(steps) as served:
             started = time.monotonic()
             with pytest.raises(
-                StalledTransferError, match=r"^body slower than 1024 bytes per 0\.3s$"
+                StalledTransferError,
+                match=r"^transfer stalled: body slower than 1024 bytes per 0\.3s$",
             ):
                 urllib_transport(served.base + "/drip.jpg", limit=limit)
             assert time.monotonic() - started < PROMPTLY
@@ -501,6 +505,22 @@ class TestBodyStall:
         with paced_server(steps) as served:
             fetched = urllib_transport(served.base + "/slow.mp3")
         assert fetched.body == b"".join(pieces)
+
+    def test_a_steady_body_past_its_deadline_fails(self, monkeypatch):
+        # Ten times the floor in every window, but the whole body is held
+        # to a wall clock as well: a server clearing the floor by a hair
+        # would hold a 10MB read for nine hours, and a scheduled run must
+        # finish.
+        monkeypatch.setattr(transport, "BODY_DEADLINE", 0.5)
+        pieces = [bytes([n]) * 1024 for n in range(40)]
+        steps = [(0, response_head(length=len(pieces) * 1024)), *((0.03, p) for p in pieces)]
+        with paced_server(steps) as served:
+            started = time.monotonic()
+            with pytest.raises(
+                StalledTransferError, match=r"^transfer stalled: body unfinished after 0\.5s$"
+            ):
+                urllib_transport(served.base + "/endless.mp3")
+            assert 0.5 <= time.monotonic() - started < PROMPTLY
 
     def test_a_body_gone_silent_fails_at_the_socket_timeout(self, monkeypatch):
         # Silence is the socket timeout's to catch, as it always was, and
@@ -560,6 +580,43 @@ class TestResponseShape:
         assert response.body == b""
 
 
+# Longer than the ceiling the release tests read it under: http.client
+# closes a connection itself once a body is read to its declared end, so
+# only a read stopped short leaves the socket for the transport to close.
+NOT_FOUND = response_head(b"404 Not Found", length=200_000) + b"e" * 200_000
+
+
+@contextlib.contextmanager
+def collector_off() -> Iterator[None]:
+    """No cyclic collection: what is still held after a call stays held."""
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
+
+
+class TestErrorResponseRelease:
+    """An error response is let go when the call returns, never left to the collector."""
+
+    def test_its_connection_is_closed_when_the_call_returns(self):
+        with collector_off(), paced_server([(0, NOT_FOUND)]) as served:
+            response = urllib_transport(served.base + "/gone.png", limit=1000)
+            assert served.hung_up.wait(timeout=2)
+        assert response.status == 404
+
+    def test_the_error_is_held_in_no_cycle(self):
+        # Raised through the worker's handoff, the error's traceback holds
+        # the frames that handed it over: if any of them still held the
+        # error, the two would keep each other — and its socket — alive.
+        with collector_off():
+            with paced_server([(0, NOT_FOUND)]) as served:
+                urllib_transport(served.base + "/gone.png", limit=1000)
+            held = [obj for obj in gc.get_objects() if isinstance(obj, urllib.error.HTTPError)]
+        assert held == []
+
+
 class TestBodyOverTheWire:
     """The pieces ``read1`` hands back add up to the body ``read`` returned."""
 
@@ -616,6 +673,23 @@ class TestStallFloor:
             arrivals.add(1, STALL_WINDOW + 1.5)
 
 
+class TestBodyDeadline:
+    """The whole body on an explicit clock: however fast it arrives, it ends at the deadline."""
+
+    def test_a_body_well_above_the_floor_reads_up_to_the_deadline(self):
+        arrivals = _Arrivals(0.0)
+        arrivals.add(STALL_MIN_BYTES, BODY_DEADLINE - 1.0)
+        arrivals.add(1, BODY_DEADLINE - 0.001)
+
+    def test_the_deadline_ends_it(self):
+        arrivals = _Arrivals(0.0)
+        arrivals.add(STALL_MIN_BYTES, BODY_DEADLINE - 1.0)
+        with pytest.raises(
+            StalledTransferError, match=r"^transfer stalled: body unfinished after 1800s$"
+        ):
+            arrivals.add(1, BODY_DEADLINE)
+
+
 @pytest.mark.usefixtures("tight_bounds")
 class TestStallClassification:
     def test_a_stalled_fetch_is_blocked_and_names_the_stall(self):
@@ -628,3 +702,14 @@ class TestStallClassification:
         assert failure.classification.reason == (
             "transfer stalled: body slower than 1024 bytes per 0.3s"
         )
+
+    def test_a_fetch_with_no_response_by_the_deadline_is_never_called_a_stall(self):
+        # A dripping status line and four unreachable addresses tried in
+        # turn both run out the same clock: the reason says only that no
+        # response came.
+        with paced_server(drip(response_head(length=2) + b"hi", every=0.05)) as served:
+            failure = fetch_classified(urllib_transport, served.base + "/slow-head")
+        assert isinstance(failure, FetchFailure)
+        assert failure.classification.status is Status.BLOCKED
+        assert failure.classification.reason == "no response within 0.3s"
+        assert_openers_end()
