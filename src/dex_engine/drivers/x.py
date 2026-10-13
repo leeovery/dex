@@ -46,9 +46,8 @@ done on a URL. Stored beside content, in a thread or with its own media,
 it keeps that link as its body, followed by the title and description of
 the ``card`` fxtwitter previews it with: harvest reads links out of stored
 bodies, and the link is the post's only pointer. A shared article URL
-parks too, and says why: an article
-id is not a status id, and fxtwitter will not resolve one to the post
-that announced it.
+parks too, and says why: an article id is not a status id, and fxtwitter
+will not resolve one to the post that announced it.
 """
 
 import itertools

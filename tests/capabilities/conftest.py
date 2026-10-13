@@ -18,9 +18,9 @@ def video_only(path: Path) -> Path:
     with av.open(str(path), "w") as out:
         stream = out.add_stream("mpeg4", rate=10)
         stream.width = stream.height = 16
-        frames = (av.VideoFrame(16, 16, "yuv420p") for _ in range(10))
-        for packet in [*(p for frame in frames for p in stream.encode(frame)), *stream.encode()]:
-            out.mux(packet)
+        for _ in range(10):
+            out.mux(stream.encode(av.VideoFrame(16, 16, "yuv420p")))
+        out.mux(stream.encode())  # flush the encoder's buffered packets
     return path
 
 
