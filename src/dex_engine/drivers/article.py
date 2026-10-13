@@ -214,10 +214,10 @@ _FENCED_BLOCK_RE = re.compile(
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
 # The share of the distinct words an extraction found that a shorter
 # alternate must hold to be kept over it. Measured over 114 pages declaring
-# one: each source that trafilatura 2.3.0's corrupt extractions outgrew
-# held 0.998 or more of their words; the nearest that should lose, a
-# plain-text copy without the headings and links its extraction kept,
-# held 0.946; and every source cut to its first sections held 0.973 or less.
+# one: every source a corrupt trafilatura 2.3.0 extraction outgrew held
+# 0.998 or more of its words; the nearest that should lose, a plain-text
+# copy without the headings and links its extraction kept, held 0.946; and
+# every source cut to the first half of its sections held 0.973 or less.
 _ALTERNATE_WORD_SHARE = 0.98
 # A word as the alternate's check counts it: letters and digits, so that
 # markdown's underscores and an escaped one split a word alike.
