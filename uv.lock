@@ -593,7 +593,7 @@ wheels = [
 
 [[package]]
 name = "dex-engine"
-version = "0.2.12"
+version = "0.2.13"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
