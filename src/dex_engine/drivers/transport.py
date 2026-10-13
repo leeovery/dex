@@ -18,14 +18,27 @@ path, a CJK slug or an unencoded space in an href failed before a byte
 left the machine — these URLs are fetchable, and this is where they get
 fetched.
 
+Every call is bounded as a whole, not only per socket operation: a server
+dripping a byte inside each socket timeout held a run on one open socket
+for most of an hour, and a name lookup has no timeout at all. Everything
+up to the response headers runs under one wall clock (:func:`_open`), and
+the body is read in whatever pieces arrive, failing once it slows below a
+floor (:func:`_read_body`). Either raises
+:class:`~dex_engine.pipeline.classify.StalledTransferError`, a
+``TimeoutError``, so it classifies like every other connection failure.
+
 The browser UA is deliberate: the motivating incident was Cloudflare
 challenging trafilatura's own fetch client; urllib with a browser UA avoids
 the block outright more often than not.
 """
 
+import collections
 import contextlib
 import http.client
 import re
+import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,10 +46,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
+from dex_engine.pipeline.classify import StalledTransferError
+
 __all__ = [
     "BOT_UA",
     "BROWSER_UA",
     "DEFAULT_TIMEOUT",
+    "HEADERS_DEADLINE",
+    "STALL_MIN_BYTES",
+    "STALL_WINDOW",
     "HttpResponse",
     "Transport",
     "bot_transport",
@@ -55,7 +73,16 @@ BROWSER_UA = (
 # endpoints has to identify as a preview bot deliberately (verified against
 # the live endpoints 2026-08-27).
 BOT_UA = "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+
+# Per socket operation: a peer silent this long fails the call.
 DEFAULT_TIMEOUT = 30.0
+# Up to the response headers, redirects included: DNS and the proxy lookup
+# have no timeout of their own, and a drip never trips DEFAULT_TIMEOUT.
+HEADERS_DEADLINE = 90.0
+# The stall floor, about 270 B/s: a 200MB enclosure at 100KB/s clears it
+# hundreds of times over, and the byte-per-30s drip that held a run never can.
+STALL_WINDOW = 60.0
+STALL_MIN_BYTES = 16 * 1024
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -202,33 +229,139 @@ def _ascii_url(url: str) -> str:
     )
 
 
-# How much of a body one bounded read call asks for. Only reads under a
-# caller's ``limit`` chunk; an unlimited read stays one ``read()``.
+# The most of a body one read call asks for.
 _READ_CHUNK = 64 * 1024
 
-
-class _BodyStream(Protocol):
-    """What the bounded read needs of a response: ``read(n)``, short reads ok."""
-
-    def read(self, n: int, /) -> bytes: ...
+# Named, so a stack dump or a test can tell the worker from any other thread.
+_OPENER_THREAD = "dex-transport-open"
 
 
-def _read_limited(stream: _BodyStream, limit: int) -> bytes:
-    """Read ``stream`` to at most ``limit + 1`` bytes, in chunks, and stop.
+class _Opening:
+    """One ``urlopen`` handed from its worker thread to the caller, or abandoned.
+
+    The worker can finish in the instant the caller gives up, so the handoff
+    is decided under a lock: exactly one side owns what the call returned,
+    and the worker closes a response the caller will never read.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._outcome: http.client.HTTPResponse | Exception | None = None
+        self._abandoned = False
+
+    def run(self, request: urllib.request.Request) -> None:
+        """Open ``request`` — the worker's whole job — and hand over what came of it."""
+        outcome: http.client.HTTPResponse | Exception
+        try:
+            outcome = urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT)  # noqa: S310 — the caller checked the scheme
+        except Exception as e:  # noqa: BLE001 — not handled here: carried over and raised in the caller's thread
+            outcome = e
+        with self._lock:
+            if not self._abandoned:
+                self._outcome = outcome
+                return
+        if isinstance(outcome, http.client.HTTPResponse | urllib.error.HTTPError):
+            outcome.close()
+
+    def collect(self) -> http.client.HTTPResponse:
+        """The response; the worker's exception, raised; or the call abandoned.
+
+        Raises:
+            StalledTransferError: The worker has not finished — it is
+                abandoned, and closes whatever it opens from here on.
+        """
+        with self._lock:
+            outcome = self._outcome
+            self._abandoned = outcome is None
+        if outcome is None:
+            raise StalledTransferError(f"no response within {HEADERS_DEADLINE:g}s")
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _open(request: urllib.request.Request) -> http.client.HTTPResponse:
+    """``urlopen`` ``request`` within :data:`HEADERS_DEADLINE`: the response, headers read.
+
+    The call runs in a daemon worker, because nothing can interrupt what it
+    blocks in — ``getaddrinfo``, the macOS proxy lookup, a header dripping
+    in a byte per socket timeout. On expiry the worker is abandoned to end
+    whenever its call does, never holding up the run or the process's exit.
+
+    Raises:
+        StalledTransferError: No response within the deadline.
+        Exception: Whatever ``urlopen`` raised, as it raised it — ``HTTPError``
+            and the rest of urllib's ``OSError`` family, ``http.client``'s
+            protocol failures, a ``ValueError`` for a URL it refuses.
+    """
+    opening = _Opening()
+    worker = threading.Thread(target=opening.run, args=(request,), name=_OPENER_THREAD, daemon=True)
+    worker.start()
+    worker.join(HEADERS_DEADLINE)
+    return opening.collect()
+
+
+class _Arrivals:
+    """A body's bytes in the trailing :data:`STALL_WINDOW` — the stall rule, applied."""
+
+    def __init__(self, started: float) -> None:
+        self._started = started
+        self._recent: collections.deque[tuple[float, int]] = collections.deque()
+        self._recent_bytes = 0
+
+    def add(self, size: int, now: float) -> None:
+        """Count ``size`` bytes arrived at ``now``.
+
+        Raises:
+            StalledTransferError: The body has been read for a whole window
+                and fewer than :data:`STALL_MIN_BYTES` arrived in the last one.
+        """
+        self._recent.append((now, size))
+        self._recent_bytes += size
+        while self._recent[0][0] < now - STALL_WINDOW:
+            self._recent_bytes -= self._recent.popleft()[1]
+        if now - self._started >= STALL_WINDOW and self._recent_bytes < STALL_MIN_BYTES:
+            raise StalledTransferError(
+                f"body slower than {STALL_MIN_BYTES} bytes per {STALL_WINDOW:g}s"
+            )
+
+
+def _read_body(
+    stream: http.client.HTTPResponse | urllib.error.HTTPError, limit: int | None
+) -> bytes:
+    """Read ``stream`` whole, or under a ``limit`` to at most ``limit + 1`` bytes.
+
+    ``stream`` is a response, or the error urllib raised in its place, which
+    reads through to the same ``http.client`` response.
+
+    ``read1`` answers with whatever has arrived, so the loop regains control
+    at least once per socket timeout and the stall rule (:class:`_Arrivals`)
+    is checked as the body comes in. ``read(n)`` sits inside the buffered
+    reader until all ``n`` bytes are there, and a body dripping in a byte at
+    a time never handed control back at all.
 
     The single extra byte is what keeps the caller's ceiling test honest:
     ``len(body) > limit`` still fires for an over-ceiling body, while the
     bytes past it are never requested — a 2GB enclosure behind a lying or
     absent Content-Length costs ``limit + 1`` bytes of memory, not 2GB.
+
+    Raises:
+        StalledTransferError: The body stalled.
+        http.client.IncompleteRead: The body ended short of its declared
+            length — which ``read1`` itself reports as a quiet end of body.
     """
+    remaining = sys.maxsize if limit is None else limit + 1
+    arrivals = _Arrivals(time.monotonic())
     chunks: list[bytes] = []
-    remaining = limit + 1
     while remaining > 0:
-        chunk = stream.read(min(_READ_CHUNK, remaining))
+        chunk = stream.read1(min(_READ_CHUNK, remaining))
         if not chunk:
+            if stream.length:
+                raise http.client.IncompleteRead(b"".join(chunks), stream.length)
             break
         chunks.append(chunk)
         remaining -= len(chunk)
+        arrivals.add(len(chunk), time.monotonic())
     return b"".join(chunks)
 
 
@@ -240,7 +373,7 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
         user_agent: The User-Agent the request carries.
         method: ``GET`` or ``HEAD``.
         limit: The caller's body ceiling, when it has one — the body is
-            read to at most ``limit + 1`` bytes (:func:`_read_limited`).
+            read to at most ``limit + 1`` bytes (:func:`_read_body`).
 
     Returns:
         The response — 4xx/5xx included, never raised.
@@ -249,8 +382,9 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
         ValueError: ``url`` is not http(s), or its host is not encodable
             for DNS (:func:`_ascii_url`).
         OSError: Connection-level failure (DNS, refused, reset, timeout, a
-            truncated body); ``urllib.error.URLError`` is an ``OSError``
-            subclass and ``http.client``'s family is normalized into one.
+            stalled transfer, a truncated body); ``urllib.error.URLError`` is
+            an ``OSError`` subclass and ``http.client``'s family is
+            normalized into one.
     """
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"transport fetches http(s) URLs only, got {url!r}")
@@ -259,13 +393,8 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
     )
     with normalize_httplib_errors():
         try:
-            with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT) as response:  # noqa: S310
-                if method == "HEAD":
-                    body = b""
-                elif limit is None:
-                    body = response.read()
-                else:
-                    body = _read_limited(response, limit)
+            with _open(request) as response:
+                body = b"" if method == "HEAD" else _read_body(response, limit)
                 return HttpResponse(
                     status=response.status,
                     content_type=_media_type(response.headers.get("Content-Type")),
@@ -282,7 +411,7 @@ def _urllib_fetch(url: str, *, user_agent: str, method: str, limit: int | None) 
             # ``normalize_httplib_errors`` as a connection failure, turning
             # a 404's `dead` into `blocked`.
             with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
-                body = e.read() if limit is None else _read_limited(e, limit)
+                body = _read_body(e, limit)
             return HttpResponse(
                 status=e.code,
                 content_type=_media_type(e.headers.get("Content-Type") if e.headers else None),

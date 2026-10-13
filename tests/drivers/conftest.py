@@ -7,6 +7,7 @@ import json
 import re
 import socket
 import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -240,5 +241,97 @@ def truncating_server(
     try:
         yield f"http://{host}:{port}/ep42.mp3"
     finally:
+        listener.close()
+        thread.join(timeout=5)
+
+
+def response_head(status: bytes = b"200 OK", *, length: int | None) -> bytes:
+    """A status line and headers declaring a ``length``-byte body, or a chunked one."""
+    framing = b"Transfer-Encoding: chunked" if length is None else b"Content-Length: %d" % length
+    return b"HTTP/1.1 %s\r\nContent-Type: image/png\r\n%s\r\nConnection: close\r\n\r\n" % (
+        status,
+        framing,
+    )
+
+
+def chunked(*chunks: bytes) -> bytes:
+    """``chunks`` in chunked transfer coding, the terminating chunk included."""
+    return b"".join(b"%x\r\n%s\r\n" % (len(chunk), chunk) for chunk in chunks) + b"0\r\n\r\n"
+
+
+def drip(data: bytes, *, every: float) -> list[tuple[float, bytes]]:
+    """``data`` as a tarpit sends it: one byte per step, ``every`` seconds apart."""
+    return [(every, data[i : i + 1]) for i in range(len(data))]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PacedServer:
+    """A running :func:`paced_server`."""
+
+    base: str  # http://127.0.0.1:<port>
+    hung_up: threading.Event  # a client closed its end while the server held the socket
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Pacing:
+    """One paced server's script and its two signals."""
+
+    steps: Sequence[tuple[float, bytes]]
+    stop: threading.Event
+    hung_up: threading.Event
+
+    def answer(self, conn: socket.socket) -> None:
+        with conn, contextlib.suppress(OSError):
+            _drain_request(conn)
+            for pause, data in self.steps:
+                if self.stop.wait(pause):
+                    return
+                conn.sendall(data)
+            self.hold(conn)
+
+    def hold(self, conn: socket.socket) -> None:
+        # Bounded, so a client that regressed into waiting forever fails
+        # its test on the hang-up instead of hanging the suite.
+        conn.settimeout(0.05)
+        deadline = time.monotonic() + 10
+        while not self.stop.is_set() and time.monotonic() < deadline:
+            try:
+                if not conn.recv(1):
+                    self.hung_up.set()
+                    return
+            except TimeoutError:
+                continue
+
+
+@contextlib.contextmanager
+def paced_server(steps: Sequence[tuple[float, bytes]]) -> Iterator[PacedServer]:
+    """Answer every request with ``steps``, then hold the socket open, silent.
+
+    A step is ``(pause, data)``: wait ``pause`` seconds, then send ``data``
+    — a healthy server is one step, a tarpit one byte per step. A real
+    socket, because the stalls live in ``http.client``'s buffered reads.
+    Leaving the context cuts every step still running short and closes the
+    sockets, which ends any client still waiting on one.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    host, port = listener.getsockname()
+    pacing = _Pacing(steps=steps, stop=threading.Event(), hung_up=threading.Event())
+
+    def serve() -> None:
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return  # the listener closed: the context manager is done
+            threading.Thread(target=pacing.answer, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield PacedServer(base=f"http://{host}:{port}", hung_up=pacing.hung_up)
+    finally:
+        pacing.stop.set()
         listener.close()
         thread.join(timeout=5)

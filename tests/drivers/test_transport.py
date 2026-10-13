@@ -3,13 +3,16 @@
 The truncated-body cases run against a real localhost socket — the failure
 lives inside ``http.client``'s read path and no in-process double reproduces
 it faithfully. The non-ASCII cases use one for the same reason: what a URL
-becomes on the wire is only visible from the other end of the socket.
+becomes on the wire is only visible from the other end of the socket, and
+so do the stall cases, whose drips only ``http.client``'s buffered reads
+can be caught in.
 """
 
 import contextlib
 import http.client
 import socket
 import threading
+import time
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -19,19 +22,37 @@ import pytest
 
 from dex_engine.capabilities import Capabilities
 from dex_engine.capabilities.transcribe.whisper_api import WhisperApi, urllib_multipart_post
+from dex_engine.drivers import transport
+from dex_engine.drivers.fetch import FetchFailure, fetch_classified
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.transport import (
+    _OPENER_THREAD,
     _REQUEST_LINE_FORBIDDEN,
     BOT_UA,
     BROWSER_UA,
+    STALL_MIN_BYTES,
+    STALL_WINDOW,
+    _Arrivals,
     _ascii_url,
     bot_transport,
     normalize_httplib_errors,
     urllib_transport,
 )
-from dex_engine.pipeline.classify import ProviderInputError, classify_connection, classify_http
+from dex_engine.pipeline.classify import (
+    ProviderInputError,
+    StalledTransferError,
+    classify_connection,
+    classify_http,
+)
 from dex_engine.pipeline.types import Kind, Refused, Status
-from tests.drivers.conftest import make_unit, truncating_server
+from tests.drivers.conftest import (
+    chunked,
+    drip,
+    make_unit,
+    paced_server,
+    response_head,
+    truncating_server,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,9 +303,8 @@ class TestNonAsciiUrls:
 class _ChunkedResponse:
     """A 200 body served in chunks, counting every byte the caller draws.
 
-    ``read(n)`` answers short (at most one chunk), the way a socket does;
-    ``read()`` with no argument serves everything left in one buffer — the
-    whole-body regression this fake exists to expose.
+    ``read1(n)`` answers short (at most one chunk), the way a socket does,
+    so every byte drawn past a ceiling shows in ``served``.
     """
 
     status = 200
@@ -296,9 +316,12 @@ class _ChunkedResponse:
         self.served = 0
         self.headers = {"Content-Type": "audio/mpeg", "Content-Length": str(total)}
 
-    def read(self, n: int | None = None) -> bytes:
-        left = self.total - self.served
-        take = left if n is None else min(n, self.chunk, left)
+    @property
+    def length(self) -> int:
+        return self.total - self.served
+
+    def read1(self, n: int) -> bytes:
+        take = min(n, self.chunk, self.length)
         self.served += take
         return b"m" * take
 
@@ -341,3 +364,223 @@ class TestBoundedBodyRead:
         self._serve(monkeypatch, total=self.LIMIT * 3)
         fetched = urllib_transport("https://cdn.example.test/page")
         assert fetched.body == b"m" * (self.LIMIT * 3)
+
+
+# Every stall below ends in a fraction of a second under `tight_bounds`,
+# while the server behind it would hold an unbounded call seconds longer.
+PROMPTLY = 2.0
+
+
+@pytest.fixture
+def tight_bounds(monkeypatch):
+    """The transfer bounds at test scale: a stall shows in a third of a second."""
+    monkeypatch.setattr(transport, "HEADERS_DEADLINE", 0.3)
+    monkeypatch.setattr(transport, "STALL_WINDOW", 0.3)
+    monkeypatch.setattr(transport, "STALL_MIN_BYTES", 1024)
+
+
+def opener_threads() -> list[threading.Thread]:
+    return [thread for thread in threading.enumerate() if thread.name == _OPENER_THREAD]
+
+
+def assert_openers_end() -> None:
+    """Every abandoned worker ends once its call does — none outlives its server."""
+    for thread in opener_threads():
+        thread.join(timeout=5)
+    assert opener_threads() == []
+
+
+class TestHeadersDeadline:
+    """Everything before the body under one wall clock, whatever it waits on."""
+
+    @pytest.mark.usefixtures("tight_bounds")
+    def test_a_dripping_status_line_fails_at_the_deadline(self):
+        # A byte every 50ms never trips the per-operation socket timeout:
+        # http.client's readline sits in its buffered reader for as long as
+        # the server cares to drip, which here is four seconds.
+        with paced_server(drip(response_head(length=2) + b"hi", every=0.05)) as served:
+            started = time.monotonic()
+            with pytest.raises(StalledTransferError, match=r"^no response within 0\.3s$"):
+                urllib_transport(served.base + "/slow-head")
+            assert time.monotonic() - started < PROMPTLY
+        assert_openers_end()
+
+    @pytest.mark.usefixtures("tight_bounds")
+    def test_a_name_lookup_that_never_answers_fails_at_the_deadline(self, monkeypatch):
+        # getaddrinfo has no timeout at all, and on macOS it waits on
+        # mDNSResponder: no socket of the process's own exists to time out.
+        release = threading.Event()
+
+        def unanswered(*_args, **_kwargs):
+            release.wait(timeout=10)
+            raise socket.gaierror(socket.EAI_AGAIN, "temporary failure in name resolution")
+
+        monkeypatch.setattr(socket, "getaddrinfo", unanswered)
+        try:
+            started = time.monotonic()
+            with pytest.raises(StalledTransferError):
+                urllib_transport("http://unanswered.example.test/")
+            assert time.monotonic() - started < PROMPTLY
+            # Abandoned, never awaited: a daemon cannot hold up the exit.
+            stuck = opener_threads()
+            assert stuck
+            assert all(thread.daemon for thread in stuck)
+        finally:
+            release.set()
+        assert_openers_end()
+
+    @pytest.mark.usefixtures("tight_bounds")
+    def test_an_abandoned_worker_hangs_up_on_the_response_it_gets(self):
+        # The headers complete after the caller gave up: nobody will read
+        # that response, so the worker closes it rather than leave the
+        # server holding a connection open for a reader that never comes.
+        with paced_server(drip(response_head(length=100), every=0.01)) as served:
+            with pytest.raises(StalledTransferError) as caught:
+                urllib_transport(served.base + "/late-head")
+            assert served.hung_up.wait(timeout=5)
+        assert caught.value  # held, so only the worker's own close can hang up
+        assert_openers_end()
+
+    def test_a_completed_call_leaves_no_worker_behind(self):
+        with recording_server() as (base, _):
+            assert urllib_transport(base + "/").status == 200
+        assert opener_threads() == []
+
+
+@pytest.mark.usefixtures("tight_bounds")
+class TestBodyStall:
+    """A body slower than the floor fails; one above it never does."""
+
+    @pytest.mark.parametrize("limit", [None, 10_000_000])
+    def test_a_dripping_body_stalls(self, limit):
+        # Headers at once, then a byte every 10ms — inside every socket
+        # timeout, so only the body's own floor ends it, ten seconds early.
+        steps = [(0, response_head(length=100_000)), *drip(b"x" * 1000, every=0.01)]
+        with paced_server(steps) as served:
+            started = time.monotonic()
+            with pytest.raises(
+                StalledTransferError, match=r"^body slower than 1024 bytes per 0\.3s$"
+            ):
+                urllib_transport(served.base + "/drip.jpg", limit=limit)
+            assert time.monotonic() - started < PROMPTLY
+
+    def test_a_dripping_chunked_body_stalls(self):
+        steps = [(0, response_head(length=None) + b"3e8\r\n"), *drip(b"x" * 1000, every=0.01)]
+        with paced_server(steps) as served, pytest.raises(StalledTransferError):
+            urllib_transport(served.base + "/drip-chunked.jpg")
+
+    def test_a_fast_start_does_not_cover_a_later_drip(self):
+        # The floor reads the trailing window, never the running total: the
+        # burst leaves the window and the drip behind it stalls on its own.
+        steps = [
+            (0, response_head(length=100_000) + b"x" * 50_000),
+            *drip(b"x" * 1000, every=0.01),
+        ]
+        with paced_server(steps) as served:
+            started = time.monotonic()
+            with pytest.raises(StalledTransferError):
+                urllib_transport(served.base + "/burst-then-drip.mp3")
+            assert time.monotonic() - started < PROMPTLY
+
+    def test_a_slow_body_above_the_floor_arrives_whole(self):
+        # A podcast over a poor link must never trip the floor: 1KB every
+        # 30ms is ten times the floor, sustained across four windows.
+        pieces = [bytes([n]) * 1024 for n in range(40)]
+        steps = [(0, response_head(length=len(pieces) * 1024)), *((0.03, p) for p in pieces)]
+        with paced_server(steps) as served:
+            fetched = urllib_transport(served.base + "/slow.mp3")
+        assert fetched.body == b"".join(pieces)
+
+    def test_a_body_gone_silent_fails_at_the_socket_timeout(self, monkeypatch):
+        # Silence is the socket timeout's to catch, as it always was, and
+        # it reads as a timeout — never as a drip the server kept up.
+        monkeypatch.setattr(transport, "DEFAULT_TIMEOUT", 0.3)
+        steps = [(0, response_head(length=100_000) + b"x" * 50_000)]
+        with paced_server(steps) as served, pytest.raises(TimeoutError) as caught:
+            urllib_transport(served.base + "/silent.mp3")
+        assert type(caught.value) is TimeoutError
+        assert classify_connection(caught.value).reason == "connection timed out"
+
+    def test_a_dripping_error_body_keeps_its_status(self):
+        # The error page is only detail: its stall is dropped like any other
+        # failure reading it, and the status still classifies the fetch.
+        steps = [
+            (0, response_head(b"404 Not Found", length=100_000)),
+            *drip(b"x" * 1000, every=0.01),
+        ]
+        with paced_server(steps) as served:
+            started = time.monotonic()
+            response = urllib_transport(served.base + "/gone")
+            assert time.monotonic() - started < PROMPTLY
+        assert response.status == 404
+        assert response.body == b""
+
+
+class TestBodyOverTheWire:
+    """The pieces ``read1`` hands back add up to the body ``read`` returned."""
+
+    def test_a_body_arrives_whole(self):
+        body = bytes(range(256)) * 1024
+        with paced_server([(0, response_head(length=len(body)) + body)]) as served:
+            assert urllib_transport(served.base + "/whole.png").body == body
+
+    def test_a_chunked_body_arrives_whole(self):
+        pieces = [b"a" * 70_000, b"b" * 3, b"c" * 100_000]
+        with paced_server([(0, response_head(length=None) + chunked(*pieces))]) as served:
+            assert urllib_transport(served.base + "/chunked.png").body == b"".join(pieces)
+
+    def test_an_over_ceiling_body_stops_one_byte_past_the_limit(self):
+        body = b"z" * 200_000
+        with paced_server([(0, response_head(length=len(body)) + body)]) as served:
+            assert urllib_transport(served.base + "/big.png", limit=1000).body == b"z" * 1001
+
+    def test_a_body_at_the_ceiling_arrives_whole(self):
+        body = b"q" * 1000
+        with paced_server([(0, response_head(length=len(body)) + body)]) as served:
+            assert urllib_transport(served.base + "/exact.png", limit=1000).body == body
+
+    def test_a_truncated_body_under_a_ceiling_fails_as_truncated(self):
+        # read1 — and read(n) before it — reports a server hanging up short
+        # of its Content-Length as a quiet end of body, so a media download
+        # cut off mid-way landed as a broken image under a done line.
+        with truncating_server() as url, pytest.raises(OSError) as caught:  # noqa: PT011 — the OSError shape IS the assertion
+            urllib_transport(url, limit=10_000_000)
+        assert str(caught.value) == "truncated response body (20 bytes read, 4999980 more expected)"
+
+
+class TestStallFloor:
+    """The stall rule on an explicit clock: once a whole window has passed,
+    fewer than the floor's bytes in the trailing window is a stall."""
+
+    def test_no_verdict_before_a_whole_window(self):
+        _Arrivals(0.0).add(1, STALL_WINDOW - 0.001)
+
+    def test_a_window_short_of_the_floor_has_stalled(self):
+        with pytest.raises(StalledTransferError):
+            _Arrivals(0.0).add(STALL_MIN_BYTES - 1, STALL_WINDOW)
+
+    def test_the_floor_itself_is_enough(self):
+        arrivals = _Arrivals(0.0)
+        arrivals.add(STALL_MIN_BYTES - 1, 1.0)
+        arrivals.add(1, STALL_WINDOW)
+
+    def test_bytes_leave_the_window_as_it_trails(self):
+        arrivals = _Arrivals(0.0)
+        arrivals.add(STALL_MIN_BYTES * 100, 1.0)
+        arrivals.add(1, STALL_WINDOW + 1.0)  # the burst is exactly a window old: still in it
+        with pytest.raises(StalledTransferError):
+            arrivals.add(1, STALL_WINDOW + 1.5)
+
+
+@pytest.mark.usefixtures("tight_bounds")
+class TestStallClassification:
+    def test_a_stalled_fetch_is_blocked_and_names_the_stall(self):
+        steps = [(0, response_head(length=100_000)), *drip(b"x" * 1000, every=0.01)]
+        with paced_server(steps) as served:
+            failure = fetch_classified(urllib_transport, served.base + "/drip.jpg", limit=10_000)
+        assert isinstance(failure, FetchFailure)
+        assert failure.http_status is None
+        assert failure.classification.status is Status.BLOCKED
+        assert failure.classification.reason == (
+            "transfer stalled: body slower than 1024 bytes per 0.3s"
+        )
