@@ -467,6 +467,55 @@ NOTEBOOK_SOURCE_URL = "https://www.pinecone.io/learn/nemo-guardrails-intro/md/"
 # An extraction with one fenced block and a two-row table: the structure a
 # source must hold at least as much of.
 STRUCTURED = "```\nprint(1)\n```\n\n| a | b |\n| 1 | 2 |\n\n" + "extracted body " * 40
+# prefab.prefect.io's FastMCP page as trafilatura 2.3.0 extracted it — each
+# clause beside an inline code span twice, a sentence gone — and the source
+# the page declares, which the duplication made the shorter of the two.
+FAITHFUL_SOURCE = (
+    "Prefab integrates with [FastMCP](https://github.com/PrefectHQ/fastmcp) to build"
+    " [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs that"
+    " render directly inside the conversation. Mark any tool with `app=True` and return a"
+    " component tree or a `PrefabApp`:\n\n"
+    "When a host like Claude Desktop calls this tool, the user sees a fully interactive UI"
+    " instead of plain text.\n\n"
+    "## Returning UI\n\n"
+    "You can return either a `PrefabApp` or a bare component. Returning a component is a"
+    " shorthand — FastMCP wraps it in a `PrefabApp` automatically. Return a `PrefabApp` when"
+    " you need initial state, a page title, or reusable definitions."
+)
+CORRUPT_EXTRACTION = (
+    "[FastMCP](https://github.com/PrefectHQ/fastmcp)to build\n\n"
+    "[MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps)— interactive UIs that"
+    " render directly inside the conversation. Mark any tool with\n\n"
+    "`app=True` and return a component tree or a and return a component tree or a\n\n"
+    "`PrefabApp`:\n:\n\n"
+    "## Returning UI\n\n"
+    "You can return either a`PrefabApp` or a bare component. Returning a component is a"
+    " shorthand — FastMCP wraps it in a or a bare component. Returning a component is a"
+    " shorthand — FastMCP wraps it in a\n\n"
+    "`PrefabApp` automatically.\nautomatically.\n\n"
+    "`PrefabApp` when you need initial state, a page title, or reusable definitions.\n"
+    "when you need initial state, a page title, or reusable definitions."
+)
+# A clean extraction of four sections, each saying something of its own.
+SECTIONS = (
+    (
+        "# Retries\n\nEvery fetch the ledger records is retried on a schedule its driver names,"
+        " and a fetch that keeps failing is parked rather than dropped."
+    ),
+    (
+        "## Backoff\n\nA blocked fetch waits twice as long each time it fails, up to a day, so"
+        " a site that throttles bursts recovers before the next attempt."
+    ),
+    (
+        "## Wayback\n\nA dead page is looked up in the internet archive before it is parked for"
+        " the owner, and the snapshot's address is noted beside the body it rescued."
+    ),
+    (
+        "## Thin pages\n\nA page whose extraction comes back under three hundred characters is"
+        " parked as unusable, never stored: a stub read as an article misleads every digest."
+    ),
+)
+SECTIONED = "\n\n".join(SECTIONS)
 
 
 class TestMarkdownAlternate:
@@ -707,6 +756,64 @@ class TestMarkdownAlternate:
         source = "s" * source_chars
         result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
         assert result.body == {"extraction": extraction, "source": source}[stored]
+
+    def test_a_corrupt_extraction_longer_than_the_source_loses_to_it(self):
+        # The field case: the duplicated clauses outgrew the page's own
+        # source, and the length rule kept the corrupt extraction.
+        assert len(CORRUPT_EXTRACTION) > len(FAITHFUL_SOURCE)
+        result = self.fetch(
+            declaring(SOURCE_LINK),
+            markdown_response(FAITHFUL_SOURCE),
+            extract=lambda _: CORRUPT_EXTRACTION,
+        )
+        assert body_of(result) == FAITHFUL_SOURCE
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "# Page not found\n\nThe page you are looking for does not exist or has been moved.",
+            "# 500\n\nAn internal error occurred while rendering this page. Try again later.",
+            "\n\n".join(SECTIONS[:2]),
+            "\n\n".join(SECTIONS[:2] + SECTIONS[3:]),
+        ],
+        ids=["stub", "error-page", "first-half", "a-section-left-out"],
+    )
+    def test_a_shorter_source_missing_what_the_page_says_loses(self, source):
+        assert len(source) < len(SECTIONED)
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: SECTIONED)
+        assert body_of(result) == SECTIONED
+
+    @pytest.mark.parametrize(("held", "stored"), [(98, "source"), (97, "extraction")])
+    def test_a_shorter_source_is_kept_where_it_holds_nearly_every_word(self, held, stored):
+        # Words are counted once each, however often the extraction repeats them.
+        extraction = " ".join([f"term{n}" for n in range(100)] * 3)
+        source = " ".join(f"term{n}" for n in range(held))
+        assert len(source) < len(extraction)
+        result = self.fetch(
+            declaring(SOURCE_LINK), markdown_response(source), extract=lambda _: extraction
+        )
+        assert body_of(result) == {"source": source, "extraction": extraction}[stored]
+
+    def test_urls_case_and_markdown_syntax_are_not_held_against_a_source(self):
+        # A source writes its links relative and its underscores escaped, and
+        # a URL's words are not words the page says.
+        extraction = (
+            "See [the Ledger docs](https://docs.example.test/en/latest/reference/ledger.html) for"
+            " the `snake_case` keys every unit carries, mirrored at"
+            " https://mirror.example.test/archive/2026/10/ledger-reference-full-text. "
+            + "Each key is written once, by the stage that owns it. "
+            * 6
+        )
+        source = (
+            "See [the ledger docs](ledger.md) for the `snake\\_case` keys every unit carries,"
+            " mirrored at <mirror>. " + "Each key is written once, by the stage that owns it. " * 5
+        )
+        assert len(source) < len(extraction)
+        result = self.fetch(
+            declaring(SOURCE_LINK), markdown_response(source), extract=lambda _: extraction
+        )
+        assert body_of(result) == source.strip()
 
     def test_a_sources_notebook_records_read_as_their_code_and_output(self):
         # pinecone.io's learn posts declare a source that writes each embedded
@@ -1358,6 +1465,114 @@ class TestExtractionFidelity:
             "export { default as module2 } from './module2';\n"
             "export { default as module3 } from './module3';\n```"
         ) in body
+
+    def test_a_code_block_framed_in_a_figure_keeps_its_code_and_caption(self):
+        # cognition.com frames every example in a <figure>, captioned with
+        # the file it shows, and trafilatura deletes every figure holding no
+        # real table: all thirteen blocks of a post were gone, the prose
+        # around them kept.
+        body = trafilatura_extract(fixture_text("web", "figure-framed-code.html")) or ""
+        assert (
+            "other files.\n\n```\nmemory-john/\n  MEMORY.md\n  team_structure.md\n  projects/\n"
+            "    payments.md\n```"
+        ) in body
+        assert (
+            "plus links to everything else.\n\nMEMORY.md\n\n```\n# Memory: John\n"
+            "- John leads the product team [source: https://example.com/sessions/100]\n"
+            "- [[team_structure]]\n```"
+        ) in body
+        assert ("swarms/slow-checkout/findings.md\n\n```\n- Database: queries are fast.") in body
+        assert "The runtime agent cannot see why memory fills up" in body
+
+    def test_a_heading_in_a_summary_is_one_heading_its_parts_apart(self):
+        # trafilatura reads a <summary> as a heading too: the post's
+        # collapsible sections came back as `## ## FormatRepository layout,
+        # ...`, two markers and the subtitle welded to the title.
+        body = trafilatura_extract(fixture_text("web", "figure-framed-code.html")) or ""
+        # One heading line sits in a code block: the MEMORY.md example's own.
+        assert [line for line in headings(body) if line != "# Memory: John"] == [
+            "# Agent Memory Repo",
+            "## The memory loop",
+            "## Format Repository layout, entries, metadata, and cross-links.",
+            "### Repository layout",
+            "### MEMORY.md",
+            "### Entries and metadata",
+            "## Example: agent swarm uses message boards to solve performance issue",
+        ]
+
+    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <details><summary><h3>Retries<!-- a note --><span>What the ledger"
+            " replays</span></h3></summary><p>Each retry is a line in the ledger, written"
+            " before the fetch it records.</p></details>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "### Retries What the ledger replays" in body
+
+    def test_a_summary_holding_no_heading_is_left_as_it_was(self):
+        page = "<html><body><details><summary>Options</summary><p>Text.</p></details></body></html>"
+        assert "<summary>Options</summary>" in prepare_page(page)
+
+    def test_expressive_code_blocks_keep_their_lines_and_captions(self):
+        # Starlight's Expressive Code draws each block as a figure, a window
+        # title in its caption and each line a <div class="ec-line">: a docs
+        # site's Install and Quickstart sections were stored empty.
+        body = trafilatura_extract(fixture_text("web", "expressive-code-figures.html")) or ""
+        assert (
+            "Terminal window\n\n```\npip install graphrag-lexical-graph\n"
+            "pip install llama-index-readers-web\n```"
+        ) in body
+        assert (
+            "extract_and_build.py\n\n```\nfrom graphrag_toolkit.lexical_graph import"
+            " LexicalGraphIndex\ngraph_index = LexicalGraphIndex(graph_store, vector_store)\n"
+        ) in body
+        assert (
+            "For example:\n\n```\nStatement\n---------\nNeptune supports open graph APIs"
+        ) in body
+
+    def test_a_figure_holding_no_code_is_read_as_before(self):
+        # The rail on the figure repair: a picture's caption is chrome
+        # trafilatura drops with its figure, as it always has.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <figure><img src="/chart.png" alt="A chart"><figcaption>Figure 1: throughput'
+            " by week, before and after the ledger rewrite.</figcaption></figure>\n"
+            "      <p>Politeness matters",
+        )
+        assert "Figure 1" not in (trafilatura_extract(page) or "")
+
+    def test_paragraphs_written_as_spans_keep_every_sentence(self):
+        # Mintlify writes each paragraph as <span data-as="p">, which
+        # trafilatura read as loose text: prefab.prefect.io's FastMCP page
+        # lost its opening words and the paragraph after its first code
+        # block, split a sentence at its inline code and welded a fence to
+        # the end of a line.
+        body = trafilatura_extract(fixture_text("web", "mintlify-span-paragraphs.html")) or ""
+        assert body.startswith(
+            "Prefab integrates with [FastMCP](https://github.com/PrefectHQ/fastmcp) to build"
+            " [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs"
+            " that render directly inside the conversation. Mark any tool with `app=True` and"
+            " return a component tree or a `PrefabApp`:\n\n"
+        )
+        assert GLUED_FENCE.search(body) is None
+        assert (
+            "```\nWhen a host like Claude Desktop calls this tool, the user sees a fully"
+            " interactive UI instead of plain text."
+        ) in body
+        assert (
+            "\n\nWhen the user interacts with the UI (clicks a button, submits a form),"
+            " [`CallTool`](/docs/actions/call-tool) sends a new tool call"
+        ) in body
+
+    def test_a_span_declaring_anything_else_stays_inline(self):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <p>The <span data-as="em">ledger</span> holds every unit of work the pipeline'
+            " still owes.</p>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "The ledger holds every unit of work the pipeline still owes." in body
 
     def test_inline_code_is_never_broken_whatever_it_holds(self):
         # Only a block's lines are repaired: a paragraph's code stays inline.

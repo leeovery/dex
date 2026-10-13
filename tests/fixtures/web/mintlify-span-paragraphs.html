@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FastMCP - Prefab</title>
+</head>
+<body class="antialiased">
+<main id="content-container" class="flex-1 px-4 pt-6"><div id="content-area" class="w-full min-w-0"><header id="header" class="relative"><h1 id="page-title" class="inline-block text-2xl">FastMCP</h1></header><div class="mdx-content relative mt-8 prose prose-gray dark:prose-invert isolate empty:hidden mb-14" data-page-title="FastMCP" data-page-href="/running/fastmcp" id="content"><span data-as="p">Prefab integrates with <a href="https://github.com/PrefectHQ/fastmcp" target="_blank" rel="noreferrer" class="link">FastMCP</a> to build <a href="https://modelcontextprotocol.io/docs/extensions/apps" target="_blank" rel="noreferrer" class="link">MCP Apps</a> — interactive UIs that render directly inside the conversation. Mark any tool with <code>app=True</code> and return a component tree or a <code>PrefabApp</code>:</span>
+<div role="note" aria-label="Note" class="callout my-4 px-5 py-4 overflow-hidden rounded-2xl flex gap-3 border border-blue-200 bg-blue-50" data-callout-type="note"><div class="mt-0.5 w-4" data-component-part="callout-icon"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M 9 1.6714 C 13.0371 1.6714 16.3286 4.9629 16.3286 9"></path></svg></div><div class="text-sm prose min-w-0 w-full text-blue-800" data-component-part="callout-content"><span data-as="p">When you install <code>fastmcp[apps]</code>, FastMCP pulls in <code>prefab-ui</code> with only a minimum version — no upper bound. See <a class="link" href="/docs/getting-started/installation#versioning-policy">Versioning Policy</a> for details.</span></div></div>
+<div class="code-block mt-5 mb-8 not-prose rounded-2xl relative group min-w-0 codeblock-light border border-gray-950/10 bg-transparent" data-has-floating-buttons="" numberOfLines="5" language="python"><div data-floating-buttons="true" class="absolute top-3 right-4 flex items-center gap-1.5 print:hidden"><div class="code-block-copy-button z-10 select-none"><button class="size-6.5 flex items-center justify-center rounded-md" data-testid="copy-code-button" aria-label="Copy the contents from the code block"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M14.25 5.25H7.25"></path></svg></button><span role="status" class="sr-only"></span></div></div><div role="presentation" data-component-part="code-block-root" class="w-0 min-w-full max-w-full h-full text-sm leading-6 code-block-background rounded-2xl bg-white"><div role="presentation" tabindex="-1" class="size-full rounded-[inherit] py-3.5 px-4 overflow-y-hidden! base-ui-disable-scrollbar" style="overflow:scroll" data-component-part="scroll-area-viewport"><div role="presentation" style="min-width:fit-content" data-component-part="scroll-area-content" class="min-w-full! h-full"><div class="font-mono whitespace-pre leading-6"><pre class="shiki shiki-themes snazzy-light dark-plus" language="python"><code language="python" numberOfLines="5"><span class="line"><span>from</span><span> fastmcp </span><span>import</span><span> FastMCP</span></span>
+<span class="line"><span>mcp </span><span>=</span><span> FastMCP</span><span>(</span><span>"My Server"</span><span>)</span></span>
+<span class="line"><span>@</span><span>mcp</span><span>.</span><span>tool</span><span>(</span><span>app</span><span>=</span><span>True</span><span>)</span></span>
+<span class="line"><span>def</span><span> browse</span><span>()</span><span> -&gt;</span><span> PrefabApp</span><span>:</span></span>
+<span class="line"><span>    return</span><span> PrefabApp</span><span>()</span></span></code></pre></div></div></div></div></div>
+<span data-as="p">When a host like Claude Desktop calls this tool, the user sees a fully interactive UI instead of plain text. FastMCP handles the wiring automatically: it registers a shared Prefab renderer as a <code>ui://</code> resource, sets the MCP Apps metadata on your tool, and converts <code>PrefabApp</code> returns to <code>structuredContent</code> in the tool result.</span>
+<h2 class="flex whitespace-pre-wrap group font-semibold" id="how-it-works"><span class="cursor-pointer">How It Works</span></h2>
+<span data-as="p">The flow has three steps:</span>
+<ol>
+<li><strong>Tool call</strong> — the host calls your tool via MCP</li>
+<li><strong>PrefabApp → structuredContent</strong> — FastMCP serializes your return value into the Prefab JSON envelope</li>
+<li><strong>Renderer</strong> — the host loads the Prefab renderer and passes it the structured content</li>
+</ol>
+<span data-as="p">When the user interacts with the UI (clicks a button, submits a form), <a class="link" href="/docs/actions/call-tool"><code>CallTool</code></a> sends a new tool call through MCP back to your server.</span>
+</div></div></main>
+</body>
+</html>

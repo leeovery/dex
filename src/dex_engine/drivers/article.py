@@ -45,9 +45,9 @@ and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
 and stores it whenever it answers as markdown or plain text and is at
-least as long as what extraction found, with any notebook it holds as a
-CMS record rendered as the page shows it. The title, description and
-og:image still come from the HTML.
+least as long as what extraction found or holds nearly every word it
+found, with any notebook it holds as a CMS record rendered as the page
+shows it. The title, description and og:image still come from the HTML.
 
 A page served AS markdown or plain text — a docs site's ``.md`` pages, its
 ``llms.txt`` — needs no extraction either, and must never get one: an HTML
@@ -211,8 +211,23 @@ _FENCED_BLOCK_RE = re.compile(
 )
 # The record type Pinecone's CMS writes a notebook as, the one rendered.
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
+# The share of the distinct words an extraction found that a shorter
+# alternate must hold to be kept over it. Measured over 114 pages declaring
+# one: each source that trafilatura 2.3.0's corrupt extractions outgrew
+# held 0.998 or more of their words; the nearest that should lose, a
+# plain-text copy without the headings and links its extraction kept,
+# held 0.946; and every source cut to its first sections held 0.973 or less.
+_ALTERNATE_WORD_SHARE = 0.98
+# A word as the alternate's check counts it: letters and digits, so that
+# markdown's underscores and an escaped one split a word alike.
+_SAID_WORD_RE = re.compile(r"[^\W_]+")
+# A link's target or a bare URL: a source may write a page's links relative
+# where the page has them absolute, and the words of a URL are not words
+# the page says.
+_URL_RE = re.compile(r"\]\([^)]*\)|https?://\S+")
 
-_CODE_LINE_CLASS = "line"
+_CODE_LINE_CLASSES = frozenset({"line", "ec-line"})
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 
 # HTML's phrasing content: what a run of text beside a code block is made of.
 _PHRASING_TAGS = frozenset(
@@ -404,12 +419,13 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     Every repair runs over one parse, and each function below carries the
     field case that earned it. They come in two families: what
     ``include_links`` costs — empty anchors, and permalink glyphs and
-    line breaks in headings — and markup trafilatura throws away with
-    content inside it — scroll areas its navigation filter misreads, code
-    lines whose breaks live in the stylesheet, MathML, and LaTeXML's
-    tabulars and equation tables. ``mark_body`` is the second reading of
-    a page whose article trafilatura could not find
-    (:func:`_mark_article_body`).
+    line breaks in headings — and markup trafilatura throws away or
+    misreads with content inside it — scroll areas its navigation filter
+    misreads, code framed in figures, code lines whose breaks live in the
+    stylesheet, paragraphs written as spans, headings inside a
+    ``<summary>``, MathML, and LaTeXML's tabulars and equation tables.
+    ``mark_body`` is the second reading of a page whose article
+    trafilatura could not find (:func:`_mark_article_body`).
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -422,7 +438,9 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     except (LxmlError, ValueError):
         return html
     _unmask_scroll_areas(tree)
+    _unframe_code_figures(tree)
     _break_code_lines(tree)
+    _paragraph_declared_spans(tree)
     _tabulate_latexml_spans(tree)
     # Before the rest of the math: an equation row's formulas are one
     # display block, and rendered one element at a time they would come
@@ -430,7 +448,8 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     _flatten_equation_tables(tree)
     _render_math(tree)
     _drop_empty_anchors(tree)
-    for heading in tree.iter("h1", "h2", "h3", "h4", "h5", "h6"):
+    _unwrap_heading_summaries(tree)
+    for heading in tree.iter(*_HEADING_TAGS):
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
             _flatten_heading(heading)
@@ -515,6 +534,40 @@ def _drop_glyph_anchors(heading: "HtmlElement") -> None:
             anchor.drop_tree()
 
 
+def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
+    """Let the heading a ``<summary>`` holds stand alone, its parts a space apart.
+
+    trafilatura reads a ``<summary>`` as a heading itself, so one holding a
+    heading came out with two markers: cognition.com's collapsible
+    sections were stored as ``## ## FormatRepository layout, entries,
+    metadata, and cross-links.`` Without the summary around it the heading
+    is read once, at its own level. Its title and the line under it are
+    separate elements the stylesheet stacks, with nothing between their
+    words, so each element inside the heading opens with the space a
+    reader sees.
+    """
+    for summary in list(tree.iter("summary")):
+        headings = list(summary.iter(*_HEADING_TAGS))
+        if not headings:
+            continue
+        for heading in headings:
+            _space_parts(heading)
+        summary.drop_tag()
+
+
+def _space_parts(heading: "HtmlElement") -> None:
+    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
+
+    for part in heading:
+        if not isinstance(part, HtmlElement):
+            continue
+        before = part.getprevious()
+        if before is None:
+            heading.text = f"{heading.text or ''} "
+        else:
+            before.tail = f"{before.tail or ''} "
+
+
 def _flatten_heading(heading: "HtmlElement") -> None:
     """Put a heading on one line: each ``<br>`` a space, whitespace runs collapsed.
 
@@ -574,6 +627,24 @@ def _unmask_scroll_areas(tree: "HtmlElement") -> None:
             element.set("class", " ".join(kept))
 
 
+def _unframe_code_figures(tree: "HtmlElement") -> None:
+    """Make each ``<figure>`` holding a code block a ``<div>``, and its caption a paragraph.
+
+    trafilatura deletes every figure that holds no real ``<table>``, and
+    sites frame their code in one: cognition.com sets each example in a
+    figure captioned with the file it shows, and Starlight's Expressive
+    Code draws every block as a figure under a window-title caption. Their
+    pages were stored with the prose and none of the code, an Install
+    section left empty. A ``<figcaption>`` in a div is still dropped, so
+    the caption becomes a paragraph: the label line its block sits under.
+    """
+    for figure in list(tree.iter("figure")):
+        if next(figure.iter("pre"), None) is not None:
+            figure.tag = "div"
+            for caption in figure.iter("figcaption"):
+                caption.tag = "p"
+
+
 def _break_code_lines(tree: "HtmlElement") -> None:
     """Put a newline between the lines of a code block typeset one element per line.
 
@@ -585,7 +656,8 @@ def _break_code_lines(tree: "HtmlElement") -> None:
     of a towardsdatascience.com post was stored as a single backticked line,
     its statements run together (``from PyPDF2 import PdfReaderimport
     nltk``). vercel.com's blog draws its lines as ``<div class="line">``
-    the same way.
+    the same way, and Starlight's Expressive Code as ``<div
+    class="ec-line">``.
 
     A line that already ends in a newline keeps what it has: Shiki's string
     output puts one between its spans, and Hugo's Chroma ends each span
@@ -606,11 +678,36 @@ def _code_lines(tree: "HtmlElement") -> "Iterator[HtmlElement]":
     """
     for pre in tree.iter("pre"):
         for code in pre.iterchildren("code"):
-            yield from (line for line in code if _CODE_LINE_CLASS in _classes(line))
+            yield from (line for line in code if _CODE_LINE_CLASSES.intersection(_classes(line)))
 
 
 def _ends_its_line(line: "HtmlElement") -> bool:
     return line.text_content().endswith("\n") or (line.tail or "").startswith("\n")
+
+
+def _paragraph_declared_spans(tree: "HtmlElement") -> None:
+    """Make every span that declares itself a paragraph (``data-as="p"``) one.
+
+    Mintlify writes each paragraph of a docs page as ``<span data-as="p">``,
+    which trafilatura reads as text running loose in the page: a link
+    welded to the word after it, a sentence split at its inline code, and
+    the paragraph after a code block dropped — prefab.prefect.io's FastMCP
+    page lost "When a host like Claude Desktop calls this tool…" that way.
+
+    The rest of such a page's text sits bare in divs — a callout, a step's
+    number, a code block's file name — and trafilatura reads a div's own
+    text only while the page's paragraphs hold little, so once the spans
+    are paragraphs, each div holding nothing but text is made one too.
+    Without that, a docs site's callouts were lost with the fix.
+    """
+    spans = [span for span in tree.iter("span") if span.get("data-as") == "p"]
+    if not spans:
+        return
+    for span in spans:
+        span.tag = "p"
+    for div in list(tree.iter("div")):
+        if div.text_content().strip() and all(_is_phrasing(child) for child in div):
+            div.tag = "p"
 
 
 def _set_code_blocks_apart(tree: "HtmlElement") -> None:
@@ -1050,17 +1147,36 @@ def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
     one holds every word extraction kept plus the tables and code it
     dropped: across 13 docs sites that declare one, it ran 1.05 to 2.9
     times the extraction's length, and 27 times on a page whose HTML
-    extracted thin. One shorter than the extraction is missing something
-    the page has — a stub, an error body served with a 200 — and where the
-    two come close the page lost nothing to extraction, so keeping the
-    extraction costs nothing.
+    extracted thin. One at least as long as the extraction, or holding
+    nearly every word it found, is kept (:func:`_carries`).
 
     A source kept has its notebook records rendered
     (:func:`_render_notebook_records`).
     """
-    if alternate is not None and len(alternate) >= len(extracted or ""):
+    if alternate is not None and _carries(alternate, extracted or ""):
         return _render_notebook_records(alternate)
     return extracted
+
+
+def _carries(alternate: str, extracted: str) -> bool:
+    """Whether the alternate is as long as the extraction, or holds nearly every word it found.
+
+    Length alone let a corrupt extraction win: one that wrote each clause
+    beside an inline code span twice outgrew its own page's source while
+    dropping whole sentences of it. So a shorter alternate is kept where
+    it holds nearly every distinct word extraction found, as a faithful
+    source does, and not where it is missing what the page says — a stub,
+    an error body served with a 200, a source holding part of the page.
+    """
+    if len(alternate) >= len(extracted):
+        return True
+    found = _distinct_words(extracted)
+    return len(found & _distinct_words(alternate)) >= _ALTERNATE_WORD_SHARE * len(found)
+
+
+def _distinct_words(markdown: str) -> set[str]:
+    """The words a markdown body says, lowercased, its URLs and markdown syntax left out."""
+    return set(_SAID_WORD_RE.findall(_URL_RE.sub(" ", markdown).lower()))
 
 
 def _render_notebook_records(markdown: str) -> str:
