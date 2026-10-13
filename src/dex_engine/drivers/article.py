@@ -214,8 +214,12 @@ _FENCED_BLOCK_RE = re.compile(
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
 
 _CODE_LINE_CLASSES = frozenset({"line", "ec-line"})
-_CODE_TAGS = ("pre", "code")
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Where the span repair opens no paragraph.
+_NO_PARAGRAPH_INSIDE = ("p", "pre", "code", *_HEADING_TAGS)
+# The page around a docs article's content.
+_CHROME_TAGS = ("nav", "header", "footer", "aside")
+_SCREEN_READER_ONLY = ".//*[contains(concat(' ', normalize-space(@class), ' '), ' sr-only ')]"
 # The elements inside a heading that a stylesheet sets apart as parts — a
 # title and the subtitle under it — with nothing between their words. The
 # rest of phrasing, emphasis and code and links, runs inside a line of
@@ -572,7 +576,10 @@ def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
     metadata, and cross-links.`` Without the summary around it the heading
     is read once, at its own level. Its title and the line under it are
     separate elements the stylesheet stacks, with nothing between their
-    words, so each such part opens with the space a reader sees.
+    words, so each such part opens with the space a reader sees. A part
+    is one only where it opens with a capital letter, as every subtitle
+    there does: the same elements opening in lower case carry the end of
+    a word or a phrase (``Configur<span class="hl">ation</span>``).
     """
     for summary in list(tree.iter("summary")):
         headings = list(summary.iter(*_HEADING_TAGS))
@@ -585,7 +592,7 @@ def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
 
 def _space_parts(heading: "HtmlElement") -> None:
     for part in heading:
-        if part.tag not in _STACKED_PARTS:
+        if part.tag not in _STACKED_PARTS or not part.text_content()[:1].isupper():
             continue
         before = part.getprevious()
         if before is None:
@@ -667,8 +674,23 @@ def _unframe_code_figures(tree: "HtmlElement") -> None:
     for figure in list(tree.iter("figure")):
         if next(figure.iter("pre"), None) is not None:
             figure.tag = "div"
-            for caption in figure.iter("figcaption"):
-                caption.tag = "p"
+            for caption in list(figure.iter("figcaption")):
+                _label_caption(caption)
+
+
+def _label_caption(caption: "HtmlElement") -> None:
+    """Make a code figure's caption the paragraph its block sits under, if anything is left to say.
+
+    Its screen-reader text goes first: Expressive Code captions a terminal
+    block "Terminal window" for screen readers alone, its visible title
+    empty, and every terminal block was stored under that line.
+    """
+    for hidden in caption.xpath(_SCREEN_READER_ONLY):
+        hidden.drop_tree()
+    if caption.text_content().strip():
+        caption.tag = "p"
+    else:
+        caption.drop_tree()
 
 
 def _break_code_lines(tree: "HtmlElement") -> None:
@@ -719,31 +741,37 @@ def _paragraph_declared_spans(tree: "HtmlElement") -> None:
     welded to the word after it, a sentence split at its inline code, and
     the paragraph after a code block dropped — prefab.prefect.io's FastMCP
     page lost "When a host like Claude Desktop calls this tool…" that way.
-    A span already inside a paragraph stays a span: a paragraph in a
-    paragraph is split apart when the page is parsed again, and the text
-    after it is left loose.
 
     The rest of such a page's text sits bare in divs — a callout, a step's
     number, a code block's file name — and trafilatura reads a div's own
     text only while the page's paragraphs hold little, so once the spans
     are paragraphs, each div holding nothing but text is made one too.
     Without that, a docs site's callouts were lost with the fix. Only the
-    divs among the spans, inside the innermost element holding them all:
-    the navigation, header and footer around a docs page hold dozens.
+    divs among the article's spans, inside the innermost element holding
+    them all: the navigation, header and footer around a docs page hold
+    dozens, and one span of their own would make that element the body.
 
-    Nothing inside a code block changes: a highlighter writes each line of
-    one as a div of text, and made paragraphs its lines lose their fence.
+    No paragraph opens inside a paragraph, a code block or a heading. A
+    paragraph in a paragraph is split apart when the page is parsed again,
+    and the text after it is left loose; a highlighter writes each line of
+    a code block as a div of text, and made paragraphs its lines lose their
+    fence; and a heading made of paragraphs is a heading no longer.
     """
-    paragraphs = []
-    for span in list(tree.iter("span")):
-        if span.get("data-as") == "p" and not _within(span, "p", *_CODE_TAGS):
-            span.tag = "p"
-            paragraphs.append(span)
-    if not paragraphs:
+    article = [span for span in _paragraph_spans(tree) if not _within(span, *_CHROME_TAGS)]
+    if not article:
         return
-    for div in list(_innermost_container(paragraphs).iter("div")):
-        if _holds_text_alone(div) and not _within(div, *_CODE_TAGS):
+    for div in list(_innermost_container(article).iter("div")):
+        if _holds_text_alone(div) and not _within(div, *_NO_PARAGRAPH_INSIDE):
             div.tag = "p"
+
+
+def _paragraph_spans(tree: "HtmlElement") -> list["HtmlElement"]:
+    made = []
+    for span in list(tree.iter("span")):
+        if span.get("data-as") == "p" and not _within(span, *_NO_PARAGRAPH_INSIDE):
+            span.tag = "p"
+            made.append(span)
+    return made
 
 
 def _innermost_container(elements: list["HtmlElement"]) -> "HtmlElement":
@@ -759,7 +787,7 @@ def _within(element: "HtmlElement", *tags: str) -> bool:
 
 
 def _holds_text_alone(element: "HtmlElement") -> bool:
-    return bool(element.text_content().strip()) and all(_is_phrasing(child) for child in element)
+    return all(_is_phrasing(child) for child in element) and bool(element.text_content().strip())
 
 
 def _set_code_blocks_apart(tree: "HtmlElement") -> None:
@@ -790,7 +818,7 @@ def _set_code_blocks_apart(tree: "HtmlElement") -> None:
     for pre in list(tree.iter("pre")):
         for block, container in _code_block_levels(pre):
             _paragraph_loose_text(container)
-            if next(block.iterancestors(*_LIST_ITEM_TAGS), None) is not None:
+            if _within(block, *_LIST_ITEM_TAGS):
                 _break_line_before(block)
 
 
@@ -947,12 +975,8 @@ def _tabulate_latexml_spans(tree: "HtmlElement") -> None:
     "(%, ↑)"), and a table inside a cell has no markdown form.
     """
     for tabular in list(tree.iter("span")):
-        if "ltx_tabular" in _classes(tabular) and not _in_table_cell(tabular):
+        if "ltx_tabular" in _classes(tabular) and not _within(tabular, "td", "th"):
             _as_table(tabular)
-
-
-def _in_table_cell(element: "HtmlElement") -> bool:
-    return any(ancestor.tag in ("td", "th") for ancestor in element.iterancestors())
 
 
 def _as_table(tabular: "HtmlElement") -> None:

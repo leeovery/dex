@@ -1463,11 +1463,16 @@ class TestExtractionFidelity:
         assert "### Retries What the ledger replays" in body
 
     @pytest.mark.parametrize(
-        "tag", ["a", "b", "code", "em", "i", "kbd", "mark", "strong", "sub", "sup"]
+        "tag",
+        [
+            *("a", "b", "code", "em", "i", "kbd", "mark", "strong", "sub", "sup"),
+            *("div", "small", "span"),
+        ],
     )
     def test_markup_inside_a_summary_headings_words_adds_no_space(self, tag):
-        # Emphasis, code and links run inside a line of text, often mid-word.
-        heading = f"<h3>Configur<{tag}>ing</{tag}> the run hook</h3>"
+        # Emphasis, code and links run inside a line of text, often mid-word,
+        # and so does a part opening in lower case: a highlight's span.
+        heading = f'<h3>Configur<{tag} class="hl">ing</{tag}> the run hook</h3>'
         page = f"<html><body><details><summary>{heading}</summary><p>Text.</p></details></body>"
         assert heading in prepare_page(page)
 
@@ -1487,7 +1492,7 @@ class TestExtractionFidelity:
         # site's Install and Quickstart sections were stored empty.
         body = trafilatura_extract(fixture_text("web", "expressive-code-figures.html")) or ""
         assert (
-            "Terminal window\n\n```\npip install graphrag-lexical-graph\n"
+            "## Install\n\n```\npip install graphrag-lexical-graph\n"
             "pip install llama-index-readers-web\n```"
         ) in body
         assert (
@@ -1554,6 +1559,15 @@ class TestExtractionFidelity:
         page = f"<html><body><div>{heading}{beside}</div></body></html>"
         assert beside in prepare_page(page)
 
+    def test_a_code_figures_screen_reader_text_is_no_label(self):
+        # Expressive Code captions a terminal block "Terminal window" for
+        # screen readers alone, and every terminal block was stored under
+        # that line. A caption left with nothing to say goes; a title stays.
+        prepared = prepare_page(fixture_text("web", "expressive-code-figures.html"))
+        assert "Terminal window" not in prepared
+        assert '<p class="header"></p>' not in prepared
+        assert '<p class="header"><span class="title">extract_and_build.py</span></p>' in prepared
+
     def test_a_figure_holding_no_code_is_read_as_before(self):
         # The rail on the figure repair: a picture's caption is chrome
         # trafilatura drops with its figure, as it always has.
@@ -1616,6 +1630,44 @@ class TestExtractionFidelity:
         assert "<p>A callout between the steps.</p>" in prepared
         assert "<nav><div>Get started</div></nav>" in prepared
         assert "<footer><div>Built with a docs host</div></footer>" in prepared
+
+    @pytest.mark.parametrize("chrome", ["nav", "header", "footer", "aside"])
+    def test_a_span_paragraph_in_the_page_chrome_draws_no_divs_in(self, chrome):
+        # Counted with the article's spans, one would make the body the
+        # element they share, and every label div around the page a paragraph.
+        page = (
+            f'<html><body><{chrome}><div>Get started</div><span data-as="p">Search.</span>'
+            f'</{chrome}><div class="content"><span data-as="p">Install it.</span>'
+            "<div>A callout beside it.</div></div></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert f'<{chrome}><div>Get started</div><p data-as="p">Search.</p></{chrome}>' in prepared
+        assert "<p>A callout beside it.</p>" in prepared
+
+    @pytest.mark.parametrize(
+        ("inside", "kept"),
+        [
+            (
+                '<h2><span data-as="p">Install the toolkit</span></h2>',
+                '<h2><span data-as="p">Install the toolkit</span></h2>',
+            ),
+            (
+                "<h2><div>Install the toolkit</div><div>Then build the graph</div></h2>",
+                "<h2><div>Install the toolkit</div><div>Then build the graph</div></h2>",
+            ),
+            (
+                '<span data-as="p">Lead text, then <div>an inner note.</div></span>',
+                "<div>an inner note.</div>",
+            ),
+        ],
+        ids=["span-in-a-heading", "divs-in-a-heading", "div-in-a-span-paragraph"],
+    )
+    def test_no_paragraph_opens_inside_a_heading_or_a_paragraph(self, inside, kept):
+        # Made of paragraphs, a heading lost its marker; a paragraph inside
+        # a paragraph is split apart when the page is parsed again, and the
+        # paragraph after it was merged in.
+        page = f'<html><body><span data-as="p">A paragraph.</span>{inside}</body></html>'
+        assert kept in prepare_page(page)
 
     @pytest.mark.parametrize(
         "block",
@@ -1782,6 +1834,17 @@ class TestExtractionFidelity:
         body = trafilatura_extract(page) or ""
         assert GLUED_FENCE.search(body) is None
         assert "Then link it." in body
+
+    def test_a_code_block_outside_a_list_gets_no_line_break(self):
+        # Only a list item writes its paragraphs on one line: in a quote the
+        # break was a blank line of its own above the fence.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <blockquote><p>Quoted before the block:</p>{CODE_BLOCK}</blockquote>\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Quoted before the block:\n\n```\nline_one = 1" in body
 
     def test_a_code_block_first_in_its_item_stays_beside_the_marker(self):
         # Nothing precedes it, so there is no line to break: "- ```" is
