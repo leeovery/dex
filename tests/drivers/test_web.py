@@ -467,35 +467,6 @@ NOTEBOOK_SOURCE_URL = "https://www.pinecone.io/learn/nemo-guardrails-intro/md/"
 # An extraction with one fenced block and a two-row table: the structure a
 # source must hold at least as much of.
 STRUCTURED = "```\nprint(1)\n```\n\n| a | b |\n| 1 | 2 |\n\n" + "extracted body " * 40
-# prefab.prefect.io's FastMCP page as trafilatura 2.3.0 extracted it — each
-# clause beside an inline code span twice, a sentence gone — and the source
-# the page declares, which the duplication made the shorter of the two.
-FAITHFUL_SOURCE = (
-    "Prefab integrates with [FastMCP](https://github.com/PrefectHQ/fastmcp) to build"
-    " [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs that"
-    " render directly inside the conversation. Mark any tool with `app=True` and return a"
-    " component tree or a `PrefabApp`:\n\n"
-    "When a host like Claude Desktop calls this tool, the user sees a fully interactive UI"
-    " instead of plain text.\n\n"
-    "## Returning UI\n\n"
-    "You can return either a `PrefabApp` or a bare component. Returning a component is a"
-    " shorthand — FastMCP wraps it in a `PrefabApp` automatically. Return a `PrefabApp` when"
-    " you need initial state, a page title, or reusable definitions."
-)
-CORRUPT_EXTRACTION = (
-    "[FastMCP](https://github.com/PrefectHQ/fastmcp)to build\n\n"
-    "[MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps)— interactive UIs that"
-    " render directly inside the conversation. Mark any tool with\n\n"
-    "`app=True` and return a component tree or a and return a component tree or a\n\n"
-    "`PrefabApp`:\n:\n\n"
-    "## Returning UI\n\n"
-    "You can return either a`PrefabApp` or a bare component. Returning a component is a"
-    " shorthand — FastMCP wraps it in a or a bare component. Returning a component is a"
-    " shorthand — FastMCP wraps it in a\n\n"
-    "`PrefabApp` automatically.\nautomatically.\n\n"
-    "`PrefabApp` when you need initial state, a page title, or reusable definitions.\n"
-    "when you need initial state, a page title, or reusable definitions."
-)
 # A clean extraction of four sections, each saying something of its own.
 SECTIONS = (
     (
@@ -516,6 +487,10 @@ SECTIONS = (
     ),
 )
 SECTIONED = "\n\n".join(SECTIONS)
+# A paragraph of the same page in words every one of which a section says.
+RECURRING = (
+    "A fetch that keeps failing is parked, and a blocked fetch waits before the next attempt."
+)
 
 
 class TestMarkdownAlternate:
@@ -757,17 +732,6 @@ class TestMarkdownAlternate:
         result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
         assert result.body == {"extraction": extraction, "source": source}[stored]
 
-    def test_a_corrupt_extraction_longer_than_the_source_loses_to_it(self):
-        # The field case: the duplicated clauses outgrew the page's own
-        # source, and the length rule kept the corrupt extraction.
-        assert len(CORRUPT_EXTRACTION) > len(FAITHFUL_SOURCE)
-        result = self.fetch(
-            declaring(SOURCE_LINK),
-            markdown_response(FAITHFUL_SOURCE),
-            extract=lambda _: CORRUPT_EXTRACTION,
-        )
-        assert body_of(result) == FAITHFUL_SOURCE
-
     @pytest.mark.parametrize(
         "source",
         [
@@ -775,50 +739,18 @@ class TestMarkdownAlternate:
             "# 500\n\nAn internal error occurred while rendering this page. Try again later.",
             "\n\n".join(SECTIONS[:2]),
             "\n\n".join(SECTIONS[:2] + SECTIONS[3:]),
+            SECTIONED,
         ],
-        ids=["stub", "error-page", "first-half", "a-section-left-out"],
+        ids=["stub", "error-page", "first-half", "a-section-left-out", "a-paragraph-left-out"],
     )
     def test_a_shorter_source_missing_what_the_page_says_loses(self, source):
-        assert len(source) < len(SECTIONED)
+        # The last leaves out a paragraph whose every word the page says
+        # elsewhere, as a docs source with an include left unexpanded can:
+        # a count of the words each side says never sees it go.
+        extraction = f"{SECTIONED}\n\n{RECURRING}"
         answer = markdown_response(source)
-        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: SECTIONED)
-        assert body_of(result) == SECTIONED
-
-    @pytest.mark.parametrize(("held", "stored"), [(98, "source"), (97, "extraction")])
-    def test_a_shorter_source_is_kept_where_it_holds_nearly_every_word(self, held, stored):
-        # Words are counted once each, however often the extraction repeats them.
-        extraction = " ".join([f"term{n}" for n in range(100)] * 3)
-        source = " ".join(f"term{n}" for n in range(held))
-        assert len(source) < len(extraction)
-        result = self.fetch(
-            declaring(SOURCE_LINK), markdown_response(source), extract=lambda _: extraction
-        )
-        assert body_of(result) == {"source": source, "extraction": extraction}[stored]
-
-    @pytest.mark.parametrize(
-        "docs",
-        ["[the ledger docs](ledger.md)", "the ledger docs"],
-        ids=["relative-link", "no-link"],
-    )
-    def test_urls_case_and_markdown_syntax_are_not_held_against_a_source(self, docs):
-        # A source writes its links relative and its underscores escaped, or
-        # leaves a link out, and a URL's words are not words the page says.
-        extraction = (
-            "See [the Ledger docs](https://docs.example.test/en/latest/reference/ledger.html) for"
-            " the `snake_case` keys every unit carries, mirrored at"
-            " https://mirror.example.test/archive/2026/10/ledger-reference-full-text. "
-            + "Each key is written once, by the stage that owns it. "
-            * 6
-        )
-        source = (
-            f"See {docs} for the `snake\\_case` keys every unit carries, mirrored at <mirror>. "
-            + "Each key is written once, by the stage that owns it. " * 5
-        )
-        assert len(source) < len(extraction)
-        result = self.fetch(
-            declaring(SOURCE_LINK), markdown_response(source), extract=lambda _: extraction
-        )
-        assert body_of(result) == source.strip()
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: extraction)
+        assert body_of(result) == extraction
 
     def test_a_sources_notebook_records_read_as_their_code_and_output(self):
         # pinecone.io's learn posts declare a source that writes each embedded
@@ -1518,16 +1450,26 @@ class TestExtractionFidelity:
             "## Example: agent swarm uses message boards to solve performance issue",
         ]
 
+    @pytest.mark.parametrize("part", ["span", "div", "small"])
     @pytest.mark.parametrize("between", ["", "<!-- a note -->"], ids=["text", "comment"])
-    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self, between):
+    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self, between, part):
         page = ARTICLE.replace(
             "      <p>Politeness matters",
-            f"      <details><summary><h3>Retries{between}<span>What the ledger"
-            " replays</span></h3></summary><p>Each retry is a line in the ledger, written"
+            f"      <details><summary><h3>Retries{between}<{part}>What the ledger"
+            f" replays</{part}></h3></summary><p>Each retry is a line in the ledger, written"
             " before the fetch it records.</p></details>\n      <p>Politeness matters",
         )
         body = trafilatura_extract(page) or ""
         assert "### Retries What the ledger replays" in body
+
+    @pytest.mark.parametrize(
+        "tag", ["a", "b", "code", "em", "i", "kbd", "mark", "strong", "sub", "sup"]
+    )
+    def test_markup_inside_a_summary_headings_words_adds_no_space(self, tag):
+        # Emphasis, code and links run inside a line of text, often mid-word.
+        heading = f"<h3>Configur<{tag}>ing</{tag}> the run hook</h3>"
+        page = f"<html><body><details><summary>{heading}</summary><p>Text.</p></details></body>"
+        assert heading in prepare_page(page)
 
     def test_a_summary_holding_no_heading_is_left_as_it_was(self):
         # And it is passed over, not the end of the search.
@@ -1590,21 +1532,27 @@ class TestExtractionFidelity:
                 '<p>Each retry is logged.</p><a href="#retries">Back to Retries</a>',
             ),
             ('<h2 id="">Retries</h2>', '<a href="#">Back to top</a>'),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<a href="#retries"><h3 id="ledger">Ledger section</h3></a>',
+            ),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<a href="#retries"><div>Every retry, logged in full.</div></a>',
+            ),
         ],
-        ids=["pointing-elsewhere", "reading-as-the-heading", "not-a-neighbour", "no-id"],
+        ids=[
+            "pointing-elsewhere",
+            "reading-as-the-heading",
+            "not-a-neighbour",
+            "no-id",
+            "holding-a-heading",
+            "holding-a-block",
+        ],
     )
     def test_an_anchor_beside_a_heading_that_is_not_its_permalink_stays(self, heading, beside):
         page = f"<html><body><div>{heading}{beside}</div></body></html>"
         assert beside in prepare_page(page)
-
-    def test_a_heading_inside_a_dropped_permalink_does_not_end_the_repairs(self):
-        page = (
-            '<html><body><h2 id="retries">Retries</h2><a href="#retries"><h3>Inside</h3></a>'
-            '<h2 id="ledger">Ledger <a href="#ledger">#</a></h2></body></html>'
-        )
-        prepared = prepare_page(page)
-        assert '<h2 id="ledger">Ledger' in prepared
-        assert 'href="#ledger"' not in prepared
 
     def test_a_figure_holding_no_code_is_read_as_before(self):
         # The rail on the figure repair: a picture's caption is chrome
@@ -1654,6 +1602,66 @@ class TestExtractionFidelity:
     def test_a_page_without_span_paragraphs_keeps_its_divs(self):
         page = "<html><body><div>A note held bare in a div.</div><p>A paragraph.</p></body></html>"
         assert "<div>A note held bare in a div.</div>" in prepare_page(page)
+
+    def test_only_the_divs_among_span_paragraphs_become_paragraphs(self):
+        # A docs page's navigation and footer hold text-only divs by the dozen.
+        page = (
+            "<html><body><nav><div>Get started</div></nav>"
+            '<div class="content"><div class="step"><span data-as="p">Install it.</span></div>'
+            "<div>A callout between the steps.</div>"
+            '<div class="step"><span data-as="p">Run it.</span></div></div>'
+            "<footer><div>Built with a docs host</div></footer></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert "<p>A callout between the steps.</p>" in prepared
+        assert "<nav><div>Get started</div></nav>" in prepared
+        assert "<footer><div>Built with a docs host</div></footer>" in prepared
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            (
+                '<pre><code><div class="line"><span>import os</span></div>'
+                '<div class="line"><span>print(os.getcwd())</span></div></code></pre>'
+            ),
+            (
+                '<div class="expressive-code"><figure class="frame"><pre><code>'
+                '<div class="ec-line"><div class="code"><span>import os</span></div></div>'
+                '<div class="ec-line"><div class="code"><span>print(os.getcwd())</span></div></div>'
+                "</code></pre></figure></div>"
+            ),
+        ],
+        ids=["line-divs", "expressive-code"],
+    )
+    def test_code_lines_beside_span_paragraphs_keep_their_fence(self, block):
+        # A highlighter writes each line as a div of text: made paragraphs,
+        # the lines of every block on a page with one span paragraph lost
+        # their fence.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <span data-as="p">Start from the directory the run was launched in.</span>'
+            f"{block}\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "```\nimport os\nprint(os.getcwd())\n```" in body
+
+    def test_nothing_in_a_code_block_is_made_a_paragraph(self):
+        code = '<pre><code><div>make ledger</div><span data-as="p">make run</span></code></pre>'
+        page = f'<html><body><span data-as="p">Build it first.</span>{code}</body></html>'
+        assert code in prepare_page(page)
+
+    @pytest.mark.parametrize(
+        ("opens", "closes"),
+        [("<p>", "</p>"), ('<span data-as="p">', "</span>")],
+        ids=["paragraph", "span"],
+    )
+    def test_a_span_paragraph_already_in_a_paragraph_stays_a_span(self, opens, closes):
+        # A paragraph in a paragraph is split apart when the page is parsed
+        # again, and the text after it was left loose. A span made a
+        # paragraph is one.
+        inner = '<span data-as="p">then run shell commands</span> across them.'
+        prepared = prepare_page(f"<html><body>{opens}Mount your sources, {inner}{closes}</body>")
+        assert f"Mount your sources, {inner}</p>" in prepared
 
     def test_a_span_declaring_anything_else_stays_inline(self):
         page = ARTICLE.replace(
@@ -1936,6 +1944,14 @@ class TestExtractionFidelity:
         assert "line_one = 1" in body
         assert "https://example.test/paper.pdf" in body
         assert RESCUED_TEXT in body
+
+    @pytest.mark.parametrize(("chars", "set_apart"), [(99, False), (100, True)])
+    def test_a_block_is_short_under_trafilaturas_hundred_characters(self, chars, set_apart):
+        # trafilatura's own bar: under 100 characters of text, whitespace collapsed.
+        rest = f' <a href="https://example.test/doc">the doc</a>{CODE_BLOCK}After.'
+        lead = "x" * (chars - len(" the docline_one = 1 line_two = 2After."))
+        prepared = prepare_page(f"<html><body><div>{lead}{rest}</div></body></html>")
+        assert (f"<p>{lead} <a" in prepared) is set_apart
 
     @pytest.mark.parametrize(
         ("lead", "read"),

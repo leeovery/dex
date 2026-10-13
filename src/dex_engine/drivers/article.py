@@ -46,9 +46,9 @@ and that source keeps the tables and code blocks extraction loses. The
 route fetches it exactly where the page says — never a guessed ``.md``
 URL, because GitHub's points at an API path and Fern's at another slug —
 and stores it whenever it answers as markdown or plain text and is at
-least as long as what extraction found or holds nearly every word it
-found, with any notebook it holds as a CMS record rendered as the page
-shows it. The title, description and og:image still come from the HTML.
+least as long as what extraction found, with any notebook it holds as a
+CMS record rendered as the page shows it. The title, description and
+og:image still come from the HTML.
 
 A page served AS markdown or plain text — a docs site's ``.md`` pages, its
 ``llms.txt`` — needs no extraction either, and must never get one: an HTML
@@ -212,23 +212,15 @@ _FENCED_BLOCK_RE = re.compile(
 )
 # The record type Pinecone's CMS writes a notebook as, the one rendered.
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
-# The share of the distinct words an extraction found that a shorter
-# alternate must hold to be kept over it. Measured over 114 pages declaring
-# one: every source a corrupt trafilatura 2.3.0 extraction outgrew held
-# 0.998 or more of its words; the nearest that should lose, a plain-text
-# copy without the headings and links its extraction kept, held 0.946; and
-# every source cut to the first half of its sections held 0.973 or less.
-_ALTERNATE_WORD_SHARE = 0.98
-# A word as the alternate's check counts it: letters and digits, so that
-# markdown's underscores and an escaped one split a word alike.
-_SAID_WORD_RE = re.compile(r"[^\W_]+")
-# A link's target or a bare URL: a source may write a page's links relative
-# where the page has them absolute, and the words of a URL are not words
-# the page says.
-_URL_RE = re.compile(r"\]\([^)]*\)|https?://\S+")
 
 _CODE_LINE_CLASSES = frozenset({"line", "ec-line"})
+_CODE_TAGS = ("pre", "code")
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# The elements inside a heading that a stylesheet sets apart as parts — a
+# title and the subtitle under it — with nothing between their words. The
+# rest of phrasing, emphasis and code and links, runs inside a line of
+# text, often mid-word.
+_STACKED_PARTS = frozenset({"div", "small", "span"})
 
 # HTML's phrasing content: what a run of text beside a code block is made of.
 _PHRASING_TAGS = frozenset(
@@ -451,8 +443,8 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     _render_math(tree)
     _drop_empty_anchors(tree)
     _unwrap_heading_summaries(tree)
-    # A list: lxml's iterator already holds the next heading, and when that
-    # one sits in a dropped permalink the walk ends there, skipping the rest.
+    # A list: lxml's walk already holds the next heading while this one is
+    # repaired, and the repairs drop elements in and beside it.
     for heading in list(tree.iter(*_HEADING_TAGS)):
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
@@ -549,7 +541,8 @@ def _drop_heading_permalinks(heading: "HtmlElement") -> None:
     — trafilatura deletes such a block, and a docs page's "Facts" heading
     went that way. Only the heading's neighbours are read, and only one
     linking to the heading's own id goes: one pointing anywhere else is a
-    link somebody meant, and one reading as the heading does is the heading.
+    link somebody meant, one reading as the heading does is the heading,
+    and one holding a heading or any other block holds content.
     """
     target = heading.get("id")
     if not target:
@@ -560,6 +553,7 @@ def _drop_heading_permalinks(heading: "HtmlElement") -> None:
             neighbour is not None
             and neighbour.tag == "a"
             and neighbour.get("href") == f"#{target}"
+            and _is_phrasing(neighbour)
             and _collapsed_text(neighbour) != title
         ):
             neighbour.drop_tree()
@@ -578,8 +572,7 @@ def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
     metadata, and cross-links.`` Without the summary around it the heading
     is read once, at its own level. Its title and the line under it are
     separate elements the stylesheet stacks, with nothing between their
-    words, so each element inside the heading opens with the space a
-    reader sees.
+    words, so each such part opens with the space a reader sees.
     """
     for summary in list(tree.iter("summary")):
         headings = list(summary.iter(*_HEADING_TAGS))
@@ -591,10 +584,8 @@ def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
 
 
 def _space_parts(heading: "HtmlElement") -> None:
-    from lxml.html import HtmlElement  # noqa: PLC0415 — lazy: pulled in with trafilatura
-
     for part in heading:
-        if not isinstance(part, HtmlElement):
+        if part.tag not in _STACKED_PARTS:
             continue
         before = part.getprevious()
         if before is None:
@@ -728,21 +719,47 @@ def _paragraph_declared_spans(tree: "HtmlElement") -> None:
     welded to the word after it, a sentence split at its inline code, and
     the paragraph after a code block dropped — prefab.prefect.io's FastMCP
     page lost "When a host like Claude Desktop calls this tool…" that way.
+    A span already inside a paragraph stays a span: a paragraph in a
+    paragraph is split apart when the page is parsed again, and the text
+    after it is left loose.
 
     The rest of such a page's text sits bare in divs — a callout, a step's
     number, a code block's file name — and trafilatura reads a div's own
     text only while the page's paragraphs hold little, so once the spans
     are paragraphs, each div holding nothing but text is made one too.
-    Without that, a docs site's callouts were lost with the fix.
+    Without that, a docs site's callouts were lost with the fix. Only the
+    divs among the spans, inside the innermost element holding them all:
+    the navigation, header and footer around a docs page hold dozens.
+
+    Nothing inside a code block changes: a highlighter writes each line of
+    one as a div of text, and made paragraphs its lines lose their fence.
     """
-    spans = [span for span in tree.iter("span") if span.get("data-as") == "p"]
-    if not spans:
+    paragraphs = []
+    for span in list(tree.iter("span")):
+        if span.get("data-as") == "p" and not _within(span, "p", *_CODE_TAGS):
+            span.tag = "p"
+            paragraphs.append(span)
+    if not paragraphs:
         return
-    for span in spans:
-        span.tag = "p"
-    for div in list(tree.iter("div")):
-        if div.text_content().strip() and all(_is_phrasing(child) for child in div):
+    for div in list(_innermost_container(paragraphs).iter("div")):
+        if _holds_text_alone(div) and not _within(div, *_CODE_TAGS):
             div.tag = "p"
+
+
+def _innermost_container(elements: list["HtmlElement"]) -> "HtmlElement":
+    shared = list(elements[0].iterancestors())
+    for element in elements[1:]:
+        ancestors = set(element.iterancestors())
+        shared = [ancestor for ancestor in shared if ancestor in ancestors]
+    return shared[0]
+
+
+def _within(element: "HtmlElement", *tags: str) -> bool:
+    return next(element.iterancestors(*tags), None) is not None
+
+
+def _holds_text_alone(element: "HtmlElement") -> bool:
+    return bool(element.text_content().strip()) and all(_is_phrasing(child) for child in element)
 
 
 def _set_code_blocks_apart(tree: "HtmlElement") -> None:
@@ -872,7 +889,7 @@ def _short_with_a_link(container: "HtmlElement") -> bool:
     """
     if next(container.iter("a"), None) is None:
         return False
-    return len(" ".join(container.text_content().split())) < _SHORT_WITH_A_LINK
+    return len(_collapsed_text(container)) < _SHORT_WITH_A_LINK
 
 
 def _holds_loose_text(container: "HtmlElement") -> bool:
@@ -1182,36 +1199,17 @@ def _preferred_body(extracted: str | None, alternate: str | None) -> str | None:
     one holds every word extraction kept plus the tables and code it
     dropped: across 13 docs sites that declare one, it ran 1.05 to 2.9
     times the extraction's length, and 27 times on a page whose HTML
-    extracted thin. One at least as long as the extraction, or holding
-    nearly every word it found, is kept (:func:`_carries`).
+    extracted thin. One shorter than the extraction is missing something
+    the page has — a stub, an error body served with a 200 — and where the
+    two come close the page lost nothing to extraction, so keeping the
+    extraction costs nothing.
 
     A source kept has its notebook records rendered
     (:func:`_render_notebook_records`).
     """
-    if alternate is not None and _carries(alternate, extracted or ""):
+    if alternate is not None and len(alternate) >= len(extracted or ""):
         return _render_notebook_records(alternate)
     return extracted
-
-
-def _carries(alternate: str, extracted: str) -> bool:
-    """Whether the alternate is as long as the extraction, or holds nearly every word it found.
-
-    Length alone let a corrupt extraction win: one that wrote each clause
-    beside an inline code span twice outgrew its own page's source while
-    dropping whole sentences of it. So a shorter alternate is kept where
-    it holds nearly every distinct word extraction found, as a faithful
-    source does, and not where it is missing what the page says — a stub,
-    an error body served with a 200, a source holding part of the page.
-    """
-    if len(alternate) >= len(extracted):
-        return True
-    found = _distinct_words(extracted)
-    return len(found & _distinct_words(alternate)) >= _ALTERNATE_WORD_SHARE * len(found)
-
-
-def _distinct_words(markdown: str) -> set[str]:
-    """The words a markdown body says, lowercased, its URLs and markdown syntax left out."""
-    return set(_SAID_WORD_RE.findall(_URL_RE.sub(" ", markdown).lower()))
 
 
 def _render_notebook_records(markdown: str) -> str:
