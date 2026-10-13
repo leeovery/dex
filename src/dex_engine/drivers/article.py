@@ -26,11 +26,12 @@ sits in, or leaking its glyph into the heading line. Extraction therefore
 runs twice over the prepared page, once without comments and once with,
 because the two settings answer different questions: an article's comment
 section is chrome, and a discussion page's comments are the entire
-artifact. The same preparation repairs markup trafilatura throws away
-with content inside it: scroll-area wrappers its navigation filter
-misreads, code blocks whose line breaks live in the stylesheet, MathML,
-and the LaTeXML shapes of an arXiv rendering. The arXiv full text in the
-paper driver runs through it too.
+artifact. The same preparation repairs markup trafilatura throws away or
+misreads with content inside it: scroll-area wrappers its navigation
+filter misreads, code blocks framed in figures or whose line breaks live
+in the stylesheet, paragraphs written as spans, headings inside a
+``<summary>``, MathML, and the LaTeXML shapes of an arXiv rendering. The
+arXiv full text in the paper driver runs through it too.
 
 A page whose article trafilatura cannot find — nothing its body search
 names, or a newsletter box it names first — falls to its recovery of
@@ -212,7 +213,18 @@ _FENCED_BLOCK_RE = re.compile(
 # The record type Pinecone's CMS writes a notebook as, the one rendered.
 _NOTEBOOK_RECORD_TYPE = "colabBlock"
 
-_CODE_LINE_CLASS = "line"
+_CODE_LINE_CLASSES = frozenset({"line", "ec-line"})
+_HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Where the span repair opens no paragraph.
+_NO_PARAGRAPH_INSIDE = ("p", "pre", "code", *_HEADING_TAGS)
+# The page around a docs article's content.
+_CHROME_TAGS = ("nav", "header", "footer", "aside")
+_SCREEN_READER_ONLY = ".//*[contains(concat(' ', normalize-space(@class), ' '), ' sr-only ')]"
+# The elements inside a heading that a stylesheet sets apart as parts — a
+# title and the subtitle under it — with nothing between their words. The
+# rest of phrasing, emphasis and code and links, runs inside a line of
+# text, often mid-word.
+_STACKED_PARTS = frozenset({"div", "small", "span"})
 
 # HTML's phrasing content: what a run of text beside a code block is made of.
 _PHRASING_TAGS = frozenset(
@@ -403,13 +415,15 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
 
     Every repair runs over one parse, and each function below carries the
     field case that earned it. They come in two families: what
-    ``include_links`` costs — empty anchors, and permalink glyphs and
-    line breaks in headings — and markup trafilatura throws away with
-    content inside it — scroll areas its navigation filter misreads, code
-    lines whose breaks live in the stylesheet, MathML, and LaTeXML's
-    tabulars and equation tables. ``mark_body`` is the second reading of
-    a page whose article trafilatura could not find
-    (:func:`_mark_article_body`).
+    ``include_links`` costs — empty anchors, permalink glyphs and line
+    breaks in headings, and permalinks beside them — and markup
+    trafilatura throws away or misreads with content inside it — scroll
+    areas its navigation filter misreads, code framed in figures, code
+    lines whose breaks live in the stylesheet, paragraphs written as
+    spans, headings inside a ``<summary>``, MathML, and LaTeXML's
+    tabulars and equation tables.
+    ``mark_body`` is the second reading of a page whose article
+    trafilatura could not find (:func:`_mark_article_body`).
 
     A page lxml cannot parse goes through untouched: preparation is a
     repair, never a gate.
@@ -422,7 +436,9 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     except (LxmlError, ValueError):
         return html
     _unmask_scroll_areas(tree)
+    _unframe_code_figures(tree)
     _break_code_lines(tree)
+    _paragraph_declared_spans(tree)
     _tabulate_latexml_spans(tree)
     # Before the rest of the math: an equation row's formulas are one
     # display block, and rendered one element at a time they would come
@@ -430,9 +446,13 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     _flatten_equation_tables(tree)
     _render_math(tree)
     _drop_empty_anchors(tree)
-    for heading in tree.iter("h1", "h2", "h3", "h4", "h5", "h6"):
+    _unwrap_heading_summaries(tree)
+    # A list: lxml's walk already holds the next heading while this one is
+    # repaired, and the repairs drop elements in and beside it.
+    for heading in list(tree.iter(*_HEADING_TAGS)):
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
+            _drop_heading_permalinks(heading)
             _flatten_heading(heading)
     # Last: it sorts a container's children into text and blocks, so it must
     # read the markup every repair above leaves, the math already text.
@@ -515,6 +535,72 @@ def _drop_glyph_anchors(heading: "HtmlElement") -> None:
             anchor.drop_tree()
 
 
+def _drop_heading_permalinks(heading: "HtmlElement") -> None:
+    """Drop the anchor either side of a heading that links to the heading itself.
+
+    Starlight sets each heading in a wrapper beside its permalink: an icon
+    and the screen-reader text "Section titled “Facts”". Every heading was
+    stored with a ``[Section titled “Facts”](#facts)`` line under it, and a
+    short one was lost with its wrapper, whose words were then mostly link
+    — trafilatura deletes such a block, and a docs page's "Facts" heading
+    went that way. Only the heading's neighbours are read, and only one
+    linking to the heading's own id goes: one pointing anywhere else is a
+    link somebody meant, one reading as the heading does is the heading,
+    and one holding a heading or any other block holds content.
+    """
+    target = heading.get("id")
+    if not target:
+        return
+    title = _collapsed_text(heading)
+    for neighbour in (heading.getprevious(), heading.getnext()):
+        if (
+            neighbour is not None
+            and neighbour.tag == "a"
+            and neighbour.get("href") == f"#{target}"
+            and _is_phrasing(neighbour)
+            and _collapsed_text(neighbour) != title
+        ):
+            neighbour.drop_tree()
+
+
+def _collapsed_text(element: "HtmlElement") -> str:
+    return " ".join(element.text_content().split())
+
+
+def _unwrap_heading_summaries(tree: "HtmlElement") -> None:
+    """Let the heading a ``<summary>`` holds stand alone, its parts a space apart.
+
+    trafilatura reads a ``<summary>`` as a heading itself, so one holding a
+    heading came out with two markers: cognition.com's collapsible
+    sections were stored as ``## ## FormatRepository layout, entries,
+    metadata, and cross-links.`` Without the summary around it the heading
+    is read once, at its own level. Its title and the line under it are
+    separate elements the stylesheet stacks, with nothing between their
+    words, so each such part opens with the space a reader sees. A part
+    is one only where it opens with a capital letter, as every subtitle
+    there does: the same elements opening in lower case carry the end of
+    a word or a phrase (``Configur<span class="hl">ation</span>``).
+    """
+    for summary in list(tree.iter("summary")):
+        headings = list(summary.iter(*_HEADING_TAGS))
+        if not headings:
+            continue
+        for heading in headings:
+            _space_parts(heading)
+        summary.drop_tag()
+
+
+def _space_parts(heading: "HtmlElement") -> None:
+    for part in heading:
+        if part.tag not in _STACKED_PARTS or not part.text_content()[:1].isupper():
+            continue
+        before = part.getprevious()
+        if before is None:
+            heading.text = f"{heading.text or ''} "
+        else:
+            before.tail = f"{before.tail or ''} "
+
+
 def _flatten_heading(heading: "HtmlElement") -> None:
     """Put a heading on one line: each ``<br>`` a space, whitespace runs collapsed.
 
@@ -574,6 +660,39 @@ def _unmask_scroll_areas(tree: "HtmlElement") -> None:
             element.set("class", " ".join(kept))
 
 
+def _unframe_code_figures(tree: "HtmlElement") -> None:
+    """Make each ``<figure>`` holding a code block a ``<div>``, and its caption a paragraph.
+
+    trafilatura deletes every figure that holds no real ``<table>``, and
+    sites frame their code in one: cognition.com sets each example in a
+    figure captioned with the file it shows, and Starlight's Expressive
+    Code draws every block as a figure under a window-title caption. Their
+    pages were stored with the prose and none of the code, an Install
+    section left empty. A ``<figcaption>`` in a div is still dropped, so
+    the caption becomes a paragraph: the label line its block sits under.
+    """
+    for figure in list(tree.iter("figure")):
+        if next(figure.iter("pre"), None) is not None:
+            figure.tag = "div"
+            for caption in list(figure.iter("figcaption")):
+                _label_caption(caption)
+
+
+def _label_caption(caption: "HtmlElement") -> None:
+    """Make a code figure's caption the paragraph its block sits under, if anything is left to say.
+
+    Its screen-reader text goes first: Expressive Code captions a terminal
+    block "Terminal window" for screen readers alone, its visible title
+    empty, and every terminal block was stored under that line.
+    """
+    for hidden in caption.xpath(_SCREEN_READER_ONLY):
+        hidden.drop_tree()
+    if caption.text_content().strip():
+        caption.tag = "p"
+    else:
+        caption.drop_tree()
+
+
 def _break_code_lines(tree: "HtmlElement") -> None:
     """Put a newline between the lines of a code block typeset one element per line.
 
@@ -585,7 +704,8 @@ def _break_code_lines(tree: "HtmlElement") -> None:
     of a towardsdatascience.com post was stored as a single backticked line,
     its statements run together (``from PyPDF2 import PdfReaderimport
     nltk``). vercel.com's blog draws its lines as ``<div class="line">``
-    the same way.
+    the same way, and Starlight's Expressive Code as ``<div
+    class="ec-line">``.
 
     A line that already ends in a newline keeps what it has: Shiki's string
     output puts one between its spans, and Hugo's Chroma ends each span
@@ -606,11 +726,68 @@ def _code_lines(tree: "HtmlElement") -> "Iterator[HtmlElement]":
     """
     for pre in tree.iter("pre"):
         for code in pre.iterchildren("code"):
-            yield from (line for line in code if _CODE_LINE_CLASS in _classes(line))
+            yield from (line for line in code if _CODE_LINE_CLASSES.intersection(_classes(line)))
 
 
 def _ends_its_line(line: "HtmlElement") -> bool:
     return line.text_content().endswith("\n") or (line.tail or "").startswith("\n")
+
+
+def _paragraph_declared_spans(tree: "HtmlElement") -> None:
+    """Make every span that declares itself a paragraph (``data-as="p"``) one.
+
+    Mintlify writes each paragraph of a docs page as ``<span data-as="p">``,
+    which trafilatura reads as text running loose in the page: a link
+    welded to the word after it, a sentence split at its inline code, and
+    the paragraph after a code block dropped — prefab.prefect.io's FastMCP
+    page lost "When a host like Claude Desktop calls this tool…" that way.
+
+    The rest of such a page's text sits bare in divs — a callout, a step's
+    number, a code block's file name — and trafilatura reads a div's own
+    text only while the page's paragraphs hold little, so once the spans
+    are paragraphs, each div holding nothing but text is made one too.
+    Without that, a docs site's callouts were lost with the fix. Only the
+    divs among the article's spans, inside the innermost element holding
+    them all: the navigation, header and footer around a docs page hold
+    dozens, and one span of their own would make that element the body.
+
+    No paragraph opens inside a paragraph, a code block or a heading. A
+    paragraph in a paragraph is split apart when the page is parsed again,
+    and the text after it is left loose; a highlighter writes each line of
+    a code block as a div of text, and made paragraphs its lines lose their
+    fence; and a heading made of paragraphs is a heading no longer.
+    """
+    article = [span for span in _paragraph_spans(tree) if not _within(span, *_CHROME_TAGS)]
+    if not article:
+        return
+    for div in list(_innermost_container(article).iter("div")):
+        if _holds_text_alone(div) and not _within(div, *_NO_PARAGRAPH_INSIDE):
+            div.tag = "p"
+
+
+def _paragraph_spans(tree: "HtmlElement") -> list["HtmlElement"]:
+    made = []
+    for span in list(tree.iter("span")):
+        if span.get("data-as") == "p" and not _within(span, *_NO_PARAGRAPH_INSIDE):
+            span.tag = "p"
+            made.append(span)
+    return made
+
+
+def _innermost_container(elements: list["HtmlElement"]) -> "HtmlElement":
+    shared = list(elements[0].iterancestors())
+    for element in elements[1:]:
+        ancestors = set(element.iterancestors())
+        shared = [ancestor for ancestor in shared if ancestor in ancestors]
+    return shared[0]
+
+
+def _within(element: "HtmlElement", *tags: str) -> bool:
+    return next(element.iterancestors(*tags), None) is not None
+
+
+def _holds_text_alone(element: "HtmlElement") -> bool:
+    return all(_is_phrasing(child) for child in element) and bool(element.text_content().strip())
 
 
 def _set_code_blocks_apart(tree: "HtmlElement") -> None:
@@ -641,7 +818,7 @@ def _set_code_blocks_apart(tree: "HtmlElement") -> None:
     for pre in list(tree.iter("pre")):
         for block, container in _code_block_levels(pre):
             _paragraph_loose_text(container)
-            if next(block.iterancestors(*_LIST_ITEM_TAGS), None) is not None:
+            if _within(block, *_LIST_ITEM_TAGS):
                 _break_line_before(block)
 
 
@@ -740,7 +917,7 @@ def _short_with_a_link(container: "HtmlElement") -> bool:
     """
     if next(container.iter("a"), None) is None:
         return False
-    return len(" ".join(container.text_content().split())) < _SHORT_WITH_A_LINK
+    return len(_collapsed_text(container)) < _SHORT_WITH_A_LINK
 
 
 def _holds_loose_text(container: "HtmlElement") -> bool:
@@ -798,12 +975,8 @@ def _tabulate_latexml_spans(tree: "HtmlElement") -> None:
     "(%, ↑)"), and a table inside a cell has no markdown form.
     """
     for tabular in list(tree.iter("span")):
-        if "ltx_tabular" in _classes(tabular) and not _in_table_cell(tabular):
+        if "ltx_tabular" in _classes(tabular) and not _within(tabular, "td", "th"):
             _as_table(tabular)
-
-
-def _in_table_cell(element: "HtmlElement") -> bool:
-    return any(ancestor.tag in ("td", "th") for ancestor in element.iterancestors())
 
 
 def _as_table(tabular: "HtmlElement") -> None:

@@ -467,6 +467,30 @@ NOTEBOOK_SOURCE_URL = "https://www.pinecone.io/learn/nemo-guardrails-intro/md/"
 # An extraction with one fenced block and a two-row table: the structure a
 # source must hold at least as much of.
 STRUCTURED = "```\nprint(1)\n```\n\n| a | b |\n| 1 | 2 |\n\n" + "extracted body " * 40
+# A clean extraction of four sections, each saying something of its own.
+SECTIONS = (
+    (
+        "# Retries\n\nEvery fetch the ledger records is retried on a schedule its driver names,"
+        " and a fetch that keeps failing is parked rather than dropped."
+    ),
+    (
+        "## Backoff\n\nA blocked fetch waits twice as long each time it fails, up to a day, so"
+        " a site that throttles bursts recovers before the next attempt."
+    ),
+    (
+        "## Wayback\n\nA dead page is looked up in the internet archive before it is parked for"
+        " the owner, and the snapshot's address is noted beside the body it rescued."
+    ),
+    (
+        "## Thin pages\n\nA page whose extraction comes back under three hundred characters is"
+        " parked as unusable, never stored: a stub read as an article misleads every digest."
+    ),
+)
+SECTIONED = "\n\n".join(SECTIONS)
+# A paragraph of the same page in words every one of which a section says.
+RECURRING = (
+    "A fetch that keeps failing is parked, and a blocked fetch waits before the next attempt."
+)
 
 
 class TestMarkdownAlternate:
@@ -707,6 +731,26 @@ class TestMarkdownAlternate:
         source = "s" * source_chars
         result = content_of(self.fetch(declaring(SOURCE_LINK), markdown_response(source)))
         assert result.body == {"extraction": extraction, "source": source}[stored]
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "# Page not found\n\nThe page you are looking for does not exist or has been moved.",
+            "# 500\n\nAn internal error occurred while rendering this page. Try again later.",
+            "\n\n".join(SECTIONS[:2]),
+            "\n\n".join(SECTIONS[:2] + SECTIONS[3:]),
+            SECTIONED,
+        ],
+        ids=["stub", "error-page", "first-half", "a-section-left-out", "a-paragraph-left-out"],
+    )
+    def test_a_shorter_source_missing_what_the_page_says_loses(self, source):
+        # The last leaves out a paragraph whose every word the page says
+        # elsewhere, as a docs source with an include left unexpanded can:
+        # a count of the words each side says never sees it go.
+        extraction = f"{SECTIONED}\n\n{RECURRING}"
+        answer = markdown_response(source)
+        result = self.fetch(declaring(SOURCE_LINK), answer, extract=lambda _: extraction)
+        assert body_of(result) == extraction
 
     def test_a_sources_notebook_records_read_as_their_code_and_output(self):
         # pinecone.io's learn posts declare a source that writes each embedded
@@ -1359,6 +1403,336 @@ class TestExtractionFidelity:
             "export { default as module3 } from './module3';\n```"
         ) in body
 
+    def test_a_code_block_framed_in_a_figure_keeps_its_code_and_caption(self):
+        # cognition.com frames every example in a <figure>, captioned with
+        # the file it shows, and trafilatura deletes every figure holding no
+        # real table: all thirteen blocks of a post were gone, the prose
+        # around them kept.
+        body = trafilatura_extract(fixture_text("web", "figure-framed-code.html")) or ""
+        assert (
+            "other files.\n\n```\nmemory-john/\n  MEMORY.md\n  team_structure.md\n  projects/\n"
+            "    payments.md\n```"
+        ) in body
+        assert (
+            "plus links to everything else.\n\nMEMORY.md\n\n```\n# Memory: John\n"
+            "- John leads the product team [source: https://example.com/sessions/100]\n"
+            "- [[team_structure]]\n```"
+        ) in body
+        assert ("swarms/slow-checkout/findings.md\n\n```\n- Database: queries are fast.") in body
+        assert "The runtime agent cannot see why memory fills up" in body
+
+    def test_a_code_figure_among_loose_text_keeps_the_text_around_it(self):
+        # Read as a div, the figure is one more wrapper the code-block repair
+        # walks out through to the text the block sits among.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            "      <div>Run the migration before the workers start, so the ledger sees one"
+            f" schema:<figure>{CODE_BLOCK}</figure>Then restart the workers, one queue at a"
+            " time.</div>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "one schema:\n\n```\nline_one = 1\nline_two = 2\n```" in body
+        assert "```\nThen restart the workers, one queue at a time." in body
+
+    def test_a_heading_in_a_summary_is_one_heading_its_parts_apart(self):
+        # trafilatura reads a <summary> as a heading too: the post's
+        # collapsible sections came back as `## ## FormatRepository layout,
+        # ...`, two markers and the subtitle welded to the title.
+        body = trafilatura_extract(fixture_text("web", "figure-framed-code.html")) or ""
+        # One heading line sits in a code block: the MEMORY.md example's own.
+        assert [line for line in headings(body) if line != "# Memory: John"] == [
+            "# Agent Memory Repo",
+            "## The memory loop",
+            "## Format Repository layout, entries, metadata, and cross-links.",
+            "### Repository layout",
+            "### MEMORY.md",
+            "### Entries and metadata",
+            "## Example: agent swarm uses message boards to solve performance issue",
+        ]
+
+    @pytest.mark.parametrize("part", ["span", "div", "small"])
+    @pytest.mark.parametrize("between", ["", "<!-- a note -->"], ids=["text", "comment"])
+    def test_text_before_a_part_of_a_summary_heading_is_set_apart_from_it(self, between, part):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <details><summary><h3>Retries{between}<{part}>What the ledger"
+            f" replays</{part}></h3></summary><p>Each retry is a line in the ledger, written"
+            " before the fetch it records.</p></details>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "### Retries What the ledger replays" in body
+
+    @pytest.mark.parametrize(
+        "tag",
+        [
+            *("a", "b", "code", "em", "i", "kbd", "mark", "strong", "sub", "sup"),
+            *("div", "small", "span"),
+        ],
+    )
+    def test_markup_inside_a_summary_headings_words_adds_no_space(self, tag):
+        # Emphasis, code and links run inside a line of text, often mid-word,
+        # and so does a part opening in lower case: a highlight's span.
+        heading = f'<h3>Configur<{tag} class="hl">ing</{tag}> the run hook</h3>'
+        page = f"<html><body><details><summary>{heading}</summary><p>Text.</p></details></body>"
+        assert heading in prepare_page(page)
+
+    def test_a_summary_holding_no_heading_is_left_as_it_was(self):
+        # And it is passed over, not the end of the search.
+        page = (
+            "<html><body><details><summary>Options</summary><p>Text.</p></details>"
+            "<details><summary><h2>Format</h2></summary><p>More text.</p></details></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert "<summary>Options</summary>" in prepared
+        assert "<details><h2>Format</h2><p>More text.</p></details>" in prepared
+
+    def test_expressive_code_blocks_keep_their_lines_and_captions(self):
+        # Starlight's Expressive Code draws each block as a figure, a window
+        # title in its caption and each line a <div class="ec-line">: a docs
+        # site's Install and Quickstart sections were stored empty.
+        body = trafilatura_extract(fixture_text("web", "expressive-code-figures.html")) or ""
+        assert (
+            "## Install\n\n```\npip install graphrag-lexical-graph\n"
+            "pip install llama-index-readers-web\n```"
+        ) in body
+        assert (
+            "extract_and_build.py\n\n```\nfrom graphrag_toolkit.lexical_graph import"
+            " LexicalGraphIndex\ngraph_index = LexicalGraphIndex(graph_store, vector_store)\n"
+        ) in body
+        assert (
+            "For example:\n\n```\nStatement\n---------\nNeptune supports open graph APIs"
+        ) in body
+
+    def test_a_starlight_heading_keeps_itself_and_sheds_its_permalink(self):
+        # Starlight wraps each heading beside a permalink whose text is for
+        # screen readers. Every heading was stored with a `[Section titled
+        # “X”](#x)` line under it, and the graph-model page lost its short
+        # "Facts" heading outright, wrapper and all.
+        body = trafilatura_extract(fixture_text("web", "expressive-code-figures.html")) or ""
+        assert headings(body) == [
+            "# Graph Model",
+            "## Install",
+            "## Quickstart",
+            "#### Facts",
+            "#### Statements",
+        ]
+        assert "Section titled" not in body
+
+    @pytest.mark.parametrize("side", ["before", "after"])
+    def test_a_permalink_either_side_of_its_heading_goes(self, side):
+        heading = '<h2 id="retries">Retries</h2>'
+        permalink = '<a href="#retries">Section titled “Retries”</a>'
+        pair = permalink + heading if side == "before" else heading + permalink
+        prepared = prepare_page(f"<html><body><div>{pair}</div></body></html>")
+        assert "Section titled" not in prepared
+        assert heading in prepared
+
+    @pytest.mark.parametrize(
+        ("heading", "beside"),
+        [
+            ('<h2 id="retries">Retries</h2>', '<a href="#ledger">Section titled “Ledger”</a>'),
+            ('<h2 id="retries">\n  Retry\n  rules\n</h2>', '<a href="#retries">Retry rules</a>'),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<p>Each retry is logged.</p><a href="#retries">Back to Retries</a>',
+            ),
+            ('<h2 id="">Retries</h2>', '<a href="#">Back to top</a>'),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<a href="#retries"><h3 id="ledger">Ledger section</h3></a>',
+            ),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<a href="#retries"><div>Every retry, logged in full.</div></a>',
+            ),
+        ],
+        ids=[
+            "pointing-elsewhere",
+            "reading-as-the-heading",
+            "not-a-neighbour",
+            "no-id",
+            "holding-a-heading",
+            "holding-a-block",
+        ],
+    )
+    def test_an_anchor_beside_a_heading_that_is_not_its_permalink_stays(self, heading, beside):
+        page = f"<html><body><div>{heading}{beside}</div></body></html>"
+        assert beside in prepare_page(page)
+
+    def test_a_code_figures_screen_reader_text_is_no_label(self):
+        # Expressive Code captions a terminal block "Terminal window" for
+        # screen readers alone, and every terminal block was stored under
+        # that line. A caption left with nothing to say goes; a title stays.
+        prepared = prepare_page(fixture_text("web", "expressive-code-figures.html"))
+        assert "Terminal window" not in prepared
+        assert '<p class="header"></p>' not in prepared
+        assert '<p class="header"><span class="title">extract_and_build.py</span></p>' in prepared
+
+    def test_a_figure_holding_no_code_is_read_as_before(self):
+        # The rail on the figure repair: a picture's caption is chrome
+        # trafilatura drops with its figure, as it always has.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <figure><img src="/chart.png" alt="A chart"><figcaption>Figure 1: throughput'
+            " by week, before and after the ledger rewrite.</figcaption></figure>\n"
+            "      <p>Politeness matters",
+        )
+        assert "Figure 1" not in (trafilatura_extract(page) or "")
+
+    def test_paragraphs_written_as_spans_keep_every_sentence(self):
+        # Mintlify writes each paragraph as <span data-as="p">, which
+        # trafilatura read as loose text: prefab.prefect.io's FastMCP page
+        # lost its opening words and the paragraph after its first code
+        # block, split a sentence at its inline code and welded a fence to
+        # the end of a line.
+        body = trafilatura_extract(fixture_text("web", "mintlify-span-paragraphs.html")) or ""
+        assert body.startswith(
+            "Prefab integrates with [FastMCP](https://github.com/PrefectHQ/fastmcp) to build"
+            " [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs"
+            " that render directly inside the conversation. Mark any tool with `app=True` and"
+            " return a component tree or a `PrefabApp`:\n\n"
+        )
+        assert GLUED_FENCE.search(body) is None
+        assert (
+            "```\nWhen a host like Claude Desktop calls this tool, the user sees a fully"
+            " interactive UI instead of plain text."
+        ) in body
+        assert (
+            "\n\nWhen the user interacts with the UI (clicks a button, submits a form),"
+            " [`CallTool`](/docs/actions/call-tool) sends a new tool call"
+        ) in body
+
+    def test_text_bare_in_divs_beside_span_paragraphs_is_kept(self):
+        # trafilatura reads a div's own text only while a page's paragraphs
+        # hold little: once the spans were paragraphs, a docs site lost its
+        # callouts and its code blocks' file names.
+        body = trafilatura_extract(fixture_text("web", "mintlify-span-paragraphs.html")) or ""
+        assert "server.py\n\n```\nfrom fastmcp import FastMCP" in body
+        assert (
+            "\n\nHosts render the UI in a sandboxed iframe, so a component cannot reach the page"
+            " around it.\n\n"
+        ) in body
+
+    def test_a_page_without_span_paragraphs_keeps_its_divs(self):
+        page = "<html><body><div>A note held bare in a div.</div><p>A paragraph.</p></body></html>"
+        assert "<div>A note held bare in a div.</div>" in prepare_page(page)
+
+    def test_only_the_divs_among_span_paragraphs_become_paragraphs(self):
+        # A docs page's navigation and footer hold text-only divs by the dozen.
+        page = (
+            "<html><body><nav><div>Get started</div></nav>"
+            '<div class="content"><div class="step"><span data-as="p">Install it.</span></div>'
+            "<div>A callout between the steps.</div>"
+            '<div class="step"><span data-as="p">Run it.</span></div></div>'
+            "<footer><div>Built with a docs host</div></footer></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert "<p>A callout between the steps.</p>" in prepared
+        assert "<nav><div>Get started</div></nav>" in prepared
+        assert "<footer><div>Built with a docs host</div></footer>" in prepared
+
+    @pytest.mark.parametrize("chrome", ["nav", "header", "footer", "aside"])
+    def test_a_span_paragraph_in_the_page_chrome_draws_no_divs_in(self, chrome):
+        # Counted with the article's spans, one would make the body the
+        # element they share, and every label div around the page a paragraph.
+        page = (
+            f'<html><body><{chrome}><div>Get started</div><span data-as="p">Search.</span>'
+            f'</{chrome}><div class="content"><span data-as="p">Install it.</span>'
+            "<div>A callout beside it.</div></div></body></html>"
+        )
+        prepared = prepare_page(page)
+        assert f'<{chrome}><div>Get started</div><p data-as="p">Search.</p></{chrome}>' in prepared
+        assert "<p>A callout beside it.</p>" in prepared
+
+    @pytest.mark.parametrize(
+        ("inside", "kept"),
+        [
+            (
+                '<h2><span data-as="p">Install the toolkit</span></h2>',
+                '<h2><span data-as="p">Install the toolkit</span></h2>',
+            ),
+            (
+                "<h2><div>Install the toolkit</div><div>Then build the graph</div></h2>",
+                "<h2><div>Install the toolkit</div><div>Then build the graph</div></h2>",
+            ),
+            (
+                '<span data-as="p">Lead text, then <div>an inner note.</div></span>',
+                "<div>an inner note.</div>",
+            ),
+        ],
+        ids=["span-in-a-heading", "divs-in-a-heading", "div-in-a-span-paragraph"],
+    )
+    def test_no_paragraph_opens_inside_a_heading_or_a_paragraph(self, inside, kept):
+        # Made of paragraphs, a heading lost its marker; a paragraph inside
+        # a paragraph is split apart when the page is parsed again, and the
+        # paragraph after it was merged in.
+        page = f'<html><body><span data-as="p">A paragraph.</span>{inside}</body></html>'
+        assert kept in prepare_page(page)
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            (
+                '<pre><code><div class="line"><span>import os</span></div>'
+                '<div class="line"><span>print(os.getcwd())</span></div></code></pre>'
+            ),
+            (
+                '<div class="expressive-code"><figure class="frame"><pre><code>'
+                '<div class="ec-line"><div class="code"><span>import os</span></div></div>'
+                '<div class="ec-line"><div class="code"><span>print(os.getcwd())</span></div></div>'
+                "</code></pre></figure></div>"
+            ),
+        ],
+        ids=["line-divs", "expressive-code"],
+    )
+    def test_code_lines_beside_span_paragraphs_keep_their_fence(self, block):
+        # A highlighter writes each line as a div of text: made paragraphs,
+        # the lines of every block on a page with one span paragraph lost
+        # their fence.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <span data-as="p">Start from the directory the run was launched in.</span>'
+            f"{block}\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "```\nimport os\nprint(os.getcwd())\n```" in body
+
+    def test_nothing_in_a_code_block_is_made_a_paragraph(self):
+        code = '<pre><code><div>make ledger</div><span data-as="p">make run</span></code></pre>'
+        page = f'<html><body><span data-as="p">Build it first.</span>{code}</body></html>'
+        assert code in prepare_page(page)
+
+    @pytest.mark.parametrize(
+        ("opens", "closes"),
+        [("<p>", "</p>"), ('<span data-as="p">', "</span>")],
+        ids=["paragraph", "span"],
+    )
+    def test_a_span_paragraph_already_in_a_paragraph_stays_a_span(self, opens, closes):
+        # A paragraph in a paragraph is split apart when the page is parsed
+        # again, and the text after it was left loose. A span made a
+        # paragraph is one.
+        inner = '<span data-as="p">then run shell commands</span> across them.'
+        prepared = prepare_page(f"<html><body>{opens}Mount your sources, {inner}{closes}</body>")
+        assert f"Mount your sources, {inner}</p>" in prepared
+
+    def test_a_span_declaring_anything_else_stays_inline(self):
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            '      <p>The <span data-as="em">ledger</span> holds every unit of work the pipeline'
+            " still owes.</p>\n      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "The ledger holds every unit of work the pipeline still owes." in body
+
+    def test_only_a_span_is_taken_at_its_word(self):
+        # A span holds nothing but text, so it can always be a paragraph; an
+        # element holding blocks cannot.
+        page = (
+            '<html><body><span data-as="p">A paragraph.</span>'
+            '<div data-as="p"><ul><li>An item.</li></ul></div></body></html>'
+        )
+        assert '<div data-as="p"><ul>' in prepare_page(page)
+
     def test_inline_code_is_never_broken_whatever_it_holds(self):
         # Only a block's lines are repaired: a paragraph's code stays inline.
         page = ARTICLE.replace(
@@ -1460,6 +1834,17 @@ class TestExtractionFidelity:
         body = trafilatura_extract(page) or ""
         assert GLUED_FENCE.search(body) is None
         assert "Then link it." in body
+
+    def test_a_code_block_outside_a_list_gets_no_line_break(self):
+        # Only a list item writes its paragraphs on one line: in a quote the
+        # break was a blank line of its own above the fence.
+        page = ARTICLE.replace(
+            "      <p>Politeness matters",
+            f"      <blockquote><p>Quoted before the block:</p>{CODE_BLOCK}</blockquote>\n"
+            "      <p>Politeness matters",
+        )
+        body = trafilatura_extract(page) or ""
+        assert "Quoted before the block:\n\n```\nline_one = 1" in body
 
     def test_a_code_block_first_in_its_item_stays_beside_the_marker(self):
         # Nothing precedes it, so there is no line to break: "- ```" is
@@ -1622,6 +2007,14 @@ class TestExtractionFidelity:
         assert "line_one = 1" in body
         assert "https://example.test/paper.pdf" in body
         assert RESCUED_TEXT in body
+
+    @pytest.mark.parametrize(("chars", "set_apart"), [(99, False), (100, True)])
+    def test_a_block_is_short_under_trafilaturas_hundred_characters(self, chars, set_apart):
+        # trafilatura's own bar: under 100 characters of text, whitespace collapsed.
+        rest = f' <a href="https://example.test/doc">the doc</a>{CODE_BLOCK}After.'
+        lead = "x" * (chars - len(" the docline_one = 1 line_two = 2After."))
+        prepared = prepare_page(f"<html><body><div>{lead}{rest}</div></body></html>")
+        assert (f"<p>{lead} <a" in prepared) is set_apart
 
     @pytest.mark.parametrize(
         ("lead", "read"),
