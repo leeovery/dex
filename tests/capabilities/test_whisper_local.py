@@ -1,5 +1,6 @@
 """Tests for whisper-local: fake model seams; the real model is live-only."""
 
+import importlib
 import math
 import struct
 import wave
@@ -142,11 +143,14 @@ class TestTranscribe:
         # failure — it must park waiting, never reach the run loop's
         # broad except as an "engine bug". Named explicitly: the OSError
         # ancestry of hf-hub's errors is a transport detail.
-        import httpx  # noqa: PLC0415 — heavy transitive dep, loaded only for this pin
-        from huggingface_hub.errors import HfHubHTTPError  # noqa: PLC0415 — same
+        from huggingface_hub.errors import HfHubHTTPError  # noqa: PLC0415 — heavy transitive dep
 
-        response = httpx.Response(
-            429, request=httpx.Request("GET", "https://huggingface.co/model.bin")
+        # hf-hub builds its errors on httpx before 2.0 and on httpx2 from it,
+        # and instances run whichever release resolves; the response comes
+        # from the library the error class is built on.
+        http = importlib.import_module(HfHubHTTPError.__mro__[1].__module__.partition(".")[0])
+        response = http.Response(
+            429, request=http.Request("GET", "https://huggingface.co/model.bin")
         )
 
         def load(_name: str):
