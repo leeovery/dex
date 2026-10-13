@@ -10,6 +10,7 @@ from dex_engine.pipeline.classify import (
     PAYWALL_REASON,
     Classification,
     ProviderInputError,
+    StalledTransferError,
     classify_connection,
     classify_http,
     scrub,
@@ -87,6 +88,27 @@ class TestClassifyConnection:
         assert classify_connection(TimeoutError("timed out")).status is Status.BLOCKED
         wrapped = urllib.error.URLError(TimeoutError("timed out"))
         assert classify_connection(wrapped).status is Status.BLOCKED
+
+    @pytest.mark.parametrize(
+        "bound",
+        [
+            "no response within 90s",
+            "transfer stalled: body slower than 16384 bytes per 60s",
+            "transfer stalled: body unfinished after 1800s",
+        ],
+    )
+    def test_a_transfer_past_its_bound_is_blocked_and_states_that_bound(self, bound):
+        # Which bound it ran past is the reason, word for word and never
+        # prefixed: a response that never came may be four unreachable
+        # addresses tried in turn, which no reason may call a stall. The
+        # status is the same retryable blocked, and the TLS marker stays off.
+        classification = classify_connection(StalledTransferError(bound))
+        assert classification.status is Status.BLOCKED
+        assert classification.reason == bound
+        assert not classification.tls
+
+    def test_a_plain_timeout_is_never_called_a_stall(self):
+        assert classify_connection(TimeoutError("timed out")).reason == "connection timed out"
 
     @pytest.mark.parametrize(
         "exc",
