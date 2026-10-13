@@ -362,9 +362,9 @@ def _read_body(
 
     ``read1`` answers with whatever has arrived, so the loop regains control
     at least once per socket timeout and the body's bounds
-    (:class:`_Arrivals`) are checked as it comes in. ``read(n)`` sits inside the buffered
-    reader until all ``n`` bytes are there, and a body dripping in a byte at
-    a time never handed control back at all.
+    (:class:`_Arrivals`) are checked as it comes in. ``read(n)`` sits inside
+    the buffered reader until all ``n`` bytes are there, and a body dripping
+    in a byte at a time never handed control back at all.
 
     The single extra byte is what keeps the caller's ceiling test honest:
     ``len(body) > limit`` still fires for an over-ceiling body, while the
