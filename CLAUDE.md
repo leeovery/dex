@@ -349,6 +349,11 @@ feature that touched pipeline logic —
 ./mutate show dex_engine.pipeline.classify.x_classify_http__mutmut_2
 ```
 
+`./mutate run` forks four workers at `nice` 10 (`DEX_MUTATE_CHILDREN` sets
+the count): mutmut's own default is one per core, and every run first traces
+the whole suite, so two audits at once, or one beside the suite, starve the
+machine. Run one audit at a time.
+
 A module takes a minute or two. Reading the result is the part that matters:
 
 - `killed` (🎉) — a test failed when the line changed. That is the claim the
