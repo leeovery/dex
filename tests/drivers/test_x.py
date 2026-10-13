@@ -256,8 +256,9 @@ class TestQuotes:
         responses = {API + "status/400": api_fixture("quoted-400.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         body = body_of(result)
-        assert "> Quoting @erik: A 403 is not a 404." in body
-        assert "> Record the difference." in body
+        assert body.endswith(
+            "I have seen.\n\n> Quoting @erik: A 403 is not a 404.\n> Record the difference."
+        )
 
 
 class TestArticles:
