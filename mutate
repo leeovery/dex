@@ -4,5 +4,11 @@
 #   ./mutate run "dex_engine.pipeline.classify.*"
 #   ./mutate results
 #   ./mutate show <mutant>
+# A run forks DEX_MUTATE_CHILDREN workers (default 4) at low priority:
+# mutmut's own default is one per core, which starves the whole machine.
 [ -n "$1" ] || { echo 'usage: ./mutate run "<module>.*" | results | show <mutant> | <mutmut verb>'; exit 1; }
+if [ "$1" = run ]; then
+  shift
+  exec nice -n 10 uv run --group mutation mutmut run --max-children "${DEX_MUTATE_CHILDREN:-4}" "$@"
+fi
 exec uv run --group mutation mutmut "$@"
