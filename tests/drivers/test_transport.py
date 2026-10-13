@@ -337,8 +337,8 @@ class TestBoundedBodyRead:
 
     LIMIT = 1_000
 
-    def _serve(self, monkeypatch, total: int) -> _ChunkedResponse:
-        response = _ChunkedResponse(total)
+    def _serve(self, monkeypatch, total: int, chunk: int = 8192) -> _ChunkedResponse:
+        response = _ChunkedResponse(total, chunk)
         monkeypatch.setattr(
             urllib.request,
             "urlopen",
@@ -352,6 +352,15 @@ class TestBoundedBodyRead:
         # One byte past the ceiling: len(body) > limit still fires for the
         # caller's check, and the other 39,000 bytes were never requested —
         # the memory cost of an oversize body is the ceiling, not the body.
+        assert len(fetched.body) == self.LIMIT + 1
+        assert response.served == self.LIMIT + 1
+
+    def test_the_extra_byte_is_asked_for_on_its_own(self, monkeypatch):
+        # Pieces that reach the ceiling exactly leave the one extra byte
+        # outstanding: unless the read asks for it alone, an over-ceiling
+        # body arrives exactly at the limit and passes the caller's check.
+        response = self._serve(monkeypatch, total=self.LIMIT * 40, chunk=self.LIMIT // 2)
+        fetched = urllib_transport("https://cdn.example.test/huge.mp3", limit=self.LIMIT)
         assert len(fetched.body) == self.LIMIT + 1
         assert response.served == self.LIMIT + 1
 
@@ -435,10 +444,12 @@ class TestHeadersDeadline:
         # that response, so the worker closes it rather than leave the
         # server holding a connection open for a reader that never comes.
         with paced_server(drip(response_head(length=100), every=0.01)) as served:
-            with pytest.raises(StalledTransferError) as caught:
+            # Kept bound: the call's frames hold its handoff, so a response
+            # handed over to it rather than closed would stay open.
+            with pytest.raises(StalledTransferError) as abandoned:
                 urllib_transport(served.base + "/late-head")
             assert served.hung_up.wait(timeout=5)
-        assert caught.value  # held, so only the worker's own close can hang up
+        assert abandoned.type is StalledTransferError
         assert_openers_end()
 
     def test_a_completed_call_leaves_no_worker_behind(self):
@@ -513,6 +524,39 @@ class TestBodyStall:
             response = urllib_transport(served.base + "/gone")
             assert time.monotonic() - started < PROMPTLY
         assert response.status == 404
+        assert response.body == b""
+
+
+class TestResponseShape:
+    """What a response carries besides its body, whatever its status."""
+
+    def test_a_response_states_its_media_type_and_declared_length(self):
+        body = b"\x89PNG"
+        with paced_server([(0, response_head(length=len(body)) + body)]) as served:
+            response = urllib_transport(served.base + "/a.png")
+        assert (response.status, response.content_type, response.content_length) == (
+            200,
+            "image/png",
+            len(body),
+        )
+
+    def test_an_error_response_states_them_too_under_the_same_ceiling(self):
+        body = b"e" * 200_000
+        with paced_server(
+            [(0, response_head(b"404 Not Found", length=len(body)) + body)]
+        ) as served:
+            response = urllib_transport(served.base + "/gone.png", limit=1000)
+        assert (response.status, response.content_type, response.content_length) == (
+            404,
+            "image/png",
+            len(body),
+        )
+        assert response.body == b"e" * 1001
+
+    def test_a_head_goes_out_as_head_and_reads_no_body(self):
+        with recording_server() as (base, seen):
+            response = urllib_transport(base + "/probe.png", method="HEAD")
+        assert [request.line for request in seen] == ["HEAD /probe.png HTTP/1.1"]
         assert response.body == b""
 
 
