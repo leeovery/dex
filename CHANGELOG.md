@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.13] - 2026-10-13
+
+✨ Added
+- Link-only X posts keep their link, followed by the title and description of the link preview, when stored beside other content — harvest no longer loses the post's only pointer.
+- Docs sites built on Starlight's Expressive Code and on Mintlify now extract with their code blocks, captions and paragraphs intact.
+
+🔧 Changed
+- Muted videos (no audio stream) are now treated as holding no speech instead of being passed to a transcriber, where they failed with a raw ffmpeg error.
+- `./mutate run` now uses four workers at low priority (`DEX_MUTATE_CHILDREN` sets the count) so an audit no longer starves the machine.
+
+🐛 Fixed
+- Stalled downloads no longer hold a run for most of an hour — connections and bodies now have wall-clock deadlines and a minimum transfer rate, and a stalled fetch parks as blocked with the reason stated.
+- Truncated media downloads under a size limit now fail as truncated instead of landing as a partial file marked done.
+- Code blocks framed in `<figure>` elements are no longer dropped from extracted pages, and their captions stay as label lines.
+- Headings inside a `<summary>` no longer come out with a doubled `## ##` marker or a subtitle welded to the title.
+- Starlight heading permalinks (`Section titled “…”`) are no longer stored under every heading, and short headings are no longer lost with their wrapper.
+- Paragraphs written as `<span data-as="p">`, and the callouts and file names beside them, are no longer lost or split mid-sentence.
+- A shorter markdown alternate that is missing sections of the page is no longer preferred over the full extraction.
+
 ## [0.2.12] - 2026-10-07
 
 🐛 Fixed
