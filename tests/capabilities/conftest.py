@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import av
+
 from dex_engine.pipeline.types import Availability, Extraction, Format
 
 FILE_FIXTURES = Path(__file__).parent.parent / "fixtures" / "files"
@@ -9,6 +11,17 @@ FILE_FIXTURES = Path(__file__).parent.parent / "fixtures" / "files"
 
 def fixture_bytes(name: str) -> bytes:
     return (FILE_FIXTURES / name).read_bytes()
+
+
+def video_only(path: Path) -> Path:
+    """A one-second mp4 holding a video stream and no audio stream, as a muted post's can."""
+    with av.open(str(path), "w") as out:
+        stream = out.add_stream("mpeg4", rate=10)
+        stream.width = stream.height = 16
+        frames = (av.VideoFrame(16, 16, "yuv420p") for _ in range(10))
+        for packet in [*(p for frame in frames for p in stream.encode(frame)), *stream.encode()]:
+            out.mux(packet)
+    return path
 
 
 class FakeTranscriber:

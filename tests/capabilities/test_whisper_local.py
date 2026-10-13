@@ -1,9 +1,7 @@
 """Tests for whisper-local: fake model seams; the real model is live-only."""
 
 import math
-import shutil
 import struct
-import subprocess
 import wave
 from pathlib import Path
 
@@ -11,6 +9,7 @@ import pytest
 
 from dex_engine.capabilities.transcribe.whisper_local import WhisperLocal
 from dex_engine.pipeline.classify import ProviderInputError, ProviderUnavailableError
+from tests.capabilities.conftest import video_only
 
 
 class Segment:
@@ -113,20 +112,9 @@ class TestTranscribe:
         # decode indexes the stream list unguarded, so a video-only file
         # surfaces as IndexError and not as any decode error. Decoding
         # needs no model, so this stays off the live marker.
-        if shutil.which("ffmpeg") is None:
-            pytest.skip("ffmpeg is not on PATH")
         from faster_whisper.audio import decode_audio  # noqa: PLC0415 — heavy dep, one test
 
-        video = tmp_path / "videoonly.mp4"
-        subprocess.run(  # noqa: S603 — fixed args, no shell
-            [
-                shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
-            ],
-            check=True,
-            capture_output=True,
-        )  # fmt: skip
+        video = video_only(tmp_path / "videoonly.mp4")
         with pytest.raises(IndexError):
             decode_audio(str(video))
 
