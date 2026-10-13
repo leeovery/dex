@@ -452,6 +452,14 @@ that as two executors. Neither weakens an ordinary run.
   through the same mechanism, never by hand first, so every instance gets
   the repair that was tested. A default, not a hard rule — but the burden
   of proof is on touching stored content.
+- **Extraction changes are proven on real pages.** A change to
+  `drivers/article.py` or what feeds it changes every page stored from
+  then on, and unit fixtures have never caught its losses: before merging,
+  run the release and the change on the same fetched bytes for hundreds of
+  real pages, compare what each would store (words, links, fences, table
+  rows, headings), and read every page that loses anything. The
+  maintainer's checkout keeps the fetched pages and the scripts in
+  `extraction-harness/` (gitignored; its README says how to run it).
 - **Anything under `instance/`**: after pushing and releasing, run
   `bin/dex sync` in every instance you maintain and commit there.
 - **The gates move together**: the four commands in Development are named in
