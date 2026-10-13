@@ -1,11 +1,10 @@
 """Voice detection before a post's video is transcribed: silence, the length bound, bad input."""
 
-import shutil
 import struct
-import subprocess
 import wave
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import av
 import faster_whisper.audio
@@ -14,6 +13,7 @@ import pytest
 
 from dex_engine.capabilities.transcribe import speech
 from dex_engine.capabilities.transcribe.speech import cannot_tell, hears_speech
+from tests.capabilities.conftest import video_only
 
 SPEECH = Path(__file__).resolve().parents[1] / "fixtures" / "audio" / "speech.opus"
 
@@ -110,22 +110,15 @@ class TestHearsSpeech:
         clip.write_bytes(b"\x00\x00\x00\x18ftypmp42 not a video")
         assert hears_speech(clip) is None
 
-    def test_a_container_with_no_audio_stream_cannot_tell(self, tmp_path):
-        # faster-whisper's decoder indexes the stream list unguarded; the
-        # transcriber then reports the missing stream itself, as it always has.
-        if shutil.which("ffmpeg") is None:
-            pytest.skip("ffmpeg is not on PATH")
-        video = tmp_path / "videoonly.mp4"
-        subprocess.run(  # noqa: S603 — fixed args, no shell
-            [
-                shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video),
-            ],
-            check=True,
-            capture_output=True,
-        )  # fmt: skip
-        assert hears_speech(video) is None
+    def test_a_container_with_no_audio_stream_holds_no_speech(self, tmp_path, monkeypatch):
+        # A muted post's video: undecoded, it never reaches a transcriber,
+        # whose segmenter fails on it with a raw ffmpeg error.
+        monkeypatch.setattr(faster_whisper.audio, "decode_audio", refuse_decode)
+        assert hears_speech(video_only(tmp_path / "muted.mp4")) is False
+
+    def test_no_audio_stream_holds_no_speech_whatever_its_length(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(speech, "DETECTION_MAX_SECONDS", 0)
+        assert hears_speech(video_only(tmp_path / "muted.mp4")) is False
 
     def test_a_clip_past_the_bound_is_never_decoded(self, tmp_path, monkeypatch):
         # Decoding holds the whole clip in memory, so a long one is not asked
@@ -141,6 +134,7 @@ class TestHearsSpeech:
     def test_a_container_stating_no_duration_cannot_tell(self, tmp_path, monkeypatch):
         class Unmeasured:
             duration = None
+            streams = SimpleNamespace(audio=["the clip's sound"])
 
         @contextmanager
         def opened(*_args: object, **_kwargs: object):

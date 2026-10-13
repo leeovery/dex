@@ -256,8 +256,9 @@ class TestQuotes:
         responses = {API + "status/400": api_fixture("quoted-400.json")}
         result = driver_for(responses).fetch(make_unit(url, Kind.X))
         body = body_of(result)
-        assert "> Quoting @erik: A 403 is not a 404." in body
-        assert "> Record the difference." in body
+        assert body.endswith(
+            "I have seen.\n\n> Quoting @erik: A 403 is not a 404.\n> Record the difference."
+        )
 
 
 class TestArticles:
@@ -375,6 +376,170 @@ class TestArticles:
         result = driver_for(responses).fetch(make_unit("https://x.com/hana/status/702", Kind.X))
         assert isinstance(result, Content)
         assert "finally up" in body_of(result)
+
+
+# fxtwitter's `card`: the link preview x draws under a post.
+RELEASE_CARD = {
+    "url": "https://t.co/Rq7xB1kP0e",
+    "title": "Release v2.1.0 · charmbracelet/bubbletea",
+    "description": "Bubble Tea v2.1.0 brings synchronized output and faster renders.",
+    "domain": "github.com",
+    "card_name": "summary_large_image",
+}
+
+
+class TestLinkOnlyPosts:
+    """A post that is nothing but a link keeps it beside other content, with its preview."""
+
+    URL = "https://x.com/alice/status/302"
+    RELEASE = "https://github.com/charmbracelet/bubbletea/releases/tag/v2.1.0"
+    HEADER = "@alice — Wed Aug 19 16:05:00 +0000 2026"
+
+    def reply(self, **fields: object) -> dict:
+        return {
+            "id": "302",
+            "url": self.URL,
+            "text": self.RELEASE,
+            "created_at": "Wed Aug 19 16:05:00 +0000 2026",
+            "author": {"name": "Alice Ives", "screen_name": "alice"},
+            "replying_to": "alice",
+            "replying_to_status": "100",
+            **fields,
+        }
+
+    def thread_body(self, reply: dict) -> str:
+        responses = {
+            API + "status/302": json_response({"tweet": reply}),
+            API + "alice/status/100": api_fixture("root-100.json"),
+        }
+        return body_of(driver_for(responses).fetch(make_unit(self.URL, Kind.X)))
+
+    def test_a_link_only_reply_keeps_its_link_and_its_preview(self):
+        # The field defect: the captured post stored as its header alone, and
+        # harvest, reading links out of the stored body, lost its one pointer.
+        body = self.thread_body(self.reply(card=RELEASE_CARD))
+        assert body.startswith("@alice — Wed Aug 19 16:00:00 +0000 2026\n\nTwo things")
+        assert body.endswith(
+            f"\n\n{self.HEADER}\n\n{self.RELEASE}\n\n"
+            "> Link preview: Release v2.1.0 · charmbracelet/bubbletea\n"
+            "> Bubble Tea v2.1.0 brings synchronized output and faster renders."
+        )
+
+    @pytest.mark.parametrize(
+        "fields",
+        [{}, {"card": None}, {"card": {}}, {"card": {"title": " ", "description": ""}}],
+        ids=["no card", "null card", "empty card", "blank card"],
+    )
+    def test_without_a_preview_the_link_stands_alone(self, fields):
+        body = self.thread_body(self.reply(text=f" {self.RELEASE}\n", **fields))
+        assert body.endswith(f"\n\n{self.HEADER}\n\n{self.RELEASE}")
+
+    @pytest.mark.parametrize(
+        ("card", "preview"),
+        [
+            ({"title": " Release v2.1.0 "}, "> Link preview: Release v2.1.0"),
+            ({"description": " Faster renders.\n"}, "> Faster renders."),
+        ],
+        ids=["title only", "description only"],
+    )
+    def test_a_preview_carries_whichever_of_its_title_and_description_it_has(self, card, preview):
+        body = self.thread_body(self.reply(card={"url": "https://t.co/Rq7xB1kP0e", **card}))
+        assert body.endswith(f"\n\n{self.HEADER}\n\n{self.RELEASE}\n\n{preview}")
+
+    def test_a_preview_spanning_paragraphs_stays_one_quote(self):
+        card = {"title": "Release v2.1.0", "description": "Faster renders.\n\nFewer flickers."}
+        body = self.thread_body(self.reply(card=card))
+        assert body.endswith(
+            f"{self.RELEASE}\n\n> Link preview: Release v2.1.0\n> Faster renders.\n>\n"
+            "> Fewer flickers."
+        )
+
+    @pytest.mark.parametrize(
+        ("card", "tail"),
+        [
+            ({"title": 42, "description": ["Faster renders."]}, ""),
+            (
+                {"title": {"text": "Release"}, "description": "Faster renders."},
+                "\n\n> Faster renders.",
+            ),
+        ],
+        ids=["no field a string", "title not a string"],
+    )
+    def test_a_preview_field_that_is_not_a_string_renders_nothing(self, card, tail):
+        body = self.thread_body(self.reply(card=card))
+        assert body.endswith(f"\n\n{self.HEADER}\n\n{self.RELEASE}{tail}")
+
+    @pytest.mark.parametrize(
+        ("media", "card", "tail"),
+        [
+            (
+                [{"type": "photo", "url": "https://pbs.example.test/media/p302.jpg"}],
+                RELEASE_CARD,
+                (
+                    "\n\n> Link preview: Release v2.1.0 · charmbracelet/bubbletea\n"
+                    "> Bubble Tea v2.1.0 brings synchronized output and faster renders.\n\n"
+                    "(photo post)"
+                ),
+            ),
+            (
+                [{"type": "gif", "url": "https://video.example.test/tweet_video/302.mp4"}],
+                None,
+                "\n\n(video post)",
+            ),
+        ],
+        ids=["photo with a preview", "gif without one"],
+    )
+    def test_a_link_only_post_with_media_keeps_its_link_and_names_its_media(
+        self, media, card, tail
+    ):
+        reply = self.reply(
+            media={"all": media}, card=card, replying_to=None, replying_to_status=None
+        )
+        responses = {API + "status/302": json_response({"tweet": reply})}
+        result = driver_for(responses).fetch(make_unit(self.URL, Kind.X))
+        assert body_of(result) == f"{self.HEADER}\n\n{self.RELEASE}{tail}"
+
+    @pytest.mark.parametrize(
+        ("card", "tail"),
+        [
+            (
+                RELEASE_CARD,
+                (
+                    "\n>\n> > Link preview: Release v2.1.0 · charmbracelet/bubbletea\n"
+                    "> > Bubble Tea v2.1.0 brings synchronized output and faster renders."
+                ),
+            ),
+            (None, ""),
+        ],
+        ids=["with a preview", "without one"],
+    )
+    def test_a_quoted_link_only_post_keeps_its_link_inside_the_quote(self, card, tail):
+        quote = self.reply(card=card, replying_to=None, replying_to_status=None)
+        post = self.reply(
+            id="303",
+            text="Worth upgrading.",
+            quote=quote,
+            replying_to=None,
+            replying_to_status=None,
+        )
+        responses = {API + "status/303": json_response({"tweet": post})}
+        result = driver_for(responses).fetch(make_unit("https://x.com/alice/status/303", Kind.X))
+        assert body_of(result).endswith(
+            f"Worth upgrading.\n\n> Quoting @alice: {self.RELEASE}{tail}"
+        )
+
+    def test_a_post_with_prose_shows_no_preview(self):
+        body = self.thread_body(self.reply(text=f"Out now: {self.RELEASE}", card=RELEASE_CARD))
+        assert body.endswith(f"\n\n{self.HEADER}\n\nOut now: {self.RELEASE}")
+
+    def test_a_lone_link_only_post_is_still_not_content(self):
+        # A link is a pointer to content, preview or not: alone it parks for
+        # judgment rather than ledgering done on a URL.
+        reply = self.reply(card=RELEASE_CARD, replying_to=None, replying_to_status=None)
+        responses = {API + "status/302": json_response({"tweet": reply})}
+        result = driver_for(responses).fetch(make_unit(self.URL, Kind.X))
+        assert isinstance(result, Unusable)
+        assert "no text or media" in result.evidence
 
 
 class TestArticleEntities:
