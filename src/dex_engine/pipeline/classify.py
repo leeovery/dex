@@ -34,6 +34,7 @@ __all__ = [
     "ProviderInputError",
     "ProviderUnavailableError",
     "ScannedDocumentError",
+    "StalledTransferError",
     "classify_connection",
     "classify_http",
     "scrub",
@@ -84,6 +85,18 @@ class ScannedDocumentError(Exception):
     Extract providers raise this instead of returning empty markdown; the
     file driver maps it to the OCR path (``waiting`` + ``needs: ocr``),
     where the cognitive floor reads the pages with eyes.
+    """
+
+
+class StalledTransferError(TimeoutError):
+    """A transfer that ran past one of its bounds; the message is the reason.
+
+    A ``TimeoutError``, so every ``except OSError`` connection guard takes
+    it, and a type of its own, so :func:`classify_connection` can state
+    which bound it ran past rather than call it "connection timed out":
+    a server dripping a byte at a time never trips a socket timeout, and
+    a response that never came may be four unreachable addresses tried in
+    turn rather than any drip at all.
     """
 
 
@@ -178,8 +191,8 @@ def classify_connection(exc: OSError) -> Classification:
 
     NXDOMAIN (``EAI_NONAME``) is the one connection failure that means
     *confirmed gone* → ``dead``. Everything else — temporary DNS failure,
-    refused/reset connections, timeouts, TLS trouble — is the world
-    misbehaving → ``blocked``.
+    refused/reset connections, timeouts, transfers past their bounds, TLS
+    trouble — is the world misbehaving → ``blocked``.
 
     Args:
         exc: The raised failure; ``urllib.error.URLError`` wrappers are
@@ -197,6 +210,8 @@ def classify_connection(exc: OSError) -> Classification:
         return Classification(
             status=Status.BLOCKED, reason=f"temporary DNS failure ({scrub(str(cause))})"
         )
+    if isinstance(cause, StalledTransferError):
+        return Classification(status=Status.BLOCKED, reason=str(cause))
     if isinstance(cause, TimeoutError):
         return Classification(status=Status.BLOCKED, reason="connection timed out")
     if isinstance(cause, ssl.SSLError):

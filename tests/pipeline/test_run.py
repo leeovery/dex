@@ -20,10 +20,11 @@ from hypothesis import strategies as st
 from dex_engine import atomic, corpus
 from dex_engine.capabilities import Capabilities
 from dex_engine.capabilities.transcribe.speech import cannot_tell
+from dex_engine.drivers import transport as transport_mod
 from dex_engine.drivers.file import FileDriver
 from dex_engine.drivers.github import GitHubDriver
 from dex_engine.drivers.podcast import PodcastDriver
-from dex_engine.drivers.transport import HttpResponse
+from dex_engine.drivers.transport import HttpResponse, urllib_transport
 from dex_engine.drivers.web import WebDriver
 from dex_engine.exclude import run_exclude
 from dex_engine.lint import run_lint
@@ -86,7 +87,15 @@ from dex_engine.pipeline.urls import work_hash
 from tests.capabilities.conftest import FakeExtractor, FakeTranscriber, fixture_bytes
 from tests.conftest import FakeDriver
 from tests.drivers.conftest import FakeGh as FakeGhApi
-from tests.drivers.conftest import FakeTransport, fixture_text, gh_contents
+from tests.drivers.conftest import (
+    FakeTransport,
+    drip,
+    fixture_text,
+    gh_contents,
+    paced_server,
+    response_head,
+    truncating_server,
+)
 from tests.pipeline.test_issues import FakeGh
 from tests.test_atomic import failing_fdopen
 
@@ -3076,6 +3085,42 @@ class TestMediaStage:
         entry = ledger.load(instance.ledger_path)[work_hash(self.IMG1)]
         assert entry.status is Status.DONE
         assert (instance.root / f"enrichment/{ITEM}/media-0.png").read_bytes() == b"png"
+
+    def test_a_stalled_media_download_parks_blocked_and_the_run_reports(
+        self, instance, monkeypatch
+    ):
+        # Over the real transport: a CDN that answers at once and then
+        # drips the image a byte at a time held a run on one open socket
+        # until it was killed, with no ledger line and no report.
+        monkeypatch.setattr(transport_mod, "STALL_WINDOW", 0.3)
+        monkeypatch.setattr(transport_mod, "STALL_MIN_BYTES", 1024)
+        steps = [(0, response_head(length=100_000) + PNG_BYTES), *drip(b"x" * 1000, every=0.01)]
+        write_item(instance)
+        with paced_server(steps) as served:
+            image = served.base + "/drip.png"
+            driver = FakeDriver(fetch_fn=self.media_fetch([image]))
+            report = run_mod.run(make_ctx(instance, driver, transport=urllib_transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(image)]
+        assert entry.status is Status.BLOCKED
+        assert entry.reason == "transfer stalled: body slower than 1024 bytes per 0.3s"
+        assert entry.attempts == 1
+        assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
+        assert "**blocked** 1" in report
+        assert "transfer stalled: body slower than 1024 bytes per 0.3s" in report
+
+    def test_a_truncated_media_download_parks_blocked_never_lands(self, instance):
+        # A server hanging up short of its Content-Length read as a quiet
+        # end of body under the media ceiling: the image's first bytes
+        # landed as a whole file under a done line.
+        write_item(instance)
+        with truncating_server(body=PNG_BYTES) as image:
+            driver = FakeDriver(fetch_fn=self.media_fetch([image]))
+            run_mod.run(make_ctx(instance, driver, transport=urllib_transport))
+        entry = ledger.load(instance.ledger_path)[work_hash(image)]
+        assert entry.status is Status.BLOCKED
+        assert entry.reason is not None
+        assert entry.reason.startswith("connection failed (truncated response body")
+        assert not any((instance.enrichment_dir / ITEM).glob("media-*"))
 
     @pytest.mark.parametrize(
         ("body", "shape"),
