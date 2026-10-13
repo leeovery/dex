@@ -419,12 +419,13 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
 
     Every repair runs over one parse, and each function below carries the
     field case that earned it. They come in two families: what
-    ``include_links`` costs — empty anchors, and permalink glyphs and
-    line breaks in headings — and markup trafilatura throws away or
-    misreads with content inside it — scroll areas its navigation filter
-    misreads, code framed in figures, code lines whose breaks live in the
-    stylesheet, paragraphs written as spans, headings inside a
-    ``<summary>``, MathML, and LaTeXML's tabulars and equation tables.
+    ``include_links`` costs — empty anchors, permalink glyphs and line
+    breaks in headings, and permalinks beside them — and markup
+    trafilatura throws away or misreads with content inside it — scroll
+    areas its navigation filter misreads, code framed in figures, code
+    lines whose breaks live in the stylesheet, paragraphs written as
+    spans, headings inside a ``<summary>``, MathML, and LaTeXML's
+    tabulars and equation tables.
     ``mark_body`` is the second reading of a page whose article
     trafilatura could not find (:func:`_mark_article_body`).
 
@@ -450,9 +451,12 @@ def _prepare_page(html: str, *, set_code_apart: bool = True, mark_body: bool = F
     _render_math(tree)
     _drop_empty_anchors(tree)
     _unwrap_heading_summaries(tree)
-    for heading in tree.iter(*_HEADING_TAGS):
+    # A list: lxml's iterator already holds the next heading, and when that
+    # one sits in a dropped permalink the walk ends there, skipping the rest.
+    for heading in list(tree.iter(*_HEADING_TAGS)):
         if isinstance(heading, HtmlElement):
             _drop_glyph_anchors(heading)
+            _drop_heading_permalinks(heading)
             _flatten_heading(heading)
     # Last: it sorts a container's children into text and blocks, so it must
     # read the markup every repair above leaves, the math already text.
@@ -533,6 +537,36 @@ def _drop_glyph_anchors(heading: "HtmlElement") -> None:
             continue
         if anchor.text_content().strip() in _PERMALINK_GLYPHS:
             anchor.drop_tree()
+
+
+def _drop_heading_permalinks(heading: "HtmlElement") -> None:
+    """Drop the anchor either side of a heading that links to the heading itself.
+
+    Starlight sets each heading in a wrapper beside its permalink: an icon
+    and the screen-reader text "Section titled “Facts”". Every heading was
+    stored with a ``[Section titled “Facts”](#facts)`` line under it, and a
+    short one was lost with its wrapper, whose words were then mostly link
+    — trafilatura deletes such a block, and a docs page's "Facts" heading
+    went that way. Only the heading's neighbours are read, and only one
+    linking to the heading's own id goes: one pointing anywhere else is a
+    link somebody meant, and one reading as the heading does is the heading.
+    """
+    target = heading.get("id")
+    if not target:
+        return
+    title = _collapsed_text(heading)
+    for neighbour in (heading.getprevious(), heading.getnext()):
+        if (
+            neighbour is not None
+            and neighbour.tag == "a"
+            and neighbour.get("href") == f"#{target}"
+            and _collapsed_text(neighbour) != title
+        ):
+            neighbour.drop_tree()
+
+
+def _collapsed_text(element: "HtmlElement") -> str:
+    return " ".join(element.text_content().split())
 
 
 def _unwrap_heading_summaries(tree: "HtmlElement") -> None:

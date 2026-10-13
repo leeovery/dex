@@ -1556,6 +1556,56 @@ class TestExtractionFidelity:
             "For example:\n\n```\nStatement\n---------\nNeptune supports open graph APIs"
         ) in body
 
+    def test_a_starlight_heading_keeps_itself_and_sheds_its_permalink(self):
+        # Starlight wraps each heading beside a permalink whose text is for
+        # screen readers. Every heading was stored with a `[Section titled
+        # “X”](#x)` line under it, and the graph-model page lost its short
+        # "Facts" heading outright, wrapper and all.
+        body = trafilatura_extract(fixture_text("web", "expressive-code-figures.html")) or ""
+        assert headings(body) == [
+            "# Graph Model",
+            "## Install",
+            "## Quickstart",
+            "#### Facts",
+            "#### Statements",
+        ]
+        assert "Section titled" not in body
+
+    @pytest.mark.parametrize("side", ["before", "after"])
+    def test_a_permalink_either_side_of_its_heading_goes(self, side):
+        heading = '<h2 id="retries">Retries</h2>'
+        permalink = '<a href="#retries">Section titled “Retries”</a>'
+        pair = permalink + heading if side == "before" else heading + permalink
+        prepared = prepare_page(f"<html><body><div>{pair}</div></body></html>")
+        assert "Section titled" not in prepared
+        assert heading in prepared
+
+    @pytest.mark.parametrize(
+        ("heading", "beside"),
+        [
+            ('<h2 id="retries">Retries</h2>', '<a href="#ledger">Section titled “Ledger”</a>'),
+            ('<h2 id="retries">\n  Retry\n  rules\n</h2>', '<a href="#retries">Retry rules</a>'),
+            (
+                '<h2 id="retries">Retries</h2>',
+                '<p>Each retry is logged.</p><a href="#retries">Back to Retries</a>',
+            ),
+            ('<h2 id="">Retries</h2>', '<a href="#">Back to top</a>'),
+        ],
+        ids=["pointing-elsewhere", "reading-as-the-heading", "not-a-neighbour", "no-id"],
+    )
+    def test_an_anchor_beside_a_heading_that_is_not_its_permalink_stays(self, heading, beside):
+        page = f"<html><body><div>{heading}{beside}</div></body></html>"
+        assert beside in prepare_page(page)
+
+    def test_a_heading_inside_a_dropped_permalink_does_not_end_the_repairs(self):
+        page = (
+            '<html><body><h2 id="retries">Retries</h2><a href="#retries"><h3>Inside</h3></a>'
+            '<h2 id="ledger">Ledger <a href="#ledger">#</a></h2></body></html>'
+        )
+        prepared = prepare_page(page)
+        assert '<h2 id="ledger">Ledger' in prepared
+        assert 'href="#ledger"' not in prepared
+
     def test_a_figure_holding_no_code_is_read_as_before(self):
         # The rail on the figure repair: a picture's caption is chrome
         # trafilatura drops with its figure, as it always has.
