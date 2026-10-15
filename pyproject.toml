@@ -88,10 +88,10 @@ test = [
 line-length = 100
 target-version = "py311"
 # Markdown holds prose, not shipped code. The design doc's protocol sketches
-# align their trailing comments into columns to be read as a table, and
-# `.agents/skills/**` is vendored. Formatting the fenced Python inside either
+# align their trailing comments into columns to be read as a table, and the
+# installed skills are markdown too. Formatting the fenced Python inside them
 # rewrites documents nothing imports.
-extend-exclude = ["*.md", ".agents"]
+extend-exclude = ["*.md"]
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [

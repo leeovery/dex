@@ -2526,7 +2526,7 @@ lint, types and formatting once, since all are pinned to py311 semantics), and
 again as `.mint.toml`'s release `preflight` so a tag cannot exist over a red
 tree — instances pin tags, and rollback is hand-editing pins. The format gate
 holds because the tree is format-clean and pyproject's `extend-exclude` keeps
-the formatter out of markdown and the vendored `.agents/`.
+the formatter out of markdown, the installed skills included.
 The live checks run on their own daily schedule, never as a gate, split into a
 notifying job and a `continue-on-error` job for the endpoints (`ci_hostile`
 marker) that answer a datacenter IP differently from a laptop.
