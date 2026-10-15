@@ -263,8 +263,8 @@ uv run ruff format --check .
 
 **Formatting gates because the tree is format-clean.** `ruff format` reaches
 only shipped code: pyproject's `extend-exclude` keeps it away from markdown
-(the design doc's aligned protocol sketches are prose, not code) and the
-vendored `.agents/`. Within that boundary every file satisfies the formatter,
+(the design doc's aligned protocol sketches are prose, not code, and the
+installed skills are markdown). Within that boundary every file satisfies the formatter,
 and the check exists to keep it that way — format what you touch, and never
 reformat files you are not otherwise editing.
 

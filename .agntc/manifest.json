@@ -1,0 +1,21 @@
+{
+  "leeovery/agentic-skills/python": {
+    "ref": "v0.2.5",
+    "commit": "85e89afa8dbf71ef4ad2e67d8bd3e563aef84750",
+    "files": [
+      ".claude/skills/python-actions/",
+      ".claude/skills/python-architecture/",
+      ".claude/skills/python-concurrency/",
+      ".claude/skills/python-errors/",
+      ".claude/skills/python-project/",
+      ".claude/skills/python-protocols/",
+      ".claude/skills/python-quality/",
+      ".claude/skills/python-testing/",
+      ".claude/skills/python-types/"
+    ],
+    "type": "pack",
+    "cloneUrl": "https://github.com/leeovery/agentic-skills.git",
+    "installedAt": "2026-10-15T19:18:49.996Z",
+    "constraint": "^0.2.5"
+  }
+}
